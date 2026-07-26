@@ -1,6 +1,11 @@
 appId: com.deyin.desktop
 productName: Deyin
 copyright: Copyright (c) 2026 Deyin
+# node-pty is the only native module and it uses N-API (stable ABI across Node
+# and Electron) with prebuilt binaries, so no from-source Electron rebuild is
+# needed. Skipping it avoids @electron/rebuild -> node-gyp (and the Windows
+# Visual Studio detection failure) entirely, and keeps builds fast.
+npmRebuild: false
 directories:
   output: release
   buildResources: build
