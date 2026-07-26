@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+out/
+build/
+*.tsbuildinfo
+
+# Electron packaging
+release/
+apps/desktop/out/
+apps/desktop/dist/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!packages/oauth-provider/keys/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Test / coverage
+coverage/
+
+# Local upstream reference (never committed - proprietary)
+.zcode-upstream/

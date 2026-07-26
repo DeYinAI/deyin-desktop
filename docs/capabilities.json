@@ -1,0 +1,28 @@
+{
+  "$schema": "./capabilities.schema.json",
+  "product": "deyin",
+  "version": "0.1.0",
+  "description": "Deyin's own capability registry. The renderer and host read this to enable features and to gate work-in-progress functionality behind flags.",
+  "capabilities": [
+    { "id": "workspace.projects", "title": "Projects", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "workspace.tasks", "title": "Task list & status", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "workspace.commandPalette", "title": "Command palette (Ctrl/Cmd+K)", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "agent.chat", "title": "Streaming agent chat", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "agent.contextRefs", "title": "@ files, / commands, $ skills, # chats", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "agent.executionModes", "title": "Execution modes (ask -> full access)", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "agent.goalMode", "title": "Goal mode", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "agent.reviewFlow", "title": "Change review / diff apply", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "host.terminal", "title": "PTY terminal", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "host.files", "title": "File explorer & IO", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "host.git", "title": "Git panel", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "host.exec", "title": "Run commands & stream output", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "host.browserPreview", "title": "Embedded browser preview", "status": "planned", "runtime": ["desktop"] },
+    { "id": "skills.registry", "title": "Skills registry", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "skills.import", "title": "Import skills from other agents", "status": "planned", "runtime": ["desktop"] },
+    { "id": "plugins.registry", "title": "Plugins (skills/commands/agents/mcp/hooks/lsp)", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "automations", "title": "Scheduled & event automations", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "mcp.client", "title": "MCP server connections", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "auth.openference", "title": "Openference OAuth sign-in", "status": "building", "runtime": ["desktop", "web"] },
+    { "id": "models.picker", "title": "Multi-model picker (Openference /v1/models)", "status": "planned", "runtime": ["desktop", "web"] }
+  ]
+}
