@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     strategy:
+      # One OS failing must not cancel the others (e.g. macOS signing quirks
+      # should never block the Windows .exe / Linux artifacts).
+      fail-fast: false
       matrix:
         os: [macos-latest, windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
