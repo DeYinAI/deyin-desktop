@@ -27,8 +27,12 @@ win:
   icon: build/icon.ico
 mac:
   target: [dmg]
-  icon: build/icon.png
+  icon: build/icon.icns
   category: public.app-category.developer-tools
+  # Skip code signing on CI (no Apple cert). electron-builder's empty-password
+  # fallback can fail the build; null disables signing cleanly for an unsigned
+  # DMG. Set an identity + notarization secrets to ship a signed build.
+  identity: null
 linux:
   target: [deb, AppImage]
   icon: build/icon.png
