@@ -31,9 +31,6 @@
       "electron",
       "esbuild",
       "node-pty"
-    ],
-    "overrides": {
-      "node-gyp": "^10.2.0"
-    }
+    ]
   }
 }
