@@ -1,0 +1,23 @@
+{
+  "$comment": "Remote config fetched by the desktop app at startup (config.remoteConfigUrl). Lets us flip feature flags and endpoints without shipping a new build.",
+  "schemaVersion": "deyin.remote-config.v1",
+  "minSupportedVersion": "0.1.0",
+  "endpoints": {
+    "oauthIssuer": "https://api.openference.com",
+    "apiBaseUrl": "https://api.openference.com/v1"
+  },
+  "features": {
+    "agent.goalMode": false,
+    "agent.executionModes": true,
+    "host.terminal": true,
+    "host.browserPreview": true,
+    "skills.registry": true,
+    "plugins.registry": true,
+    "automations": false,
+    "mcp.client": true
+  },
+  "community": {
+    "discord": "https://discord.gg/deyin",
+    "docs": "https://docs.deyin.ai"
+  }
+}
