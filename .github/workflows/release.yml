@@ -23,6 +23,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # node-pty is a native module; @electron/rebuild runs node-gyp during
+      # packaging. Runners now default to Python 3.12, which removed distutils
+      # (node-gyp needs it), so pin 3.11 to keep the native rebuild working.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
