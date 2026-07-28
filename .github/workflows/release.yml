@@ -27,7 +27,10 @@ jobs:
       # Mirror draft in the public releases-only repo: this is the feed
       # electron-updater polls, since the source repo is private. Needs a PAT
       # with contents:write on DeYinAI/deyin-releases stored as RELEASES_TOKEN.
+      # Non-fatal: a missing/invalid token must not block the installer builds
+      # (the source-repo draft above is still created either way).
       - name: Create draft in public releases repo
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           repository: DeYinAI/deyin-releases
@@ -116,9 +119,11 @@ jobs:
 
       # Mirror the desktop artifacts (incl. latest*.yml manifests, which the
       # updater resolves first) to the public feed. Publishing this draft is
-      # what ships the update to clients.
+      # what ships the update to clients. Non-fatal: keep the source-repo draft
+      # populated even if the mirror token is missing/invalid.
       - name: Attach installers to public releases repo
         if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           repository: DeYinAI/deyin-releases
