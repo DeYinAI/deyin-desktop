@@ -69,8 +69,10 @@ export async function* streamChat(opts: StreamChatOptions): AsyncGenerator<strin
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let yielded = 0;
 
-  while (true) {
+  let finished = false;
+  while (!finished) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -80,7 +82,10 @@ export async function* streamChat(opts: StreamChatOptions): AsyncGenerator<strin
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
       const payload = trimmed.slice(5).trim();
-      if (payload === "[DONE]") return;
+      if (payload === "[DONE]") {
+        finished = true;
+        break;
+      }
       try {
         const json = JSON.parse(payload) as {
           choices?: { delta?: { content?: string } }[];
@@ -96,10 +101,18 @@ export async function* streamChat(opts: StreamChatOptions): AsyncGenerator<strin
           });
         }
         const delta = json.choices?.[0]?.delta?.content;
-        if (delta) yield delta;
+        if (delta) {
+          yielded += delta.length;
+          yield delta;
+        }
       } catch {
         // Ignore keep-alive / non-JSON lines.
       }
     }
+  }
+  // A 200 stream with zero content deltas would surface as an empty assistant
+  // bubble — indistinguishable from "nothing happened". Make it a real error.
+  if (yielded === 0) {
+    throw new Error("The model returned an empty response.");
   }
 }

@@ -25,6 +25,7 @@ export function ThreadMenu(props: ThreadMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [paths, setPaths] = useState<KnownPaths | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [diagState, setDiagState] = useState<"idle" | "sending" | "ok" | "error">("idle");
   const isDesktop = props.platform === "desktop";
 
   useEffect(() => {
@@ -58,6 +59,31 @@ export function ThreadMenu(props: ThreadMenuProps) {
     props.onAction(action);
     props.onClose();
   };
+
+  /** Upload a scrubbed diagnostics bundle; the report id lands in deyin.log. */
+  const sendDiagnostics = () => {
+    if (diagState === "sending") return;
+    setDiagState("sending");
+    void window.deyin.diagnostics
+      .send()
+      .then((result) => {
+        setDiagState(result.ok ? "ok" : "error");
+        setTimeout(props.onClose, result.ok ? 1200 : 2200);
+      })
+      .catch(() => {
+        setDiagState("error");
+        setTimeout(props.onClose, 2200);
+      });
+  };
+
+  const diagLabel =
+    diagState === "sending"
+      ? "Sending diagnostics…"
+      : diagState === "ok"
+        ? "Diagnostics sent"
+        : diagState === "error"
+          ? "Diagnostics failed"
+          : "Send diagnostics";
 
   const taskPath = paths ? `${paths.userData}/tasks/${props.threadId}` : props.threadId;
   const logPath = paths ? `${paths.logs}/deyin.log` : "deyin.log";
@@ -108,6 +134,7 @@ export function ThreadMenu(props: ThreadMenuProps) {
       )}
       <div className="modelmenu__rule" />
       {item("route", "View model trajectory", () => act("trajectory"))}
+      {item("shield", diagLabel, sendDiagnostics, !isDesktop || diagState === "sending")}
       {item("flag", "Report issue", () => {
         const url = "https://github.com/deyin-app/deyin/issues/new";
         if (isDesktop) window.deyin.shell.openExternal(url);

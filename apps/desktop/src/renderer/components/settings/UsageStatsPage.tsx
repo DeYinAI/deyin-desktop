@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { Icon } from "../Icon.js";
 import { PageHeader } from "./controls.js";
 import type { AccountUsage, UsageStats } from "../../../shared/types.js";
 
@@ -18,9 +19,14 @@ interface Props {
   stats: UsageStats | null;
   /** Server-side Openference account usage; null when signed out or unavailable. */
   account: AccountUsage | null;
+  /** True while the user is signed in (distinguishes "signed out" from "unreachable"). */
+  signedIn: boolean;
+  /** Force-refresh the cached account snapshot. */
+  onRefreshAccount: () => void;
+  refreshing: boolean;
 }
 
-export function UsageStatsPage({ stats, account }: Props) {
+export function UsageStatsPage({ stats, account, signedIn, onRefreshAccount, refreshing }: Props) {
   const [rangeDays, setRangeDays] = useState(30);
 
   const windowDays = useMemo(() => {
@@ -52,11 +58,30 @@ export function UsageStatsPage({ stats, account }: Props) {
         <span className="badge badge--muted">App usage</span>
       </PageHeader>
 
+      {!account && (
+        <div className="usage-card">
+          <div className="usage-card__title">Openference account</div>
+          <div className="hint">
+            {signedIn
+              ? "Account usage is unavailable right now (offline or the service is unreachable)."
+              : "Sign in with Openference to see server-side plan usage here."}
+          </div>
+          {signedIn && (
+            <button className="chip chip--small" style={{ marginTop: 8 }} disabled={refreshing} onClick={onRefreshAccount}>
+              {refreshing ? "Refreshing…" : "Retry"}
+            </button>
+          )}
+        </div>
+      )}
       {account && (
         <div className="usage-card">
           <div className="usage-card__title">
             Openference account
             {account.planName && <span className="badge badge--muted">{account.planName}</span>}
+            <span className="usage-card__spacer" />
+            <button className="icon-btn icon-btn--small" title="Refresh from Openference" disabled={refreshing} onClick={onRefreshAccount}>
+              <Icon name="refresh" size={12} />
+            </button>
           </div>
           <div className="stat-grid">
             <StatCard label="Requests today" value={fmt(account.todayRequests)} />

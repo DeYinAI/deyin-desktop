@@ -1,32 +1,9 @@
 /** Renderer-side session model: projects hold threads, threads hold a timeline of
- * structured events (plain chat plus agent activity cards). */
+ * structured events (plain chat plus agent activity cards). The types live in
+ * @deyin/host-core so the ProjectsStore and both transports share them. */
+export type { Project, Thread, ThreadEvent, ProjectsState } from "@deyin/host-core/shared";
 
-export type ThreadEvent =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "plan"; steps: { text: string; done: boolean }[]; badge?: string }
-  | { kind: "file"; name: string; subtitle: string; adds: number; dels: number }
-  | { kind: "model-switch"; from: string; to: string }
-  | { kind: "skill"; name: string }
-  | { kind: "thought"; label: string }
-  | { kind: "worked"; seconds: number };
-
-export interface Thread {
-  id: string;
-  title: string;
-  /** Relative age label shown in the sidebar ("now", "2h", "4d"). */
-  age: string;
-  events: ThreadEvent[];
-  pinned?: boolean;
-  archived?: boolean;
-  unread?: boolean;
-}
-
-export interface Project {
-  id: string;
-  name: string;
-  threads: Thread[];
-}
+import type { Thread, ThreadEvent } from "@deyin/host-core/shared";
 
 let counter = 0;
 export function newId(prefix: string): string {

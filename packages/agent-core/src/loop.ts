@@ -45,6 +45,9 @@ export interface AgentRunOptions {
   onEvent?: (event: AgentEvent) => void;
   /** Persistence hook: fired for every message appended to the transcript. */
   onMessage?: (message: AgentMessage) => void;
+  /** Lifecycle hooks (hooks.json): return { block } to veto a tool call. */
+  beforeTool?: (call: AgentToolCall, args: Record<string, unknown>, summary: string) => Promise<{ block?: string } | void>;
+  afterTool?: (call: AgentToolCall, result: string, ok: boolean) => Promise<void>;
   cwd: string;
   thinking?: boolean;
   maxSteps?: number;
@@ -202,6 +205,21 @@ async function executeCall(
   const summary = safeSummary(tool.summarize, args, call.name);
   emit({ type: "tool-start", call, summary });
 
+  // Lifecycle hooks run before the permission prompt so a blocking hook never
+  // bothers the user with a dialog for an action that would be vetoed anyway.
+  if (opts.beforeTool) {
+    try {
+      const hookResult = await opts.beforeTool(call, args, summary);
+      if (hookResult?.block) {
+        const msg = `Blocked by hook: ${hookResult.block}`;
+        emit({ type: "tool-end", call, result: msg, ok: false, denied: true });
+        return msg;
+      }
+    } catch {
+      // Hook engine failures fail open by design.
+    }
+  }
+
   let action = opts.permissions.actionFor(tool);
   if (action === "ask") {
     const decision = await opts.resolvePermission({ toolName: tool.name, tier: tool.tier, args, summary });
@@ -221,10 +239,12 @@ async function executeCall(
   try {
     const result = await tool.execute(args, ctx);
     emit({ type: "tool-end", call, result, ok: true });
+    if (opts.afterTool) await opts.afterTool(call, result, true).catch(() => undefined);
     return result;
   } catch (err) {
     const msg = `ERROR: ${err instanceof Error ? err.message : String(err)}`;
     emit({ type: "tool-end", call, result: msg, ok: false });
+    if (opts.afterTool) await opts.afterTool(call, msg, false).catch(() => undefined);
     return msg;
   }
 }
