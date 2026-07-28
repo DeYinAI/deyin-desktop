@@ -265,16 +265,6 @@ code {
   font-size: 11px;
 }
 
-.sidebar__filters {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 12px 6px;
-}
-.sidebar__filters-spacer {
-  flex: 1;
-}
-
 .sidebar__scroll {
   flex: 1;
   overflow-y: auto;
@@ -311,14 +301,6 @@ code {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.project__refresh {
-  margin-left: auto;
-  opacity: 0;
-}
-.project__row:hover .project__refresh {
-  opacity: 1;
-}
-
 .thread-row {
   display: flex;
   align-items: center;
@@ -339,10 +321,6 @@ code {
 .thread-row--active {
   background: var(--color-surface-overlay);
   color: var(--color-text);
-}
-.thread-row--more {
-  color: var(--color-text-faint);
-  font-size: 12px;
 }
 .thread-row__title {
   flex: 1;
@@ -1475,47 +1453,6 @@ code {
   font-weight: 600;
 }
 
-.plan-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: var(--radius-lg);
-  margin-bottom: 12px;
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-  cursor: pointer;
-}
-.plan-banner--green {
-  background: linear-gradient(135deg, rgba(63, 185, 80, 0.16), rgba(63, 185, 80, 0.04));
-  border-color: rgba(63, 185, 80, 0.3);
-}
-.plan-banner--blue {
-  background: linear-gradient(135deg, rgba(79, 124, 255, 0.18), rgba(79, 124, 255, 0.04));
-  border-color: rgba(79, 124, 255, 0.35);
-}
-.plan-banner__meta {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.plan-banner__name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-.plan-banner__headline {
-  font-size: 17px;
-  font-weight: 700;
-}
-.plan-banner__detail {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
 /* Provider editor fields --------------------------------------------------- */
 .field {
   margin-bottom: 14px;
@@ -1557,6 +1494,15 @@ code {
 .modellist__row--form {
   background: transparent;
   border-style: dashed;
+}
+.modellist__row--off .modellist__id,
+.modellist__row--off .badge {
+  opacity: 0.45;
+}
+.modellist__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .modellist__id {
   font-size: 12px;
@@ -1681,9 +1627,15 @@ code {
   margin-bottom: 14px;
 }
 .usage-card__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 12px;
+}
+.usage-card__foot {
+  margin-top: 10px;
 }
 
 .heatmap {
@@ -2009,7 +1961,9 @@ code {
 
 /* Terminal panel --------------------------------------------------------- */
 .terminal-panel {
-  height: 260px;
+  /* Cap by viewport height so short windows never push the terminal's last
+     rows under the rounded, overflow-hidden .app__center edge. */
+  height: min(260px, 40vh);
   border-top: 1px solid var(--color-hairline);
   background: #05070a;
   display: flex;
@@ -2033,6 +1987,7 @@ code {
 .terminal-panel__body {
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* The terminal chrome stays dark in both themes, so its colors are fixed. */
@@ -2082,6 +2037,7 @@ code {
 .terminal-host {
   height: 100%;
   padding: 6px;
+  overflow: hidden;
 }
 
 /* Light-theme overrides ------------------------------------------------------ */
@@ -2114,12 +2070,4 @@ code {
 }
 [data-theme="light"] .overlay {
   background: rgba(0, 0, 0, 0.25);
-}
-[data-theme="light"] .plan-banner--green {
-  background: linear-gradient(135deg, rgba(26, 127, 55, 0.12), rgba(26, 127, 55, 0.03));
-  border-color: rgba(26, 127, 55, 0.3);
-}
-[data-theme="light"] .plan-banner--blue {
-  background: linear-gradient(135deg, rgba(63, 102, 224, 0.12), rgba(63, 102, 224, 0.03));
-  border-color: rgba(63, 102, 224, 0.3);
 }
