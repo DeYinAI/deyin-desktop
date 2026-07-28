@@ -62,6 +62,7 @@ export const editTool: ToolDefinition = {
     const content = await readFile(path, "utf8");
     const { next, replacements } = applyEdit(content, oldString, newString, replaceAll);
     await writeFile(path, next, "utf8");
+    ctx.onFileChanged?.({ path, before: content, after: next });
     return `Replaced ${replacements} occurrence${replacements === 1 ? "" : "s"} in ${path}`;
   },
 };

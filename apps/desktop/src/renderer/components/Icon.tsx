@@ -156,6 +156,7 @@ const PATHS: Record<string, JSX.Element> = {
   ),
   flag: <path d="M4 14V2.5M4 3h8l-1.8 2.5L12 8H4" />,
   route: <path d="M4 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM12 5.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM12 5.5v3a2 2 0 01-2 2H5.5" />,
+  message: <path d="M2.5 4.5A1.5 1.5 0 014 3h8a1.5 1.5 0 011.5 1.5v4A1.5 1.5 0 0112 10H7l-3 3v-3a1.5 1.5 0 01-1.5-1.5z" />,
 };
 
 export type IconName = keyof typeof PATHS & string;

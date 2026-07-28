@@ -13,19 +13,52 @@ import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { TopBar } from "./components/TopBar.js";
 import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
-import type { FileDiff } from "./diff.js";
-import { emptyThread, newId, toChatMessages, type Project, type ThreadEvent } from "./threads.js";
+import { computeLineDiff, type FileDiff } from "./diff.js";
+import { emptyThread, newId, toChatMessages, type Project, type Thread, type ThreadEvent } from "./threads.js";
 import type { SettingsPage } from "./components/SettingsView.js";
 import type {
   AgentEventEnvelope,
   ApprovalMode,
   Bootstrap,
+  ChatMode,
   DeyinSettings,
   EnvInfo,
   ModelInfo,
   ProviderInfo,
   UserProfile,
 } from "../shared/types.js";
+
+/** Above this size we skip diff rendering (LCS is quadratic) but keep the card. */
+const DIFF_MAX_LINES = 2000;
+
+/** Adds/dels counts for a file card; falls back to a cheap estimate on big files. */
+function diffStats(before: string, after: string): { adds: number; dels: number; renderable: boolean } {
+  if (before === "" && after === "") return { adds: 0, dels: 0, renderable: false };
+  const a = before.split("\n");
+  const b = after.split("\n");
+  if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
+    const counts = new Map<string, number>();
+    for (const line of a) counts.set(line, (counts.get(line) ?? 0) + 1);
+    let common = 0;
+    for (const line of b) {
+      const left = counts.get(line) ?? 0;
+      if (left > 0) {
+        common += 1;
+        counts.set(line, left - 1);
+      }
+    }
+    return { adds: b.length - common, dels: a.length - common, renderable: false };
+  }
+  let adds = 0;
+  let dels = 0;
+  for (const line of computeLineDiff(before, after)) {
+    if (line.type === "add") adds += 1;
+    else if (line.type === "del") dels += 1;
+  }
+  return { adds, dels, renderable: true };
+}
+
+const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
 type View = "workspace" | "settings";
 
@@ -52,6 +85,7 @@ export function App() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>("openference");
   const [selectedModel, setSelectedModel] = useState<string>("GLM-5.2");
+  const [composerMode, setComposerMode] = useState<ChatMode>("agent");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState<string | null>(null);
@@ -62,9 +96,16 @@ export function App() {
   const [agentThreadId, setAgentThreadId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<ThreadEvent[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [streamReasoning, setStreamReasoning] = useState<string | null>(null);
   const runToolIndex = useRef(new Map<string, number>());
   const runTextRef = useRef("");
   const runTokensRef = useRef(0);
+  const runReasoningRef = useRef("");
+  const reasoningStartRef = useRef(0);
+  /** Mode of the in-flight run (drives plan completion handling). */
+  const runModeRef = useRef<ChatMode>("agent");
+  /** Volatile diff contents per file path; thread events only persist the counts. */
+  const fileDiffsRef = useRef(new Map<string, FileDiff>());
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(true);
@@ -166,6 +207,13 @@ export function App() {
     () => projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId) ?? null,
     [projects, activeThreadId],
   );
+
+  // Restore the thread's composer mode when switching tasks.
+  useEffect(() => {
+    const thread = projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId);
+    if (thread) setComposerMode(thread.mode ?? "agent");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThreadId]);
 
   const patchSettings = useCallback((patch: Partial<DeyinSettings>) => {
     setSettings((cur) => (cur ? { ...cur, ...patch } : cur));
@@ -291,14 +339,30 @@ export function App() {
     if (!window.deyin.agent) return;
     const off = window.deyin.agent.onEvent((envelope: AgentEventEnvelope) => {
       const { threadId, event } = envelope;
+      const flushReasoning = () => {
+        const text = runReasoningRef.current;
+        if (text.trim().length === 0) return;
+        const seconds = Math.max(1, Math.round((Date.now() - reasoningStartRef.current) / 1000));
+        runReasoningRef.current = "";
+        setStreamReasoning(null);
+        setRunEvents((cur) => [...cur, { kind: "reasoning", text, seconds }]);
+      };
       const flushText = () => {
+        flushReasoning();
         const text = runTextRef.current;
         runTextRef.current = "";
         setStreamText("");
         if (text.trim().length > 0) setRunEvents((cur) => [...cur, { kind: "assistant", text }]);
       };
       switch (event.type) {
+        case "reasoning-delta":
+          if (runReasoningRef.current.length === 0) reasoningStartRef.current = Date.now();
+          runReasoningRef.current += event.delta;
+          setStreamReasoning(runReasoningRef.current);
+          break;
         case "text-delta":
+          // The model moved from thinking to answering: fold the thought away.
+          flushReasoning();
           runTextRef.current += event.delta;
           setStreamText(runTextRef.current);
           break;
@@ -318,6 +382,20 @@ export function App() {
             next[index] = { ...(next[index] as Extract<ThreadEvent, { kind: "tool" }>), result: event.result, ok: event.ok, denied: event.denied };
             return next;
           });
+          break;
+        }
+        case "file-change": {
+          const stats = diffStats(event.before, event.after);
+          if (stats.renderable) {
+            const fileDiff: FileDiff = { fileName: event.path, before: event.before, after: event.after };
+            fileDiffsRef.current.set(event.path, fileDiff);
+            setDiff(fileDiff); // Diff tab always shows the latest change.
+          }
+          const name = event.path.split(/[\\/]/).pop() ?? event.path;
+          setRunEvents((cur) => [
+            ...cur,
+            { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels },
+          ]);
           break;
         }
         case "todos": {
@@ -352,17 +430,35 @@ export function App() {
         case "done": {
           // Fold the run into the persisted thread: run events + final text.
           const text = runTextRef.current.trim().length > 0 ? runTextRef.current : event.finalText;
+          const reasoning = runReasoningRef.current;
+          const reasoningSeconds = Math.max(1, Math.round((Date.now() - reasoningStartRef.current) / 1000));
           runTextRef.current = "";
+          runReasoningRef.current = "";
+          const planFinished = runModeRef.current === "plan" && event.reason === "completed" && text.trim().length > 0;
           setRunEvents((cur) => {
             const finished: ThreadEvent[] = [...cur];
+            if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
             if (text.trim().length > 0) finished.push({ kind: "assistant", text });
+            if (planFinished) finished.push({ kind: "plan-ready" });
             if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
             if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
             appendEvents(threadId, finished);
             return [];
           });
+          if (planFinished) {
+            // The final message is the plan document: feed the Plan tab.
+            setProjects((cur) =>
+              cur.map((project) => ({
+                ...project,
+                threads: project.threads.map((th) => (th.id === threadId ? { ...th, planMarkdown: text } : th)),
+              })),
+            );
+            setPanelOpen(true);
+            setPanelTab("plan");
+          }
           runToolIndex.current.clear();
           setStreamText(null);
+          setStreamReasoning(null);
           setAgentThreadId(null);
           setApproval(null);
           markOnboard("taskRun");
@@ -404,7 +500,7 @@ export function App() {
           void window.deyin.workspace.setRoot(root);
         }
       }
-      const thread = emptyThread();
+      const thread: Thread = { ...emptyThread(), mode: composerMode };
       const createdId = createdProject?.id ?? null;
       setProjects((cur) => {
         if (cur.length === 0) {
@@ -421,7 +517,7 @@ export function App() {
       setActiveThreadId(thread.id);
       setView("workspace");
     })();
-  }, [projects, activeProjectId, boot, ensureFolderProject]);
+  }, [projects, activeProjectId, boot, ensureFolderProject, composerMode]);
 
   const updateThread = useCallback((threadId: string, patch: Partial<Project["threads"][number]>) => {
     setProjects((cur) =>
@@ -431,6 +527,15 @@ export function App() {
       })),
     );
   }, []);
+
+  /** Composer mode change: remembered app-wide and stamped on the active thread. */
+  const selectMode = useCallback(
+    (mode: ChatMode) => {
+      setComposerMode(mode);
+      if (activeThreadId) updateThread(activeThreadId, { mode });
+    },
+    [activeThreadId, updateThread],
+  );
 
   const handleThreadAction = useCallback(
     (threadId: string, action: ThreadAction) => {
@@ -503,6 +608,50 @@ export function App() {
     document.documentElement.style.setProperty("--app-font-size", `${settings?.fontSize ?? 14}px`);
   }, [settings?.fontSize]);
 
+  /** Start (or continue) the tool-calling loop for a thread in the given mode. */
+  const startAgentRun = useCallback(
+    (thread: Thread, text: string, mode: ChatMode) => {
+      const isFirstMessage = toChatMessages(thread.events).length === 0;
+      appendEvents(thread.id, [{ kind: "user", text }]);
+      setStreamText("");
+      setStreamReasoning(null);
+      setAgentThreadId(thread.id);
+      setRunEvents([]);
+      runToolIndex.current.clear();
+      runTextRef.current = "";
+      runReasoningRef.current = "";
+      runTokensRef.current = 0;
+      runModeRef.current = mode;
+      if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
+      void window.deyin.agent.start({
+        threadId: thread.id,
+        prompt: text,
+        providerId: selectedProviderId,
+        model: selectedModel,
+        thinking: settings?.thinking ?? true,
+        approvalMode: settings?.approvalMode ?? "full-access",
+        mode,
+        history: toChatMessages(thread.events),
+      });
+    },
+    [appendEvents, selectedModel, selectedProviderId, settings],
+  );
+
+  /** Plan-ready card "Build": switch the thread to agent mode and execute the plan. */
+  const buildFromPlan = useCallback(() => {
+    if (!activeThread || streamText !== null) return;
+    selectMode("agent");
+    startAgentRun(activeThread, BUILD_PROMPT, "agent");
+  }, [activeThread, streamText, selectMode, startAgentRun]);
+
+  /** File card "Open": show that change in the Diff tab (when we still hold it). */
+  const openFileDiff = useCallback((path: string) => {
+    const fileDiff = fileDiffsRef.current.get(path);
+    if (fileDiff) setDiff(fileDiff);
+    setPanelOpen(true);
+    setPanelTab("diff");
+  }, []);
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text || streamText !== null || !boot) return;
@@ -511,7 +660,7 @@ export function App() {
     // the click — the composer must never silently no-op.
     let thread = activeThread;
     if (!thread) {
-      const newThread = emptyThread();
+      const newThread: Thread = { ...emptyThread(), mode: composerMode };
       setProjects((cur) => {
         if (cur.length === 0) {
           return [{ id: newId("proj"), name: "Workspace", root: null, threads: [newThread] }];
@@ -555,27 +704,12 @@ export function App() {
     const isFirstMessage = toChatMessages(thread.events).length === 0;
     const history = [...toChatMessages(thread.events), { role: "user" as const, content: text }];
 
-    // Agent mode (default on desktop): run the tool-calling loop in the main
-    // process; falls back to the plain text stream when switched off.
+    // Agent runtime (default on desktop): run the tool-calling loop in the main
+    // process in the selected composer mode; falls back to the plain text
+    // stream when switched off (or on the web, which has no agent host yet).
     if ((settings?.agentMode ?? "agent") === "agent" && boot.platform === "desktop" && window.deyin.agent) {
-      appendEvents(thread.id, [{ kind: "user", text }]);
       setInput("");
-      setStreamText("");
-      setAgentThreadId(thread.id);
-      setRunEvents([]);
-      runToolIndex.current.clear();
-      runTextRef.current = "";
-      runTokensRef.current = 0;
-      if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
-      void window.deyin.agent.start({
-        threadId: thread.id,
-        prompt: text,
-        providerId: selectedProviderId,
-        model: selectedModel,
-        thinking: settings?.thinking ?? true,
-        approvalMode: settings?.approvalMode ?? "full-access",
-        history: toChatMessages(thread.events),
-      });
+      startAgentRun(thread, text, composerMode);
       return;
     }
 
@@ -628,7 +762,7 @@ export function App() {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, connect, appendEvents]);
+  }, [input, streamText, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, connect, appendEvents, startAgentRun]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -763,6 +897,7 @@ export function App() {
                   ...(agentThreadId !== null && agentThreadId === activeThreadId ? runEvents : []),
                 ]}
                 streamText={agentThreadId === null || agentThreadId === activeThreadId ? streamText : null}
+                streamReasoning={agentThreadId === null || agentThreadId === activeThreadId ? streamReasoning : null}
                 greetingName={greetingName}
                 codeDisplay={{
                   themeLight: settings?.codeThemeLight ?? "GitHub Light",
@@ -772,11 +907,13 @@ export function App() {
                   showLineNumbers: settings?.showLineNumbers ?? true,
                   wrapLongLines: settings?.wrapLongLines ?? false,
                 }}
-                onOpenFile={() => {
-                  setPanelOpen(true);
-                  setPanelTab("diff");
-                }}
+                onOpenFile={openFileDiff}
                 onUndo={() => setDiff(null)}
+                onBuild={buildFromPlan}
+                onOpenPlan={() => {
+                  setPanelOpen(true);
+                  setPanelTab("plan");
+                }}
               />
 
               <div className="chat-column__composer">
@@ -785,6 +922,11 @@ export function App() {
                   models={models}
                   selectedModel={selectedModel}
                   approvalMode={settings?.approvalMode ?? "full-access"}
+                  mode={
+                    boot?.platform === "desktop" && (settings?.agentMode ?? "agent") === "agent"
+                      ? composerMode
+                      : undefined
+                  }
                   thinking={settings?.thinking ?? true}
                   canSend={input.trim().length > 0 && streamText === null}
                   streaming={streamText !== null}
@@ -808,6 +950,7 @@ export function App() {
                     setView("settings");
                   }}
                   onSelectApproval={(mode: ApprovalMode) => patchSettings({ approvalMode: mode })}
+                  onSelectMode={selectMode}
                   onToggleThinking={(on) => patchSettings({ thinking: on })}
                 />
               </div>
@@ -818,7 +961,7 @@ export function App() {
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
                 activeTab={panelTab}
-                planMarkdown=""
+                planMarkdown={activeThread?.planMarkdown ?? ""}
                 diff={diff}
                 browserUrl={browserUrl}
                 browserPartition={browserPartition}
@@ -826,6 +969,9 @@ export function App() {
                   showLineNumbers: settings?.showLineNumbers ?? true,
                   wrapLongLines: settings?.wrapLongLines ?? false,
                   codeFontSize: settings?.codeFontSize ?? 12,
+                  themeLight: settings?.codeThemeLight ?? "GitHub Light",
+                  themeDark: settings?.codeThemeDark ?? "GitHub Dark",
+                  variant: themeVariant,
                 }}
                 browserControlEnabled={settings?.browserControlEnabled ?? true}
                 onSelectTab={setPanelTab}

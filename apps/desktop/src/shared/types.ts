@@ -15,6 +15,7 @@ export type {
   ShellInfo,
   EnvInfo,
   ApprovalMode,
+  ChatMode,
   DeyinSettings,
   OnboardProgress,
   CapabilityKind,

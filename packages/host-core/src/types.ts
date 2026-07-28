@@ -59,10 +59,15 @@ export interface ChatMessage {
  * threads; each thread is a timeline of structured events. Persisted per
  * profile via ProjectsStore (desktop: projects.json, web: localStorage). */
 
+/** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
+export type ChatMode = "agent" | "plan" | "ask";
+
 export type ThreadEvent =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
+  | { kind: "reasoning"; text: string; seconds?: number }
   | { kind: "plan"; steps: { text: string; done: boolean }[]; badge?: string }
+  | { kind: "plan-ready" }
   | { kind: "file"; name: string; subtitle: string; adds: number; dels: number }
   | { kind: "model-switch"; from: string; to: string }
   | { kind: "skill"; name: string }
@@ -77,6 +82,10 @@ export interface Thread {
   /** Relative age label shown in the sidebar ("now", "2h", "4d"). */
   age: string;
   events: ThreadEvent[];
+  /** Composer mode this thread runs in; defaults to "agent". */
+  mode?: ChatMode;
+  /** Markdown produced by the latest plan-mode run; feeds the Plan tab. */
+  planMarkdown?: string;
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
@@ -288,6 +297,7 @@ export type AgentUiEvent =
   | { type: "reasoning-delta"; delta: string }
   | { type: "tool-start"; callId: string; name: string; summary: string }
   | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
+  | { type: "file-change"; path: string; before: string; after: string }
   | { type: "todos"; todos: AgentTodoItem[] }
   | { type: "usage"; totalTokens: number }
   | { type: "permission-request"; requestId: string; toolName: string; summary: string }
@@ -308,6 +318,8 @@ export interface AgentStartOptions {
   model: string;
   thinking: boolean;
   approvalMode: ApprovalMode;
+  /** Composer mode: agent (build), plan (read-only research) or ask (read-only Q&A). */
+  mode: ChatMode;
   /** Prior plain-text turns used to rebuild context after a restart. */
   history: { role: "user" | "assistant"; content: string }[];
 }
