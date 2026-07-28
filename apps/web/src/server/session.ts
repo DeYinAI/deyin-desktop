@@ -60,7 +60,7 @@ export class Session {
           this.send({ type: "reply", id: msg.id, ok: true, result: { content: await this.host.read(msg.path) } });
           break;
         case "env.detect":
-          this.send({ type: "reply", id: msg.id, ok: true, result: { env: this.host.env() } });
+          this.send({ type: "reply", id: msg.id, ok: true, result: { env: await this.host.env() } });
           break;
         case "term.create":
           this.send({ type: "reply", id: msg.id, ok: true, result: { termId: await this.host.createTerminal(msg.opts) } });

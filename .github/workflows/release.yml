@@ -1,4 +1,4 @@
-name: Release Desktop
+name: Release
 
 on:
   push:
@@ -71,17 +71,98 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/*.yml
 
-  # Attach every platform's installers to the GitHub Release for the tag, so
-  # there are stable download URLs (and the electron-updater generic feed can be
-  # pointed at them). Only runs for tag pushes, after all matrix builds pass.
+  # CLI single-file executables: bun cross-compiles every target from one runner
+  # (no native modules in the CLI, so cross-compilation is safe). Asset names match
+  # what `deyin upgrade` and scripts/install.sh expect: deyin-<os>-<arch>[.exe].
+  cli:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared packages
+        run: pnpm --filter "./packages/**" build
+
+      - name: Compile CLI binaries
+        working-directory: apps/cli
+        run: |
+          mkdir -p dist-bin
+          bun scripts/compile.mjs bun-linux-x64 dist-bin/deyin-linux-x64
+          bun scripts/compile.mjs bun-linux-arm64 dist-bin/deyin-linux-arm64
+          bun scripts/compile.mjs bun-darwin-x64 dist-bin/deyin-darwin-x64
+          bun scripts/compile.mjs bun-darwin-arm64 dist-bin/deyin-darwin-arm64
+          bun scripts/compile.mjs bun-windows-x64 dist-bin/deyin-windows-x64.exe
+
+      - name: Smoke test host binary
+        run: apps/cli/dist-bin/deyin-linux-x64 --version
+
+      - name: Upload CLI binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: deyin-cli
+          path: apps/cli/dist-bin/*
+
+  # Publish the CLI (and the workspace packages it depends on) to npm with provenance
+  # attestations. pnpm rewrites workspace:* ranges to real versions at pack time.
+  # Requires the NPM_TOKEN secret; id-token grants the OIDC token provenance needs.
+  publish-npm:
+    needs: cli
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages + CLI
+        run: |
+          pnpm --filter "./packages/**" build
+          pnpm --filter @deyin/cli build
+
+      - name: Publish to npm
+        run: >
+          pnpm publish -r --access public --no-git-checks --provenance
+          --filter @deyin/oauth-client
+          --filter @deyin/host-core
+          --filter @deyin/agent-core
+          --filter @deyin/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Attach every platform's installers + CLI binaries to the GitHub Release for the
+  # tag, so there are stable download URLs (electron-updater feed, `deyin upgrade`,
+  # and the curl install script all point here). Runs after all builds pass.
   release:
-    needs: build
+    needs: [build, cli]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download all installers
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: installers
