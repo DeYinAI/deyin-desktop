@@ -60,10 +60,12 @@ const api: DeyinApi = {
     setKey: (id, key) => ipcRenderer.invoke(CH.providersSetKey, id, key),
     getKey: (id) => ipcRenderer.invoke(CH.providersGetKey, id),
     test: (id) => ipcRenderer.invoke(CH.providersTest, id),
+    fetchModels: (id) => ipcRenderer.invoke(CH.providersFetchModels, id),
   },
   usage: {
     get: () => ipcRenderer.invoke(CH.usageGet),
     record: (event) => ipcRenderer.invoke(CH.usageRecord, event),
+    account: () => ipcRenderer.invoke(CH.usageAccount),
   },
   win: {
     minimize: () => ipcRenderer.send(CH.winMinimize),

@@ -1,0 +1,72 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { bashTool } from "../src/tools/bash.js";
+import type { ToolContext } from "../src/types.js";
+
+const ctx = (): ToolContext => ({ cwd: process.cwd(), todos: [] });
+
+const isPosix = process.platform !== "win32";
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+test("runs a command and reports non-zero exit codes", { skip: !isPosix }, async () => {
+  const ok = await bashTool.execute({ command: "echo hello" }, ctx());
+  assert.ok(ok.includes("hello"));
+  assert.ok(!ok.includes("exit code"));
+
+  const fail = await bashTool.execute({ command: "echo boom >&2; exit 3" }, ctx());
+  assert.ok(fail.includes("boom"));
+  assert.ok(fail.includes("(exit code 3)"));
+});
+
+test("timeout kills the whole process group, not just the shell", { skip: !isPosix }, async () => {
+  // The shell starts a background sleep (grandchild) and then blocks on `wait`.
+  // Killing only the shell would orphan the sleep; the group kill must get it too.
+  const result = await bashTool.execute(
+    { command: "sleep 30 & echo CHILD:$!; wait", timeout_seconds: 1 },
+    ctx(),
+  );
+  assert.ok(result.includes("timed out"), `expected timeout note, got: ${result}`);
+
+  const match = result.match(/CHILD:(\d+)/);
+  assert.ok(match, `expected the grandchild pid in output, got: ${result}`);
+  const grandchild = Number(match![1]);
+
+  // SIGKILL delivery to the group is immediate; allow a short grace for reaping.
+  let alive = processAlive(grandchild);
+  for (let i = 0; i < 20 && alive; i++) {
+    await sleep(100);
+    alive = processAlive(grandchild);
+  }
+  assert.equal(alive, false, `grandchild sleep (pid ${grandchild}) survived the group kill`);
+});
+
+test("abort cancels the command and kills its tree", { skip: !isPosix }, async () => {
+  const controller = new AbortController();
+  const pending = bashTool.execute(
+    { command: "sleep 30 & echo CHILD:$!; wait" },
+    { ...ctx(), signal: controller.signal },
+  );
+  await sleep(300); // let the shell start and echo the pid
+  controller.abort();
+  const result = await pending;
+  assert.ok(result.includes("cancelled"), `expected cancellation note, got: ${result}`);
+
+  const match = result.match(/CHILD:(\d+)/);
+  assert.ok(match, `expected the grandchild pid in output, got: ${result}`);
+  let alive = processAlive(Number(match![1]));
+  for (let i = 0; i < 20 && alive; i++) {
+    await sleep(100);
+    alive = processAlive(Number(match![1]));
+  }
+  assert.equal(alive, false, "grandchild survived the abort kill");
+});

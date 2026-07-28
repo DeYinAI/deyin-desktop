@@ -16,14 +16,17 @@ Identity and model access use Openference via OAuth 2.0 + PKCE.
 packages/
   oauth-provider/   Standalone OAuth 2.0 / OIDC server for Openference
   oauth-client/     Reusable PKCE client (desktop loopback, CLI device flow, web redirect)
-  rpc/              Typed RPC contract + Electron IPC / WebSocket transports
-  host-core/        Runtime-agnostic host services (PTY, files, git, exec, skills)
-  renderer-core/    Shared React UI
+  host-core/        Runtime-agnostic core: shared types/config, settings/providers/usage
+                    stores, model + search clients, and host services (PTY, files, env)
+  agent-core/       Agentic runtime: streaming tool-call loop, built-in tools (bash, read,
+                    write, edit, grep, glob, ls, websearch, todo), permission engine,
+                    sessions, layered config, MCP client
   branding/         Deyin logos, icons, theme tokens
 apps/
   desktop/          Electron shell (main = host, renderer = UI)
   web/              Static renderer + per-session WebSocket host-server
-docs/               Architecture, features, capability manifest, OAuth guide
+  cli/              `deyin` in the terminal: interactive TUI + headless mode
+docs/               Architecture, features, capability manifest, OAuth guide, CLI guide
 ```
 
 ## Prerequisites
@@ -44,7 +47,15 @@ pnpm desktop:dev
 
 # Run the web app in dev
 pnpm web:dev
+
+# Run the CLI in dev (TUI)
+pnpm --filter @deyin/cli dev
 ```
+
+## CLI
+
+The same account, models, agents and search — in your terminal. Interactive TUI plus a
+headless mode for scripts and CI. See [docs/CLI.md](docs/CLI.md).
 
 ## Openference OAuth
 

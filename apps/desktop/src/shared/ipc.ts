@@ -1,4 +1,5 @@
 import type {
+  AccountUsage,
   Bootstrap,
   CapabilityItem,
   CapabilityKind,
@@ -48,8 +49,10 @@ export const CH = {
   providersSetKey: "deyin:providers:setKey",
   providersGetKey: "deyin:providers:getKey",
   providersTest: "deyin:providers:test",
+  providersFetchModels: "deyin:providers:fetchModels",
   usageGet: "deyin:usage:get",
   usageRecord: "deyin:usage:record",
+  usageAccount: "deyin:usage:account",
   winMinimize: "deyin:win:minimize",
   winToggleMaximize: "deyin:win:toggleMaximize",
   winClose: "deyin:win:close",
@@ -111,10 +114,14 @@ export interface DeyinApi {
     setKey(id: string, key: string): Promise<ProviderInfo[]>;
     getKey(id: string): Promise<string | null>;
     test(id: string): Promise<ProviderTestResult>;
+    /** Pull the provider's /models catalog and persist it as the provider's model list. */
+    fetchModels(id: string): Promise<ProviderTestResult>;
   };
   usage: {
     get(): Promise<UsageStats>;
     record(event: UsageEvent): Promise<void>;
+    /** Server-side Openference account usage; null when signed out or unreachable. */
+    account(): Promise<AccountUsage | null>;
   };
   win: {
     minimize(): void;
