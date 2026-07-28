@@ -6,7 +6,7 @@ const root = import.meta.dirname;
 
 // Bundle workspace packages into the main output; keep native/third-party deps external.
 const externalize = externalizeDepsPlugin({
-  exclude: ["@deyin/oauth-client", "@deyin/branding", "@deyin/host-core"],
+  exclude: ["@deyin/oauth-client", "@deyin/branding", "@deyin/host-core", "@deyin/agent-core"],
 });
 
 export default defineConfig({
@@ -21,7 +21,10 @@ export default defineConfig({
         // throwing require() stub and the native pty.node/conpty.node could
         // never load in packaged builds. Kept external, the runtime
         // import("node-pty") resolves from node_modules (asar-unpacked).
-        external: ["node-pty"],
+        // @huggingface/transformers is the *optional* ONNX embedding backend
+        // (dynamically imported by host-core's indexer); external so its
+        // absence never breaks the bundle.
+        external: ["node-pty", "@huggingface/transformers"],
       },
     },
   },

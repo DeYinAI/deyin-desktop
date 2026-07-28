@@ -1,3 +1,5 @@
+import { LOCALES } from "@deyin/host-core/shared";
+import { useT } from "../../i18n.js";
 import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "../../../shared/types.js";
 
@@ -8,39 +10,40 @@ interface Props {
 }
 
 export function GeneralPage({ settings, version, onChange }: Props) {
+  const t = useT();
   return (
     <div className="settings-page">
-      <PageHeader title="General" description="Application behavior and updates." />
+      <PageHeader title={t("general.title")} description={t("general.desc")} />
 
-      <SectionTitle>Application</SectionTitle>
-      <SettingCard title="Language" description="Language used across the interface.">
+      <SectionTitle>{t("general.application")}</SectionTitle>
+      <SettingCard title={t("general.language")} description={t("general.languageDesc")}>
         <select
           className="select"
           value={settings.language}
           onChange={(e) => onChange({ language: e.target.value })}
         >
-          <option value="en">English</option>
-          <option value="zh">中文</option>
-          <option value="de">Deutsch</option>
+          {LOCALES.map((locale) => (
+            <option key={locale.id} value={locale.id}>{locale.label}</option>
+          ))}
         </select>
       </SettingCard>
-      <SettingCard
-        title="Automatic updates"
-        description="Download and install new versions of Deyin in the background."
-      >
+      <SettingCard title={t("general.autoUpdate")} description={t("general.autoUpdateDesc")}>
         <Toggle checked={settings.autoUpdate} onChange={(v) => onChange({ autoUpdate: v })} />
       </SettingCard>
+      <SettingCard title={t("general.agentMode")} description={t("general.agentModeDesc")}>
+        <Toggle
+          checked={settings.agentMode === "agent"}
+          onChange={(v) => onChange({ agentMode: v ? "agent" : "chat" })}
+        />
+      </SettingCard>
 
-      <SectionTitle>Privacy</SectionTitle>
-      <SettingCard
-        title="Usage telemetry"
-        description="Share anonymous usage metrics to help improve Deyin. Off by default."
-      >
+      <SectionTitle>{t("general.privacy")}</SectionTitle>
+      <SettingCard title={t("general.telemetry")} description={t("general.telemetryDesc")}>
         <Toggle checked={settings.telemetry} onChange={(v) => onChange({ telemetry: v })} />
       </SettingCard>
 
-      <SectionTitle>About</SectionTitle>
-      <SettingCard title="Version" description="Current Deyin build.">
+      <SectionTitle>{t("general.about")}</SectionTitle>
+      <SettingCard title={t("general.version")} description={t("general.versionDesc")}>
         <span className="hint">{version}</span>
       </SettingCard>
     </div>

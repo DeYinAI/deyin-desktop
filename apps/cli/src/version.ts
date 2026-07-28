@@ -19,7 +19,7 @@ function readPackageVersion(): string {
 export const VERSION = readPackageVersion();
 
 /** GitHub repo whose Releases carry the CLI binaries (deyin-<os>-<arch> assets). */
-export const RELEASES_REPO = process.env.DEYIN_RELEASES_REPO ?? "deyin-dev/deyin-desktop";
+export const RELEASES_REPO = process.env.DEYIN_RELEASES_REPO ?? "DeYinAI/deyin-desktop";
 
 export function compareVersions(a: string, b: string): number {
   const pa = a.replace(/^v/, "").split(".").map((n) => Number.parseInt(n, 10) || 0);

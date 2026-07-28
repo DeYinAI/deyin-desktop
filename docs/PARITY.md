@@ -19,12 +19,18 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Workspace panel: Plan tab | Done (static plan; agent-fed later) | `components/WorkspacePanel.tsx` |
 | Workspace panel: Diff tab | Done (LCS line diff + source preview) | `components/WorkspacePanel.tsx`, `renderer/diff.ts` |
 | Workspace panel: Browser tab | Done | `components/WorkspacePanel.tsx` (`<webview>` desktop, iframe web) |
-| Settings: General / Appearance | Done | `components/settings/GeneralPage.tsx`, `AppearancePage.tsx` |
-| Settings: Model providers (+ add custom) | Done | `components/settings/ModelSettingsPage.tsx`, `main/agents.ts` |
+| Settings: General (live i18n en/zh/de, auto-update, telemetry, agent mode) | Done | `components/settings/GeneralPage.tsx`, `host-core/src/i18n.ts`, `host-core/src/telemetry.ts` |
+| Settings: Appearance (interface font size, real code theme palettes + highlighter) | Done | `settings/AppearancePage.tsx`, `renderer/code.tsx` |
+| Settings: Model providers (plan display, 1-week model cache, draft add form) | Done | `settings/ModelSettingsPage.tsx`, `host-core/src/stores.ts` (`AccountCache`, `ModelsCache`) |
 | Settings: Browser control + clear data | Done | `components/settings/BrowserPage.tsx`, `main/ipc.ts` (`browser:*`) |
-| Settings: Plugins / Skills / Subagents / MCP / Commands / Hooks | Done (registry + toggles) | `components/settings/CapabilityPage.tsx`, `main/agents.ts` |
-| Settings: Indexing | Done (file count; semantic index later) | `components/settings/IndexingPage.tsx` |
-| Settings: Usage stats (cards, heatmap, per-day chart) | Done | `components/settings/UsageStatsPage.tsx`, `main/usage.ts` |
+| Settings: Terminal (default shell incl. WSL2, font size, scrollback) | Done | `components/settings/TerminalPage.tsx` |
+| Settings: Skills / Subagents / Commands / Hooks (live `.deyin` registry) | Done | `settings/CapabilityPage.tsx`, `agent-core/src/capabilities/*`, `main/capabilities.ts` |
+| Built-in default skills (13, materialized + overridable) | Done | `agent-core/src/capabilities/builtin-skills.ts` |
+| Settings: MCP servers (list/add/remove/test, stdio+SSE+HTTP) | Done | `settings/McpPage.tsx`, `agent-core/src/mcp.ts` |
+| Settings: Plugins (GitHub install, DeYinAI catalog, secret variables) | Done | `settings/PluginsPage.tsx`, `main/plugins.ts`, `agent-core/src/capabilities/plugin-install.ts` |
+| Settings: Indexing (live local semantic index + search probe) | Done | `settings/IndexingPage.tsx`, `host-core/src/indexer/*` |
+| Settings: Usage stats (cards, heatmap, per-day chart, cached account snapshot) | Done | `components/settings/UsageStatsPage.tsx`, `main/usage.ts` |
+| Settings: Onboard checklist (computed from real state, persisted) | Done | `components/settings/OnboardPage.tsx` |
 | Environment detection (Local / WSL2) | Done | `main/host/env.ts`, `components/EnvironmentBadge.tsx` |
 | Terminal (PTY, tabs, shell picker incl. WSL2 distros) | Done (needs `node-pty` built) | `main/host/pty.ts`, web `server/host.ts`, `components/TerminalPanel.tsx` |
 | Two-level model picker (providers → models, Manage models) | Done | `components/ModelPicker.tsx` |
@@ -36,13 +42,18 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Rounded card layout (line-free sidebar, floating content card) | Done | `renderer/styles.css` surface model |
 | Task context menu (pin/rename/archive/unread, copy paths/session ID, open in file manager, report issue) | Done | `components/ThreadMenu.tsx`, `TopBar.tsx`, `Sidebar.tsx` |
 | Built-in free web search (DuckDuckGo, keyless) + Ctrl+K overlay | Done | `main/search.ts`, web `server/index.ts` `/api/search`, `components/SearchOverlay.tsx` |
-| Search exposed as MCP entry (`deyin-search`) | Done (registry entry; MCP protocol serving later) | `main/agents.ts` |
-| Browser control (navigate/execute/screenshot on the built-in tab) | Done (plumbing, gated by setting) | `components/WorkspacePanel.tsx` (`window.deyinBrowser`) |
+| Desktop agent runtime (tool-calling loop, approvals, sessions) | Done | `main/agent.ts` hosting `@deyin/agent-core` (`runAgent`), `components/ApprovalDialog.tsx` |
+| Skills (SKILL.md discovery, prompt injection, /skill invoke, built-in defaults) | Done | `agent-core/src/capabilities/skills.ts`, `builtin-skills.ts` |
+| Commands ($ARGUMENTS templates + composer autocomplete) | Done | `agent-core/src/capabilities/commands.ts`, `components/Composer.tsx` |
+| Subagents (task tool, clean context, fg/bg, readonly) | Done | `agent-core/src/tools/task.ts`, `main/agent.ts` |
+| Hooks (hooks.json, stdio JSON, exit-2 block, fail-open) | Done | `agent-core/src/capabilities/hooks.ts` |
+| MCP client (stdio + SSE + Streamable HTTP, mcp.json + interpolation) | Done | `agent-core/src/mcp.ts`, `agent-core/src/capabilities/mcp-config.ts` |
+| Plugins (GitHub tarball install, auto-discovery, variables) | Done | `agent-core/src/capabilities/plugins.ts`, `plugin-install.ts`, `main/plugins.ts` |
+| Live local semantic index + `codebase_search` tool | Done | `host-core/src/indexer/*`, `agent-core/src/tools/codebase-search.ts` |
+| Browser control (CDP navigate/click/type/screenshot/console/network, per-workspace profile) | Done | `main/browser.ts`, `components/WorkspacePanel.tsx` |
 | File explorer / read | Foundation | `main/host/files.ts`, web `server/host.ts` (tree/read wired; UI panel pending) |
 | Workspace / open folder | Foundation | `main/ipc.ts` (`workspace:open`) |
 | Goal mode / automations engine | Planned | flag off by default |
-| Live agent-driven edits (real diffs/plans from runs) | Planned | timeline + diff UI ready to receive them |
-| MCP client (spawn configured servers) | Planned | registry exists in `main/agents.ts` |
 | OS-level computer use | Out of scope for now | browser control covers in-app automation |
 | Web hosting (same renderer) | Done | `@deyin/web` reuses `apps/desktop/src/renderer` verbatim |
 | Auto-update | Done (packaged builds) | `main/updater.ts` |

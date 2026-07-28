@@ -1,14 +1,13 @@
 import { app, BrowserWindow } from "electron";
-import type { TerminalManager } from "@deyin/host-core";
 import { AuthManager } from "./auth.js";
-import { registerIpc } from "./ipc.js";
+import { registerIpc, type IpcServices } from "./ipc.js";
 import { CH } from "../shared/ipc.js";
 import { resolveDeyinConfig } from "../shared/config.js";
 import { DEEP_LINK_SCHEME } from "../shared/config.js";
-import { initAutoUpdater } from "./updater.js";
+import { initLogger } from "./logger.js";
 import { createMainWindow } from "./window.js";
 
-let terminals: TerminalManager | undefined;
+let services: IpcServices | undefined;
 let workspaceRoot: string | null = null;
 let auth: AuthManager | undefined;
 
@@ -45,19 +44,25 @@ async function handleDeepLink(url: string | undefined): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
+  // First: every subsequent console.* line (auth, updater, agent) also persists
+  // to <logs>/deyin.log, which the diagnostics upload reads.
+  initLogger(app.getPath("logs"));
+
   const config = resolveDeyinConfig();
   const deepLinkAvailable = registerDeepLinkScheme();
   auth = new AuthManager(config, deepLinkAvailable);
 
   // Push a bootstrap payload to the renderer so it re-reads the session after
-  // a browser deep-link login without a manual refresh.
+  // a browser deep-link login without a manual refresh. Server caches (account
+  // plan, model list) are tied to the session, so they drop with it.
   auth.setOnChange(() => {
+    services?.notifyAuthChanged();
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(CH.authChanged);
     }
   });
 
-  terminals = registerIpc({
+  services = registerIpc({
     config,
     auth,
     getWorkspaceRoot: () => workspaceRoot,
@@ -67,7 +72,6 @@ async function bootstrap(): Promise<void> {
   });
 
   createMainWindow();
-  initAutoUpdater(config.updateFeedUrl);
 
   // macOS delivers the deep link via the open-url event.
   app.on("open-url", (event, url) => {
@@ -97,8 +101,11 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on("window-all-closed", () => {
-  terminals?.disposeAll();
+  services?.terminals.disposeAll();
   if (process.platform !== "darwin") app.quit();
 });
 
-app.on("before-quit", () => terminals?.disposeAll());
+app.on("before-quit", () => {
+  services?.terminals.disposeAll();
+  services?.dispose();
+});

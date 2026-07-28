@@ -2,39 +2,46 @@ import { useEffect, useState } from "react";
 import { Icon } from "../Icon.js";
 import { formatContext } from "../ModelPicker.js";
 import { PageHeader, Toggle } from "./controls.js";
-import type { ModelInfo, ProviderInfo, ProviderModel, ProviderPatch, ProviderTestResult } from "../../../shared/types.js";
+import type {
+  AccountUsage,
+  ModelInfo,
+  ProviderInfo,
+  ProviderModel,
+  ProviderPatch,
+  ProviderTestResult,
+} from "../../../shared/types.js";
 
 interface Props {
   providers: ProviderInfo[];
-  /** Live models for the primary provider (from /v1/models). */
+  /** Live models for the primary provider (served from the 1-week cache). */
   liveModels: ModelInfo[];
   busy: boolean;
   onConnect: () => void;
   onProvidersChanged: (providers: ProviderInfo[]) => void;
+  /** Force-refresh the primary provider's cached /models catalog. */
+  onRefreshLiveModels: () => Promise<void>;
 }
+
+/** Sentinel id for the unsaved "Add provider" draft shown in the detail pane. */
+const DRAFT_ID = "__draft__";
 
 export function ModelSettingsPage(props: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(props.providers[0]?.id ?? null);
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newUrl, setNewUrl] = useState("");
+  const [account, setAccount] = useState<AccountUsage | null>(null);
 
   useEffect(() => {
     if (!selectedId && props.providers[0]) setSelectedId(props.providers[0].id);
   }, [props.providers, selectedId]);
 
-  const selected = props.providers.find((p) => p.id === selectedId) ?? props.providers[0] ?? null;
+  // Cached account snapshot: the plan shown on the primary provider.
+  useEffect(() => {
+    void window.deyin.usage.account().then(setAccount).catch(() => setAccount(null));
+  }, []);
+
+  const adding = selectedId === DRAFT_ID;
+  const selected = adding ? null : (props.providers.find((p) => p.id === selectedId) ?? props.providers[0] ?? null);
   const primaries = props.providers.filter((p) => p.kind === "primary");
   const customs = props.providers.filter((p) => p.kind === "custom");
-
-  const submitAdd = async () => {
-    if (!newName.trim() || !newUrl.trim()) return;
-    const next = await window.deyin.providers.add({ name: newName.trim(), baseUrl: newUrl.trim() });
-    props.onProvidersChanged(next);
-    setAdding(false);
-    setNewName("");
-    setNewUrl("");
-  };
 
   return (
     <div className="settings-page settings-page--wide">
@@ -61,36 +68,34 @@ export function ModelSettingsPage(props: Props) {
           {customs.map((p) => (
             <ProviderRow key={p.id} provider={p} active={selected?.id === p.id} onClick={() => setSelectedId(p.id)} />
           ))}
-          {adding ? (
-            <div className="providers__add-form">
-              <input className="input" placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-              <input
-                className="input"
-                placeholder="Base URL (/v1)"
-                value={newUrl}
-                onChange={(e) => setNewUrl(e.target.value)}
-              />
-              <div className="providers__add-actions">
-                <button className="chip chip--small" onClick={() => setAdding(false)}>Cancel</button>
-                <button className="chip chip--small chip--active" onClick={() => void submitAdd()}>Add</button>
-              </div>
-            </div>
-          ) : (
-            <button className="providers__add" onClick={() => setAdding(true)}>
-              <Icon name="plus" size={13} />
-              Add provider
-            </button>
-          )}
+          <button
+            className={`providers__add ${adding ? "providers__add--active" : ""}`}
+            onClick={() => setSelectedId(DRAFT_ID)}
+          >
+            <Icon name="plus" size={13} />
+            Add provider
+          </button>
         </div>
 
-        {selected && (
+        {adding && (
+          <ProviderDraft
+            onCancel={() => setSelectedId(props.providers[0]?.id ?? null)}
+            onCreated={(providers, newId) => {
+              props.onProvidersChanged(providers);
+              setSelectedId(newId);
+            }}
+          />
+        )}
+        {!adding && selected && (
           <ProviderDetail
             key={selected.id}
             provider={selected}
             liveModels={props.liveModels}
+            planName={account?.planName ?? null}
             busy={props.busy}
             onConnect={props.onConnect}
             onProvidersChanged={props.onProvidersChanged}
+            onRefreshLiveModels={props.onRefreshLiveModels}
           />
         )}
       </div>
@@ -107,17 +112,110 @@ function ProviderRow({ provider, active, onClick }: { provider: ProviderInfo; ac
   );
 }
 
+/* New provider draft (unsaved until Save) -------------------------------------- */
+
+function ProviderDraft({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (providers: ProviderInfo[], newId: string) => void;
+}) {
+  const [name, setName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiFormat, setApiFormat] = useState<ProviderInfo["apiFormat"]>("chat-completions");
+  const [key, setKey] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!name.trim() || !baseUrl.trim()) {
+      setError("Name and base URL are required.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      let providers = await window.deyin.providers.add({ name: name.trim(), baseUrl: baseUrl.trim() });
+      const created = providers.find((p) => p.kind === "custom" && p.name === name.trim());
+      if (!created) {
+        setError("A provider with that name already exists.");
+        return;
+      }
+      if (apiFormat !== "chat-completions") {
+        providers = await window.deyin.providers.update(created.id, { apiFormat });
+      }
+      if (key.trim()) {
+        providers = await window.deyin.providers.setKey(created.id, key.trim());
+      }
+      onCreated(providers, created.id);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="providers__detail">
+      <div className="providers__detail-head">
+        <span className="providers__detail-name">New provider</span>
+        <span className="badge badge--muted">Unsaved</span>
+        <div className="providers__detail-spacer" />
+      </div>
+
+      <div className="field">
+        <label className="field__label">Name</label>
+        <input className="input" placeholder="My provider" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+      </div>
+      <div className="field">
+        <label className="field__label">Base URL</label>
+        <input
+          className="input"
+          placeholder="https://api.example.com/v1"
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.target.value)}
+        />
+      </div>
+      <div className="field">
+        <label className="field__label">API format</label>
+        <select
+          className="select"
+          style={{ width: "100%" }}
+          value={apiFormat}
+          onChange={(e) => setApiFormat(e.target.value as ProviderInfo["apiFormat"])}
+        >
+          <option value="chat-completions">Chat completions (/chat/completions)</option>
+          <option value="responses">Responses (/responses)</option>
+        </select>
+      </div>
+      <div className="field">
+        <label className="field__label">API key (optional)</label>
+        <input className="input" type="password" placeholder="sk-..." value={key} onChange={(e) => setKey(e.target.value)} />
+      </div>
+      {error && <div className="hint hint--bad">{error}</div>}
+      <div className="providers__add-actions">
+        <button className="chip chip--small" onClick={onCancel}>Cancel</button>
+        <button className="chip chip--small chip--active" disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Save provider"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* Detail editor --------------------------------------------------------------- */
 
 interface DetailProps {
   provider: ProviderInfo;
   liveModels: ModelInfo[];
+  /** Cached Openference plan name shown on the primary provider. */
+  planName: string | null;
   busy: boolean;
   onConnect: () => void;
   onProvidersChanged: (providers: ProviderInfo[]) => void;
+  onRefreshLiveModels: () => Promise<void>;
 }
 
-function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChanged }: DetailProps) {
+function ProviderDetail({ provider, liveModels, planName, busy, onConnect, onProvidersChanged, onRefreshLiveModels }: DetailProps) {
   const isCustom = provider.kind === "custom";
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(provider.name);
@@ -174,19 +272,24 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
     await apply({ disabledModels: [...disabled] });
   };
 
-  /** Pull the live /models catalog from the provider and persist it. */
+  /** Force-refresh the model catalog (bypasses the 1-week cache). */
   const fetchModels = async () => {
     setFetchingModels(true);
     setFetchMessage(null);
     try {
-      const res = await window.deyin.providers.fetchModels(provider.id);
-      if (res.ok) {
-        onProvidersChanged(await window.deyin.providers.list());
-        setFetchMessage(
-          res.modelCount ? `Loaded ${res.modelCount} models from the provider.` : "The provider returned no models.",
-        );
+      if (isCustom) {
+        const res = await window.deyin.providers.fetchModels(provider.id);
+        if (res.ok) {
+          onProvidersChanged(await window.deyin.providers.list());
+          setFetchMessage(
+            res.modelCount ? `Loaded ${res.modelCount} models from the provider.` : "The provider returned no models.",
+          );
+        } else {
+          setFetchMessage(`Fetch failed: ${res.message ?? `HTTP ${res.status}`}`);
+        }
       } else {
-        setFetchMessage(`Fetch failed: ${res.message ?? `HTTP ${res.status}`}`);
+        await onRefreshLiveModels();
+        setFetchMessage("Model list refreshed.");
       }
     } finally {
       setFetchingModels(false);
@@ -196,6 +299,13 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
   const shownModels: ProviderModel[] = isCustom
     ? provider.models
     : liveModels.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength }));
+
+  const cachedAgo =
+    isCustom && provider.modelsFetchedAt
+      ? `Model list fetched ${describeAge(provider.modelsFetchedAt)}; cached for one week.`
+      : !isCustom
+        ? "Model list is cached for one week; refresh to fetch the live catalog."
+        : null;
 
   return (
     <div className="providers__detail">
@@ -228,20 +338,6 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
           {provider.enabled ? "Disable" : "Enable"}
         </button>
         <div className="providers__detail-spacer" />
-        {provider.kind === "primary" && (
-          <>
-            <span className="hint">Connection mode</span>
-            <select
-              className="select select--small"
-              value={provider.activeMode}
-              onChange={(e) => void apply({ activeMode: e.target.value })}
-            >
-              {provider.connectionModes.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </>
-        )}
         {isCustom && (
           <button className="icon-btn icon-btn--small" title="Delete provider" onClick={() => void removeProvider()}>
             <Icon name="trash" size={13} />
@@ -252,8 +348,21 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
       {provider.kind === "primary" && (
         <div className="plan-connect">
           <div className="plan-connect__meta">
-            <span className="plan-connect__title">Coding plan</span>
-            <span className="hint">{provider.status === "connected" ? "Connected" : "Not connected"}</span>
+            <span className="plan-connect__title">
+              Coding plan
+              {provider.status === "connected" && (
+                <span className="badge badge--ok" style={{ marginLeft: 8 }}>
+                  {planName ?? "Connected"}
+                </span>
+              )}
+            </span>
+            <span className="hint">
+              {provider.status === "connected"
+                ? planName
+                  ? `Signed in on the ${planName} plan.`
+                  : "Connected via Openference sign-in."
+                : "Not connected"}
+            </span>
           </div>
           {provider.status !== "connected" && (
             <button className="btn btn--outline" disabled={busy} onClick={onConnect}>
@@ -331,6 +440,7 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
 
       <div className="field">
         <label className="field__label">Model list</label>
+        {cachedAgo && <div className="hint" style={{ marginBottom: 6 }}>{cachedAgo}</div>}
         <div className="modellist">
           {shownModels.map((model) => {
             const modelEnabled = !provider.disabledModels.includes(model.id);
@@ -357,50 +467,55 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
                 : "Connect to load the live model list."}
             </div>
           )}
-          {isCustom && (
-            <>
-              {addingModel ? (
-                <div className="modellist__row modellist__row--form">
-                  <input
-                    className="input"
-                    placeholder="model-id"
-                    value={modelId}
-                    autoFocus
-                    onChange={(e) => setModelId(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void addModel();
-                    }}
-                  />
-                  <select className="select select--small" value={modelCtx} onChange={(e) => setModelCtx(e.target.value)}>
-                    <option value="128000">128K</option>
-                    <option value="200000">200K</option>
-                    <option value="1000000">1M</option>
-                    <option value="2000000">2M</option>
-                  </select>
-                  <button className="chip chip--small" onClick={() => setAddingModel(false)}>Cancel</button>
-                  <button className="chip chip--small chip--active" onClick={() => void addModel()}>Add</button>
-                </div>
-              ) : (
-                <div className="modellist__actions">
-                  <button className="providers__add" disabled={fetchingModels} onClick={() => void fetchModels()}>
-                    <Icon name="refresh" size={13} />
-                    {fetchingModels ? "Fetching..." : "Fetch models"}
-                  </button>
-                  <button className="providers__add" onClick={() => setAddingModel(true)}>
-                    <Icon name="plus" size={13} />
-                    Add model
-                  </button>
-                </div>
+          {addingModel && isCustom ? (
+            <div className="modellist__row modellist__row--form">
+              <input
+                className="input"
+                placeholder="model-id"
+                value={modelId}
+                autoFocus
+                onChange={(e) => setModelId(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void addModel();
+                }}
+              />
+              <select className="select select--small" value={modelCtx} onChange={(e) => setModelCtx(e.target.value)}>
+                <option value="128000">128K</option>
+                <option value="200000">200K</option>
+                <option value="1000000">1M</option>
+                <option value="2000000">2M</option>
+              </select>
+              <button className="chip chip--small" onClick={() => setAddingModel(false)}>Cancel</button>
+              <button className="chip chip--small chip--active" onClick={() => void addModel()}>Add</button>
+            </div>
+          ) : (
+            <div className="modellist__actions">
+              <button className="providers__add" disabled={fetchingModels} onClick={() => void fetchModels()}>
+                <Icon name="refresh" size={13} />
+                {fetchingModels ? "Fetching..." : isCustom ? "Fetch models" : "Refresh models"}
+              </button>
+              {isCustom && (
+                <button className="providers__add" onClick={() => setAddingModel(true)}>
+                  <Icon name="plus" size={13} />
+                  Add model
+                </button>
               )}
-              {fetchMessage && (
-                <div className={fetchMessage.startsWith("Fetch failed") ? "hint hint--bad" : "hint hint--ok"}>
-                  {fetchMessage}
-                </div>
-              )}
-            </>
+            </div>
+          )}
+          {fetchMessage && (
+            <div className={fetchMessage.startsWith("Fetch failed") ? "hint hint--bad" : "hint hint--ok"}>
+              {fetchMessage}
+            </div>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+function describeAge(epochMs: number): string {
+  const days = Math.floor((Date.now() - epochMs) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
 }

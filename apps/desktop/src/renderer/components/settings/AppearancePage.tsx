@@ -1,8 +1,18 @@
+import { CodeBlock, DARK_CODE_THEMES, LIGHT_CODE_THEMES, themeByName } from "../../code.js";
+import { useT } from "../../i18n.js";
 import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "../../../shared/types.js";
 
-const LIGHT_THEMES = ["GitHub Light", "One Light", "Solarized Light"];
-const DARK_THEMES = ["GitHub Dark", "One Dark", "Midnight"];
+const SAMPLE = `interface ThemeConfig {
+  surface: string;
+  accent: string;
+}
+
+// Applied to every code block in chat.
+export function apply(config: ThemeConfig): number {
+  const contrast = measure(config.accent, "#0d1117");
+  return Math.max(contrast, 4.5);
+}`;
 
 interface Props {
   settings: DeyinSettings;
@@ -10,23 +20,24 @@ interface Props {
 }
 
 export function AppearancePage({ settings, onChange }: Props) {
+  const t = useT();
   return (
     <div className="settings-page">
-      <PageHeader title="Appearance" description="Interface theme, text and code rendering." />
+      <PageHeader title={t("appearance.title")} description={t("appearance.desc")} />
 
-      <SectionTitle>Interface</SectionTitle>
-      <SettingCard title="Color theme" description="Deyin ships dark-first; light theme is in progress.">
+      <SectionTitle>{t("appearance.interface")}</SectionTitle>
+      <SettingCard title={t("appearance.colorTheme")} description={t("appearance.colorThemeDesc")}>
         <select
           className="select"
           value={settings.theme}
           onChange={(e) => onChange({ theme: e.target.value as DeyinSettings["theme"] })}
         >
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-          <option value="system">System</option>
+          <option value="dark">{t("appearance.dark")}</option>
+          <option value="light">{t("appearance.light")}</option>
+          <option value="system">{t("appearance.system")}</option>
         </select>
       </SettingCard>
-      <SettingCard title="Font size" description="Base font size for chat and panels.">
+      <SettingCard title={t("appearance.fontSize")} description={t("appearance.fontSizeDesc")}>
         <div className="range-row">
           <input
             type="range"
@@ -39,39 +50,36 @@ export function AppearancePage({ settings, onChange }: Props) {
         </div>
       </SettingCard>
 
-      <SectionTitle>Code display</SectionTitle>
-      <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
-        Choose code themes, font size and display options independently from the interface font size.
-      </p>
-      <SettingCard title="Light code theme" description="Highlighting theme used for code content in the light interface.">
+      <SectionTitle>{t("appearance.codeDisplay")}</SectionTitle>
+      <SettingCard title={t("appearance.lightCodeTheme")} description="Highlighting palette used with the light interface.">
         <select
           className="select"
           value={settings.codeThemeLight}
           onChange={(e) => onChange({ codeThemeLight: e.target.value })}
         >
-          {LIGHT_THEMES.map((t) => (
-            <option key={t} value={t}>{t}</option>
+          {LIGHT_CODE_THEMES.map((name) => (
+            <option key={name} value={name}>{name}</option>
           ))}
         </select>
       </SettingCard>
-      <SettingCard title="Dark code theme" description="Highlighting theme used for code content in the dark interface.">
+      <SettingCard title={t("appearance.darkCodeTheme")} description="Highlighting palette used with the dark interface.">
         <select
           className="select"
           value={settings.codeThemeDark}
           onChange={(e) => onChange({ codeThemeDark: e.target.value })}
         >
-          {DARK_THEMES.map((t) => (
-            <option key={t} value={t}>{t}</option>
+          {DARK_CODE_THEMES.map((name) => (
+            <option key={name} value={name}>{name}</option>
           ))}
         </select>
       </SettingCard>
-      <SettingCard title="Show line numbers" description="Display line numbers in code and diff views.">
+      <SettingCard title={t("appearance.showLineNumbers")} description="Display line numbers in code and diff views.">
         <Toggle checked={settings.showLineNumbers} onChange={(v) => onChange({ showLineNumbers: v })} />
       </SettingCard>
-      <SettingCard title="Wrap long lines" description="Wrap long code lines automatically.">
+      <SettingCard title={t("appearance.wrapLongLines")} description="Wrap long code lines automatically.">
         <Toggle checked={settings.wrapLongLines} onChange={(v) => onChange({ wrapLongLines: v })} />
       </SettingCard>
-      <SettingCard title="Code font size" description="Default font size for code blocks, file previews and diff views.">
+      <SettingCard title={t("appearance.codeFontSize")} description="Default font size for code blocks, file previews and diff views.">
         <div className="range-row">
           <input
             className="input"
@@ -86,62 +94,59 @@ export function AppearancePage({ settings, onChange }: Props) {
         </div>
       </SettingCard>
 
-      <SectionTitle>Code preview</SectionTitle>
+      <SectionTitle>{t("appearance.codePreview")}</SectionTitle>
       <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
-        Preview the light and dark code themes together. The theme used by the current interface is marked as active.
+        Live preview of both code themes with the current display options. The theme matching the interface is active.
       </p>
       <div className="codepreview">
         <PreviewCard
           title="Light preview"
-          theme={settings.codeThemeLight}
+          themeName={settings.codeThemeLight}
           variant="light"
           active={settings.theme === "light"}
-          fontSize={settings.codeFontSize}
+          settings={settings}
         />
         <PreviewCard
           title="Dark preview"
-          theme={settings.codeThemeDark}
+          themeName={settings.codeThemeDark}
           variant="dark"
           active={settings.theme !== "light"}
-          fontSize={settings.codeFontSize}
+          settings={settings}
         />
       </div>
     </div>
   );
 }
 
-function PreviewCard(props: { title: string; theme: string; variant: "light" | "dark"; active: boolean; fontSize: number }) {
+function PreviewCard(props: {
+  title: string;
+  themeName: string;
+  variant: "light" | "dark";
+  active: boolean;
+  settings: DeyinSettings;
+}) {
+  const theme = themeByName(props.themeName, props.variant);
   return (
     <div className={`codepreview__card codepreview__card--${props.variant}`}>
       <div className="codepreview__head">
         <div>
           <div className="codepreview__title">{props.title}</div>
-          <div className="codepreview__theme">{props.theme}</div>
+          <div className="codepreview__theme">{theme.name}</div>
         </div>
-        {props.active ? <span className="badge badge--ok">Active</span> : <span className="badge badge--muted">{props.variant === "light" ? "Light" : "Dark"}</span>}
+        {props.active ? (
+          <span className="badge badge--ok">Active</span>
+        ) : (
+          <span className="badge badge--muted">{props.variant === "light" ? "Light" : "Dark"}</span>
+        )}
       </div>
-      <pre className="codepreview__code" style={{ fontSize: props.fontSize }}>
-        <span className="cp-line">
-          <span className="cp-no">1</span>
-          <span className="cp-kw">const</span> <span className="cp-var">themePreview</span>: <span className="cp-type">ThemeConfig</span> = {"{"}
-        </span>
-        <span className="cp-line">
-          <span className="cp-no">2</span>
-          {"  "}surface: <span className="cp-str">"sidebar"</span>,
-        </span>
-        <span className="cp-line">
-          <span className="cp-no">3</span>
-          {"  "}accent: <span className="cp-str">"#4f7cff"</span>,
-        </span>
-        <span className="cp-line">
-          <span className="cp-no">4</span>
-          {"  "}contrast: <span className="cp-num">45</span>,
-        </span>
-        <span className="cp-line">
-          <span className="cp-no">5</span>
-          {"}"};
-        </span>
-      </pre>
+      <CodeBlock
+        code={SAMPLE}
+        lang="ts"
+        theme={theme}
+        fontSize={props.settings.codeFontSize}
+        showLineNumbers={props.settings.showLineNumbers}
+        wrapLongLines={props.settings.wrapLongLines}
+      />
     </div>
   );
 }

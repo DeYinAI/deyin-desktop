@@ -73,9 +73,6 @@ export function TopBar(props: TopBarProps) {
         >
           <Icon name="panel" size={15} />
         </button>
-        <button className="icon-btn" title="Layout">
-          <Icon name="chevronDown" size={14} />
-        </button>
 
         {isDesktop && !isMac && (
           <div className="titlebar__winctl">

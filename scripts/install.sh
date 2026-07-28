@@ -4,12 +4,12 @@
 #   curl -fsSL https://cdn.deyin.dev/cli/install.sh | bash
 #
 # Overrides:
-#   DEYIN_RELEASES_REPO  GitHub repo hosting the releases (default deyin-dev/deyin-desktop)
+#   DEYIN_RELEASES_REPO  GitHub repo hosting the releases (default DeYinAI/deyin-desktop)
 #   DEYIN_INSTALL_DIR    Install directory (default ~/.local/bin)
 #   DEYIN_VERSION        Tag to install, e.g. v0.2.0 (default: latest)
 set -euo pipefail
 
-REPO="${DEYIN_RELEASES_REPO:-deyin-dev/deyin-desktop}"
+REPO="${DEYIN_RELEASES_REPO:-DeYinAI/deyin-desktop}"
 INSTALL_DIR="${DEYIN_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${DEYIN_VERSION:-latest}"
 

@@ -12,3 +12,7 @@ export * from "./openference.js";
 export * from "./search.js";
 export * from "./models.js";
 export * from "./account.js";
+export * from "./identity.js";
+export * from "./redact.js";
+export * from "./i18n.js";
+export * from "./telemetry.js";

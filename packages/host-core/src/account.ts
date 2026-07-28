@@ -1,4 +1,4 @@
-import type { AccountUsage } from "./types.js";
+import type { AccountUsage, ServerIdentity } from "./types.js";
 import type { TokenSource } from "./models.js";
 
 interface MeResponse {
@@ -16,6 +16,22 @@ interface MeResponse {
     tokensPerWeek?: number | null;
     weeklyResetAt?: string | null;
   };
+  identity?: {
+    tenant?: string | null;
+    org?: string | null;
+    role?: string | null;
+    policies?: unknown;
+  };
+}
+
+/** Parse the optional identity block; absent or malformed means "not reported". */
+export function parseServerIdentity(raw: MeResponse["identity"]): ServerIdentity | null {
+  if (!raw || typeof raw !== "object") return null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  const policies = Array.isArray(raw.policies) ? raw.policies.filter((p): p is string => typeof p === "string") : [];
+  const identity = { tenant: str(raw.tenant), org: str(raw.org), role: str(raw.role), policies };
+  // An entirely empty block carries no information; treat it as not reported.
+  return identity.tenant || identity.org || identity.role || policies.length > 0 ? identity : null;
 }
 
 /**
@@ -48,6 +64,7 @@ export async function fetchAccountUsage(
       tokensPerWeek: body.limits?.tokensPerWeek ?? null,
       weeklyResetAt: body.limits?.weeklyResetAt ?? null,
       creditsUsd: body.credits?.balanceUsd ?? null,
+      identity: parseServerIdentity(body.identity),
     };
   } catch {
     return null;
