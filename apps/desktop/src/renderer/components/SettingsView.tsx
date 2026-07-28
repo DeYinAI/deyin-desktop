@@ -9,6 +9,7 @@ import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
 import { OnboardPage } from "./settings/OnboardPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
 import type {
+  AccountUsage,
   CapabilityItem,
   CapabilityKind,
   DeyinSettings,
@@ -97,6 +98,7 @@ export function SettingsView(props: SettingsViewProps) {
   const [caps, setCaps] = useState<CapabilityItem[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [usage, setUsage] = useState<UsageStats | null>(null);
+  const [accountUsage, setAccountUsage] = useState<AccountUsage | null>(null);
 
   useEffect(() => {
     void window.deyin.caps.list().then(setCaps);
@@ -104,7 +106,10 @@ export function SettingsView(props: SettingsViewProps) {
   }, []);
 
   useEffect(() => {
-    if (page === "usage") void window.deyin.usage.get().then(setUsage);
+    if (page === "usage") {
+      void window.deyin.usage.get().then(setUsage);
+      void window.deyin.usage.account().then(setAccountUsage).catch(() => setAccountUsage(null));
+    }
   }, [page]);
 
   const toggleCap = (id: string, enabled: boolean) => {
@@ -163,7 +168,7 @@ export function SettingsView(props: SettingsViewProps) {
           <CapabilityPage kind={capKind} items={caps.filter((c) => c.kind === capKind)} onToggle={toggleCap} />
         )}
         {page === "indexing" && <IndexingPage workspaceRoot={props.workspaceRoot} />}
-        {page === "usage" && <UsageStatsPage stats={usage} />}
+        {page === "usage" && <UsageStatsPage stats={usage} account={accountUsage} />}
         {page === "onboard" && <OnboardPage user={props.user} busy={props.busy} onConnect={props.onConnect} />}
       </div>
     </div>

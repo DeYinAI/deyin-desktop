@@ -42,9 +42,6 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onClick={() => props.onSelectTab("diff")}
         />
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
-        <button className="icon-btn icon-btn--small" title="New tab">
-          <Icon name="plus" size={13} />
-        </button>
       </div>
 
       {props.activeTab === "plan" && <PlanTab markdown={props.planMarkdown} />}
@@ -78,6 +75,9 @@ function TabButton(props: { label: string; active: boolean; badge?: string; dot?
 
 function PlanTab({ markdown }: { markdown: string }) {
   const blocks = useMemo(() => markdown.split("\n"), [markdown]);
+  if (markdown.trim() === "") {
+    return <div className="wspanel__body wspanel__empty">No plan yet. The agent posts its working plan here as it executes.</div>;
+  }
   return (
     <div className="wspanel__body plan-doc">
       {blocks.map((line, i) => {
@@ -140,12 +140,6 @@ function DiffTab({
           onClick={() => setSourcePreview((v) => !v)}
         >
           Source preview
-        </button>
-        <button className="icon-btn icon-btn--small" title="More">
-          <Icon name="dots" size={13} />
-        </button>
-        <button className="icon-btn icon-btn--small" title="Open externally">
-          <Icon name="external" size={13} />
         </button>
       </div>
       <div className="wspanel__body code-view" style={{ fontSize: display.codeFontSize }}>

@@ -41,10 +41,13 @@ export function ModelPicker(props: ModelPickerProps) {
 
   const modelsOf = (provider: ProviderInfo | undefined): ProviderModel[] => {
     if (!provider) return props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength }));
-    if (provider.kind === "primary") {
-      return props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength }));
-    }
-    return provider.models;
+    const list =
+      provider.kind === "primary"
+        ? props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength }))
+        : provider.models;
+    // Models switched off in Settings stay out of the picker.
+    const disabled = new Set(provider.disabledModels);
+    return list.filter((m) => !disabled.has(m.id));
   };
 
   const currentLabel =
@@ -87,7 +90,11 @@ export function ModelPicker(props: ModelPickerProps) {
             ))}
             {shownModels.length === 0 && (
               <div className="menu__item hint">
-                {shownProvider?.kind === "custom" ? "No models added yet" : "No models available"}
+                {shownProvider && shownProvider.disabledModels.length > 0
+                  ? "All models are switched off - enable some under Manage models"
+                  : shownProvider?.kind === "custom"
+                    ? "No models added yet"
+                    : "No models available"}
               </div>
             )}
           </div>

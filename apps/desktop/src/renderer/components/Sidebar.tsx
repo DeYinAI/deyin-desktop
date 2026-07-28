@@ -40,32 +40,7 @@ export function Sidebar(props: SidebarProps) {
           <span>Search</span>
           <span className="kbd">Ctrl+K</span>
         </button>
-        <button className="nav-item">
-          <Icon name="bolt" size={15} />
-          <span>Automations</span>
-        </button>
-        <button className="nav-item">
-          <Icon name="sparkles" size={15} />
-          <span>Skills</span>
-        </button>
       </nav>
-
-      <div className="sidebar__filters">
-        <button className="chip chip--small">
-          <Icon name="plus" size={12} />
-          <span>Group</span>
-        </button>
-        <button className="chip chip--small chip--active">
-          <span>Project</span>
-        </button>
-        <div className="sidebar__filters-spacer" />
-        <button className="icon-btn icon-btn--small" title="Sort">
-          <Icon name="chevronDown" size={13} />
-        </button>
-        <button className="icon-btn icon-btn--small" title="Collapse all">
-          <Icon name="grid" size={13} />
-        </button>
-      </div>
 
       <div className="sidebar__scroll">
         <div className="sidebar__section">Projects</div>
@@ -74,9 +49,6 @@ export function Sidebar(props: SidebarProps) {
             <div className="project__row">
               <Icon name="folder" size={13} />
               <span className="project__name">{project.name}</span>
-              <button className="icon-btn icon-btn--small project__refresh" title="Refresh">
-                <Icon name="refresh" size={12} />
-              </button>
             </div>
             {orderThreads(project.threads).map((thread) =>
               thread.id === props.renamingThreadId ? (
@@ -100,11 +72,11 @@ export function Sidebar(props: SidebarProps) {
                 </button>
               ),
             )}
-            {orderThreads(project.threads).length > 4 && (
-              <button className="thread-row thread-row--more">Show more</button>
-            )}
           </div>
         ))}
+        {props.projects.length === 0 && (
+          <div className="sidebar__empty">No projects yet. Start a new task to create one.</div>
+        )}
 
         <div className="sidebar__section">Tasks</div>
         <div className="sidebar__empty">No tasks yet</div>
