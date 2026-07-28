@@ -40,7 +40,10 @@ jobs:
         # .dmg leg once a Mac runner or hosted budget exists, add:
         #   - { name: macos, labels: macos-latest }
         include:
-          - { name: windows, labels: [self-hosted, Windows, X64] }
+          # ebcache: winCodeSign's archive contains symlinks the runner's
+          # NETWORK SERVICE account cannot create, so the cache is pre-seeded
+          # (symlinks materialized) at C:\runner\ebcache on win-runner.
+          - { name: windows, labels: [self-hosted, Windows, X64], ebcache: 'C:\runner\ebcache' }
           - { name: linux, labels: [self-hosted, Linux, X64] }
     runs-on: ${{ matrix.labels }}
     steps:
@@ -75,6 +78,9 @@ jobs:
       - name: Package installers
         run: pnpm --filter @deyin/desktop package
         env:
+          # Empty on legs without a pre-seeded cache; electron-builder then
+          # uses its default cache directory.
+          ELECTRON_BUILDER_CACHE: ${{ matrix.ebcache }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
