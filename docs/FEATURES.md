@@ -15,9 +15,19 @@ functional specification the apps are built against; it contains no third-party 
 - Streaming chat with an Openference-hosted model.
 - `@` to attach files/folders as context, `/` for slash commands, `$` to invoke skills,
   `#` to link related conversations.
-- Execution modes cycled with a shortcut: from "ask before every action" through to
-  "full access". The mode gates whether the agent may edit files or run commands without
-  a confirmation.
+- Two independent control axes (Cursor-style split):
+  - **Composer modes** — Agent (build), Plan (read-only research that ends in a
+    reviewable plan) and Ask (read-only Q&A). Cycled with `Shift+Tab`; the mode menu
+    opens with `Ctrl/Cmd+.`. Plan and Ask stay read-only even under full access.
+  - **Access levels** — "Full access", "Ask before changes", "Read only". Gates tool
+    calls through the permission engine; "ask" actions surface an approval prompt with
+    Allow once / Allow for session / Deny.
+- Plan flow: a plan-mode run finishes with a plan card in the timeline and the plan
+  document in the workspace panel's Plan tab; **Build** switches the task to Agent mode
+  and executes the plan.
+- Rich timeline: markdown output (GFM tables, task lists, themed code blocks),
+  collapsible "Thought for Ns" reasoning cards, tool cards with expandable results,
+  live todo checklists, and file-change cards with +/− counts that open the Diff tab.
 - Goal mode: set a verifiable objective; the agent iterates until it reports the goal met.
 - Change review: file edits are presented as a reviewable diff before they are applied.
 

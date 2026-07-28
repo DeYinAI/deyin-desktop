@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useT } from "../i18n.js";
-import { Icon } from "./Icon.js";
+import { Icon, type IconName } from "./Icon.js";
 import { ModelPicker } from "./ModelPicker.js";
-import type { ApprovalMode, ModelInfo } from "../../shared/types.js";
+import type { ApprovalMode, ChatMode, ModelInfo } from "../../shared/types.js";
 
 interface ComposerProps {
   value: string;
   models: ModelInfo[];
   selectedModel: string;
   approvalMode: ApprovalMode;
+  /** Composer mode (Agent/Plan/Ask); hidden when undefined (e.g. web plain chat). */
+  mode?: ChatMode;
   thinking: boolean;
   canSend: boolean;
   streaming: boolean;
@@ -19,6 +21,7 @@ interface ComposerProps {
   onStop?: () => void;
   onSelectModel: (id: string) => void;
   onSelectApproval: (mode: ApprovalMode) => void;
+  onSelectMode?: (mode: ChatMode) => void;
   onToggleThinking: (on: boolean) => void;
   onManageModels?: () => void;
   providers?: import("../../shared/types.js").ProviderInfo[];
@@ -32,6 +35,13 @@ const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "han
   "read-only": { label: "Read only", icon: "eye" },
 };
 
+const MODE_ORDER: ChatMode[] = ["agent", "plan", "ask"];
+const MODE_META: Record<ChatMode, { labelKey: "mode.agent" | "mode.plan" | "mode.ask"; descKey: "mode.agentDesc" | "mode.planDesc" | "mode.askDesc"; icon: IconName }> = {
+  agent: { labelKey: "mode.agent", descKey: "mode.agentDesc", icon: "bolt" },
+  plan: { labelKey: "mode.plan", descKey: "mode.planDesc", icon: "route" },
+  ask: { labelKey: "mode.ask", descKey: "mode.askDesc", icon: "message" },
+};
+
 interface SlashItem {
   name: string;
   description: string;
@@ -42,8 +52,29 @@ export function Composer(props: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
+  const [modeOpen, setModeOpen] = useState(false);
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  const cycleMode = () => {
+    if (!props.mode || !props.onSelectMode) return;
+    const next = MODE_ORDER[(MODE_ORDER.indexOf(props.mode) + 1) % MODE_ORDER.length]!;
+    props.onSelectMode(next);
+  };
+
+  // Ctrl/Cmd+. opens the mode menu from anywhere (Cursor's Mode Menu binding).
+  useEffect(() => {
+    if (!props.mode) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === ".") {
+        e.preventDefault();
+        setModeOpen((v) => !v);
+        ref.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [props.mode]);
 
   // Slash autocomplete sources: commands plus skills (invocable as /skill-name).
   useEffect(() => {
@@ -77,6 +108,7 @@ export function Composer(props: ComposerProps) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setPlusOpen(false);
         setAccessOpen(false);
+        setModeOpen(false);
       }
     };
     document.addEventListener("mousedown", close);
@@ -87,6 +119,11 @@ export function Composer(props: ComposerProps) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (props.canSend) props.onSend();
+    }
+    // Shift+Tab rotates Agent -> Plan -> Ask (Cursor binding).
+    if (e.key === "Tab" && e.shiftKey) {
+      e.preventDefault();
+      cycleMode();
     }
   };
 
@@ -126,7 +163,15 @@ export function Composer(props: ComposerProps) {
         ref={ref}
         className="composer__input"
         rows={1}
-        placeholder={props.hasEvents ? t("composer.placeholderFollowUp") : t("composer.placeholder")}
+        placeholder={
+          props.mode === "plan"
+            ? t("composer.placeholderPlan")
+            : props.mode === "ask"
+              ? t("composer.placeholderAsk")
+              : props.hasEvents
+                ? t("composer.placeholderFollowUp")
+                : t("composer.placeholder")
+        }
         value={props.value}
         onChange={(e) => {
           props.onChange(e.target.value);
@@ -160,6 +205,41 @@ export function Composer(props: ComposerProps) {
             </div>
           )}
         </div>
+
+        {props.mode && props.onSelectMode && (
+          <div className="menu">
+            <button
+              className={`chip ${props.mode !== "agent" ? "chip--mode" : ""}`}
+              title={t("mode.switchHint")}
+              onClick={() => setModeOpen((v) => !v)}
+            >
+              <Icon name={MODE_META[props.mode].icon} size={13} />
+              <span>{t(MODE_META[props.mode].labelKey)}</span>
+              <Icon name="chevronDown" size={11} />
+            </button>
+            {modeOpen && (
+              <div className="menu__panel menu__panel--up">
+                {MODE_ORDER.map((mode) => (
+                  <button
+                    key={mode}
+                    className={`menu__item ${mode === props.mode ? "menu__item--active" : ""}`}
+                    onClick={() => {
+                      props.onSelectMode?.(mode);
+                      setModeOpen(false);
+                      ref.current?.focus();
+                    }}
+                  >
+                    <Icon name={MODE_META[mode].icon} size={14} />
+                    <span className="menu__item-body">
+                      {t(MODE_META[mode].labelKey)}
+                      <span className="menu__item-desc">{t(MODE_META[mode].descKey)}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="menu">
           <button
