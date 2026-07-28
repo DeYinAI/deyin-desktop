@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { webSearch } from "@deyin/host-core";
 import { WebSocketServer } from "ws";
-import { webSearch } from "./search.js";
 import { Session } from "./session.js";
 
 const PORT = Number(process.env.PORT ?? 8790);

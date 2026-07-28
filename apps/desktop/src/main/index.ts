@@ -1,9 +1,9 @@
 import { app, BrowserWindow } from "electron";
+import type { TerminalManager } from "@deyin/host-core";
 import { AuthManager } from "./auth.js";
-import { resolveDeyinConfig } from "./config.js";
 import { registerIpc } from "./ipc.js";
-import type { TerminalManager } from "./host/pty.js";
 import { CH } from "../shared/ipc.js";
+import { resolveDeyinConfig } from "../shared/config.js";
 import { DEEP_LINK_SCHEME } from "../shared/config.js";
 import { initAutoUpdater } from "./updater.js";
 import { createMainWindow } from "./window.js";

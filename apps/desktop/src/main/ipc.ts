@@ -1,17 +1,22 @@
 import { join } from "node:path";
 import { BrowserWindow, app, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import {
+  AgentsStore,
+  SettingsStore,
+  TerminalManager,
+  UsageStore,
+  detectEnv,
+  fetchAccountUsage,
+  listModels,
+  readTextFile,
+  readTree,
+  webSearch,
+} from "@deyin/host-core";
 import { CH } from "../shared/ipc.js";
 import type { Bootstrap, CapabilityKind, DeyinSettings, ProviderPatch, TerminalCreateOptions, UsageEvent } from "../shared/types.js";
 import type { DeyinConfig } from "../shared/config.js";
-import { AgentsStore } from "./agents.js";
 import type { AuthManager } from "./auth.js";
-import { detectEnv } from "./host/env.js";
-import { readTextFile, readTree } from "./host/files.js";
-import { TerminalManager } from "./host/pty.js";
-import { listModels } from "./models.js";
-import { webSearch } from "./search.js";
-import { SettingsStore } from "./settings.js";
-import { UsageStore } from "./usage.js";
+import { createDesktopStorage } from "./storage.js";
 
 interface RegisterOptions {
   config: DeyinConfig;
@@ -28,12 +33,17 @@ function windowOf(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | nul
 export function registerIpc(opts: RegisterOptions): TerminalManager {
   const { config, auth } = opts;
 
-  const settings = new SettingsStore();
-  const agents = new AgentsStore();
-  const usage = new UsageStore();
-  const terminals = new TerminalManager(
-    () => BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null,
-  );
+  const storage = createDesktopStorage();
+  const settings = new SettingsStore(storage);
+  const agents = new AgentsStore(storage);
+  const usage = new UsageStore(storage);
+
+  const sender = () =>
+    BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null;
+  const terminals = new TerminalManager({
+    onData: (id, data) => sender()?.send(CH.termData, { id, data }),
+    onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
+  });
 
   ipcMain.handle(CH.bootstrap, async (): Promise<Bootstrap> => {
     return {
@@ -54,7 +64,7 @@ export function registerIpc(opts: RegisterOptions): TerminalManager {
   ipcMain.handle(CH.authGetUser, () => auth.getUser());
   ipcMain.handle(CH.authGetToken, () => auth.getAccessToken());
 
-  ipcMain.handle(CH.modelsList, () => listModels(config, auth));
+  ipcMain.handle(CH.modelsList, () => listModels(config, () => auth.getAccessToken()));
 
   ipcMain.handle(CH.filesTree, (_e, dir?: string) => {
     const root = dir ?? opts.getWorkspaceRoot();
@@ -103,9 +113,11 @@ export function registerIpc(opts: RegisterOptions): TerminalManager {
   });
   ipcMain.handle(CH.providersGetKey, (_e, id: string) => agents.getKey(id));
   ipcMain.handle(CH.providersTest, (_e, id: string) => agents.testProvider(id));
+  ipcMain.handle(CH.providersFetchModels, (_e, id: string) => agents.fetchModels(id));
 
   ipcMain.handle(CH.usageGet, () => usage.stats());
   ipcMain.handle(CH.usageRecord, (_e, event: UsageEvent) => usage.record(event));
+  ipcMain.handle(CH.usageAccount, () => fetchAccountUsage(config, () => auth.getAccessToken()));
 
   ipcMain.on(CH.winMinimize, (e) => windowOf(e)?.minimize());
   ipcMain.on(CH.winToggleMaximize, (e) => {
