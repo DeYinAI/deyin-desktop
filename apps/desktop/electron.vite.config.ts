@@ -6,7 +6,7 @@ const root = import.meta.dirname;
 
 // Bundle workspace packages into the main output; keep native/third-party deps external.
 const externalize = externalizeDepsPlugin({
-  exclude: ["@deyin/oauth-client", "@deyin/branding"],
+  exclude: ["@deyin/oauth-client", "@deyin/branding", "@deyin/host-core"],
 });
 
 export default defineConfig({
@@ -14,7 +14,15 @@ export default defineConfig({
     plugins: [externalize],
     build: {
       outDir: "out/main",
-      rollupOptions: { input: resolve(root, "src/main/index.ts") },
+      rollupOptions: {
+        input: resolve(root, "src/main/index.ts"),
+        // node-pty lives in optionalDependencies, which externalizeDepsPlugin
+        // does not read; without this rollup would inline its JS with a
+        // throwing require() stub and the native pty.node/conpty.node could
+        // never load in packaged builds. Kept external, the runtime
+        // import("node-pty") resolves from node_modules (asar-unpacked).
+        external: ["node-pty"],
+      },
     },
   },
   preload: {
