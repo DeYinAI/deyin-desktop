@@ -13,8 +13,11 @@ export function openBrowser(url: string): void {
     command = "open";
     args = [url];
   } else if (platform === "win32") {
-    command = "cmd";
-    args = ["/c", "start", "", url];
+    // Not `cmd /c start`: cmd parses unquoted `&` as a command separator,
+    // truncating OAuth URLs at the first query param. rundll32 receives the
+    // URL as a plain argv element with no shell parsing at all.
+    command = "rundll32";
+    args = ["url.dll,FileProtocolHandler", url];
   } else {
     command = "xdg-open";
     args = [url];

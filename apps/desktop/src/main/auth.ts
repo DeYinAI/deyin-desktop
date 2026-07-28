@@ -1,11 +1,10 @@
 import { join } from "node:path";
-import { app, safeStorage } from "electron";
+import { app, safeStorage, shell } from "electron";
 import { OAuthClient, type UserInfo } from "@deyin/oauth-client";
 import {
   FileTokenStore,
   beginDeepLinkLogin,
   loginWithLoopback,
-  openBrowser,
   type DeepLinkLoginStart,
 } from "@deyin/oauth-client/node";
 import { DEEP_LINK_REDIRECT_URI, type DeyinConfig } from "../shared/config.js";
@@ -61,7 +60,10 @@ export class AuthManager {
   async connect(): Promise<UserProfile | null> {
     if (this.deepLinkAvailable) {
       this.pending = await beginDeepLinkLogin(this.client, { redirectUri: DEEP_LINK_REDIRECT_URI });
-      openBrowser(this.pending.authorizationUrl);
+      // Electron's opener passes the URL to the OS intact; the generic
+      // spawn-based helper went through cmd on Windows, which truncated the
+      // query string at the first "&".
+      void shell.openExternal(this.pending.authorizationUrl);
       return null;
     }
     await loginWithLoopback(this.client, {
