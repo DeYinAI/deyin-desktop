@@ -6,6 +6,7 @@ import {
   AuthRequiredError,
   type AgentMessage,
   type AgentToolCall,
+  type FileChange,
   type TodoItem,
   type TokenUsage,
   type ToolContext,
@@ -24,6 +25,7 @@ export type AgentEvent =
   | { type: "assistant-message"; message: AgentMessage }
   | { type: "tool-start"; call: AgentToolCall; summary: string }
   | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean }
+  | { type: "file-change"; change: FileChange }
   | { type: "todos"; todos: TodoItem[] }
   | { type: "usage"; usage: TokenUsage }
   | { type: "compaction"; truncatedToolResults: number; droppedMessages: number }
@@ -83,6 +85,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     signal: opts.signal,
     todos,
     onTodosChanged: (t) => emit({ type: "todos", todos: [...t] }),
+    onFileChanged: (change) => emit({ type: "file-change", change }),
   };
 
   const append = (message: AgentMessage): void => {

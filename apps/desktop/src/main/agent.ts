@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { BrowserWindow, app } from "electron";
 import type { AgentsStore, SettingsStore } from "@deyin/host-core";
 import {
+  ASK_AGENT,
   BUILD_AGENT,
+  PLAN_AGENT,
   PermissionEngine,
   SessionStore,
   ToolRegistry,
@@ -17,6 +19,7 @@ import {
   matchCommand,
   runAgent,
   runHooks,
+  type AgentDefinition,
   type AgentMessage,
   type LoadedHook,
   type McpConnection,
@@ -24,7 +27,7 @@ import {
   type PermissionRule,
   type SubagentDefinition,
 } from "@deyin/agent-core";
-import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ApprovalMode, IndexSearchHit } from "../shared/types.js";
+import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ApprovalMode, ChatMode, IndexSearchHit } from "../shared/types.js";
 import { CH } from "../shared/ipc.js";
 import type { DeyinConfig } from "../shared/config.js";
 import type { AuthManager } from "./auth.js";
@@ -32,6 +35,8 @@ import type { BrowserControlService } from "./browser.js";
 import type { CapabilityService } from "./capabilities.js";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
+/** Files bigger than this ship to the renderer without diff content. */
+const FILE_DIFF_CAP = 400_000;
 const READONLY_RULES: PermissionRule[] = [
   { tool: "*", action: "deny" },
   { tool: "read", action: "allow" },
@@ -50,6 +55,8 @@ const READONLY_RULES: PermissionRule[] = [
 interface ThreadSession {
   sessionId: string;
   messages: AgentMessage[];
+  /** Mode the system prompt was built for; a switch rebuilds messages[0]. */
+  mode: ChatMode;
 }
 
 interface ActiveRun {
@@ -189,9 +196,14 @@ export class DesktopAgentHost {
     session.messages.push({ role: "user", content: prompt });
     this.store.append(session.sessionId, { role: "user", content: prompt });
 
+    // Two independent axes: the access level (approvalMode chip) provides the base
+    // rules; the composer mode's own restrictions come last so plan/ask stay
+    // read-only even under "full access". skipAll only ever applies to agent mode.
+    const modeAgent = agentForMode(options.mode);
     const permissions = new PermissionEngine({
-      configRules: rulesForMode(options.approvalMode),
-      skipAll: options.approvalMode === "full-access",
+      agentRules: rulesForMode(options.approvalMode),
+      configRules: modeAgent.permissions ?? [],
+      skipAll: options.approvalMode === "full-access" && options.mode === "agent",
     });
 
     try {
@@ -246,6 +258,19 @@ export class DesktopAgentHost {
                 denied: event.denied,
               });
               break;
+            case "file-change": {
+              // Feeds the renderer's diff view; huge files ship without content
+              // (the card still shows, the diff falls back to empty).
+              const oversized =
+                event.change.before.length > FILE_DIFF_CAP || event.change.after.length > FILE_DIFF_CAP;
+              this.send(options.threadId, {
+                type: "file-change",
+                path: event.change.path,
+                before: oversized ? "" : event.change.before,
+                after: oversized ? "" : event.change.after,
+              });
+              break;
+            }
             case "todos":
               this.send(options.threadId, { type: "todos", todos: event.todos });
               break;
@@ -279,17 +304,19 @@ export class DesktopAgentHost {
     if (this.opts.settings.get().indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
-    const agentRules: PermissionRule[] = def.readonly
+    const readonlyRules: PermissionRule[] = def.readonly
       ? [
           { tool: "write", action: "deny" },
           { tool: "edit", action: "deny" },
           { tool: "bash", action: "ask" },
         ]
       : [];
+    // Subagents inherit the parent run's mode restrictions: a plan/ask session
+    // must stay read-only even inside a spawned task.
     const permissions = new PermissionEngine({
-      agentRules,
-      configRules: rulesForMode(parent.approvalMode),
-      skipAll: parent.approvalMode === "full-access" && !def.readonly,
+      agentRules: rulesForMode(parent.approvalMode),
+      configRules: [...(agentForMode(parent.mode).permissions ?? []), ...readonlyRules],
+      skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
     });
     const messages: AgentMessage[] = [
       {
@@ -331,15 +358,49 @@ export class DesktopAgentHost {
     hooks: LoadedHook[],
   ): Promise<ThreadSession> {
     const existing = this.sessions.get(options.threadId);
-    if (existing) return existing;
+    if (existing) {
+      // Mode switched mid-thread (e.g. plan -> agent via Build): rebuild the
+      // system prompt in place — it is always messages[0].
+      if (existing.mode !== options.mode) {
+        existing.messages[0] = {
+          role: "system",
+          content: await this.systemPrompt(options.mode, cwd, registry, skills, hooks),
+        };
+        existing.mode = options.mode;
+      }
+      return existing;
+    }
 
+    const system = await this.systemPrompt(options.mode, cwd, registry, skills, hooks);
+    const messages: AgentMessage[] = [{ role: "system", content: system }];
+    // Rebuild prior plain-text turns (post-restart continuity).
+    for (const turn of options.history) {
+      messages.push({ role: turn.role, content: turn.content });
+    }
+
+    const meta = this.store.create({ cwd, model: options.model, agent: agentForMode(options.mode).name });
+    for (const message of messages) this.store.append(meta.id, message);
+    const session: ThreadSession = { sessionId: meta.id, messages, mode: options.mode };
+    this.sessions.set(options.threadId, session);
+    this.threadToSession.set(options.threadId, meta.id);
+    return session;
+  }
+
+  private async systemPrompt(
+    mode: ChatMode,
+    cwd: string,
+    registry: ToolRegistry,
+    skills: Parameters<typeof buildSystemPrompt>[0]["skills"],
+    hooks: LoadedHook[],
+  ): Promise<string> {
+    const agent = agentForMode(mode);
     const contextFiles = await loadContextFiles(cwd).catch(() => []);
     let system = buildSystemPrompt({
       cwd,
       agent: {
-        ...BUILD_AGENT,
+        ...agent,
         prompt:
-          BUILD_AGENT.prompt +
+          agent.prompt +
           " You run inside the Deyin desktop app: the user sees your streamed text and tool cards in the chat timeline.",
       },
       toolNames: registry.names(),
@@ -352,19 +413,7 @@ export class DesktopAgentHost {
     if (startHooks.additionalContext && startHooks.additionalContext.length > 0) {
       system += `\n\n# Hook context\n${startHooks.additionalContext.join("\n")}`;
     }
-
-    const messages: AgentMessage[] = [{ role: "system", content: system }];
-    // Rebuild prior plain-text turns (post-restart continuity).
-    for (const turn of options.history) {
-      messages.push({ role: turn.role, content: turn.content });
-    }
-
-    const meta = this.store.create({ cwd, model: options.model, agent: "build" });
-    for (const message of messages) this.store.append(meta.id, message);
-    const session: ThreadSession = { sessionId: meta.id, messages };
-    this.sessions.set(options.threadId, session);
-    this.threadToSession.set(options.threadId, meta.id);
-    return session;
+    return system;
   }
 
   private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
@@ -389,5 +438,17 @@ function rulesForMode(mode: ApprovalMode): PermissionRule[] {
       return [];
     case "read-only":
       return READONLY_RULES;
+  }
+}
+
+/** The built-in agent definition backing each composer mode. */
+function agentForMode(mode: ChatMode): AgentDefinition {
+  switch (mode) {
+    case "plan":
+      return PLAN_AGENT;
+    case "ask":
+      return ASK_AGENT;
+    default:
+      return BUILD_AGENT;
   }
 }

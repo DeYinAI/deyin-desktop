@@ -15,6 +15,12 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Custom title bar + window controls | Done | `components/TopBar.tsx`, `main/window.ts` (frameless), `main/ipc.ts` (`win:*`) |
 | Session timeline cards (plan, file change, model switch, skill, thought) | Done | `components/ChatView.tsx`, `renderer/threads.ts` |
 | Composer: + insert menu, access mode, model, auto-run | Done | `components/Composer.tsx` (approval mode persisted in settings) |
+| Composer modes: Agent / Plan / Ask (Shift+Tab cycle, Ctrl+. menu) | Done (desktop; web falls back to plain chat) | `components/Composer.tsx`, `main/agent.ts` (`agentForMode`), `agent-core/agents.ts` |
+| Mode/access split enforced in the permission engine (plan/ask read-only even at full access) | Done | `main/agent.ts` (`PermissionEngine` layering), `agent-core/permissions.ts` |
+| Plan mode UX: plan doc to Plan tab + Build handoff to Agent mode | Done | `app.tsx` (`buildFromPlan`), `components/ChatView.tsx` (`PlanReadyCard`), `WorkspacePanel.tsx` |
+| Markdown chat output (GFM tables, themed code blocks) | Done | `components/Markdown.tsx` (react-markdown + remark-gfm over the custom `CodeBlock`) |
+| Reasoning ("thinking") cards, live + collapsed with duration | Done | `components/ChatView.tsx` (`ThinkingCard`), `app.tsx` (reasoning-delta handling) |
+| File-change cards with +/− counts feeding the Diff tab | Done | `agent-core` `file-change` event, `main/agent.ts` forward, `app.tsx` (`diffStats`) |
 | Projects / threads sidebar | Done (in-memory; persistence pending) | `components/Sidebar.tsx`, `renderer/threads.ts` |
 | Workspace panel: Plan tab | Done (static plan; agent-fed later) | `components/WorkspacePanel.tsx` |
 | Workspace panel: Diff tab | Done (LCS line diff + source preview) | `components/WorkspacePanel.tsx`, `renderer/diff.ts` |
@@ -54,6 +60,7 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | File explorer / read | Foundation | `main/host/files.ts`, web `server/host.ts` (tree/read wired; UI panel pending) |
 | Workspace / open folder | Foundation | `main/ipc.ts` (`workspace:open`) |
 | Goal mode / automations engine | Planned | flag off by default |
+| Agent runtime on the web (WS channel to the session host) | Planned | web falls back to plain chat streaming today |
 | OS-level computer use | Out of scope for now | browser control covers in-app automation |
 | Web hosting (same renderer) | Done | `@deyin/web` reuses `apps/desktop/src/renderer` verbatim |
 | Auto-update | Done (packaged builds) | `main/updater.ts` |

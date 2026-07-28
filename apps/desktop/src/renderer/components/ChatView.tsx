@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { CodeBlock, splitMessageSegments, themeByName, type CodeTheme } from "../code.js";
+import { themeByName, type CodeTheme } from "../code.js";
+import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
+import { Markdown } from "./Markdown.js";
 import type { ThreadEvent } from "../threads.js";
 
 export interface ChatCodeDisplay {
@@ -16,19 +18,25 @@ export interface ChatCodeDisplay {
 interface ChatViewProps {
   events: ThreadEvent[];
   streamText: string | null;
+  /** Model reasoning streamed for the in-flight step (rendered above the text). */
+  streamReasoning: string | null;
   greetingName: string;
   codeDisplay: ChatCodeDisplay;
-  onOpenFile: (name: string) => void;
+  onOpenFile: (path: string) => void;
   onUndo: () => void;
+  /** Plan-ready card actions (plan mode). */
+  onBuild?: () => void;
+  onOpenPlan?: () => void;
 }
 
 /** The session timeline: chat bubbles interleaved with agent activity cards. */
 export function ChatView(props: ChatViewProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const t = useT();
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [props.events, props.streamText]);
+  }, [props.events, props.streamText, props.streamReasoning]);
 
   const codeTheme = themeByName(
     props.codeDisplay.variant === "light" ? props.codeDisplay.themeLight : props.codeDisplay.themeDark,
@@ -56,14 +64,19 @@ export function ChatView(props: ChatViewProps) {
             codeDisplay={props.codeDisplay}
             onOpenFile={props.onOpenFile}
             onUndo={props.onUndo}
+            onBuild={props.onBuild}
+            onOpenPlan={props.onOpenPlan}
           />
         ))}
+        {props.streamReasoning !== null && props.streamReasoning.length > 0 && (
+          <LiveReasoning text={props.streamReasoning} />
+        )}
         {props.streamText !== null && (
           <div className="assistant-text">
             {props.streamText.length > 0 ? (
-              <RichText text={props.streamText} theme={codeTheme} display={props.codeDisplay} />
+              <Markdown text={props.streamText} theme={codeTheme} display={props.codeDisplay} />
             ) : (
-              <span className="hint">Thinking…</span>
+              (props.streamReasoning ?? "").length === 0 && <span className="hint">{t("chat.thinking")}</span>
             )}
           </div>
         )}
@@ -73,26 +86,17 @@ export function ChatView(props: ChatViewProps) {
   );
 }
 
-/** Assistant text with ``` code fences rendered through the themed CodeBlock. */
-function RichText({ text, theme, display }: { text: string; theme: CodeTheme; display: ChatCodeDisplay }) {
+/** Reasoning stream of the current step: expanded while it arrives. */
+function LiveReasoning({ text }: { text: string }) {
+  const t = useT();
   return (
-    <>
-      {splitMessageSegments(text).map((segment, i) =>
-        segment.type === "text" ? (
-          <span key={i}>{segment.text}</span>
-        ) : (
-          <CodeBlock
-            key={i}
-            code={segment.code}
-            lang={segment.lang || undefined}
-            theme={theme}
-            fontSize={display.fontSize}
-            showLineNumbers={display.showLineNumbers}
-            wrapLongLines={display.wrapLongLines}
-          />
-        ),
-      )}
-    </>
+    <div className="thinking thinking--live">
+      <div className="thinking__head">
+        <Icon name="brain" size={13} />
+        <span>{t("chat.thinking")}</span>
+      </div>
+      <div className="thinking__body">{text}</div>
+    </div>
   );
 }
 
@@ -102,12 +106,16 @@ function EventRow({
   codeDisplay,
   onOpenFile,
   onUndo,
+  onBuild,
+  onOpenPlan,
 }: {
   event: ThreadEvent;
   codeTheme: CodeTheme;
   codeDisplay: ChatCodeDisplay;
-  onOpenFile: (name: string) => void;
+  onOpenFile: (path: string) => void;
   onUndo: () => void;
+  onBuild?: () => void;
+  onOpenPlan?: () => void;
 }) {
   switch (event.kind) {
     case "user":
@@ -120,9 +128,15 @@ function EventRow({
     case "assistant":
       return (
         <div className="assistant-text">
-          <RichText text={event.text} theme={codeTheme} display={codeDisplay} />
+          <Markdown text={event.text} theme={codeTheme} display={codeDisplay} />
         </div>
       );
+
+    case "reasoning":
+      return <ThinkingCard text={event.text} seconds={event.seconds} />;
+
+    case "plan-ready":
+      return <PlanReadyCard onBuild={onBuild} onOpenPlan={onOpenPlan} />;
 
     case "plan":
       return (
@@ -169,7 +183,7 @@ function EventRow({
               </button>
             </span>
           )}
-          <button className="btn btn--outline file-card__open" onClick={() => onOpenFile(event.name)}>
+          <button className="btn btn--outline file-card__open" onClick={() => onOpenFile(event.subtitle || event.name)}>
             Open
             <Icon name="chevronDown" size={12} />
           </button>
@@ -224,6 +238,51 @@ function EventRow({
         </div>
       );
   }
+}
+
+/** Collapsed reasoning block: "Thought for Ns", expandable to the full text. */
+function ThinkingCard({ text, seconds }: { text: string; seconds?: number }) {
+  const [open, setOpen] = useState(false);
+  const t = useT();
+  const label =
+    seconds !== undefined && seconds > 0 ? `${t("chat.thoughtFor")} ${seconds}s` : t("chat.thought");
+  return (
+    <div className="thinking">
+      <button className="thinking__head" onClick={() => setOpen((v) => !v)}>
+        <Icon name="brain" size={13} />
+        <span>{label}</span>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+      </button>
+      {open && <div className="thinking__body">{text}</div>}
+    </div>
+  );
+}
+
+/** Plan-mode completion card: review the plan, then hand it to agent mode. */
+function PlanReadyCard({ onBuild, onOpenPlan }: { onBuild?: () => void; onOpenPlan?: () => void }) {
+  const t = useT();
+  return (
+    <div className="plan-ready">
+      <span className="plan-ready__icon">
+        <Icon name="route" size={15} />
+      </span>
+      <span className="plan-ready__meta">
+        <span className="plan-ready__title">{t("chat.planReady")}</span>
+        <span className="plan-ready__desc">{t("chat.planReadyDesc")}</span>
+      </span>
+      {onOpenPlan && (
+        <button className="btn btn--outline" onClick={onOpenPlan}>
+          {t("chat.openPlan")}
+        </button>
+      )}
+      {onBuild && (
+        <button className="btn" onClick={onBuild}>
+          <Icon name="play" size={12} />
+          {t("chat.build")}
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** One agent tool call: status line expanding to the (truncated) result. */

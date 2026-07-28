@@ -45,6 +45,14 @@ export interface TodoItem {
   status: "pending" | "in_progress" | "completed" | "cancelled";
 }
 
+/** A workspace file mutation reported by the write/edit tools (drives diff UIs). */
+export interface FileChange {
+  path: string;
+  /** Content before the change; empty string for newly created files. */
+  before: string;
+  after: string;
+}
+
 /** Ambient state passed to every tool execution in one agent run. */
 export interface ToolContext {
   /** Workspace root; all relative tool paths resolve against this. */
@@ -53,6 +61,8 @@ export interface ToolContext {
   /** Shared todo list, rendered by the todo_write tool. */
   todos: TodoItem[];
   onTodosChanged?: (todos: TodoItem[]) => void;
+  /** Fired by write/edit after a successful file mutation. */
+  onFileChanged?: (change: FileChange) => void;
 }
 
 /** Coarse capability class used for default permissions. */
