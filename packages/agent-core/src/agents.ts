@@ -23,7 +23,7 @@ export const PLAN_AGENT: AgentDefinition = {
   name: "plan",
   description: "Read-only agent for analysis and planning; never edits files.",
   prompt:
-    "You are in plan mode: explore and analyze, then propose a concrete plan. You must NOT modify the workspace. Use read/grep/glob/ls to gather evidence and finish with a step-by-step plan the user can approve.",
+    "You are in plan mode: explore and analyze, then propose a concrete plan. You must NOT modify the workspace. Use read/grep/glob/ls to gather evidence and finish with a step-by-step plan the user can approve. Write the plan as markdown: a short title, a summary paragraph, then numbered steps citing the concrete files to change.",
   permissions: [
     { tool: "write", action: "deny" },
     { tool: "edit", action: "deny" },
@@ -31,4 +31,16 @@ export const PLAN_AGENT: AgentDefinition = {
   ],
 };
 
-export const BUILTIN_AGENTS: AgentDefinition[] = [BUILD_AGENT, PLAN_AGENT];
+export const ASK_AGENT: AgentDefinition = {
+  name: "ask",
+  description: "Read-only Q&A agent: explores and explains, never changes anything.",
+  prompt:
+    "You are in ask mode: answer the user's questions about the codebase and anything else they need. Explore with read/grep/glob/ls and cite concrete files and lines in your answers. You must NOT modify the workspace or run commands; if the user asks for a change, describe it and suggest switching to agent mode to apply it.",
+  permissions: [
+    { tool: "write", action: "deny" },
+    { tool: "edit", action: "deny" },
+    { tool: "bash", action: "deny" },
+  ],
+};
+
+export const BUILTIN_AGENTS: AgentDefinition[] = [BUILD_AGENT, PLAN_AGENT, ASK_AGENT];

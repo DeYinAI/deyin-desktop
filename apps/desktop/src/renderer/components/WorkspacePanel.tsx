@@ -1,6 +1,8 @@
 import { createElement, useEffect, useMemo, useState } from "react";
+import { themeByName } from "../code.js";
 import { computeLineDiff, type FileDiff } from "../diff.js";
 import { Icon } from "./Icon.js";
+import { Markdown } from "./Markdown.js";
 
 export type PanelTab = "plan" | "diff" | "browser";
 
@@ -8,6 +10,10 @@ export interface CodeDisplaySettings {
   showLineNumbers: boolean;
   wrapLongLines: boolean;
   codeFontSize: number;
+  /** Code theme routing for markdown rendered inside the panel (Plan tab). */
+  themeLight?: string;
+  themeDark?: string;
+  variant?: "light" | "dark";
 }
 
 interface WorkspacePanelProps {
@@ -46,7 +52,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
       </div>
 
-      {props.activeTab === "plan" && <PlanTab markdown={props.planMarkdown} />}
+      {props.activeTab === "plan" && <PlanTab markdown={props.planMarkdown} display={props.codeDisplay} />}
       {props.activeTab === "diff" && (
         <DiffTab projectName={props.projectName} diff={props.diff} display={props.codeDisplay} />
       )}
@@ -76,32 +82,28 @@ function TabButton(props: { label: string; active: boolean; badge?: string; dot?
 
 /* Plan tab ----------------------------------------------------------------- */
 
-function PlanTab({ markdown }: { markdown: string }) {
-  const blocks = useMemo(() => markdown.split("\n"), [markdown]);
+function PlanTab({ markdown, display }: { markdown: string; display: CodeDisplaySettings }) {
   if (markdown.trim() === "") {
-    return <div className="wspanel__body wspanel__empty">No plan yet. The agent posts its working plan here as it executes.</div>;
+    return <div className="wspanel__body wspanel__empty">No plan yet. Run a task in Plan mode and the proposed plan lands here.</div>;
   }
+  const variant = display.variant ?? "dark";
   return (
     <div className="wspanel__body plan-doc">
-      {blocks.map((line, i) => {
-        if (line.startsWith("## ")) return <h3 key={i}>{line.slice(3)}</h3>;
-        if (line.startsWith("# ")) return <h2 key={i}>{line.slice(2)}</h2>;
-        const check = /^- \[( |x)\] (.*)$/.exec(line);
-        if (check) {
-          const done = check[1] === "x";
-          return (
-            <div className="plan-step" key={i}>
-              <span className={`plan-step__box ${done ? "plan-step__box--done" : ""}`}>
-                {done && <Icon name="check" size={10} />}
-              </span>
-              <span className={done ? "plan-step__text plan-step__text--done" : "plan-step__text"}>{check[2]}</span>
-            </div>
-          );
-        }
-        if (line.startsWith("- ")) return <li key={i}>{line.slice(2)}</li>;
-        if (line.trim() === "") return <div key={i} style={{ height: 8 }} />;
-        return <p key={i}>{line}</p>;
-      })}
+      <Markdown
+        text={markdown}
+        theme={themeByName(
+          variant === "light" ? (display.themeLight ?? "GitHub Light") : (display.themeDark ?? "GitHub Dark"),
+          variant,
+        )}
+        display={{
+          themeLight: display.themeLight ?? "GitHub Light",
+          themeDark: display.themeDark ?? "GitHub Dark",
+          variant,
+          fontSize: display.codeFontSize,
+          showLineNumbers: display.showLineNumbers,
+          wrapLongLines: display.wrapLongLines,
+        }}
+      />
     </div>
   );
 }
