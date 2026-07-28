@@ -118,7 +118,7 @@ function shellLabel(env: EnvInfo | null, shellId?: string): string | undefined {
 
 function TerminalInstance({ visible, cwd, shellId }: { visible: boolean; cwd: string | null; shellId?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  const fitRef = useRef<(() => void) | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -132,10 +132,29 @@ function TerminalInstance({ visible, cwd, shellId }: { visible: boolean; cwd: st
       theme: { background: "#05070a", foreground: colors.text, cursor: colors.accent },
     });
     const fit = new FitAddon();
-    fitRef.current = fit;
     term.loadAddon(fit);
     term.open(host);
-    fit.fit();
+
+    // Fitting while hidden (display:none) or before layout measures 0x0 cells
+    // and corrupts cols/rows, so every refit path is guarded and hidden tabs
+    // are refit by the visibility effect below instead.
+    const safeFit = () => {
+      if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
+      try {
+        fit.fit();
+      } catch {
+        // xterm can throw while the renderer is mid-teardown; a later refit wins.
+      }
+    };
+    fitRef.current = safeFit;
+    safeFit();
+
+    // JetBrains Mono usually loads after the first synchronous fit; cell
+    // metrics change with it, so refit once the font face is ready.
+    let fontsCancelled = false;
+    document.fonts?.ready.then(() => {
+      if (!fontsCancelled) safeFit();
+    });
 
     let disposed = false;
     let termId: string | null = null;
@@ -156,26 +175,37 @@ function TerminalInstance({ visible, cwd, shellId }: { visible: boolean; cwd: st
         termId = id;
         term.onData((data) => window.deyin.terminal.write(id, data));
         term.onResize(({ cols, rows }) => window.deyin.terminal.resize(id, cols, rows));
+        // The pty was spawned with the pre-create dims; sync once in case a
+        // font-ready or layout refit landed while create() was in flight.
+        window.deyin.terminal.resize(id, term.cols, term.rows);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
 
-    const onWindowResize = () => fit.fit();
-    window.addEventListener("resize", onWindowResize);
+    // Refit on any host-size change (window resize, side panel toggling,
+    // layout shifts), debounced to one fit per frame.
+    let raf = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(safeFit);
+    });
+    observer.observe(host);
 
     return () => {
       disposed = true;
+      fontsCancelled = true;
       offData();
       offExit();
-      window.removeEventListener("resize", onWindowResize);
+      observer.disconnect();
+      cancelAnimationFrame(raf);
       if (termId) window.deyin.terminal.kill(termId);
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shellId]);
 
-  // Refit when this tab becomes visible again.
+  // Refit when this tab becomes visible again (hidden tabs measure 0x0).
   useEffect(() => {
-    if (visible) fitRef.current?.fit();
+    if (visible) fitRef.current?.();
   }, [visible]);
 
   if (error) {

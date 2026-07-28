@@ -53,19 +53,3 @@ export interface FileDiff {
   before: string;
   after: string;
 }
-
-/** Demo diff shown until a live agent edit provides real content. */
-export const DEMO_DIFF: FileDiff = {
-  fileName: "solar-system.html",
-  before: `  tick(dt) {
-    this.lastFrame = dt;
-    this.render();
-  }`,
-  after: `  tick(dt) {
-    this.lastFrame = dt;
-    this.collisionCooldown = 0;
-    this.alarmTriggered = false;
-    this.currentLapTime = 0;
-    this.render();
-  }`,
-};

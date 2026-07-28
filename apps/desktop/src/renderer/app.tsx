@@ -11,8 +11,8 @@ import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { TopBar } from "./components/TopBar.js";
 import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
-import { DEMO_DIFF, type FileDiff } from "./diff.js";
-import { emptyThread, seedProjects, toChatMessages, type Project, type ThreadEvent } from "./threads.js";
+import type { FileDiff } from "./diff.js";
+import { emptyThread, toChatMessages, type Project, type ThreadEvent } from "./threads.js";
 import type { SettingsPage } from "./components/SettingsView.js";
 import type {
   ApprovalMode,
@@ -23,17 +23,6 @@ import type {
   ProviderInfo,
   UserProfile,
 } from "../shared/types.js";
-
-const DEFAULT_PLAN = [
-  "# Session plan",
-  "",
-  "The agent posts its working plan here as it executes.",
-  "",
-  "- [x] Understand the request",
-  "- [x] Explore the workspace",
-  "- [ ] Apply changes with preview diffs",
-  "- [ ] Verify in the built-in browser",
-].join("\n");
 
 type View = "workspace" | "settings";
 
@@ -46,7 +35,7 @@ export function App() {
 
   const [view, setView] = useState<View>("workspace");
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("general");
-  const [projects, setProjects] = useState<Project[]>(seedProjects);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -59,7 +48,7 @@ export function App() {
 
   const [panelOpen, setPanelOpen] = useState(true);
   const [panelTab, setPanelTab] = useState<PanelTab>("plan");
-  const [diff, setDiff] = useState<FileDiff | null>(DEMO_DIFF);
+  const [diff, setDiff] = useState<FileDiff | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
 
@@ -88,11 +77,22 @@ export function App() {
       const [savedProvider, savedModel] = s.defaultModel?.includes("::")
         ? (s.defaultModel.split("::") as [string, string])
         : ["openference", s.defaultModel ?? ""];
-      if (savedModel && (savedProvider !== "openference" || list.some((m) => m.id === savedModel))) {
+      const disabledFor = (providerId: string) =>
+        new Set(provs.find((p) => p.id === providerId)?.disabledModels ?? []);
+      const savedUsable =
+        Boolean(savedModel) &&
+        !disabledFor(savedProvider).has(savedModel) &&
+        (savedProvider !== "openference" || list.some((m) => m.id === savedModel));
+      if (savedUsable) {
         setSelectedProviderId(savedProvider);
         setSelectedModel(savedModel);
-      } else if (list[0]) {
-        setSelectedModel((cur) => (list.some((m) => m.id === cur) ? cur : list[0]!.id));
+      } else {
+        // Fall back to the first enabled primary model.
+        const primaryDisabled = disabledFor("openference");
+        const enabled = list.filter((m) => !primaryDisabled.has(m.id));
+        if (enabled[0]) {
+          setSelectedModel((cur) => (enabled.some((m) => m.id === cur) ? cur : enabled[0]!.id));
+        }
       }
     })();
   }, []);
@@ -156,7 +156,9 @@ export function App() {
   const logout = useCallback(async () => {
     await window.deyin.auth.logout();
     setUser(null);
-  }, []);
+    // Signing out returns to the Welcome screen, even for API-key users.
+    patchSettings({ welcomeDismissed: false });
+  }, [patchSettings]);
 
   const openFolder = useCallback(async () => {
     const root = await window.deyin.workspace.openFolder();
@@ -291,6 +293,7 @@ export function App() {
     setStreamText("");
 
     let acc = "";
+    let reportedTokens = 0;
     try {
       for await (const delta of streamChat({
         apiBaseUrl,
@@ -298,6 +301,9 @@ export function App() {
         model: selectedModel,
         messages: history,
         thinking: settings?.thinking,
+        onUsage: (u) => {
+          reportedTokens = u.totalTokens;
+        },
       })) {
         acc += delta;
         setStreamText(acc);
@@ -308,9 +314,9 @@ export function App() {
       appendEvents(activeThread.id, [{ kind: "assistant", text: `Request failed: ${msg}` }]);
     } finally {
       setStreamText(null);
-      // Rough token estimate (chars/4) keeps local usage stats meaningful without API metering.
-      const tokens = Math.ceil((text.length + acc.length) / 4);
-      void window.deyin.usage.record({ model: selectedModel, tokens, newSession: isFirstMessage });
+      // Real token usage from the provider's final stream frame. Providers that
+      // report none record 0 tokens; message/session counts still apply.
+      void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
   }, [input, streamText, activeThread, boot, providers, selectedProviderId, selectedModel, settings, connect, appendEvents]);
 
@@ -323,19 +329,21 @@ export function App() {
     ? workspaceRoot.split(/[\\/]/).pop() ?? "Workspace"
     : projects.find((p) => p.threads.some((t) => t.id === activeThreadId))?.name ?? "No workspace";
 
-  // Signed-out desktop users see the Welcome screen first. (Web signs in via a
+  // Signed-out desktop users see the Welcome screen first, unless they chose
+  // the API-key path (persisted as settings.welcomeDismissed). While settings
+  // load, keep showing Welcome to avoid a workspace flash. (Web signs in via a
   // full-page redirect, so it never sits in this state.)
-  if (boot && boot.platform === "desktop" && !user) {
+  if (boot && boot.platform === "desktop" && !user && !settings?.welcomeDismissed) {
     return (
       <Welcome
         busy={busy}
         connecting={connecting}
         onConnect={() => void connect()}
         onUseApiKey={() => {
+          // Let them in signed out; custom providers work with stored API keys.
+          patchSettings({ welcomeDismissed: true });
           setSettingsPage("models");
           setView("settings");
-          // Let them in with the API-key path even without an Openference login.
-          setUser({ sub: "local", name: "Local" });
         }}
       />
     );
@@ -459,7 +467,7 @@ export function App() {
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
                 activeTab={panelTab}
-                planMarkdown={DEFAULT_PLAN}
+                planMarkdown=""
                 diff={diff}
                 browserUrl={browserUrl}
                 codeDisplay={{
