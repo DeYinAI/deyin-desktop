@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../Icon.js";
 import { formatContext } from "../ModelPicker.js";
-import { PageHeader } from "./controls.js";
+import { PageHeader, Toggle } from "./controls.js";
 import type { ModelInfo, ProviderInfo, ProviderModel, ProviderPatch, ProviderTestResult } from "../../../shared/types.js";
 
 interface Props {
@@ -129,6 +129,8 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
   const [addingModel, setAddingModel] = useState(false);
   const [modelId, setModelId] = useState("");
   const [modelCtx, setModelCtx] = useState("200000");
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchMessage, setFetchMessage] = useState<string | null>(null);
 
   const apply = async (patch: ProviderPatch) => {
     onProvidersChanged(await window.deyin.providers.update(provider.id, patch));
@@ -162,6 +164,33 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
 
   const removeModel = async (id: string) => {
     await apply({ models: provider.models.filter((m) => m.id !== id) });
+  };
+
+  /** Persist the on/off state of one model id. */
+  const toggleModel = async (id: string, enabled: boolean) => {
+    const disabled = new Set(provider.disabledModels);
+    if (enabled) disabled.delete(id);
+    else disabled.add(id);
+    await apply({ disabledModels: [...disabled] });
+  };
+
+  /** Pull the live /models catalog from the provider and persist it. */
+  const fetchModels = async () => {
+    setFetchingModels(true);
+    setFetchMessage(null);
+    try {
+      const res = await window.deyin.providers.fetchModels(provider.id);
+      if (res.ok) {
+        onProvidersChanged(await window.deyin.providers.list());
+        setFetchMessage(
+          res.modelCount ? `Loaded ${res.modelCount} models from the provider.` : "The provider returned no models.",
+        );
+      } else {
+        setFetchMessage(`Fetch failed: ${res.message ?? `HTTP ${res.status}`}`);
+      }
+    } finally {
+      setFetchingModels(false);
+    }
   };
 
   const shownModels: ProviderModel[] = isCustom
@@ -223,10 +252,7 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
       {provider.kind === "primary" && (
         <div className="plan-connect">
           <div className="plan-connect__meta">
-            <span className="plan-connect__title">
-              Coding plan
-              {provider.quotaNote && <span className="badge badge--quota">{provider.quotaNote}</span>}
-            </span>
+            <span className="plan-connect__title">Coding plan</span>
             <span className="hint">{provider.status === "connected" ? "Connected" : "Not connected"}</span>
           </div>
           {provider.status !== "connected" && (
@@ -236,22 +262,6 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
           )}
         </div>
       )}
-
-      {provider.kind === "primary" &&
-        provider.status !== "connected" &&
-        provider.plans.map((plan) => (
-          <div key={plan.id} className={`plan-banner plan-banner--${plan.tone}`}>
-            <div className="plan-banner__meta">
-              <span className="plan-banner__name">
-                <Icon name="sparkles" size={13} />
-                {plan.name}
-              </span>
-              <span className="plan-banner__headline">{plan.headline}</span>
-              <span className="plan-banner__detail">{plan.detail}</span>
-            </div>
-            <Icon name="arrowRight" size={15} />
-          </div>
-        ))}
 
       <div className="field">
         <label className="field__label">Base URL</label>
@@ -322,58 +332,73 @@ function ProviderDetail({ provider, liveModels, busy, onConnect, onProvidersChan
       <div className="field">
         <label className="field__label">Model list</label>
         <div className="modellist">
-          {shownModels.map((model) => (
-            <div className="modellist__row" key={model.id}>
-              <code className="modellist__id">{model.name}</code>
-              {formatContext(model.contextLength) && (
-                <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
-              )}
-              <div className="modellist__spacer" />
-              {isCustom && (
-                <>
-                  <button className="icon-btn icon-btn--small" title="Test" onClick={() => void test()}>
-                    <Icon name="link" size={12} />
-                  </button>
+          {shownModels.map((model) => {
+            const modelEnabled = !provider.disabledModels.includes(model.id);
+            return (
+              <div className={`modellist__row ${modelEnabled ? "" : "modellist__row--off"}`} key={model.id}>
+                <code className="modellist__id">{model.name}</code>
+                {formatContext(model.contextLength) && (
+                  <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
+                )}
+                <div className="modellist__spacer" />
+                {isCustom && (
                   <button className="icon-btn icon-btn--small" title="Remove" onClick={() => void removeModel(model.id)}>
                     <Icon name="trash" size={12} />
                   </button>
-                </>
-              )}
-            </div>
-          ))}
+                )}
+                <Toggle checked={modelEnabled} onChange={(on) => void toggleModel(model.id, on)} />
+              </div>
+            );
+          })}
           {shownModels.length === 0 && !addingModel && (
             <div className="hint" style={{ padding: "4px 2px" }}>
-              {isCustom ? "No models yet - add the model ids this provider serves." : "Connect to load the live model list."}
+              {isCustom
+                ? "No models yet - fetch the list from the provider or add model ids manually."
+                : "Connect to load the live model list."}
             </div>
           )}
-          {isCustom &&
-            (addingModel ? (
-              <div className="modellist__row modellist__row--form">
-                <input
-                  className="input"
-                  placeholder="model-id"
-                  value={modelId}
-                  autoFocus
-                  onChange={(e) => setModelId(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void addModel();
-                  }}
-                />
-                <select className="select select--small" value={modelCtx} onChange={(e) => setModelCtx(e.target.value)}>
-                  <option value="128000">128K</option>
-                  <option value="200000">200K</option>
-                  <option value="1000000">1M</option>
-                  <option value="2000000">2M</option>
-                </select>
-                <button className="chip chip--small" onClick={() => setAddingModel(false)}>Cancel</button>
-                <button className="chip chip--small chip--active" onClick={() => void addModel()}>Add</button>
-              </div>
-            ) : (
-              <button className="providers__add" onClick={() => setAddingModel(true)}>
-                <Icon name="plus" size={13} />
-                Add model
-              </button>
-            ))}
+          {isCustom && (
+            <>
+              {addingModel ? (
+                <div className="modellist__row modellist__row--form">
+                  <input
+                    className="input"
+                    placeholder="model-id"
+                    value={modelId}
+                    autoFocus
+                    onChange={(e) => setModelId(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void addModel();
+                    }}
+                  />
+                  <select className="select select--small" value={modelCtx} onChange={(e) => setModelCtx(e.target.value)}>
+                    <option value="128000">128K</option>
+                    <option value="200000">200K</option>
+                    <option value="1000000">1M</option>
+                    <option value="2000000">2M</option>
+                  </select>
+                  <button className="chip chip--small" onClick={() => setAddingModel(false)}>Cancel</button>
+                  <button className="chip chip--small chip--active" onClick={() => void addModel()}>Add</button>
+                </div>
+              ) : (
+                <div className="modellist__actions">
+                  <button className="providers__add" disabled={fetchingModels} onClick={() => void fetchModels()}>
+                    <Icon name="refresh" size={13} />
+                    {fetchingModels ? "Fetching..." : "Fetch models"}
+                  </button>
+                  <button className="providers__add" onClick={() => setAddingModel(true)}>
+                    <Icon name="plus" size={13} />
+                    Add model
+                  </button>
+                </div>
+              )}
+              {fetchMessage && (
+                <div className={fetchMessage.startsWith("Fetch failed") ? "hint hint--bad" : "hint hint--ok"}>
+                  {fetchMessage}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>

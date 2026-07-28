@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { PageHeader } from "./controls.js";
-import type { UsageStats } from "../../../shared/types.js";
+import type { AccountUsage, UsageStats } from "../../../shared/types.js";
 
 const CHART_COLORS = ["#4f7cff", "#3fb950", "#a371f7", "#d29922", "#ff7b72", "#39c5cf"];
 
@@ -16,9 +16,11 @@ function dayKey(d: Date): string {
 
 interface Props {
   stats: UsageStats | null;
+  /** Server-side Openference account usage; null when signed out or unavailable. */
+  account: AccountUsage | null;
 }
 
-export function UsageStatsPage({ stats }: Props) {
+export function UsageStatsPage({ stats, account }: Props) {
   const [rangeDays, setRangeDays] = useState(30);
 
   const windowDays = useMemo(() => {
@@ -49,6 +51,36 @@ export function UsageStatsPage({ stats }: Props) {
       <PageHeader title="Usage stats">
         <span className="badge badge--muted">App usage</span>
       </PageHeader>
+
+      {account && (
+        <div className="usage-card">
+          <div className="usage-card__title">
+            Openference account
+            {account.planName && <span className="badge badge--muted">{account.planName}</span>}
+          </div>
+          <div className="stat-grid">
+            <StatCard label="Requests today" value={fmt(account.todayRequests)} />
+            <StatCard
+              label="Requests this week"
+              value={fmt(account.weekRequests)}
+              note={account.requestsPerWeek ? `of ${fmt(account.requestsPerWeek)}` : undefined}
+            />
+            <StatCard
+              label="Tokens this week"
+              value={fmt(account.weekTokens)}
+              note={account.tokensPerWeek ? `of ${fmt(account.tokensPerWeek)}` : undefined}
+            />
+            <StatCard label="All-time requests" value={fmt(account.totalRequests)} />
+            <StatCard label="All-time tokens" value={fmt(account.totalTokens)} />
+            {account.creditsUsd !== null && <StatCard label="Credits" value={`$${account.creditsUsd.toFixed(2)}`} />}
+          </div>
+          {account.weeklyResetAt && (
+            <div className="hint usage-card__foot">
+              Weekly quota resets {new Date(account.weeklyResetAt).toLocaleString()}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="usage-range">
         <span className="hint">Time range</span>
