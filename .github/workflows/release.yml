@@ -5,8 +5,32 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# Assets are attached straight to the draft GitHub Release instead of passing
+# through Actions artifacts: artifact storage is quota-billed (and currently
+# exhausted on this account), while release assets are not metered.
+
 jobs:
+  # Create the draft release up front so the build jobs can attach their
+  # assets concurrently without racing to create it.
+  create-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+
   build:
+    # Tag pushes attach installers to the draft; workflow_dispatch runs are
+    # smoke builds (create-release is skipped, and so is the upload step).
+    needs: create-release
+    if: ${{ !failure() && !cancelled() }}
+    permissions:
+      contents: write
     strategy:
       # One OS failing must not cancel the others.
       fail-fast: false
@@ -63,12 +87,12 @@ jobs:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
 
-      - name: Upload installers
-        uses: actions/upload-artifact@v4
+      - name: Attach installers to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: deyin-${{ matrix.name }}
-          if-no-files-found: ignore
-          path: |
+          draft: true
+          files: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
@@ -80,6 +104,10 @@ jobs:
   # (no native modules in the CLI, so cross-compilation is safe). Asset names match
   # what `deyin upgrade` and scripts/install.sh expect: deyin-<os>-<arch>[.exe].
   cli:
+    needs: create-release
+    if: ${{ !failure() && !cancelled() }}
+    permissions:
+      contents: write
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
@@ -112,11 +140,12 @@ jobs:
       - name: Smoke test host binary
         run: apps/cli/dist-bin/deyin-linux-x64 --version
 
-      - name: Upload CLI binaries
-        uses: actions/upload-artifact@v4
+      - name: Attach CLI binaries to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
         with:
-          name: deyin-cli
-          path: apps/cli/dist-bin/*
+          draft: true
+          files: apps/cli/dist-bin/*
 
   # Publish the CLI (and the workspace packages it depends on) to npm with provenance
   # attestations. pnpm rewrites workspace:* ranges to real versions at pack time.
@@ -156,25 +185,3 @@ jobs:
           --filter @deyin/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # Attach every platform's installers + CLI binaries to the GitHub Release for the
-  # tag, so there are stable download URLs (electron-updater feed, `deyin upgrade`,
-  # and the curl install script all point here). Runs after all builds pass.
-  release:
-    needs: [build, cli]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [self-hosted, Linux, X64]
-    permissions:
-      contents: write
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: installers
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: installers/**/*
-          draft: true
-          generate_release_notes: true
