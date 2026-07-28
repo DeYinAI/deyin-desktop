@@ -46,8 +46,8 @@ test("stores persist through Storage and keep provider keys ciphered", () => {
   try {
     const storage = new FileStorage(dir);
     const settings = new SettingsStore(storage);
-    settings.set({ fontSize: 19 });
-    assert.equal(new SettingsStore(storage).get().fontSize, 19);
+    settings.set({ fontSize: 17 });
+    assert.equal(new SettingsStore(storage).get().fontSize, 17);
 
     const agents = new AgentsStore(storage);
     agents.setKey("openference", "sk-test-123");

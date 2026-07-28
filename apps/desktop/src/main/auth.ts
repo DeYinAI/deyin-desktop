@@ -105,7 +105,10 @@ export class AuthManager {
     if (!(await this.client.isAuthenticated())) return null;
     try {
       return await this.client.getAccessToken();
-    } catch {
+    } catch (err) {
+      // Swallowing refresh errors here makes an expired session indistinguishable
+      // from "signed out" upstream; log so the failure stays diagnosable.
+      console.error("[deyin auth] access-token refresh failed:", err);
       return null;
     }
   }

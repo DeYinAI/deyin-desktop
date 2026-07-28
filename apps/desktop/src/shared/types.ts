@@ -16,8 +16,21 @@ export type {
   EnvInfo,
   ApprovalMode,
   DeyinSettings,
+  OnboardProgress,
   CapabilityKind,
   CapabilityItem,
+  McpTransport,
+  McpServerEntry,
+  McpServerInput,
+  McpTestResult,
+  PluginInfo,
+  PluginCatalogEntry,
+  IndexStatus,
+  IndexSearchHit,
+  AgentTodoItem,
+  AgentUiEvent,
+  AgentEventEnvelope,
+  AgentStartOptions,
   ProviderModel,
   ProviderApiFormat,
   ProviderInfo,
@@ -28,4 +41,33 @@ export type {
   UsageDay,
   UsageStats,
   AccountUsage,
+  ServerIdentity,
+  IdentityInfo,
+  IdentitySyncResult,
+  DiagnosticsPayload,
+  DiagnosticsResult,
+  ThreadEvent,
+  Thread,
+  Project,
+  ProjectsState,
 } from "@deyin/host-core/shared";
+
+/** Desktop-only: lifecycle state of the in-app updater (main -> renderer). */
+export type UpdateStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error"
+  | "unsupported";
+
+export interface UpdatesState {
+  status: UpdateStatus;
+  currentVersion: string;
+  availableVersion?: string;
+  /** 0-100 while status is "downloading". */
+  progressPercent?: number;
+  error?: string;
+}

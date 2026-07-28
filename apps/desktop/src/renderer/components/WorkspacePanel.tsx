@@ -17,6 +17,8 @@ interface WorkspacePanelProps {
   planMarkdown: string;
   diff: FileDiff | null;
   browserUrl: string;
+  /** Per-workspace persistent session partition (cookies survive restarts). */
+  browserPartition: string | null;
   codeDisplay: CodeDisplaySettings;
   browserControlEnabled: boolean;
   onSelectTab: (tab: PanelTab) => void;
@@ -52,6 +54,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <BrowserTab
           platform={props.platform}
           url={props.browserUrl}
+          partition={props.browserPartition}
           controlEnabled={props.browserControlEnabled}
           onNavigate={props.onNavigate}
           onOpenBrowserSettings={props.onOpenBrowserSettings}
@@ -169,12 +172,14 @@ function DiffTab({
 function BrowserTab({
   platform,
   url,
+  partition,
   controlEnabled,
   onNavigate,
   onOpenBrowserSettings,
 }: {
   platform: "desktop" | "web";
   url: string;
+  partition: string | null;
   controlEnabled: boolean;
   onNavigate: (url: string) => void;
   onOpenBrowserSettings?: () => void;
@@ -216,9 +221,13 @@ function BrowserTab({
         {url ? (
           platform === "desktop" ? (
             // Electron's webview tag is absent from DOM typings; create it untyped.
+            // key remounts the view when the partition changes (Electron forbids
+            // changing the partition of a live webview).
             createElement("webview", {
+              key: partition ?? "default",
               src: url,
               style: { width: "100%", height: "100%" },
+              ...(partition ? { partition } : {}),
               ref: registerControlledWebview,
             })
           ) : (
@@ -232,52 +241,34 @@ function BrowserTab({
   );
 }
 
-/* Browser control: a minimal client-side automation surface over the active webview.
- * Exposed on window.deyinBrowser so agent tooling (and the console) can drive the tab
- * when the Browser control setting is enabled. */
+/* Browser control: the workspace <webview> registers with the main process,
+ * where the agent's browser_* tools drive it over CDP (navigate, click, type,
+ * screenshot, console/network logs). */
 
 interface ControlledWebview extends HTMLElement {
-  loadURL?(url: string): Promise<void>;
-  executeJavaScript?(code: string): Promise<unknown>;
-  capturePage?(): Promise<{ toDataURL(): string }>;
-  getURL?(): string;
+  getWebContentsId?(): number;
 }
 
-let activeWebview: ControlledWebview | null = null;
+let registeredWebview: ControlledWebview | null = null;
 
 function registerControlledWebview(el: unknown): void {
-  activeWebview = (el as ControlledWebview) ?? null;
-  publishBrowserControl();
-}
-
-function publishBrowserControl(): void {
-  const w = window as unknown as { deyinBrowser?: unknown; deyin?: { settings: { get(): Promise<{ browserControlEnabled: boolean }> } } };
-  w.deyinBrowser = {
-    async navigate(target: string): Promise<void> {
-      await assertControlEnabled();
-      if (!activeWebview?.loadURL) throw new Error("No controllable browser tab.");
-      await activeWebview.loadURL(target);
-    },
-    async execute(code: string): Promise<unknown> {
-      await assertControlEnabled();
-      if (!activeWebview?.executeJavaScript) throw new Error("No controllable browser tab.");
-      return activeWebview.executeJavaScript(code);
-    },
-    async screenshot(): Promise<string> {
-      await assertControlEnabled();
-      if (!activeWebview?.capturePage) throw new Error("No controllable browser tab.");
-      const image = await activeWebview.capturePage();
-      return image.toDataURL();
-    },
-    currentUrl(): string | null {
-      return activeWebview?.getURL?.() ?? null;
-    },
-  };
-}
-
-async function assertControlEnabled(): Promise<void> {
-  const settings = await window.deyin.settings.get();
-  if (!settings.browserControlEnabled) {
-    throw new Error("Browser control is disabled. Enable it in Settings → Browser.");
+  const view = (el as ControlledWebview) ?? null;
+  if (!view) {
+    // Unmounting: tell main the target is gone.
+    registeredWebview = null;
+    window.deyin.browserControl?.register(null);
+    return;
   }
+  if (view === registeredWebview) return;
+  registeredWebview = view;
+  const announce = () => {
+    try {
+      const id = view.getWebContentsId?.();
+      if (typeof id === "number") window.deyin.browserControl?.register(id);
+    } catch {
+      // Webview not attached yet; the dom-ready listener retries.
+    }
+  };
+  view.addEventListener("dom-ready", announce);
+  announce();
 }

@@ -15,13 +15,17 @@ interface TerminalSession {
 interface TerminalPanelProps {
   cwd: string | null;
   env: EnvInfo | null;
+  /** Persisted default shell id (Settings → Terminal); null = host default. */
+  defaultShell: string | null;
+  fontSize: number;
+  scrollback: number;
   onClose: () => void;
 }
 
 let sessionCounter = 0;
 
 /** Bottom-docked terminal: tabbed PTY sessions with a shell picker (incl. WSL2). */
-export function TerminalPanel({ cwd, env, onClose }: TerminalPanelProps) {
+export function TerminalPanel({ cwd, env, defaultShell, fontSize, scrollback, onClose }: TerminalPanelProps) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -38,9 +42,13 @@ export function TerminalPanel({ cwd, env, onClose }: TerminalPanelProps) {
     setPickerOpen(false);
   };
 
-  // Open the default shell on first mount.
+  // Open the configured default shell on first mount (falls back to the host default).
   useEffect(() => {
-    if (sessions.length === 0) addSession(undefined, shellLabel(env, env?.defaultShell));
+    if (sessions.length === 0) {
+      const preferred =
+        defaultShell && env?.shells.some((s) => s.id === defaultShell) ? defaultShell : undefined;
+      addSession(preferred, shellLabel(env, preferred ?? env?.defaultShell));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -82,7 +90,7 @@ export function TerminalPanel({ cwd, env, onClose }: TerminalPanelProps) {
             <Icon name="plus" size={13} />
           </button>
           {pickerOpen && (
-            <div className="menu__panel">
+            <div className="menu__panel menu__panel--up termpicker">
               {(env?.shells ?? []).map((shell) => (
                 <button key={shell.id} className="menu__item" onClick={() => addSession(shell.id, shell.label)}>
                   <Icon name="terminal" size={13} />
@@ -103,7 +111,14 @@ export function TerminalPanel({ cwd, env, onClose }: TerminalPanelProps) {
 
       <div className="terminal-panel__body">
         {sessions.map((session) => (
-          <TerminalInstance key={session.key} visible={session.key === activeKey} cwd={cwd} shellId={session.shellId} />
+          <TerminalInstance
+            key={session.key}
+            visible={session.key === activeKey}
+            cwd={cwd}
+            shellId={session.shellId}
+            fontSize={fontSize}
+            scrollback={scrollback}
+          />
         ))}
       </div>
     </div>
@@ -116,9 +131,22 @@ function shellLabel(env: EnvInfo | null, shellId?: string): string | undefined {
   return env.shells.find((s) => s.id === id)?.label;
 }
 
-function TerminalInstance({ visible, cwd, shellId }: { visible: boolean; cwd: string | null; shellId?: string }) {
+function TerminalInstance({
+  visible,
+  cwd,
+  shellId,
+  fontSize,
+  scrollback,
+}: {
+  visible: boolean;
+  cwd: string | null;
+  shellId?: string;
+  fontSize: number;
+  scrollback: number;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<(() => void) | null>(null);
+  const termRef = useRef<Terminal | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -127,10 +155,12 @@ function TerminalInstance({ visible, cwd, shellId }: { visible: boolean; cwd: st
 
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
-      fontSize: 12,
+      fontSize,
+      scrollback,
       cursorBlink: true,
       theme: { background: "#05070a", foreground: colors.text, cursor: colors.accent },
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -207,6 +237,15 @@ function TerminalInstance({ visible, cwd, shellId }: { visible: boolean; cwd: st
   useEffect(() => {
     if (visible) fitRef.current?.();
   }, [visible]);
+
+  // Apply settings changes to live sessions without restarting the shell.
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = fontSize;
+    term.options.scrollback = scrollback;
+    fitRef.current?.();
+  }, [fontSize, scrollback]);
 
   if (error) {
     return visible ? <div className="terminal-host hint">Terminal unavailable: {error}</div> : null;

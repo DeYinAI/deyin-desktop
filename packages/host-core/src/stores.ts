@@ -1,9 +1,14 @@
-import { DEFAULT_CAPABILITIES, DEFAULT_PROVIDERS, DEFAULT_SETTINGS, type StoredProviderBase } from "./defaults.js";
+import { fetchAccountUsage } from "./account.js";
+import { DEFAULT_CAPABILITIES, DEFAULT_PROVIDERS, SETTINGS_SCHEMA_VERSION, migrateSettings, type StoredProviderBase } from "./defaults.js";
+import { listModels, type TokenSource } from "./models.js";
 import type { Storage } from "./storage.js";
 import type {
+  AccountUsage,
   CapabilityItem,
   CapabilityKind,
   DeyinSettings,
+  ModelInfo,
+  ProjectsState,
   ProviderInfo,
   ProviderPatch,
   ProviderTestResult,
@@ -13,12 +18,19 @@ import type {
 } from "./types.js";
 import { applyEvent, computeStats } from "./usage.js";
 
-/** File-backed user settings at <storage.dir>/settings.json. */
+/** File-backed user settings at <storage.dir>/settings.json, migrated on load. */
 export class SettingsStore {
   private cache: DeyinSettings;
 
   constructor(private readonly storage: Storage) {
-    this.cache = storage.readJson("settings.json", DEFAULT_SETTINGS);
+    // Empty fallback: the merge must not inject schemaVersion before we can
+    // tell whether the on-disk file predates the current schema.
+    const raw = storage.readJson<Partial<DeyinSettings>>("settings.json", {});
+    this.cache = migrateSettings(raw);
+    // Persist upgrades so older builds never see half-migrated files again.
+    if (raw.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
+      this.storage.writeJson("settings.json", this.cache);
+    }
   }
 
   get(): DeyinSettings {
@@ -26,7 +38,7 @@ export class SettingsStore {
   }
 
   set(patch: Partial<DeyinSettings>): DeyinSettings {
-    this.cache = { ...this.cache, ...patch };
+    this.cache = migrateSettings({ ...this.cache, ...patch });
     this.storage.writeJson("settings.json", this.cache);
     return this.cache;
   }
@@ -39,17 +51,22 @@ interface StoredProvider extends StoredProviderBase {
 }
 
 interface AgentsState {
-  caps: CapabilityItem[];
+  /** Legacy full capability records; migrated into disabledCaps on load. */
+  caps?: CapabilityItem[];
+  /** Capability ids the user switched off (live registry entries default to on). */
+  disabledCaps: string[];
   providers: StoredProvider[];
+  /** Encrypted plugin variable values: plugin name -> variable -> cipher text. */
+  pluginSecrets?: Record<string, Record<string, string>>;
 }
 
-/** File-backed registry for capabilities and model providers at <storage.dir>/agents.json. */
+/** File-backed registry for capability toggles and model providers at <storage.dir>/agents.json. */
 export class AgentsStore {
   private state: AgentsState;
 
   constructor(private readonly storage: Storage) {
     this.state = storage.readJson<AgentsState>("agents.json", {
-      caps: DEFAULT_CAPABILITIES,
+      disabledCaps: [],
       providers: DEFAULT_PROVIDERS,
     });
     this.normalize();
@@ -57,9 +74,17 @@ export class AgentsStore {
 
   /** New built-ins appear after updates; old records gain newly added fields. */
   private normalize(): void {
-    const known = new Set(this.state.caps.map((c) => c.id));
-    for (const cap of DEFAULT_CAPABILITIES) {
-      if (!known.has(cap.id)) this.state.caps.push(cap);
+    // Legacy agents.json stored full capability records; only the off-switches
+    // carry user intent, so fold them into disabledCaps and drop the seed data.
+    this.state.disabledCaps = this.state.disabledCaps ?? [];
+    if (this.state.caps) {
+      for (const cap of this.state.caps) {
+        if (!cap.enabled && !this.state.disabledCaps.includes(cap.id)) {
+          this.state.disabledCaps.push(cap.id);
+        }
+      }
+      delete this.state.caps;
+      this.persist();
     }
     this.state.providers = this.state.providers.map((p) => ({
       ...p,
@@ -76,17 +101,57 @@ export class AgentsStore {
     this.storage.writeJson("agents.json", this.state);
   }
 
+  /** Capability ids the user switched off. */
+  disabledCaps(): Set<string> {
+    return new Set(this.state.disabledCaps);
+  }
+
+  setCapEnabled(id: string, enabled: boolean): void {
+    const disabled = new Set(this.state.disabledCaps);
+    if (enabled) disabled.delete(id);
+    else disabled.add(id);
+    this.state.disabledCaps = [...disabled];
+    this.persist();
+  }
+
+  /** Legacy shim: static seed registry filtered by the disabled set. The desktop
+   *  host overrides this with the live filesystem registry. */
   listCaps(kind?: CapabilityKind): CapabilityItem[] {
-    return kind ? this.state.caps.filter((c) => c.kind === kind) : this.state.caps;
+    const disabled = this.disabledCaps();
+    const all = DEFAULT_CAPABILITIES.map((c) => ({ ...c, enabled: !disabled.has(c.id) && c.enabled }));
+    return kind ? all.filter((c) => c.kind === kind) : all;
   }
 
   toggleCap(id: string, enabled: boolean): CapabilityItem[] {
-    const cap = this.state.caps.find((c) => c.id === id);
-    if (cap) {
-      cap.enabled = enabled;
+    this.setCapEnabled(id, enabled);
+    return this.listCaps();
+  }
+
+  /* Plugin secrets ---------------------------------------------------------- */
+
+  setPluginSecret(plugin: string, name: string, value: string): void {
+    const secrets = (this.state.pluginSecrets ??= {});
+    const bag = (secrets[plugin] ??= {});
+    if (value) bag[name] = this.storage.cipher.encrypt(value);
+    else delete bag[name];
+    this.persist();
+  }
+
+  getPluginSecrets(plugin: string): Record<string, string> {
+    const bag = this.state.pluginSecrets?.[plugin] ?? {};
+    const out: Record<string, string> = {};
+    for (const [name, cipherText] of Object.entries(bag)) {
+      const plain = this.storage.cipher.decrypt(cipherText);
+      if (plain !== null) out[name] = plain;
+    }
+    return out;
+  }
+
+  removePluginSecrets(plugin: string): void {
+    if (this.state.pluginSecrets?.[plugin]) {
+      delete this.state.pluginSecrets[plugin];
       this.persist();
     }
-    return this.state.caps;
   }
 
   private toInfo(p: StoredProvider, connected: boolean): ProviderInfo {
@@ -152,6 +217,17 @@ export class AgentsStore {
     return cipherText ? this.storage.cipher.decrypt(cipherText) : null;
   }
 
+  /** Count of stored secret values (provider keys + plugin variables); the
+   *  values themselves are never enumerated. Shown by the Identity page. */
+  secretCount(): number {
+    const providerKeys = this.state.providers.filter((p) => Boolean(p.keyCipher)).length;
+    const pluginVars = Object.values(this.state.pluginSecrets ?? {}).reduce(
+      (sum, bag) => sum + Object.keys(bag).length,
+      0,
+    );
+    return providerKeys + pluginVars;
+  }
+
   /** Fetch the provider's /models catalog and persist it as the provider's model list. */
   async fetchModels(id: string): Promise<ProviderTestResult> {
     const provider = this.state.providers.find((p) => p.id === id);
@@ -175,6 +251,7 @@ export class AgentsStore {
         }));
       if (models.length > 0) {
         provider.models = models;
+        provider.modelsFetchedAt = Date.now();
         this.persist();
       }
       return { ok: true, status: res.status, modelCount: models.length };
@@ -217,5 +294,138 @@ export class UsageStore {
 
   stats(): UsageStats {
     return computeStats(this.days);
+  }
+}
+
+/* Server-side caches ---------------------------------------------------------
+ * Both caches persist to disk so restarts stay warm, serve stale data instantly
+ * and refresh in the background (stale-while-revalidate). */
+
+const ACCOUNT_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const MODELS_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+
+interface AccountCacheFile {
+  account: AccountUsage | null;
+  fetchedAt: number;
+}
+
+/** Cached Openference account snapshot (plan, limits, credits, usage) at account-cache.json. */
+export class AccountCache {
+  private state: AccountCacheFile;
+  private inflight: Promise<AccountUsage | null> | null = null;
+
+  constructor(
+    private readonly storage: Storage,
+    private readonly config: { oauthIssuer: string },
+    private readonly getToken: TokenSource,
+  ) {
+    this.state = storage.readJson<AccountCacheFile>("account-cache.json", { account: null, fetchedAt: 0 });
+  }
+
+  /** Cached snapshot; fetches when stale (or `force`), deduplicating concurrent calls. */
+  async get(force = false): Promise<AccountUsage | null> {
+    const fresh = Date.now() - this.state.fetchedAt < ACCOUNT_TTL_MS;
+    if (!force && fresh) return this.state.account;
+    if (this.inflight) return this.inflight;
+    this.inflight = fetchAccountUsage(this.config, this.getToken)
+      .then((account) => {
+        // Keep the last good snapshot when the endpoint is temporarily unreachable.
+        if (account !== null || !fresh) {
+          this.state = { account, fetchedAt: Date.now() };
+          this.storage.writeJson("account-cache.json", this.state);
+        }
+        return this.state.account;
+      })
+      .finally(() => {
+        this.inflight = null;
+      });
+    return this.inflight;
+  }
+
+  /** Cached plan name without hitting the network. */
+  planName(): string | null {
+    return this.state.account?.planName ?? null;
+  }
+
+  /** Drop the snapshot (sign-in/out changes the account behind it). */
+  invalidate(): void {
+    this.state = { account: null, fetchedAt: 0 };
+    this.storage.writeJson("account-cache.json", this.state);
+  }
+}
+
+interface ModelsCacheFile {
+  models: ModelInfo[];
+  fetchedAt: number;
+}
+
+/** One-week cache of the primary provider's /models catalog at models-cache.json. */
+export class ModelsCache {
+  private state: ModelsCacheFile;
+  private inflight: Promise<ModelInfo[]> | null = null;
+
+  constructor(
+    private readonly storage: Storage,
+    private readonly config: { apiBaseUrl: string },
+    private readonly getToken: TokenSource,
+  ) {
+    this.state = storage.readJson<ModelsCacheFile>("models-cache.json", { models: [], fetchedAt: 0 });
+  }
+
+  async get(force = false): Promise<ModelInfo[]> {
+    const fresh = this.state.models.length > 0 && Date.now() - this.state.fetchedAt < MODELS_TTL_MS;
+    if (!force && fresh) return this.state.models;
+    if (this.inflight) return this.inflight;
+    this.inflight = listModels(this.config, this.getToken)
+      .then((models) => {
+        if (models.length > 0) {
+          this.state = { models, fetchedAt: Date.now() };
+          this.storage.writeJson("models-cache.json", this.state);
+        }
+        return this.state.models.length > 0 ? this.state.models : models;
+      })
+      .finally(() => {
+        this.inflight = null;
+      });
+    return this.inflight;
+  }
+
+  fetchedAt(): number {
+    return this.state.fetchedAt;
+  }
+
+  invalidate(): void {
+    this.state = { models: [], fetchedAt: 0 };
+    this.storage.writeJson("models-cache.json", this.state);
+  }
+}
+
+const DEFAULT_PROJECTS_STATE: ProjectsState = {
+  projects: [],
+  activeProjectId: null,
+  activeThreadId: null,
+  workspaceRoot: null,
+};
+
+/**
+ * File-backed project/session state at <storage.dir>/projects.json. Patches merge
+ * shallowly: the renderer owns projects + active ids, the host owns workspaceRoot,
+ * so neither side can clobber the other's fields.
+ */
+export class ProjectsStore {
+  private state: ProjectsState;
+
+  constructor(private readonly storage: Storage) {
+    this.state = storage.readJson<ProjectsState>("projects.json", DEFAULT_PROJECTS_STATE);
+  }
+
+  get(): ProjectsState {
+    return this.state;
+  }
+
+  set(patch: Partial<ProjectsState>): ProjectsState {
+    this.state = { ...this.state, ...patch };
+    this.storage.writeJson("projects.json", this.state);
+    return this.state;
   }
 }

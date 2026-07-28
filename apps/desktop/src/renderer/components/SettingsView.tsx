@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
 import { AppearancePage } from "./settings/AppearancePage.js";
 import { BrowserPage } from "./settings/BrowserPage.js";
 import { CapabilityPage } from "./settings/CapabilityPage.js";
 import { GeneralPage } from "./settings/GeneralPage.js";
+import { IdentityPage } from "./settings/IdentityPage.js";
 import { IndexingPage } from "./settings/IndexingPage.js";
+import { McpPage } from "./settings/McpPage.js";
 import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
 import { OnboardPage } from "./settings/OnboardPage.js";
+import { PluginsPage } from "./settings/PluginsPage.js";
+import { TerminalPage } from "./settings/TerminalPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
+import type { MessageKey } from "@deyin/host-core/shared";
 import type {
   AccountUsage,
   CapabilityItem,
@@ -23,6 +29,7 @@ export type SettingsPage =
   | "appearance"
   | "models"
   | "browser"
+  | "terminal"
   | "plugins"
   | "skills"
   | "subagents"
@@ -31,50 +38,55 @@ export type SettingsPage =
   | "hooks"
   | "indexing"
   | "usage"
+  | "identity"
   | "onboard";
 
+/** Pages rendered by the generic CapabilityPage (file-backed registries). */
 const CAPABILITY_PAGES: Partial<Record<SettingsPage, CapabilityKind>> = {
-  plugins: "plugin",
   skills: "skill",
   subagents: "subagent",
-  mcp: "mcp",
   commands: "command",
   hooks: "hook",
 };
 
 interface NavEntry {
   page: SettingsPage;
-  label: string;
+  labelKey: MessageKey;
   icon: IconName;
 }
 
-const NAV: { section: string; entries: NavEntry[] }[] = [
+const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
   {
-    section: "Basics",
+    sectionKey: "settings.section.basics",
     entries: [
-      { page: "general", label: "General", icon: "gear" },
-      { page: "appearance", label: "Appearance", icon: "palette" },
-      { page: "models", label: "Model settings", icon: "cpu" },
-      { page: "browser", label: "Browser", icon: "globe" },
+      { page: "general", labelKey: "settings.nav.general", icon: "gear" },
+      { page: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
+      { page: "models", labelKey: "settings.nav.models", icon: "cpu" },
+      { page: "browser", labelKey: "settings.nav.browser", icon: "globe" },
+      { page: "terminal", labelKey: "settings.nav.terminal", icon: "terminal" },
     ],
   },
   {
-    section: "Agent capabilities",
+    sectionKey: "settings.section.capabilities",
     entries: [
-      { page: "plugins", label: "Plugins", icon: "grid" },
-      { page: "skills", label: "Skills", icon: "sparkles" },
-      { page: "subagents", label: "Subagents", icon: "user" },
-      { page: "mcp", label: "MCP Servers", icon: "plug" },
-      { page: "commands", label: "Commands", icon: "terminal" },
-      { page: "hooks", label: "Hooks", icon: "anchor" },
+      { page: "plugins", labelKey: "settings.nav.plugins", icon: "grid" },
+      { page: "skills", labelKey: "settings.nav.skills", icon: "sparkles" },
+      { page: "subagents", labelKey: "settings.nav.subagents", icon: "user" },
+      { page: "mcp", labelKey: "settings.nav.mcp", icon: "plug" },
+      { page: "commands", labelKey: "settings.nav.commands", icon: "terminal" },
+      { page: "hooks", labelKey: "settings.nav.hooks", icon: "anchor" },
     ],
   },
   {
-    section: "Data and statistics",
+    sectionKey: "settings.section.data",
     entries: [
-      { page: "indexing", label: "Indexing", icon: "search" },
-      { page: "usage", label: "Usage stats", icon: "chart" },
+      { page: "indexing", labelKey: "settings.nav.indexing", icon: "search" },
+      { page: "usage", labelKey: "settings.nav.usage", icon: "chart" },
     ],
+  },
+  {
+    sectionKey: "settings.section.deyin",
+    entries: [{ page: "identity", labelKey: "settings.nav.identity", icon: "shield" }],
   },
 ];
 
@@ -90,18 +102,23 @@ interface SettingsViewProps {
   onChangeSettings: (patch: Partial<DeyinSettings>) => void;
   onConnect: () => void;
   onBack: () => void;
+  onOpenFolder: () => void;
+  onOpenTerminal: () => void;
+  onRefreshLiveModels?: () => Promise<void>;
 }
 
 /** Full-screen settings: left nav + routed page content. */
 export function SettingsView(props: SettingsViewProps) {
+  const t = useT();
   const [page, setPage] = useState<SettingsPage>(props.initialPage);
   const [caps, setCaps] = useState<CapabilityItem[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const [accountUsage, setAccountUsage] = useState<AccountUsage | null>(null);
+  const [accountRefreshing, setAccountRefreshing] = useState(false);
 
   useEffect(() => {
-    void window.deyin.caps.list().then(setCaps);
+    void window.deyin.caps.list().then(setCaps).catch(() => setCaps([]));
     void window.deyin.providers.list().then(setProviders);
   }, []);
 
@@ -111,6 +128,17 @@ export function SettingsView(props: SettingsViewProps) {
       void window.deyin.usage.account().then(setAccountUsage).catch(() => setAccountUsage(null));
     }
   }, [page]);
+
+  const refreshAccount = useCallback(async () => {
+    setAccountRefreshing(true);
+    try {
+      setAccountUsage(await window.deyin.usage.account(true));
+    } catch {
+      setAccountUsage(null);
+    } finally {
+      setAccountRefreshing(false);
+    }
+  }, []);
 
   const toggleCap = (id: string, enabled: boolean) => {
     void window.deyin.caps.toggle(id, enabled).then(setCaps);
@@ -123,11 +151,11 @@ export function SettingsView(props: SettingsViewProps) {
       <aside className="settings__nav">
         <button className="settings__back" onClick={props.onBack}>
           <Icon name="arrowLeft" size={13} />
-          Back to workspace
+          {t("nav.backToWorkspace")}
         </button>
         {NAV.map((group, i) => (
           <div key={i} className="settings__nav-group">
-            {group.section && <div className="sidebar__section">{group.section}</div>}
+            <div className="sidebar__section">{t(group.sectionKey)}</div>
             {group.entries.map((entry) => (
               <button
                 key={entry.page}
@@ -135,7 +163,7 @@ export function SettingsView(props: SettingsViewProps) {
                 onClick={() => setPage(entry.page)}
               >
                 <Icon name={entry.icon} size={14} />
-                <span>{entry.label}</span>
+                <span>{t(entry.labelKey)}</span>
               </button>
             ))}
           </div>
@@ -145,7 +173,7 @@ export function SettingsView(props: SettingsViewProps) {
           onClick={() => setPage("onboard")}
         >
           <Icon name="play" size={13} />
-          <span>Onboard</span>
+          <span>{t("settings.nav.onboard")}</span>
         </button>
       </aside>
 
@@ -161,15 +189,48 @@ export function SettingsView(props: SettingsViewProps) {
             busy={props.busy}
             onConnect={props.onConnect}
             onProvidersChanged={setProviders}
+            onRefreshLiveModels={props.onRefreshLiveModels ?? (() => Promise.resolve())}
           />
         )}
         {page === "browser" && <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />}
+        {page === "terminal" && <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />}
+        {page === "plugins" && <PluginsPage onToggle={toggleCap} />}
+        {page === "mcp" && <McpPage onToggle={toggleCap} />}
         {capKind && (
           <CapabilityPage kind={capKind} items={caps.filter((c) => c.kind === capKind)} onToggle={toggleCap} />
         )}
-        {page === "indexing" && <IndexingPage workspaceRoot={props.workspaceRoot} />}
-        {page === "usage" && <UsageStatsPage stats={usage} account={accountUsage} />}
-        {page === "onboard" && <OnboardPage user={props.user} busy={props.busy} onConnect={props.onConnect} />}
+        {page === "indexing" && (
+          <IndexingPage workspaceRoot={props.workspaceRoot} settings={props.settings} onChange={props.onChangeSettings} />
+        )}
+        {page === "usage" && (
+          <UsageStatsPage
+            stats={usage}
+            account={accountUsage}
+            signedIn={props.user !== null}
+            onRefreshAccount={() => void refreshAccount()}
+            refreshing={accountRefreshing}
+          />
+        )}
+        {page === "identity" && (
+          <IdentityPage
+            user={props.user}
+            onConnect={props.onConnect}
+            onOpenUsage={() => setPage("usage")}
+            onShowThreads={props.onBack}
+          />
+        )}
+        {page === "onboard" && (
+          <OnboardPage
+            user={props.user}
+            busy={props.busy}
+            settings={props.settings}
+            onConnect={props.onConnect}
+            onOpenFolder={props.onOpenFolder}
+            onOpenTerminal={props.onOpenTerminal}
+            onStartTask={props.onBack}
+            onChange={props.onChangeSettings}
+          />
+        )}
       </div>
     </div>
   );

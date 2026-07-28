@@ -7,7 +7,7 @@
   "homepage": "https://deyin.dev",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/deyin-dev/deyin-desktop.git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
     "directory": "apps/cli"
   },
   "type": "module",

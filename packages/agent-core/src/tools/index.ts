@@ -21,6 +21,8 @@ export { lsTool } from "./ls.js";
 export { websearchTool } from "./websearch.js";
 export { todoTool, renderTodos } from "./todo.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
+export { createTaskTool, type TaskToolOptions, type TaskRunResult } from "./task.js";
+export { createCodebaseSearchTool, type CodebaseSearchHit } from "./codebase-search.js";
 
 export const BUILTIN_TOOLS: ToolDefinition[] = [
   bashTool,

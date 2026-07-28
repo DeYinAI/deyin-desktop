@@ -23,8 +23,14 @@ async function runCommand(command: string, cwd: string, timeoutS: number, signal
   return new Promise((resolvePromise) => {
     // detached on POSIX gives the shell its own process group, so timeouts and
     // cancellation kill the whole tree (e.g. a dev server the command started),
-    // not just the shell itself.
-    const child = spawn(file, args, { cwd, env: process.env, windowsHide: true, detached: posix });
+    // not just the shell itself. DEYIN_AGENT=1 lets dotfiles detect agent shells
+    // (skip heavy prompts/banners), mirroring Cursor's CURSOR_AGENT.
+    const child = spawn(file, args, {
+      cwd,
+      env: { ...process.env, DEYIN_AGENT: "1" },
+      windowsHide: true,
+      detached: posix,
+    });
     let stdout = "";
     let stderr = "";
     let timedOut = false;

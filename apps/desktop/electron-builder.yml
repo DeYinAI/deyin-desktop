@@ -54,6 +54,11 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+# electron-updater reads this at runtime from the embedded app-update.yml, so
+# it must point at a PUBLIC repo: the client fetches releases anonymously.
+# Source stays private in deyin-desktop; installers + latest*.yml manifests are
+# mirrored here by .github/workflows/release.yml.
 publish:
-  provider: generic
-  url: https://cdn.deyin.dev/desktop/releases
+  provider: github
+  owner: DeYinAI
+  repo: deyin-releases

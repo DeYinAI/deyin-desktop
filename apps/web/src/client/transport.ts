@@ -7,6 +7,9 @@ import {
   applyEvent,
   computeStats,
   fetchAccountUsage,
+  redactObject,
+  sendDiagnosticsReport,
+  syncWorkspaceIdentity,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import type { DeyinApi } from "@contract/ipc.js";
@@ -15,6 +18,8 @@ import type {
   CapabilityItem,
   DeyinSettings,
   EnvInfo,
+  PluginCatalogEntry,
+  ProjectsState,
   ProviderInfo,
   ProviderPatch,
   ProviderTestResult,
@@ -261,6 +266,10 @@ export function createBrowserTransport(): DeyinApi {
         const body = (await res.json()) as { data?: { id: string; context_length?: number }[] };
         return (body.data ?? []).map((m) => ({ id: m.id, name: m.id, contextLength: m.context_length }));
       },
+      // The web fetches live every time (no local cache file), so refresh = list.
+      refresh() {
+        return this.list();
+      },
     },
     files: {
       tree: (dir) => host.invoke<FilesTreeResult>((id) => ({ type: "files.tree", id, dir })).then((r) => r.nodes),
@@ -268,6 +277,30 @@ export function createBrowserTransport(): DeyinApi {
     },
     workspace: {
       openFolder: async () => null, // web sessions use the server-provisioned sandbox root
+      setRoot: async () => undefined, // sandbox root is server-owned; nothing to switch
+    },
+    projects: {
+      get: async () =>
+        readLocal<ProjectsState>("deyin.projects", {
+          projects: [],
+          activeProjectId: null,
+          activeThreadId: null,
+          workspaceRoot: null,
+        }),
+      set: async (patch) => {
+        const next = {
+          ...readLocal<ProjectsState>("deyin.projects", {
+            projects: [],
+            activeProjectId: null,
+            activeThreadId: null,
+            workspaceRoot: null,
+          }),
+          ...patch,
+          workspaceRoot: null,
+        };
+        writeLocal("deyin.projects", next);
+        return next;
+      },
     },
     terminal: {
       create: (opts) => host.invoke<TermCreateResult>((id) => ({ type: "term.create", id, opts })).then((r) => r.termId),
@@ -316,6 +349,66 @@ export function createBrowserTransport(): DeyinApi {
         writeLocal("deyin.caps", caps);
         return caps;
       },
+    },
+    /* Execution-backed capabilities are desktop-only; the web surfaces read-only
+     * placeholders so the settings pages render an honest state. */
+    mcp: {
+      list: async () => [],
+      add: async () => {
+        throw new Error("MCP servers are managed in the desktop app.");
+      },
+      remove: async () => [],
+      test: async () => ({ ok: false, message: "MCP servers run in the desktop app." }),
+    },
+    plugins: {
+      list: async () => [],
+      catalog: async () => {
+        try {
+          const res = await fetch("https://raw.githubusercontent.com/DeYinAI/registry/main/registry.json", {
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) return [];
+          const body = (await res.json()) as { plugins?: PluginCatalogEntry[] } | PluginCatalogEntry[];
+          return Array.isArray(body) ? body : (body.plugins ?? []);
+        } catch {
+          return [];
+        }
+      },
+      install: async () => ({ ok: false, message: "Plugin install requires the desktop app." }),
+      uninstall: async () => undefined,
+      setVariable: async () => undefined,
+      variableState: async () => ({}),
+    },
+    index: {
+      status: async () => ({
+        state: "disabled" as const,
+        root: null,
+        files: 0,
+        chunks: 0,
+        lastSync: null,
+        model: "hash-v1",
+        watching: false,
+      }),
+      rebuild: async () => undefined,
+      search: async () => [],
+      onStatus: () => () => undefined,
+    },
+    agent: {
+      // The renderer only uses the agent runtime on the desktop platform.
+      start: async () => undefined,
+      stop: () => undefined,
+      approve: () => undefined,
+      onEvent: () => () => undefined,
+    },
+    browserControl: {
+      register: () => undefined,
+      getPartition: async () => "",
+      clearProfile: async () => undefined,
+      onEnsure: () => () => undefined,
+    },
+    telemetry: {
+      // Web builds do not report telemetry.
+      record: () => undefined,
     },
     providers: {
       list: async () => listProviderInfos(await oauth.isAuthenticated().catch(() => false)),
@@ -464,5 +557,95 @@ export function createBrowserTransport(): DeyinApi {
         config: "localStorage: deyin.settings",
       }),
     },
+    updates: {
+      // Web deploys update on reload; the in-app updater is desktop-only.
+      getState: async () => ({ status: "unsupported" as const, currentVersion: "web" }),
+      check: async () => ({ status: "unsupported" as const, currentVersion: "web" }),
+      download: async () => ({ status: "unsupported" as const, currentVersion: "web" }),
+      install: () => undefined,
+      onState: () => () => undefined,
+    },
+    identity: {
+      get: async () => {
+        const member = (await oauth.isAuthenticated().catch(() => false))
+          ? await oauth.getUser().then(toProfile).catch(() => null)
+          : null;
+        const fingerprintFull = webFingerprint();
+        return {
+          member,
+          plan: member?.plan ?? null,
+          workspaceName: null,
+          workspaceRoot: null,
+          device: location.host,
+          platform: "web",
+          arch: "browser",
+          version: "web",
+          fingerprint: `${fingerprintFull.slice(0, 4)}…${fingerprintFull.slice(-4)}`,
+          fingerprintFull,
+          oauthIssuer: OAUTH_ISSUER,
+          apiBaseUrl: API_BASE,
+          lastSyncedAt: readLocal<string | null>("deyin.identitySyncedAt", null),
+          server: null,
+          localSecrets: Object.keys(readKeys()).length,
+        };
+      },
+      sync: async () => {
+        const syncedAt = await syncWorkspaceIdentity(
+          { oauthIssuer: OAUTH_ISSUER },
+          () => oauth.getAccessToken().catch(() => null),
+          {
+            fingerprint: webFingerprint(),
+            hostname: location.host,
+            platform: "web",
+            arch: "browser",
+            appVersion: "web",
+            workspaceName: null,
+          },
+        );
+        if (syncedAt) writeLocal("deyin.identitySyncedAt", syncedAt);
+        return syncedAt ? { ok: true, syncedAt } : { ok: false, syncedAt: null, message: "Sync failed or signed out." };
+      },
+    },
+    diagnostics: {
+      send: async (note) => {
+        const settings = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS);
+        return sendDiagnosticsReport(
+          { oauthIssuer: OAUTH_ISSUER },
+          () => oauth.getAccessToken().catch(() => null),
+          {
+            reportId: `web-${Date.now().toString(36)}`,
+            createdAt: new Date().toISOString(),
+            appVersion: "web",
+            platform: "web",
+            arch: "browser",
+            fingerprintFull: webFingerprint(),
+            installId: webFingerprint(),
+            env: { platform: "web", arch: "browser", wsl2: false, defaultShell: "bash" },
+            settings: redactObject({ ...settings } as unknown as Record<string, unknown>),
+            logTail: "",
+            ...(note ? { note } : {}),
+          },
+        );
+      },
+    },
+    logs: {
+      // No log file in a browser tab; mirror to the devtools console.
+      write: (level, message) => {
+        if (level === "error") console.error("[deyin]", message);
+        else if (level === "warn") console.warn("[deyin]", message);
+        else console.info("[deyin]", message);
+      },
+    },
   };
+}
+
+/** Stable anonymous id for this browser profile (fingerprint + install id). */
+function webFingerprint(): string {
+  const key = "deyin.webInstallId";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = [...crypto.getRandomValues(new Uint8Array(16))].map((b) => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(key, id);
+  }
+  return id;
 }
