@@ -1,6 +1,6 @@
 {
   "name": "@deyin/branding",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deyin brand assets: logo, icons, and theme tokens.",
   "license": "MIT",
   "type": "module",
