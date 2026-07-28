@@ -1,7 +1,7 @@
 {
   "name": "deyin-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deyin - an original, web-hostable agentic development environment with Openference OAuth.",
   "type": "module",
   "author": "Deyin",
