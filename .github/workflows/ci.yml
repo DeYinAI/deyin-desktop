@@ -7,7 +7,8 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Self-hosted (dell-runner): hosted runners are blocked by the Actions budget.
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
 
