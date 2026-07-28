@@ -2,41 +2,12 @@
  * WebSocket message protocol between the Deyin web client and its host-server.
  * Request/response calls carry a numeric `id`; terminal streams are pushed.
  *
- * The host-facing shapes are defined here (not imported from the desktop contract) so the
- * server compiles in isolation. They are structurally identical to the desktop types, so
- * the browser transport still satisfies the desktop `DeyinApi`.
+ * The host-facing shapes come from @deyin/host-core (the same types the desktop contract
+ * uses), so the browser transport satisfies the desktop `DeyinApi` by construction.
  */
-export interface FileNode {
-  name: string;
-  path: string;
-  type: "file" | "directory";
-  children?: FileNode[];
-}
+import type { EnvInfo, FileNode, TerminalCreateOptions } from "@deyin/host-core/shared";
 
-export interface TerminalCreateOptions {
-  cwd?: string;
-  cols?: number;
-  rows?: number;
-  shell?: string;
-}
-
-export interface ShellInfo {
-  id: string;
-  label: string;
-  path: string;
-  args?: string[];
-  kind: "wsl" | "posix" | "windows";
-}
-
-export interface EnvInfo {
-  platform: string;
-  arch: string;
-  wsl2: boolean;
-  wslDistros: string[];
-  shells: ShellInfo[];
-  defaultShell: string;
-  hostname: string;
-}
+export type { EnvInfo, FileNode, ShellInfo, TerminalCreateOptions } from "@deyin/host-core/shared";
 
 export type ClientMessage =
   | { type: "auth"; token: string }

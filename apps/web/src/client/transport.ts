@@ -1,5 +1,14 @@
 import { OAuthClient, type TokenSet, type TokenStore } from "@deyin/oauth-client";
 import { beginBrowserLogin, completeBrowserLogin } from "@deyin/oauth-client/browser";
+import {
+  DEFAULT_CAPABILITIES,
+  DEFAULT_PROVIDERS,
+  DEFAULT_SETTINGS,
+  applyEvent,
+  computeStats,
+  fetchAccountUsage,
+  type StoredProviderBase,
+} from "@deyin/host-core/shared";
 import type { DeyinApi } from "@contract/ipc.js";
 import type {
   Bootstrap,
@@ -152,7 +161,10 @@ function toProfile(u: { sub: string; email?: string; name?: string; picture?: st
 function readLocal<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? ({ ...fallback, ...(JSON.parse(raw) as T) } as T) : fallback;
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as T;
+    // Spreading an array into an object would corrupt it; only merge plain objects.
+    return Array.isArray(parsed) ? parsed : ({ ...fallback, ...parsed } as T);
   } catch {
     return fallback;
   }
@@ -162,64 +174,10 @@ function writeLocal<T>(key: string, value: T): void {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-const DEFAULT_SETTINGS: DeyinSettings = {
-  theme: "dark",
-  language: "en",
-  fontSize: 14,
-  autoUpdate: true,
-  telemetry: false,
-  browserControlEnabled: true,
-  defaultModel: null,
-  approvalMode: "full-access",
-  thinking: true,
-  codeThemeLight: "GitHub Light",
-  codeThemeDark: "GitHub Dark",
-  showLineNumbers: true,
-  wrapLongLines: false,
-  codeFontSize: 12,
-};
+/* DEFAULT_SETTINGS, DEFAULT_CAPABILITIES and DEFAULT_PROVIDERS come from
+ * @deyin/host-core/shared — the same seed data the desktop stores use. */
 
-const DEFAULT_CAPS: CapabilityItem[] = [
-  { id: "browser-use", kind: "plugin", name: "Browser Use", description: "Let agent sessions open, inspect and control pages in the built-in browser.", enabled: true, version: "0.3.0", source: "built-in" },
-  { id: "git-tools", kind: "plugin", name: "Git Tools", description: "Stage, diff, commit and inspect history from agent runs.", enabled: true, version: "0.2.1", source: "built-in" },
-  { id: "web-search", kind: "plugin", name: "Web Search", description: "Give the agent real-time web lookups through the built-in search engine.", enabled: true, version: "0.2.0", source: "built-in" },
-  { id: "mcp-deyin-search", kind: "mcp", name: "deyin-search", description: "Built-in free web search (DuckDuckGo) exposed to agent sessions as an MCP tool.", enabled: true, source: "built-in · runs locally" },
-  { id: "review-code", kind: "skill", name: "review-code", description: "Structured review pass over a diff: correctness, security, style.", enabled: true, source: "built-in" },
-  { id: "generate-tests", kind: "skill", name: "generate-tests", description: "Write unit tests for the selected file or the latest change set.", enabled: true, source: "built-in" },
-  { id: "refactor", kind: "skill", name: "refactor", description: "Apply a named refactoring across the workspace with a preview diff.", enabled: true, source: "built-in" },
-  { id: "control-browser", kind: "skill", name: "browser-use:control-browser", description: "Drive the built-in browser: navigate, click, type, screenshot.", enabled: true, source: "plugin:browser-use" },
-  { id: "explorer", kind: "subagent", name: "Explorer", description: "Fast codebase exploration: find files, symbols and call sites.", enabled: true, source: "built-in" },
-  { id: "reviewer", kind: "subagent", name: "Reviewer", description: "Independent second pass that critiques the main agent's changes.", enabled: true, source: "built-in" },
-  { id: "test-runner", kind: "subagent", name: "Test Runner", description: "Runs the test suite and reports failures back to the main agent.", enabled: false, source: "built-in" },
-  { id: "mcp-filesystem", kind: "mcp", name: "filesystem", description: "Filesystem MCP server scoped to the current workspace.", enabled: true, source: "npx @modelcontextprotocol/server-filesystem" },
-  { id: "mcp-github", kind: "mcp", name: "github", description: "GitHub MCP server for issues, PRs and repository metadata.", enabled: false, source: "npx @modelcontextprotocol/server-github" },
-  { id: "cmd-commit", kind: "command", name: "/commit", description: "Stage everything and write a conventional commit message.", enabled: true, source: "built-in" },
-  { id: "cmd-explain", kind: "command", name: "/explain", description: "Explain the selected code or the last terminal error.", enabled: true, source: "built-in" },
-  { id: "cmd-fix", kind: "command", name: "/fix", description: "Propose and apply a fix for the current diagnostics.", enabled: true, source: "built-in" },
-  { id: "hook-session-start", kind: "hook", name: "session-start", description: "Runs when a new agent session begins (loads workspace context).", enabled: true, source: "built-in" },
-  { id: "hook-post-edit", kind: "hook", name: "post-edit", description: "Runs the linter after every file edit the agent makes.", enabled: false, source: "built-in" },
-];
-
-type StoredProvider = Omit<ProviderInfo, "status" | "hasKey">;
-
-const DEFAULT_PROVIDERS: StoredProvider[] = [
-  {
-    id: "openference",
-    name: "Openference",
-    kind: "primary",
-    enabled: true,
-    baseUrl: "https://api.openference.com/v1",
-    apiFormat: "chat-completions",
-    connectionModes: ["Individual plan", "Team plan", "API key"],
-    activeMode: "Individual plan",
-    quotaNote: "+50% quota",
-    plans: [
-      { id: "starter", name: "Starter plan", headline: "5 million tokens per day", detail: "Daily quota · GLM-5.2 · Kimi K2.7 · DeepSeek V4", tone: "green" },
-      { id: "pro", name: "For individuals", headline: "US$18.00+", detail: "For individual developers with a dedicated coding-plan quota.", tone: "blue" },
-    ],
-    models: [],
-  },
-];
+type StoredProvider = StoredProviderBase;
 
 function readProviders(): StoredProvider[] {
   return readLocal<StoredProvider[]>("deyin.providers", DEFAULT_PROVIDERS).map((p) => ({
@@ -227,7 +185,7 @@ function readProviders(): StoredProvider[] {
     enabled: p.enabled ?? true,
     apiFormat: p.apiFormat ?? "chat-completions",
     models: p.models ?? [],
-    plans: p.plans ?? [],
+    disabledModels: p.disabledModels ?? [],
     connectionModes: p.connectionModes ?? ["API key"],
     activeMode: p.activeMode ?? "API key",
   }));
@@ -253,56 +211,8 @@ async function listProviderInfos(connected: boolean): Promise<ProviderInfo[]> {
   }));
 }
 
-function computeUsageStats(days: UsageDay[]) {
-  const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
-  const byModel = new Map<string, number>();
-  let totalTokens = 0;
-  let messages = 0;
-  let sessions = 0;
-  for (const day of sorted) {
-    messages += day.messages;
-    sessions += day.sessions;
-    for (const [model, tokens] of Object.entries(day.byModel)) {
-      totalTokens += tokens;
-      byModel.set(model, (byModel.get(model) ?? 0) + tokens);
-    }
-  }
-  let favorite: { id: string; share: number } | null = null;
-  for (const [id, tokens] of byModel) {
-    if (!favorite || tokens > (byModel.get(favorite.id) ?? 0)) {
-      favorite = { id, share: totalTokens > 0 ? Math.round((tokens / totalTokens) * 100) : 0 };
-    }
-  }
-  const active = new Set(sorted.filter((d) => d.messages > 0).map((d) => d.date));
-  let streak = 0;
-  const cursor = new Date();
-  if (!active.has(cursor.toISOString().slice(0, 10))) cursor.setDate(cursor.getDate() - 1);
-  while (active.has(cursor.toISOString().slice(0, 10))) {
-    streak += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return {
-    totalTokens,
-    sessions,
-    messages,
-    activeDays: active.size,
-    currentStreak: streak,
-    favoriteModel: favorite,
-    days: sorted,
-  };
-}
-
 function recordUsage(event: UsageEvent): void {
-  const days = readLocal<UsageDay[]>("deyin.usage", []);
-  const key = new Date().toISOString().slice(0, 10);
-  let day = days.find((d) => d.date === key);
-  if (!day) {
-    day = { date: key, byModel: {}, messages: 0, sessions: 0 };
-    days.push(day);
-  }
-  day.byModel[event.model] = (day.byModel[event.model] ?? 0) + Math.max(0, Math.round(event.tokens));
-  day.messages += 1;
-  if (event.newSession) day.sessions += 1;
+  const days = applyEvent(readLocal<UsageDay[]>("deyin.usage", []), event);
   writeLocal("deyin.usage", days);
 }
 
@@ -396,11 +306,11 @@ export function createBrowserTransport(): DeyinApi {
     },
     caps: {
       list: async (kind) => {
-        const caps = readLocal<CapabilityItem[]>("deyin.caps", DEFAULT_CAPS);
+        const caps = readLocal<CapabilityItem[]>("deyin.caps", DEFAULT_CAPABILITIES);
         return kind ? caps.filter((c) => c.kind === kind) : caps;
       },
       toggle: async (id, enabled) => {
-        const caps = readLocal<CapabilityItem[]>("deyin.caps", DEFAULT_CAPS);
+        const caps = readLocal<CapabilityItem[]>("deyin.caps", DEFAULT_CAPABILITIES);
         const cap = caps.find((c) => c.id === id);
         if (cap) cap.enabled = enabled;
         writeLocal("deyin.caps", caps);
@@ -422,8 +332,8 @@ export function createBrowserTransport(): DeyinApi {
             apiFormat: "chat-completions",
             connectionModes: ["API key"],
             activeMode: "API key",
-            plans: [],
             models: [],
+            disabledModels: [],
           });
           writeLocal("deyin.providers", providers);
         }
@@ -439,6 +349,7 @@ export function createBrowserTransport(): DeyinApi {
           if (patch.enabled !== undefined) provider.enabled = patch.enabled;
           if (patch.activeMode !== undefined) provider.activeMode = patch.activeMode;
           if (patch.models !== undefined) provider.models = patch.models;
+          if (patch.disabledModels !== undefined) provider.disabledModels = patch.disabledModels;
           writeLocal("deyin.providers", providers);
         }
         return listProviderInfos(await oauth.isAuthenticated().catch(() => false));
@@ -475,10 +386,42 @@ export function createBrowserTransport(): DeyinApi {
           return { ok: false, message: err instanceof Error ? err.message : String(err) };
         }
       },
+      fetchModels: async (id): Promise<ProviderTestResult> => {
+        const providers = readProviders();
+        const provider = providers.find((p) => p.id === id);
+        if (!provider?.baseUrl) return { ok: false, message: "No base URL configured." };
+        const key = readKeys()[id];
+        try {
+          const res = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/models`, {
+            headers: key ? { authorization: `Bearer ${key}` } : {},
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!res.ok) return { ok: false, status: res.status, message: `HTTP ${res.status}` };
+          const body = (await res.json().catch(() => ({}))) as {
+            data?: { id?: unknown; context_length?: unknown }[];
+          };
+          const models = (Array.isArray(body.data) ? body.data : [])
+            .filter((m): m is { id: string; context_length?: number } => typeof m.id === "string" && m.id.length > 0)
+            .map((m) => ({
+              id: m.id,
+              name: m.id,
+              contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
+            }));
+          if (models.length > 0) {
+            provider.models = models;
+            writeLocal("deyin.providers", providers);
+          }
+          return { ok: true, status: res.status, modelCount: models.length };
+        } catch (err) {
+          return { ok: false, message: err instanceof Error ? err.message : String(err) };
+        }
+      },
     },
     usage: {
-      get: async () => computeUsageStats(readLocal<UsageDay[]>("deyin.usage", [])),
+      get: async () => computeStats(readLocal<UsageDay[]>("deyin.usage", [])),
       record: async (event) => recordUsage(event),
+      account: () =>
+        fetchAccountUsage({ oauthIssuer: OAUTH_ISSUER }, () => oauth.getAccessToken().catch(() => null)),
     },
     win: {
       // No window chrome to control in a browser tab.

@@ -19,4 +19,7 @@ pnpm --filter @deyin/desktop build
 echo "==> Building web app (client + server)"
 pnpm --filter @deyin/web build
 
+echo "==> Building CLI"
+pnpm --filter @deyin/cli build
+
 echo "==> All green."

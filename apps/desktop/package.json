@@ -1,6 +1,6 @@
 {
   "name": "@deyin/desktop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Deyin desktop app (Electron).",
   "license": "MIT",
   "author": "Deyin <hello@deyin.dev>",
@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "@deyin/branding": "workspace:*",
+    "@deyin/host-core": "workspace:*",
     "@deyin/oauth-client": "workspace:*",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
