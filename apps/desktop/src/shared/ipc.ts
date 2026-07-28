@@ -1,12 +1,25 @@
 import type {
   AccountUsage,
+  AgentEventEnvelope,
+  AgentStartOptions,
   Bootstrap,
   CapabilityItem,
   CapabilityKind,
   DeyinSettings,
+  DiagnosticsResult,
   EnvInfo,
   FileNode,
+  IdentityInfo,
+  IdentitySyncResult,
+  IndexSearchHit,
+  IndexStatus,
+  McpServerEntry,
+  McpServerInput,
+  McpTestResult,
   ModelInfo,
+  PluginCatalogEntry,
+  PluginInfo,
+  ProjectsState,
   ProviderInfo,
   ProviderPatch,
   ProviderTestResult,
@@ -14,10 +27,14 @@ import type {
   TerminalCreateOptions,
   TerminalDataEvent,
   TerminalExitEvent,
+  UpdatesState,
   UsageEvent,
   UsageStats,
   UserProfile,
 } from "./types.js";
+
+/** Decision for an agent permission request (mirrors agent-core). */
+export type AgentPermissionDecision = "allow" | "allow-always" | "deny";
 
 /** IPC channel identifiers, shared by main and preload so they never drift. */
 export const CH = {
@@ -28,9 +45,13 @@ export const CH = {
   authGetToken: "deyin:auth:getToken",
   authChanged: "deyin:auth:changed",
   modelsList: "deyin:models:list",
+  modelsRefresh: "deyin:models:refresh",
   filesTree: "deyin:files:tree",
   filesRead: "deyin:files:read",
   workspaceOpen: "deyin:workspace:open",
+  workspaceSetRoot: "deyin:workspace:setRoot",
+  projectsGet: "deyin:projects:get",
+  projectsSet: "deyin:projects:set",
   termCreate: "deyin:term:create",
   termWrite: "deyin:term:write",
   termResize: "deyin:term:resize",
@@ -42,6 +63,29 @@ export const CH = {
   settingsSet: "deyin:settings:set",
   capsList: "deyin:caps:list",
   capsToggle: "deyin:caps:toggle",
+  mcpList: "deyin:mcp:list",
+  mcpAdd: "deyin:mcp:add",
+  mcpRemove: "deyin:mcp:remove",
+  mcpTest: "deyin:mcp:test",
+  pluginsList: "deyin:plugins:list",
+  pluginsCatalog: "deyin:plugins:catalog",
+  pluginsInstall: "deyin:plugins:install",
+  pluginsUninstall: "deyin:plugins:uninstall",
+  pluginsSetVariable: "deyin:plugins:setVariable",
+  pluginsVariableState: "deyin:plugins:variableState",
+  indexStatus: "deyin:index:status",
+  indexRebuild: "deyin:index:rebuild",
+  indexSearch: "deyin:index:search",
+  indexStatusEvent: "deyin:index:statusEvent",
+  agentStart: "deyin:agent:start",
+  agentStop: "deyin:agent:stop",
+  agentApprove: "deyin:agent:approve",
+  agentEvent: "deyin:agent:event",
+  browserRegister: "deyin:browser:register",
+  browserGetPartition: "deyin:browser:getPartition",
+  browserClearProfile: "deyin:browser:clearProfile",
+  browserEnsure: "deyin:browser:ensure",
+  telemetryRecord: "deyin:telemetry:record",
   providersList: "deyin:providers:list",
   providersAdd: "deyin:providers:add",
   providersUpdate: "deyin:providers:update",
@@ -62,6 +106,15 @@ export const CH = {
   shellShowItem: "deyin:shell:showItem",
   shellOpenExternal: "deyin:shell:openExternal",
   pathsGet: "deyin:paths:get",
+  updatesGetState: "deyin:updates:getState",
+  updatesCheck: "deyin:updates:check",
+  updatesDownload: "deyin:updates:download",
+  updatesInstall: "deyin:updates:install",
+  updatesState: "deyin:updates:state",
+  identityGet: "deyin:identity:get",
+  identitySync: "deyin:identity:sync",
+  diagnosticsSend: "deyin:diagnostics:send",
+  logWrite: "deyin:log:write",
 } as const;
 
 /** The API the preload script exposes on `window.deyin`. */
@@ -78,7 +131,10 @@ export interface DeyinApi {
     onChanged(cb: () => void): () => void;
   };
   models: {
+    /** Cached model catalog (1 week TTL). */
     list(): Promise<ModelInfo[]>;
+    /** Force a live /models fetch and refresh the cache. */
+    refresh(): Promise<ModelInfo[]>;
   };
   files: {
     tree(dir?: string): Promise<FileNode[]>;
@@ -86,6 +142,14 @@ export interface DeyinApi {
   };
   workspace: {
     openFolder(): Promise<string | null>;
+    /** Point the host's workspace cwd at a folder (terminal/files/agent); persisted. */
+    setRoot(root: string | null): Promise<void>;
+  };
+  projects: {
+    /** Persisted folder-projects + active selection. The renderer patches projects
+     *  and active ids; workspaceRoot is owned by the host. */
+    get(): Promise<ProjectsState>;
+    set(patch: Partial<ProjectsState>): Promise<ProjectsState>;
   };
   terminal: {
     create(opts: TerminalCreateOptions): Promise<string>;
@@ -103,8 +167,54 @@ export interface DeyinApi {
     set(patch: Partial<DeyinSettings>): Promise<DeyinSettings>;
   };
   caps: {
+    /** Live capability registry (filesystem scan merged with disabled set). */
     list(kind?: CapabilityKind): Promise<CapabilityItem[]>;
     toggle(id: string, enabled: boolean): Promise<CapabilityItem[]>;
+  };
+  mcp: {
+    list(): Promise<McpServerEntry[]>;
+    /** Add a custom server to ~/.deyin/mcp.json. */
+    add(input: McpServerInput): Promise<McpServerEntry[]>;
+    /** Remove a user-level server from ~/.deyin/mcp.json. */
+    remove(name: string): Promise<McpServerEntry[]>;
+    /** Connect, list tools, disconnect. */
+    test(name: string): Promise<McpTestResult>;
+  };
+  plugins: {
+    list(): Promise<PluginInfo[]>;
+    catalog(force?: boolean): Promise<PluginCatalogEntry[]>;
+    /** Install from "owner/repo", "owner/repo@ref" or a github.com URL. */
+    install(source: string): Promise<{ ok: boolean; message?: string; plugin?: PluginInfo }>;
+    uninstall(name: string): Promise<void>;
+    setVariable(plugin: string, name: string, value: string): Promise<void>;
+    /** Which declared variables have stored values (values never leave main). */
+    variableState(plugin: string, names: string[]): Promise<Record<string, boolean>>;
+  };
+  index: {
+    status(): Promise<IndexStatus>;
+    rebuild(): Promise<void>;
+    search(query: string, topK?: number): Promise<IndexSearchHit[]>;
+    onStatus(cb: (status: IndexStatus) => void): () => void;
+  };
+  agent: {
+    /** Start (or continue) an agent run for a chat thread. */
+    start(options: AgentStartOptions): Promise<void>;
+    stop(threadId: string): void;
+    approve(requestId: string, decision: AgentPermissionDecision): void;
+    onEvent(cb: (envelope: AgentEventEnvelope) => void): () => void;
+  };
+  browserControl: {
+    /** Register the workspace <webview> as the controlled browser tab. */
+    register(webContentsId: number | null): void;
+    /** Per-workspace persistent session partition for the webview. */
+    getPartition(): Promise<string>;
+    clearProfile(): Promise<void>;
+    /** Main asks the renderer to open the Browser tab so tools have a target. */
+    onEnsure(cb: () => void): () => void;
+  };
+  telemetry: {
+    /** Anonymous feature-usage event; dropped unless telemetry is enabled. */
+    record(name: string, props?: Record<string, string | number | boolean>): void;
   };
   providers: {
     list(): Promise<ProviderInfo[]>;
@@ -120,8 +230,8 @@ export interface DeyinApi {
   usage: {
     get(): Promise<UsageStats>;
     record(event: UsageEvent): Promise<void>;
-    /** Server-side Openference account usage; null when signed out or unreachable. */
-    account(): Promise<AccountUsage | null>;
+    /** Cached Openference account snapshot; `force` bypasses the 6h TTL. */
+    account(force?: boolean): Promise<AccountUsage | null>;
   };
   win: {
     minimize(): void;
@@ -142,6 +252,31 @@ export interface DeyinApi {
   paths: {
     /** Well-known locations for the task menu copy actions. */
     get(): Promise<{ userData: string; logs: string; config: string }>;
+  };
+  updates: {
+    getState(): Promise<UpdatesState>;
+    /** Check GitHub Releases for a newer build; resolves to the latest state. */
+    check(): Promise<UpdatesState>;
+    /** Download the pending update (only meaningful while status is "available"). */
+    download(): Promise<UpdatesState>;
+    /** Quit and install the downloaded update. */
+    install(): void;
+    /** Pushed on every status/progress transition. */
+    onState(cb: (state: UpdatesState) => void): () => void;
+  };
+  identity: {
+    /** Live snapshot for the Identity & Access page (env, account, fingerprint). */
+    get(): Promise<IdentityInfo>;
+    /** Register this workstation + workspace with Openference; updates lastSyncedAt. */
+    sync(): Promise<IdentitySyncResult>;
+  };
+  diagnostics: {
+    /** Upload a scrubbed diagnostics bundle; returns the support report id. */
+    send(note?: string): Promise<DiagnosticsResult>;
+  };
+  logs: {
+    /** Append a renderer-side line to deyin.log (errors are forwarded by the app). */
+    write(level: "info" | "warn" | "error", message: string): void;
   };
 }
 

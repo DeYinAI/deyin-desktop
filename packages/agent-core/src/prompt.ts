@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentDefinition } from "./agents.js";
+import { skillsPromptSection, type SkillDefinition } from "./capabilities/skills.js";
 
 const MAX_CONTEXT_FILE_CHARS = 20_000;
 const MAX_PARENT_LEVELS = 5;
@@ -61,9 +62,11 @@ export interface SystemPromptOptions {
   agent: AgentDefinition;
   toolNames: string[];
   contextFiles?: ContextFile[];
+  /** Discovered skills, advertised so the model can self-select them. */
+  skills?: SkillDefinition[];
 }
 
-/** Assemble the system prompt: identity, agent mode, environment, tool rules, project context. */
+/** Assemble the system prompt: identity, agent mode, environment, tool rules, skills, project context. */
 export function buildSystemPrompt(opts: SystemPromptOptions): string {
   const sections: string[] = [];
 
@@ -93,6 +96,9 @@ export function buildSystemPrompt(opts: SystemPromptOptions): string {
       "- When you are done, reply with a concise summary of what you did. Do not end your reply with a question unless you are genuinely blocked.",
     ].join("\n"),
   );
+
+  const skillsSection = skillsPromptSection(opts.skills ?? []);
+  if (skillsSection) sections.push(skillsSection);
 
   for (const file of opts.contextFiles ?? []) {
     sections.push(`# Project instructions from ${file.path}\n${file.content}`);

@@ -13,7 +13,7 @@
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "typecheck": "pnpm typecheck:node && pnpm typecheck:web",
-    "package": "electron-vite build && electron-builder --config electron-builder.yml",
+    "package": "electron-vite build && electron-builder --publish never --config electron-builder.yml",
     "package:dir": "electron-vite build && electron-builder --dir --config electron-builder.yml"
   },
   "dependencies": {
@@ -29,6 +29,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
+    "@deyin/agent-core": "workspace:*",
     "@deyin/branding": "workspace:*",
     "@deyin/host-core": "workspace:*",
     "@deyin/oauth-client": "workspace:*",

@@ -1,6 +1,10 @@
 import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
 
+/** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
+export const SETTINGS_SCHEMA_VERSION = 2;
+
 export const DEFAULT_SETTINGS: DeyinSettings = {
+  schemaVersion: SETTINGS_SCHEMA_VERSION,
   theme: "dark",
   language: "en",
   fontSize: 14,
@@ -16,7 +20,42 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   showLineNumbers: true,
   wrapLongLines: false,
   codeFontSize: 12,
+  agentMode: "agent",
+  defaultShell: null,
+  terminalFontSize: 12,
+  terminalScrollback: 5000,
+  indexingEnabled: true,
+  onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
 };
+
+/**
+ * Upgrade a settings object read from disk to the current schema. Unknown keys
+ * are dropped, missing keys get defaults, and out-of-range values are clamped,
+ * so renamed/new fields never leave the app with an inconsistent state.
+ */
+export function migrateSettings(raw: unknown): DeyinSettings {
+  const input = (raw && typeof raw === "object" ? raw : {}) as Partial<DeyinSettings> & Record<string, unknown>;
+  const merged: DeyinSettings = {
+    ...DEFAULT_SETTINGS,
+    ...input,
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    onboard: { ...DEFAULT_SETTINGS.onboard, ...(typeof input.onboard === "object" && input.onboard ? input.onboard : {}) },
+  };
+  // v1 -> v2: clamp numeric ranges introduced with the terminal/appearance work.
+  merged.fontSize = clamp(merged.fontSize, 12, 18, DEFAULT_SETTINGS.fontSize);
+  merged.codeFontSize = clamp(merged.codeFontSize, 10, 20, DEFAULT_SETTINGS.codeFontSize);
+  merged.terminalFontSize = clamp(merged.terminalFontSize, 10, 20, DEFAULT_SETTINGS.terminalFontSize);
+  merged.terminalScrollback = clamp(merged.terminalScrollback, 200, 100_000, DEFAULT_SETTINGS.terminalScrollback);
+  if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
+  if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
+  if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
+  return merged;
+}
+
+function clamp(value: unknown, min: number, max: number, fallback: number): number {
+  const n = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, n));
+}
 
 /** Default capability registry. Original seed data; toggles persist across restarts. */
 export const DEFAULT_CAPABILITIES: CapabilityItem[] = [
@@ -48,38 +87,111 @@ export const DEFAULT_CAPABILITIES: CapabilityItem[] = [
     version: "0.2.0",
     source: "built-in",
   },
-  // Skills
+  // Skills — mirrors the built-in skill set the desktop materializes
+  // (agent-core BUILTIN_SKILLS); this seed is display-only on the web.
   {
-    id: "review-code",
+    id: "skill:create-skill",
+    kind: "skill",
+    name: "create-skill",
+    description: "Author a new agent skill (SKILL.md) from the current conversation.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:create-rule",
+    kind: "skill",
+    name: "create-rule",
+    description: "Create project rules in .deyin/rules that steer every agent session.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:create-hook",
+    kind: "skill",
+    name: "create-hook",
+    description: "Create or edit lifecycle hooks in .deyin/hooks.json.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:create-subagent",
+    kind: "skill",
+    name: "create-subagent",
+    description: "Create a custom subagent definition in .deyin/agents.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:review-code",
     kind: "skill",
     name: "review-code",
-    description: "Structured review pass over a diff: correctness, security, style.",
+    description: "Structured review of a diff: correctness, security, edge cases, style.",
     enabled: true,
     source: "built-in",
   },
   {
-    id: "generate-tests",
+    id: "skill:generate-tests",
     kind: "skill",
     name: "generate-tests",
-    description: "Write unit tests for the selected file or the latest change set.",
+    description: "Write tests with the project's own framework, then run them.",
     enabled: true,
     source: "built-in",
   },
   {
-    id: "refactor",
+    id: "skill:refactor",
     kind: "skill",
     name: "refactor",
-    description: "Apply a named refactoring across the workspace with a preview diff.",
+    description: "Apply a named refactoring in small verifiable steps.",
     enabled: true,
     source: "built-in",
   },
   {
-    id: "control-browser",
+    id: "skill:debug-issue",
     kind: "skill",
-    name: "browser-use:control-browser",
-    description: "Drive the built-in browser: navigate, click, type, screenshot.",
+    name: "debug-issue",
+    description: "Systematic debugging: reproduce, isolate, fix the root cause, verify.",
     enabled: true,
-    source: "plugin:browser-use",
+    source: "built-in",
+  },
+  {
+    id: "skill:verify-in-browser",
+    kind: "skill",
+    name: "verify-in-browser",
+    description: "Verify UI changes end to end in the built-in browser.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:onboard",
+    kind: "skill",
+    name: "onboard",
+    description: "Explore and explain an unfamiliar codebase: structure, stack, conventions.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:split-to-prs",
+    kind: "skill",
+    name: "split-to-prs",
+    description: "Split accumulated changes into small reviewable branches/PRs.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:env-setup",
+    kind: "skill",
+    name: "env-setup",
+    description: "Get a fresh checkout running: toolchain, dependencies, build, tests.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:loop",
+    kind: "skill",
+    name: "loop",
+    description: "Re-run a prompt or check on an interval (/loop 5m <prompt>).",
+    enabled: true,
+    source: "built-in",
   },
   // Subagents
   {
