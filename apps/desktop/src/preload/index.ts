@@ -22,10 +22,27 @@ const api: DeyinApi = {
   files: {
     tree: (dir) => ipcRenderer.invoke(CH.filesTree, dir),
     read: (path) => ipcRenderer.invoke(CH.filesRead, path),
+    write: (path, content) => ipcRenderer.invoke(CH.filesWrite, path, content),
   },
   workspace: {
     openFolder: () => ipcRenderer.invoke(CH.workspaceOpen),
     setRoot: (root) => ipcRenderer.invoke(CH.workspaceSetRoot, root),
+    getRoot: () => ipcRenderer.invoke(CH.workspaceGetRoot),
+    onRootChanged: (cb) => {
+      let alive = true;
+      const listener = (_e: unknown, root: string | null) => {
+        if (alive) cb(root);
+      };
+      void ipcRenderer.invoke(CH.workspaceGetRoot).then((root: string | null) => {
+        if (!alive) return;
+        cb(root);
+        ipcRenderer.on(CH.workspaceRootChanged, listener);
+      });
+      return () => {
+        alive = false;
+        ipcRenderer.removeListener(CH.workspaceRootChanged, listener);
+      };
+    },
   },
   projects: {
     get: () => ipcRenderer.invoke(CH.projectsGet),
@@ -120,6 +137,9 @@ const api: DeyinApi = {
     record: (event) => ipcRenderer.invoke(CH.usageRecord, event),
     account: (force) => ipcRenderer.invoke(CH.usageAccount, force),
   },
+  plans: {
+    list: () => ipcRenderer.invoke(CH.plansList),
+  },
   win: {
     minimize: () => ipcRenderer.send(CH.winMinimize),
     toggleMaximize: () => ipcRenderer.send(CH.winToggleMaximize),
@@ -159,6 +179,39 @@ const api: DeyinApi = {
       ipcRenderer.on(CH.updatesState, listener);
       return () => ipcRenderer.removeListener(CH.updatesState, listener);
     },
+  },
+  automations: {
+    list: () => ipcRenderer.invoke(CH.automationsList),
+    create: (input) => ipcRenderer.invoke(CH.automationsCreate, input),
+    update: (id, patch) => ipcRenderer.invoke(CH.automationsUpdate, id, patch),
+    remove: (id) => ipcRenderer.invoke(CH.automationsDelete, id),
+    toggle: (id, enabled) => ipcRenderer.invoke(CH.automationsToggle, id, enabled),
+    run: (id) => ipcRenderer.invoke(CH.automationsRun, id),
+    stop: (runId) => ipcRenderer.send(CH.automationsStop, runId),
+    runs: (automationId) => ipcRenderer.invoke(CH.automationsRuns, automationId),
+    onEvent: (cb) => {
+      const listener = (
+        _e: unknown,
+        payload: { runId: string; automationId: string; event: import("../shared/types.js").AgentUiEvent },
+      ) => cb(payload);
+      ipcRenderer.on(CH.automationEvent, listener);
+      return () => ipcRenderer.removeListener(CH.automationEvent, listener);
+    },
+    onRunFinished: (cb) => {
+      const listener = (_e: unknown, payload: { run: import("../shared/types.js").AutomationRun }) => cb(payload);
+      ipcRenderer.on(CH.automationRunFinished, listener);
+      return () => ipcRenderer.removeListener(CH.automationRunFinished, listener);
+    },
+  },
+  sshHosts: {
+    list: () => ipcRenderer.invoke(CH.sshHostsList),
+    add: (input) => ipcRenderer.invoke(CH.sshHostsAdd, input),
+    update: (id, patch) => ipcRenderer.invoke(CH.sshHostsUpdate, id, patch),
+    remove: (id) => ipcRenderer.invoke(CH.sshHostsRemove, id),
+    setCredentials: (id, creds) => ipcRenderer.invoke(CH.sshHostsSetCredentials, id, creds),
+    test: (hostId, acceptFingerprint) => ipcRenderer.invoke(CH.sshHostsTest, hostId, acceptFingerprint),
+    pinFingerprint: (hostId, fingerprint) => ipcRenderer.invoke(CH.sshHostsPinFingerprint, hostId, fingerprint),
+    importKey: () => ipcRenderer.invoke(CH.sshHostsImportKey),
   },
 };
 

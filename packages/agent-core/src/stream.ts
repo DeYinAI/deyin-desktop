@@ -104,6 +104,10 @@ export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGen
   if (!sawDone) yield parser.finish();
 }
 
+/** Fallback tool-call ids must be unique across the whole transcript: some providers
+ * reject requests where two tool_calls share an id, and the loop runs many steps. */
+let syntheticCallCounter = 0;
+
 /**
  * Incremental SSE-chunk accumulator, exposed separately so it can be unit-tested
  * without a network. Feed raw SSE lines; get stream events back.
@@ -175,7 +179,7 @@ export class StreamAccumulator {
     const toolCalls: AgentToolCall[] = [...this.calls.entries()]
       .sort(([a], [b]) => a - b)
       .map(([i, c]) => ({
-        id: c.id || `call_${i}`,
+        id: c.id || `call_${i}_${(syntheticCallCounter++).toString(36)}`,
         name: c.name,
         arguments: c.arguments,
       }))

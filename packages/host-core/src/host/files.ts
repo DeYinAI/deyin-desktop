@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileNode } from "../types.js";
 
@@ -49,4 +49,9 @@ const MAX_READ_BYTES = 1_000_000;
 export async function readTextFile(path: string): Promise<string> {
   const buf = await readFile(path);
   return buf.subarray(0, MAX_READ_BYTES).toString("utf8");
+}
+
+/** Write a text file as UTF-8. */
+export async function writeTextFile(path: string, content: string): Promise<void> {
+  await writeFile(path, content, "utf8");
 }

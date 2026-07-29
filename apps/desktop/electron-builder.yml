@@ -16,6 +16,8 @@ files:
 # so it can be dlopen'd at runtime. The terminal degrades gracefully if absent.
 asarUnpack:
   - "**/node_modules/node-pty/**"
+  - "**/node_modules/ssh2/**"
+  - "**/node_modules/cpu-features/**"
 # Custom protocol for the OAuth deep-link callback (deyin://oauth/callback).
 # electron-builder writes the macOS CFBundleURLTypes and the Linux .desktop
 # MimeType; Windows registration happens at runtime via

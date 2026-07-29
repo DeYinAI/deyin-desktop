@@ -15,9 +15,11 @@ export function estimateTokens(messages: AgentMessage[]): number {
 
 const KEEP_RECENT_MESSAGES = 8;
 const TOOL_RESULT_TRUNCATE_CHARS = 600;
+const TOOL_ARGS_TRUNCATE_CHARS = 600;
 
 export interface CompactionResult {
   truncatedToolResults: number;
+  truncatedToolArgs: number;
   droppedMessages: number;
 }
 
@@ -26,11 +28,13 @@ export interface CompactionResult {
  * token count exceeds the budget:
  *
  * 1. Truncate old tool results (everything except the trailing KEEP_RECENT_MESSAGES).
- * 2. Still over budget: drop whole user-turn groups from the oldest side (never the
+ * 2. Still over budget: truncate old tool-call arguments the same way — write/edit
+ *    calls carry entire file contents, and the written content already lives on disk.
+ * 3. Still over budget: drop whole user-turn groups from the oldest side (never the
  *    system prompt or the most recent turns), replacing them with a single marker.
  */
 export function compactMessages(messages: AgentMessage[], budgetTokens: number): CompactionResult {
-  const result: CompactionResult = { truncatedToolResults: 0, droppedMessages: 0 };
+  const result: CompactionResult = { truncatedToolResults: 0, truncatedToolArgs: 0, droppedMessages: 0 };
   if (estimateTokens(messages) <= budgetTokens) return result;
 
   const protectedFrom = Math.max(0, messages.length - KEEP_RECENT_MESSAGES);
@@ -40,6 +44,22 @@ export function compactMessages(messages: AgentMessage[], budgetTokens: number):
       m.content = `${m.content.slice(0, TOOL_RESULT_TRUNCATE_CHARS)}\n... [tool result truncated during compaction]`;
       result.truncatedToolResults += 1;
     }
+  }
+  if (estimateTokens(messages) <= budgetTokens) return result;
+
+  for (let i = 0; i < protectedFrom; i++) {
+    const m = messages[i]!;
+    if (m.role !== "assistant" || !m.toolCalls) continue;
+    // Replace the toolCalls array rather than mutating elements in place: external
+    // holders (snapshots, undo buffers, telemetry) must not see aliased truncation.
+    const nextCalls = m.toolCalls.map((call) => {
+      if (call.arguments.length <= TOOL_ARGS_TRUNCATE_CHARS) return call;
+      const patched = truncateArgsJson(call.arguments);
+      if (patched === null) return call; // not parseable — leave untouched
+      result.truncatedToolArgs += 1;
+      return { ...call, arguments: patched };
+    });
+    m.toolCalls = nextCalls;
   }
   if (estimateTokens(messages) <= budgetTokens) return result;
 
@@ -78,6 +98,55 @@ function countLeadingSystem(messages: AgentMessage[]): number {
   let n = 0;
   while (n < messages.length && messages[n]!.role === "system") n += 1;
   return n;
+}
+
+/**
+ * Truncate large string values inside a tool-call's JSON arguments while keeping
+ * the object's shape (same keys, same primitive types) so strict providers that
+ * validate historical `tool_calls.function.arguments` against the tool's schema
+ * still accept the replayed message. Returns null if the arguments are not valid
+ * JSON, in which case the caller leaves them untouched.
+ */
+function truncateArgsJson(raw: string, max = TOOL_ARGS_TRUNCATE_CHARS): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const truncated = truncateStringsInPlace(parsed, max);
+  return truncated ? JSON.stringify(parsed) : null;
+}
+
+function truncateStringsInPlace(value: unknown, max: number): boolean {
+  if (typeof value === "string") return false; // top-level string — nothing to truncate structurally
+  if (Array.isArray(value)) {
+    let changed = false;
+    for (let i = 0; i < value.length; i++) {
+      const item = value[i]!;
+      if (typeof item === "string" && item.length > max) {
+        value[i] = `${item.slice(0, max)}… [arguments truncated during compaction]`;
+        changed = true;
+      } else {
+        changed = truncateStringsInPlace(item, max) || changed;
+      }
+    }
+    return changed;
+  }
+  if (value && typeof value === "object") {
+    let changed = false;
+    for (const key of Object.keys(value as Record<string, unknown>)) {
+      const v = (value as Record<string, unknown>)[key];
+      if (typeof v === "string" && v.length > max) {
+        (value as Record<string, unknown>)[key] = `${v.slice(0, max)}… [arguments truncated during compaction]`;
+        changed = true;
+      } else {
+        changed = truncateStringsInPlace(v, max) || changed;
+      }
+    }
+    return changed;
+  }
+  return false;
 }
 
 function marker(removed: number): AgentMessage {

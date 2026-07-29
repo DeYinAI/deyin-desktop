@@ -20,7 +20,7 @@
     { "id": "skills.registry", "title": "Skills registry", "status": "planned", "runtime": ["desktop", "web"] },
     { "id": "skills.import", "title": "Import skills from other agents", "status": "planned", "runtime": ["desktop"] },
     { "id": "plugins.registry", "title": "Plugins (skills/commands/agents/mcp/hooks/lsp)", "status": "planned", "runtime": ["desktop", "web"] },
-    { "id": "automations", "title": "Scheduled & event automations", "status": "planned", "runtime": ["desktop", "web"] },
+    { "id": "automations", "title": "Scheduled & event automations", "status": "shipped", "runtime": ["desktop"] },
     { "id": "mcp.client", "title": "MCP server connections", "status": "planned", "runtime": ["desktop", "web"] },
     { "id": "auth.openference", "title": "Openference OAuth sign-in", "status": "building", "runtime": ["desktop", "web"] },
     { "id": "models.picker", "title": "Multi-model picker (Openference /v1/models)", "status": "planned", "runtime": ["desktop", "web"] }

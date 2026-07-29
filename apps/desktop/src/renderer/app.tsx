@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_SETTINGS } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { I18nProvider } from "./i18n.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
@@ -6,22 +7,28 @@ import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
+import { PlansDialog } from "./components/PlansDialog.js";
 import { SettingsView } from "./components/SettingsView.js";
+import { AutomationsView } from "./components/AutomationsView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { TopBar } from "./components/TopBar.js";
 import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
-import { computeLineDiff, type FileDiff } from "./diff.js";
-import { emptyThread, newId, toChatMessages, type Project, type Thread, type ThreadEvent } from "./threads.js";
+import { computeLineDiff, diffSnippet, type FileDiff } from "./diff.js";
+import { TaskList } from "./components/TaskList.js";
+import { generateThreadTitle } from "./autotitle.js";
+import { DEFAULT_THREAD_TITLE, deriveTitle, emptyThread, newId, toChatMessages, type Project, type Thread, type ThreadEvent } from "./threads.js";
 import type { SettingsPage } from "./components/SettingsView.js";
 import type {
   AgentEventEnvelope,
+  AgentTodoItem,
   ApprovalMode,
   Bootstrap,
   ChatMode,
   DeyinSettings,
+  DiffSnippetLine,
   EnvInfo,
   ModelInfo,
   ProviderInfo,
@@ -60,7 +67,7 @@ function diffStats(before: string, after: string): { adds: number; dels: number;
 
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
-type View = "workspace" | "settings";
+type View = "workspace" | "settings" | "automations";
 
 interface PendingApproval {
   requestId: string;
@@ -97,6 +104,8 @@ export function App() {
   const [runEvents, setRunEvents] = useState<ThreadEvent[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [streamReasoning, setStreamReasoning] = useState<string | null>(null);
+  /** Plan-mode text streams into the Plan tab, not the chat; null when not planning. */
+  const [planStream, setPlanStream] = useState<string | null>(null);
   const runToolIndex = useRef(new Map<string, number>());
   const runTextRef = useRef("");
   const runTokensRef = useRef(0);
@@ -108,15 +117,21 @@ export function App() {
   const fileDiffsRef = useRef(new Map<string, FileDiff>());
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("plan");
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
+  const [plansOpen, setPlansOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
+
+  // PlansDialog only mounts in workspace view; clear stale open state on navigation.
+  useEffect(() => {
+    if (view !== "workspace") setPlansOpen(false);
+  }, [view]);
 
   // Bootstrap: config, profile, models, settings, environment, providers, projects.
   useEffect(() => {
@@ -276,6 +291,11 @@ export function App() {
     return off;
   }, [refreshSession]);
 
+  // Host sandbox/workspace root (web reconnect or desktop setRoot) → App state.
+  useEffect(() => {
+    return window.deyin.workspace.onRootChanged(setWorkspaceRoot);
+  }, []);
+
   const logout = useCallback(async () => {
     await window.deyin.auth.logout();
     setUser(null);
@@ -307,17 +327,16 @@ export function App() {
     const project = ensureFolderProject(root);
     setActiveProjectId(project.id);
     setWorkspaceRoot(root);
-    void window.deyin.workspace.setRoot(root);
     markOnboard("workspaceOpened");
   }, [ensureFolderProject, markOnboard]);
 
   const selectProject = useCallback(
-    (projectId: string) => {
+    async (projectId: string) => {
       setActiveProjectId(projectId);
       const root = projects.find((p) => p.id === projectId)?.root;
       if (root) {
+        await window.deyin.workspace.setRoot(root);
         setWorkspaceRoot(root);
-        void window.deyin.workspace.setRoot(root);
       }
     },
     [projects],
@@ -352,6 +371,9 @@ export function App() {
         const text = runTextRef.current;
         runTextRef.current = "";
         setStreamText("");
+        // Text flushed before a tool call is pre-tool commentary, not the plan
+        // document — it belongs in the chat; reset the live plan preview.
+        setPlanStream(null);
         if (text.trim().length > 0) setRunEvents((cur) => [...cur, { kind: "assistant", text }]);
       };
       switch (event.type) {
@@ -364,7 +386,17 @@ export function App() {
           // The model moved from thinking to answering: fold the thought away.
           flushReasoning();
           runTextRef.current += event.delta;
-          setStreamText(runTextRef.current);
+          if (runModeRef.current === "plan") {
+            // Plan mode: the streamed text is the plan document. Feed the Plan
+            // tab live and keep the chat timeline free of the markdown dump.
+            if (runTextRef.current === event.delta) {
+              setPanelOpen(true);
+              setPanelTab("plan");
+            }
+            setPlanStream(runTextRef.current);
+          } else {
+            setStreamText(runTextRef.current);
+          }
           break;
         case "tool-start": {
           flushText();
@@ -386,20 +418,23 @@ export function App() {
         }
         case "file-change": {
           const stats = diffStats(event.before, event.after);
+          let snippet: { snippet?: DiffSnippetLine[]; snippetMore?: number } = {};
           if (stats.renderable) {
             const fileDiff: FileDiff = { fileName: event.path, before: event.before, after: event.after };
             fileDiffsRef.current.set(event.path, fileDiff);
             setDiff(fileDiff); // Diff tab always shows the latest change.
+            const excerpt = diffSnippet(event.before, event.after);
+            if (excerpt.lines.length > 0) snippet = { snippet: excerpt.lines, snippetMore: excerpt.more };
           }
           const name = event.path.split(/[\\/]/).pop() ?? event.path;
           setRunEvents((cur) => [
             ...cur,
-            { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels },
+            { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels, ...snippet },
           ]);
           break;
         }
         case "todos": {
-          const steps = event.todos.map((t) => ({ text: t.content, done: t.status === "completed" }));
+          const steps = event.todos.map((t) => ({ text: t.content, done: t.status === "completed", status: t.status }));
           setRunEvents((cur) => {
             const index = cur.findIndex((e) => e.kind === "plan");
             if (index >= 0) {
@@ -409,6 +444,14 @@ export function App() {
             }
             return [...cur, { kind: "plan", steps }];
           });
+          // Persist on the thread: the pinned task list survives run folding
+          // and app restarts.
+          setProjects((cur) =>
+            cur.map((project) => ({
+              ...project,
+              threads: project.threads.map((th) => (th.id === threadId ? { ...th, todos: event.todos } : th)),
+            })),
+          );
           break;
         }
         case "usage":
@@ -434,31 +477,37 @@ export function App() {
           const reasoningSeconds = Math.max(1, Math.round((Date.now() - reasoningStartRef.current) / 1000));
           runTextRef.current = "";
           runReasoningRef.current = "";
-          const planFinished = runModeRef.current === "plan" && event.reason === "completed" && text.trim().length > 0;
+          // Plan mode: the final message is the plan document. It lives in the
+          // Plan tab only — the chat gets a plan-ready card instead of the
+          // markdown dump. Aborted plans still land in the tab (no card).
+          const planRun = runModeRef.current === "plan" && text.trim().length > 0;
+          const planFinished = planRun && event.reason === "completed";
           setRunEvents((cur) => {
             const finished: ThreadEvent[] = [...cur];
             if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
-            if (text.trim().length > 0) finished.push({ kind: "assistant", text });
+            if (text.trim().length > 0 && !planRun) finished.push({ kind: "assistant", text });
             if (planFinished) finished.push({ kind: "plan-ready" });
             if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
             if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
             appendEvents(threadId, finished);
             return [];
           });
-          if (planFinished) {
-            // The final message is the plan document: feed the Plan tab.
+          if (planRun) {
             setProjects((cur) =>
               cur.map((project) => ({
                 ...project,
                 threads: project.threads.map((th) => (th.id === threadId ? { ...th, planMarkdown: text } : th)),
               })),
             );
-            setPanelOpen(true);
-            setPanelTab("plan");
+            if (planFinished) {
+              setPanelOpen(true);
+              setPanelTab("plan");
+            }
           }
           runToolIndex.current.clear();
           setStreamText(null);
           setStreamReasoning(null);
+          setPlanStream(null);
           setAgentThreadId(null);
           setApproval(null);
           markOnboard("taskRun");
@@ -497,7 +546,6 @@ export function App() {
         if (root) {
           createdProject = ensureFolderProject(root);
           setWorkspaceRoot(root);
-          void window.deyin.workspace.setRoot(root);
         }
       }
       const thread: Thread = { ...emptyThread(), mode: composerMode };
@@ -615,6 +663,7 @@ export function App() {
       appendEvents(thread.id, [{ kind: "user", text }]);
       setStreamText("");
       setStreamReasoning(null);
+      setPlanStream(null);
       setAgentThreadId(thread.id);
       setRunEvents([]);
       runToolIndex.current.clear();
@@ -632,16 +681,43 @@ export function App() {
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
         history: toChatMessages(thread.events),
+        initialTodos: thread.todos,
       });
     },
     [appendEvents, selectedModel, selectedProviderId, settings],
+  );
+
+  /** Persist manual todo edits and keep the latest timeline todo card in sync. */
+  const updatePlanTodos = useCallback(
+    (todos: AgentTodoItem[]) => {
+      if (!activeThreadId) return;
+      const steps = todos.map((t) => ({ text: t.content, done: t.status === "completed", status: t.status }));
+      setProjects((cur) =>
+        cur.map((project) => ({
+          ...project,
+          threads: project.threads.map((th) => {
+            if (th.id !== activeThreadId) return th;
+            const events = [...th.events];
+            const index = events.findLastIndex((e) => e.kind === "plan");
+            if (index >= 0) events[index] = { kind: "plan", steps };
+            else if (steps.length > 0) events.push({ kind: "plan", steps });
+            return { ...th, todos, events };
+          }),
+        })),
+      );
+    },
+    [activeThreadId],
   );
 
   /** Plan-ready card "Build": switch the thread to agent mode and execute the plan. */
   const buildFromPlan = useCallback(() => {
     if (!activeThread || streamText !== null) return;
     selectMode("agent");
-    startAgentRun(activeThread, BUILD_PROMPT, "agent");
+    const plan = activeThread.planMarkdown?.trim();
+    const prompt = plan
+      ? `${BUILD_PROMPT}\n\n---\nPlan to implement:\n${plan}\n---`
+      : BUILD_PROMPT;
+    startAgentRun(activeThread, prompt, "agent");
   }, [activeThread, streamText, selectMode, startAgentRun]);
 
   /** File card "Open": show that change in the Diff tab (when we still hold it). */
@@ -704,6 +780,31 @@ export function App() {
     const isFirstMessage = toChatMessages(thread.events).length === 0;
     const history = [...toChatMessages(thread.events), { role: "user" as const, content: text }];
 
+    if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
+      const provisional = deriveTitle(text);
+      updateThread(thread.id, { title: provisional });
+      const threadId = thread.id;
+      // Skip the LLM call when the provisional title is already short enough.
+      const needsLlmTitle = provisional.endsWith("…") || provisional.split(/\s+/).length > 6;
+      if (needsLlmTitle) {
+        void generateThreadTitle({ apiBaseUrl, token, model: selectedModel, text })
+          .then((generated) => {
+            if (!generated) return;
+            setProjects((cur) =>
+              cur.map((project) => ({
+                ...project,
+                threads: project.threads.map((t) =>
+                  t.id === threadId && t.title === provisional && !t.archived
+                    ? { ...t, title: generated }
+                    : t,
+                ),
+              })),
+            );
+          })
+          .catch(() => {});
+      }
+    }
+
     // Agent runtime (default on desktop): run the tool-calling loop in the main
     // process in the selected composer mode; falls back to the plain text
     // stream when switched off (or on the web, which has no agent host yet).
@@ -762,7 +863,7 @@ export function App() {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, connect, appendEvents, startAgentRun]);
+  }, [input, streamText, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, connect, appendEvents, startAgentRun, updateThread]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -794,6 +895,25 @@ export function App() {
             // Let them in signed out; custom providers work with stored API keys.
             patchSettings({ welcomeDismissed: true });
             setSettingsPage("models");
+            setView("settings");
+          }}
+        />
+      </I18nProvider>
+    );
+  }
+
+  if (view === "automations" && settings && boot && boot.platform === "desktop") {
+    return (
+      <I18nProvider language={language}>
+        <AutomationsView
+          workspaceRoot={workspaceRoot}
+          providers={providers}
+          models={models}
+          selectedModel={selectedModel}
+          selectedProviderId={selectedProviderId}
+          onBack={() => setView("workspace")}
+          onOpenSshSettings={() => {
+            setSettingsPage("sshHosts");
             setView("settings");
           }}
         />
@@ -835,7 +955,7 @@ export function App() {
       <TopBar
         platform={boot?.platform ?? "desktop"}
         threadId={activeThreadId}
-        threadTitle={activeThread?.title ?? "New task"}
+        threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
         threadPinned={activeThread?.pinned ?? false}
         projectName={projectName}
         workspaceRoot={workspaceRoot}
@@ -855,7 +975,9 @@ export function App() {
           activeThreadId={activeThreadId}
           renamingThreadId={renamingThreadId}
           user={user}
+          settings={settings ?? DEFAULT_SETTINGS}
           busy={busy}
+          connecting={connecting}
           onNewTask={newTask}
           onNewProject={() => void addProjectFolder()}
           onSelectProject={selectProject}
@@ -872,6 +994,13 @@ export function App() {
           }}
           onConnect={connect}
           onLogout={logout}
+          onChangeSettings={patchSettings}
+          onOpenUsage={() => {
+            setSettingsPage("usage");
+            setView("settings");
+          }}
+          onOpenPlans={() => setPlansOpen(true)}
+          onOpenAutomations={boot?.platform === "desktop" ? () => setView("automations") : undefined}
           onOpenSettings={() => {
             // The gear always lands on General; deep links (Manage models,
             // browser settings) set their page right before switching views.
@@ -915,6 +1044,18 @@ export function App() {
                   setPanelTab("plan");
                 }}
               />
+
+              {(activeThread?.todos?.length ?? 0) > 0 && (
+                <div className="chat-column__tasks">
+                  <TaskList
+                    todos={activeThread!.todos!}
+                    running={agentThreadId !== null && agentThreadId === activeThreadId}
+                    title={
+                      activeThread!.title !== DEFAULT_THREAD_TITLE ? activeThread!.title : undefined
+                    }
+                  />
+                </div>
+              )}
 
               <div className="chat-column__composer">
                 <Composer
@@ -960,8 +1101,16 @@ export function App() {
               <WorkspacePanel
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
+                workspaceRoot={workspaceRoot}
                 activeTab={panelTab}
-                planMarkdown={activeThread?.planMarkdown ?? ""}
+                planMarkdown={
+                  planStream !== null && agentThreadId === activeThreadId
+                    ? planStream
+                    : (activeThread?.planMarkdown ?? "")
+                }
+                planTodos={activeThread?.todos ?? []}
+                planTodosRunning={agentThreadId !== null && agentThreadId === activeThreadId}
+                canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && streamText === null}
                 diff={diff}
                 browserUrl={browserUrl}
                 browserPartition={browserPartition}
@@ -977,10 +1126,13 @@ export function App() {
                 onSelectTab={setPanelTab}
                 onNavigate={setBrowserUrl}
                 onCollapse={() => setPanelOpen(false)}
+                onOpenFolder={() => void addProjectFolder()}
                 onOpenBrowserSettings={() => {
                   setSettingsPage("browser");
                   setView("settings");
                 }}
+                onBuildPlan={buildFromPlan}
+                onPlanTodosChange={updatePlanTodos}
               />
             )}
           </div>
@@ -1034,6 +1186,15 @@ export function App() {
             setBrowserUrl(url);
           }}
           onClose={() => setSearchOpen(false)}
+        />
+      )}
+
+      {plansOpen && boot && (
+        <PlansDialog
+          platform={boot.platform}
+          oauthIssuer={boot.config.oauthIssuer}
+          userPlan={user?.plan ?? null}
+          onClose={() => setPlansOpen(false)}
         />
       )}
     </div>

@@ -6,6 +6,7 @@ import { resolveDeyinConfig } from "../shared/config.js";
 import { DEEP_LINK_SCHEME } from "../shared/config.js";
 import { initLogger } from "./logger.js";
 import { createMainWindow } from "./window.js";
+import { disposeTray, ensureTray } from "./tray.js";
 
 let services: IpcServices | undefined;
 let workspaceRoot: string | null = null;
@@ -102,10 +103,20 @@ if (!app.requestSingleInstanceLock()) {
 
 app.on("window-all-closed", () => {
   services?.terminals.disposeAll();
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin") {
+    if (services?.shouldKeepRunningInBackground()) {
+      ensureTray(() => {
+        if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+        else focusMainWindow();
+      });
+      return;
+    }
+    app.quit();
+  }
 });
 
 app.on("before-quit", () => {
+  disposeTray();
   services?.terminals.disposeAll();
   services?.dispose();
 });
