@@ -219,6 +219,7 @@ export class DesktopAgentHost {
         cwd,
         thinking: options.thinking,
         signal,
+        todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
         onMessage: (message) => this.store.append(session.sessionId, message),
         beforeTool: async (call, args, summary) => {
           const pre = await runHooks(hooks, "preToolUse", call.name, { tool: call.name, args, summary, cwd });

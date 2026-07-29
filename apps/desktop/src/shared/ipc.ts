@@ -31,7 +31,22 @@ import type {
   UsageEvent,
   UsageStats,
   UserProfile,
+  PublicPlan,
+  Automation,
+  AutomationInfo,
+  AutomationRun,
+  AgentUiEvent,
+  SshHostInfo,
+  SshHostInput,
+  SshHostCredentials,
+  SshTestResult,
 } from "./types.js";
+
+/** Result of create/update — includes the mutated automation so UI can select by id. */
+export interface AutomationMutationResult {
+  automation: Automation;
+  list: AutomationInfo[];
+}
 
 /** Decision for an agent permission request (mirrors agent-core). */
 export type AgentPermissionDecision = "allow" | "allow-always" | "deny";
@@ -48,8 +63,11 @@ export const CH = {
   modelsRefresh: "deyin:models:refresh",
   filesTree: "deyin:files:tree",
   filesRead: "deyin:files:read",
+  filesWrite: "deyin:files:write",
   workspaceOpen: "deyin:workspace:open",
   workspaceSetRoot: "deyin:workspace:setRoot",
+  workspaceGetRoot: "deyin:workspace:getRoot",
+  workspaceRootChanged: "deyin:workspace:rootChanged",
   projectsGet: "deyin:projects:get",
   projectsSet: "deyin:projects:set",
   termCreate: "deyin:term:create",
@@ -97,6 +115,7 @@ export const CH = {
   usageGet: "deyin:usage:get",
   usageRecord: "deyin:usage:record",
   usageAccount: "deyin:usage:account",
+  plansList: "deyin:plans:list",
   winMinimize: "deyin:win:minimize",
   winToggleMaximize: "deyin:win:toggleMaximize",
   winClose: "deyin:win:close",
@@ -115,6 +134,24 @@ export const CH = {
   identitySync: "deyin:identity:sync",
   diagnosticsSend: "deyin:diagnostics:send",
   logWrite: "deyin:log:write",
+  automationsList: "deyin:automations:list",
+  automationsCreate: "deyin:automations:create",
+  automationsUpdate: "deyin:automations:update",
+  automationsDelete: "deyin:automations:delete",
+  automationsToggle: "deyin:automations:toggle",
+  automationsRun: "deyin:automations:run",
+  automationsStop: "deyin:automations:stop",
+  automationsRuns: "deyin:automations:runs",
+  automationEvent: "deyin:automations:event",
+  automationRunFinished: "deyin:automations:runFinished",
+  sshHostsList: "deyin:ssh:list",
+  sshHostsAdd: "deyin:ssh:add",
+  sshHostsUpdate: "deyin:ssh:update",
+  sshHostsRemove: "deyin:ssh:remove",
+  sshHostsSetCredentials: "deyin:ssh:setCredentials",
+  sshHostsTest: "deyin:ssh:test",
+  sshHostsPinFingerprint: "deyin:ssh:pinFingerprint",
+  sshHostsImportKey: "deyin:ssh:importKey",
 } as const;
 
 /** The API the preload script exposes on `window.deyin`. */
@@ -139,11 +176,16 @@ export interface DeyinApi {
   files: {
     tree(dir?: string): Promise<FileNode[]>;
     read(path: string): Promise<string>;
+    write(path: string, content: string): Promise<void>;
   };
   workspace: {
     openFolder(): Promise<string | null>;
     /** Point the host's workspace cwd at a folder (terminal/files/agent); persisted. */
     setRoot(root: string | null): Promise<void>;
+    /** Current workspace / sandbox root (may change after a web host reconnect). */
+    getRoot(): Promise<string | null>;
+    /** Fires when the host workspace/sandbox root changes (desktop setRoot or web reconnect). */
+    onRootChanged(cb: (root: string | null) => void): () => void;
   };
   projects: {
     /** Persisted folder-projects + active selection. The renderer patches projects
@@ -233,6 +275,10 @@ export interface DeyinApi {
     /** Cached Openference account snapshot; `force` bypasses the 6h TTL. */
     account(force?: boolean): Promise<AccountUsage | null>;
   };
+  plans: {
+    /** Public Openference plan catalog (edge-cached on the server). */
+    list(): Promise<PublicPlan[] | null>;
+  };
   win: {
     minimize(): void;
     toggleMaximize(): void;
@@ -277,6 +323,28 @@ export interface DeyinApi {
   logs: {
     /** Append a renderer-side line to deyin.log (errors are forwarded by the app). */
     write(level: "info" | "warn" | "error", message: string): void;
+  };
+  automations: {
+    list(): Promise<AutomationInfo[]>;
+    create(input: Omit<Automation, "id" | "createdAt" | "updatedAt">): Promise<AutomationMutationResult>;
+    update(id: string, patch: Partial<Omit<Automation, "id" | "createdAt">>): Promise<AutomationMutationResult>;
+    remove(id: string): Promise<AutomationInfo[]>;
+    toggle(id: string, enabled: boolean): Promise<AutomationInfo[]>;
+    run(id: string): Promise<AutomationRun>;
+    stop(runId: string): void;
+    runs(automationId?: string): Promise<AutomationRun[]>;
+    onEvent(cb: (payload: { runId: string; automationId: string; event: AgentUiEvent }) => void): () => void;
+    onRunFinished(cb: (payload: { run: AutomationRun }) => void): () => void;
+  };
+  sshHosts: {
+    list(): Promise<SshHostInfo[]>;
+    add(input: SshHostInput): Promise<SshHostInfo[]>;
+    update(id: string, patch: Partial<SshHostInput>): Promise<SshHostInfo[]>;
+    remove(id: string): Promise<SshHostInfo[]>;
+    setCredentials(id: string, creds: SshHostCredentials): Promise<SshHostInfo[]>;
+    test(hostId: string, acceptFingerprint?: string): Promise<SshTestResult>;
+    pinFingerprint(hostId: string, fingerprint: string): Promise<SshHostInfo[]>;
+    importKey(): Promise<string | null>;
   };
 }
 
