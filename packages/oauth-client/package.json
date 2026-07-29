@@ -1,5 +1,6 @@
 {
   "name": "@deyin/oauth-client",
+  "private": true,
   "version": "0.1.1",
   "description": "Reusable OAuth 2.0 + PKCE client for Openference. Desktop loopback, CLI device flow, and browser redirect. Token storage + auto-refresh.",
   "license": "MIT",
