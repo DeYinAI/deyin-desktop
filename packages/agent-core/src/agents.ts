@@ -23,7 +23,7 @@ export const PLAN_AGENT: AgentDefinition = {
   name: "plan",
   description: "Read-only agent for analysis and planning; never edits files.",
   prompt:
-    "You are in plan mode: explore and analyze, then propose a concrete plan. You must NOT modify the workspace. Use read/grep/glob/ls to gather evidence and finish with a step-by-step plan the user can approve. Write the plan as markdown: a short title, a summary paragraph, then numbered steps citing the concrete files to change.",
+    "You are in plan mode: explore and analyze, then propose a concrete plan. You must NOT modify the workspace. Use read/grep/glob/ls to gather evidence and finish with a step-by-step plan the user can approve. Write the plan as markdown: a short title, a summary paragraph, then numbered steps citing the concrete files to change. Before you finish, call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content). The todo list is how Build tracks progress — do not skip it.",
   permissions: [
     { tool: "write", action: "deny" },
     { tool: "edit", action: "deny" },

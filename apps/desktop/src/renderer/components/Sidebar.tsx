@@ -3,7 +3,7 @@ import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import { ProfileMenu } from "./ProfileMenu.js";
 import type { Project, Thread } from "../threads.js";
-import type { UserProfile } from "../../shared/types.js";
+import type { DeyinSettings, UserProfile } from "../../shared/types.js";
 
 interface SidebarProps {
   platform: "desktop" | "web";
@@ -12,7 +12,9 @@ interface SidebarProps {
   activeThreadId: string | null;
   renamingThreadId: string | null;
   user: UserProfile | null;
+  settings: DeyinSettings;
   busy: boolean;
+  connecting: boolean;
   onNewTask: () => void;
   onNewProject: () => void;
   onSelectProject: (projectId: string) => void;
@@ -22,7 +24,11 @@ interface SidebarProps {
   onRenameSubmit: (threadId: string, title: string) => void;
   onConnect: () => void;
   onLogout: () => void;
+  onChangeSettings: (patch: Partial<DeyinSettings>) => void;
+  onOpenUsage: () => void;
+  onOpenPlans: () => void;
   onOpenSettings: () => void;
+  onOpenAutomations?: () => void;
 }
 
 function orderThreads(threads: Thread[]): Thread[] {
@@ -54,15 +60,21 @@ export function Sidebar(props: SidebarProps) {
     <aside className="sidebar">
       <nav className="sidebar__nav">
         <button className="nav-item" onClick={props.onNewTask}>
-          <Icon name="plus" size={15} />
+          <Icon name="plus" size={13} />
           <span>{t("nav.newTask")}</span>
           <span className="kbd">Ctrl+N</span>
         </button>
         <button className="nav-item" onClick={props.onOpenSearch}>
-          <Icon name="search" size={15} />
+          <Icon name="search" size={13} />
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
         </button>
+        {props.platform === "desktop" && props.onOpenAutomations && (
+          <button className="nav-item" onClick={props.onOpenAutomations}>
+            <Icon name="sparkles" size={13} />
+            <span>{t("nav.automations")}</span>
+          </button>
+        )}
       </nav>
 
       <div className="sidebar__scroll">
@@ -156,7 +168,18 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div className="sidebar__footer">
-        <ProfileMenu user={props.user} busy={props.busy} onConnect={props.onConnect} onLogout={props.onLogout} />
+        <ProfileMenu
+          platform={props.platform}
+          user={props.user}
+          busy={props.busy}
+          connecting={props.connecting}
+          settings={props.settings}
+          onChangeSettings={props.onChangeSettings}
+          onConnect={props.onConnect}
+          onLogout={props.onLogout}
+          onOpenUsage={props.onOpenUsage}
+          onOpenPlans={props.onOpenPlans}
+        />
         <div className="sidebar__footer-spacer" />
         <button className="icon-btn" title={t("nav.settings")} onClick={props.onOpenSettings}>
           <Icon name="gear" size={15} />

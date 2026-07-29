@@ -12,6 +12,7 @@ import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
 import { OnboardPage } from "./settings/OnboardPage.js";
 import { PluginsPage } from "./settings/PluginsPage.js";
 import { TerminalPage } from "./settings/TerminalPage.js";
+import { SshHostsPage } from "./settings/SshHostsPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
 import type { MessageKey } from "@deyin/host-core/shared";
 import type {
@@ -39,6 +40,7 @@ export type SettingsPage =
   | "indexing"
   | "usage"
   | "identity"
+  | "sshHosts"
   | "onboard";
 
 /** Pages rendered by the generic CapabilityPage (file-backed registries). */
@@ -82,6 +84,7 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     entries: [
       { page: "indexing", labelKey: "settings.nav.indexing", icon: "search" },
       { page: "usage", labelKey: "settings.nav.usage", icon: "chart" },
+      { page: "sshHosts", labelKey: "settings.nav.sshHosts", icon: "terminal" },
     ],
   },
   {
@@ -194,6 +197,7 @@ export function SettingsView(props: SettingsViewProps) {
         )}
         {page === "browser" && <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />}
         {page === "terminal" && <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />}
+        {page === "sshHosts" && <SshHostsPage />}
         {page === "plugins" && <PluginsPage onToggle={toggleCap} />}
         {page === "mcp" && <McpPage onToggle={toggleCap} />}
         {capKind && (

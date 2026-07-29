@@ -59,7 +59,7 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Browser control (CDP navigate/click/type/screenshot/console/network, per-workspace profile) | Done | `main/browser.ts`, `components/WorkspacePanel.tsx` |
 | File explorer / read | Foundation | `main/host/files.ts`, web `server/host.ts` (tree/read wired; UI panel pending) |
 | Workspace / open folder | Foundation | `main/ipc.ts` (`workspace:open`) |
-| Goal mode / automations engine | Planned | flag off by default |
+| Goal mode / automations engine | Shipped (desktop) | cron + manual; local or SSH |
 | Agent runtime on the web (WS channel to the session host) | Planned | web falls back to plain chat streaming today |
 | OS-level computer use | Out of scope for now | browser control covers in-app automation |
 | Web hosting (same renderer) | Done | `@deyin/web` reuses `apps/desktop/src/renderer` verbatim |

@@ -11,7 +11,20 @@ export function newId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${counter}`;
 }
 
-export function emptyThread(title = "New task"): Thread {
+export const DEFAULT_THREAD_TITLE = "New task";
+
+/** Provisional title from the first user message (truncated at a word boundary). */
+export function deriveTitle(text: string, maxLen = 48): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  if (!collapsed) return DEFAULT_THREAD_TITLE;
+  if (collapsed.length <= maxLen) return collapsed;
+  const slice = collapsed.slice(0, maxLen);
+  const lastSpace = slice.lastIndexOf(" ");
+  const cut = lastSpace > maxLen * 0.5 ? slice.slice(0, lastSpace) : slice;
+  return `${cut.trim()}…`;
+}
+
+export function emptyThread(title = DEFAULT_THREAD_TITLE): Thread {
   return { id: newId("thread"), title, age: "now", events: [] };
 }
 
