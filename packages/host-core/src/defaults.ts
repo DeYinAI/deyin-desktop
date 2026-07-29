@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -26,6 +26,8 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   terminalScrollback: 5000,
   indexingEnabled: true,
   onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
+  automationsCatchUp: true,
+  keepRunningInBackground: false,
 };
 
 /**

@@ -11,11 +11,14 @@ import {
   TelemetryReporter,
   TerminalManager,
   UsageStore,
+  assertInsideRoot,
   detectEnv,
   readTextFile,
   readTree,
+  writeTextFile,
   webSearch,
 } from "@deyin/host-core";
+import { fetchPublicPlans } from "@deyin/host-core/shared";
 import type { PermissionDecision } from "@deyin/agent-core";
 import { CH } from "../shared/ipc.js";
 import type {
@@ -40,6 +43,9 @@ import { logLine } from "./logger.js";
 import { PluginService } from "./plugins.js";
 import { createDesktopStorage } from "./storage.js";
 import { createUpdateController } from "./updater.js";
+import { AutomationService } from "./automations/service.js";
+import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
+import { readFileSync } from "node:fs";
 
 interface RegisterOptions {
   config: DeyinConfig;
@@ -50,6 +56,8 @@ interface RegisterOptions {
 
 export interface IpcServices {
   terminals: TerminalManager;
+  automations: AutomationService;
+  shouldKeepRunningInBackground: () => boolean;
   /** Call when the auth session changes (login/logout) to drop server caches. */
   notifyAuthChanged: () => void;
   dispose: () => void;
@@ -156,12 +164,35 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     },
   });
 
-  /* Workspace root changes fan out to the index and the capability scanner. */
+  const agentDeps: AgentRunContextDeps = {
+    config,
+    auth,
+    agents,
+    settings,
+    capabilities,
+    browser,
+    getWorkspaceRoot: opts.getWorkspaceRoot,
+    searchIndex: (query, topK) => index.search(query, topK),
+    getContextLength: (providerId, modelId) => {
+      const provider = agents.listProviders(true).find((p) => p.id === providerId);
+      return provider?.models.find((m) => m.id === modelId)?.contextLength;
+    },
+  };
+
+  const automations = new AutomationService({
+    storage,
+    deps: agentDeps,
+    auth,
+    isCatchUpEnabled: () => settings.get().automationsCatchUp,
+  });
+
+  /* Workspace root changes fan out to the index, capability scanner, and renderer. */
   const applyWorkspaceRoot = (root: string | null): void => {
     opts.setWorkspaceRoot(root);
     projects.set({ workspaceRoot: root });
     capabilities.invalidate();
     void index.setRoot(root);
+    broadcast(CH.workspaceRootChanged, root);
   };
   // Restore the last workspace folder so terminals/files land where the user
   // left off; the renderer re-reads the project state via projectsGet.
@@ -199,10 +230,21 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.modelsRefresh, () => modelsCache.get(true));
 
   ipcMain.handle(CH.filesTree, (_e, dir?: string) => {
-    const root = dir ?? opts.getWorkspaceRoot();
-    return root ? readTree(root) : [];
+    const root = opts.getWorkspaceRoot();
+    if (!root) return [];
+    if (!dir) return readTree(root);
+    return readTree(assertInsideRoot(root, dir));
   });
-  ipcMain.handle(CH.filesRead, (_e, path: string) => readTextFile(path));
+  ipcMain.handle(CH.filesRead, (_e, path: string) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) throw new Error("No workspace open");
+    return readTextFile(assertInsideRoot(root, path));
+  });
+  ipcMain.handle(CH.filesWrite, (_e, path: string, content: string) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) throw new Error("No workspace open");
+    return writeTextFile(assertInsideRoot(root, path), content);
+  });
 
   ipcMain.handle(CH.workspaceOpen, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -214,6 +256,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.workspaceSetRoot, (_e, root: string | null) => {
     applyWorkspaceRoot(root);
   });
+  ipcMain.handle(CH.workspaceGetRoot, () => opts.getWorkspaceRoot());
 
   ipcMain.handle(CH.projectsGet, () => projects.get());
   ipcMain.handle(CH.projectsSet, (_e, patch: Partial<ProjectsState>) => projects.set(patch));
@@ -232,6 +275,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.settingsSet, (_e, patch: Partial<DeyinSettings>) => {
     const next = settings.set(patch);
     if ("indexingEnabled" in patch) void index.refresh();
+    if ("automationsCatchUp" in patch || "keepRunningInBackground" in patch) {
+      automations.refreshScheduler();
+    }
     return next;
   });
 
@@ -313,6 +359,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.usageGet, () => usage.stats());
   ipcMain.handle(CH.usageRecord, (_e, event: UsageEvent) => usage.record(event));
   ipcMain.handle(CH.usageAccount, (_e, force?: boolean) => accountCache.get(force ?? false));
+  ipcMain.handle(CH.plansList, () => fetchPublicPlans({ oauthIssuer: config.oauthIssuer }));
 
   /* Telemetry (renderer-side feature events). */
   ipcMain.on(CH.telemetryRecord, (_e, name: string, props?: Record<string, string | number | boolean>) =>
@@ -360,8 +407,49 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     if (typeof message === "string" && message.length > 0) logLine(level, `[renderer] ${message.slice(0, 4000)}`);
   });
 
+  /* Automations. */
+  ipcMain.handle(CH.automationsList, () => automations.list());
+  ipcMain.handle(CH.automationsCreate, (_e, input: Omit<import("../shared/types.js").Automation, "id" | "createdAt" | "updatedAt">) =>
+    automations.create(input),
+  );
+  ipcMain.handle(CH.automationsUpdate, (_e, id: string, patch: Partial<Omit<import("../shared/types.js").Automation, "id" | "createdAt">>) =>
+    automations.update(id, patch),
+  );
+  ipcMain.handle(CH.automationsDelete, (_e, id: string) => automations.remove(id));
+  ipcMain.handle(CH.automationsToggle, (_e, id: string, enabled: boolean) => automations.toggle(id, enabled));
+  ipcMain.handle(CH.automationsRun, (_e, id: string) => automations.run(id));
+  ipcMain.on(CH.automationsStop, (_e, runId: string) => automations.stopRun(runId));
+  ipcMain.handle(CH.automationsRuns, (_e, automationId?: string) => automations.listRuns(automationId));
+
+  /* SSH hosts. */
+  ipcMain.handle(CH.sshHostsList, () => automations.listSshHosts());
+  ipcMain.handle(CH.sshHostsAdd, (_e, input: import("../shared/types.js").SshHostInput) => automations.addSshHost(input));
+  ipcMain.handle(CH.sshHostsUpdate, (_e, id: string, patch: Partial<import("../shared/types.js").SshHostInput>) =>
+    automations.updateSshHost(id, patch),
+  );
+  ipcMain.handle(CH.sshHostsRemove, (_e, id: string) => automations.removeSshHost(id));
+  ipcMain.handle(CH.sshHostsSetCredentials, (_e, id: string, creds: import("../shared/types.js").SshHostCredentials) =>
+    automations.setSshCredentials(id, creds),
+  );
+  ipcMain.handle(CH.sshHostsTest, (_e, hostId: string, acceptFingerprint?: string) =>
+    automations.testSshHost(hostId, acceptFingerprint),
+  );
+  ipcMain.handle(CH.sshHostsPinFingerprint, (_e, hostId: string, fingerprint: string) =>
+    automations.pinSshFingerprint(hostId, fingerprint),
+  );
+  ipcMain.handle(CH.sshHostsImportKey, async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [{ name: "Private key", extensions: ["pem", "key", ""] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return readFileSync(result.filePaths[0]!, "utf8");
+  });
+
   return {
     terminals,
+    automations,
+    shouldKeepRunningInBackground: () => settings.get().keepRunningInBackground,
     notifyAuthChanged: () => {
       accountCache.invalidate();
       modelsCache.invalidate();
@@ -375,6 +463,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       telemetry.stop();
       void telemetry.flush();
       index.dispose();
+      automations.dispose();
     },
   };
 }

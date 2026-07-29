@@ -62,13 +62,41 @@ export interface ChatMessage {
 /** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
 export type ChatMode = "agent" | "plan" | "ask";
 
+export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+/** One checklist entry of the in-chat todo card (status added later; `done` kept
+ *  so timelines persisted by older builds still render). */
+export interface PlanStep {
+  text: string;
+  done: boolean;
+  status?: AgentTodoStatus;
+}
+
+/** One rendered line of a chat file-card diff snippet (persisted with the thread). */
+export interface DiffSnippetLine {
+  type: "context" | "add" | "del";
+  text: string;
+  oldNo: number | null;
+  newNo: number | null;
+}
+
 export type ThreadEvent =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "reasoning"; text: string; seconds?: number }
-  | { kind: "plan"; steps: { text: string; done: boolean }[]; badge?: string }
+  | { kind: "plan"; steps: PlanStep[]; badge?: string }
   | { kind: "plan-ready" }
-  | { kind: "file"; name: string; subtitle: string; adds: number; dels: number }
+  | {
+      kind: "file";
+      name: string;
+      subtitle: string;
+      adds: number;
+      dels: number;
+      /** Capped color-coded diff excerpt rendered inside the chat card. */
+      snippet?: DiffSnippetLine[];
+      /** Changed lines beyond the snippet cap ("… N more"). */
+      snippetMore?: number;
+    }
   | { kind: "model-switch"; from: string; to: string }
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string }
@@ -86,6 +114,8 @@ export interface Thread {
   mode?: ChatMode;
   /** Markdown produced by the latest plan-mode run; feeds the Plan tab. */
   planMarkdown?: string;
+  /** Latest agent todo list; feeds the pinned task list above the composer. */
+  todos?: AgentTodoItem[];
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
@@ -174,6 +204,105 @@ export interface DeyinSettings {
   /** Live local semantic indexing of the workspace. */
   indexingEnabled: boolean;
   onboard: OnboardProgress;
+  /** Run missed cron automations once on app startup. */
+  automationsCatchUp: boolean;
+  /** Keep scheduler alive in the tray when all windows are closed. */
+  keepRunningInBackground: boolean;
+}
+
+/* Automations ------------------------------------------------------------- */
+
+export type AutomationTarget =
+  | { kind: "local"; workspacePath: string }
+  | { kind: "ssh"; hostId: string; workspacePath: string };
+
+export type AutomationTrigger =
+  | { kind: "cron"; expression: string }
+  | { kind: "manual" };
+
+export interface Automation {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  prompt: string;
+  trigger: AutomationTrigger;
+  target: AutomationTarget;
+  model: string;
+  providerId: string;
+  createdAt: number;
+  updatedAt: number;
+  /** Unix ms of last successful scheduled slot (for catch-up). */
+  lastScheduledAt?: number;
+}
+
+export type AutomationRunStatus = "queued" | "running" | "completed" | "failed" | "aborted";
+
+export interface AutomationRun {
+  id: string;
+  automationId: string;
+  status: AutomationRunStatus;
+  startedAt: number;
+  finishedAt?: number;
+  reason?: string;
+  finalText?: string;
+  events: AgentUiEvent[];
+}
+
+export type SshAuthMethod = "privateKey" | "password";
+
+/** Persisted SSH host metadata; secrets stored as cipher fields. */
+export interface StoredSshHost {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: SshAuthMethod;
+  keyCipher?: string;
+  passphraseCipher?: string;
+  passwordCipher?: string;
+  knownHostFingerprint?: string;
+}
+
+/** SSH host as exposed to the renderer (no secret values). */
+export interface SshHostInfo {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: SshAuthMethod;
+  hasKey: boolean;
+  hasPassword: boolean;
+  knownHostFingerprint?: string;
+}
+
+export interface SshHostInput {
+  label: string;
+  host: string;
+  port?: number;
+  username: string;
+  authMethod: SshAuthMethod;
+}
+
+export interface SshHostCredentials {
+  privateKey?: string;
+  passphrase?: string;
+  password?: string;
+}
+
+export interface SshTestResult {
+  ok: boolean;
+  message: string;
+  nodeVersion?: string;
+  deyinVersion?: string;
+  /** Set on first connect when no fingerprint is pinned yet. */
+  hostFingerprint?: string;
+}
+
+export interface AutomationInfo extends Automation {
+  lastRun?: AutomationRun;
 }
 
 /* Capabilities (plugins / skills / subagents / MCP / commands / hooks) ----- */
@@ -288,7 +417,7 @@ export interface IndexSearchHit {
 export interface AgentTodoItem {
   id: string;
   content: string;
-  status: "pending" | "in_progress" | "completed" | "cancelled";
+  status: AgentTodoStatus;
 }
 
 /** Renderer-facing events streamed from the main-process agent runtime. */
@@ -322,6 +451,8 @@ export interface AgentStartOptions {
   mode: ChatMode;
   /** Prior plain-text turns used to rebuild context after a restart. */
   history: { role: "user" | "assistant"; content: string }[];
+  /** Seed the agent loop's todo list (e.g. plan todos handed to Build). */
+  initialTodos?: AgentTodoItem[];
 }
 
 /* Model providers ---------------------------------------------------------- */

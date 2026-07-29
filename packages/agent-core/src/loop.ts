@@ -28,7 +28,7 @@ export type AgentEvent =
   | { type: "file-change"; change: FileChange }
   | { type: "todos"; todos: TodoItem[] }
   | { type: "usage"; usage: TokenUsage }
-  | { type: "compaction"; truncatedToolResults: number; droppedMessages: number }
+  | { type: "compaction"; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
   | { type: "done"; reason: AgentRunResult["reason"] };
 
 export interface AgentRunOptions {
@@ -99,7 +99,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
     const compaction = compactMessages(opts.messages, budget);
-    if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0) {
+    if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0 || compaction.truncatedToolArgs > 0) {
       emit({ type: "compaction", ...compaction });
     }
 
