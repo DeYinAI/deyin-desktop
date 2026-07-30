@@ -1181,28 +1181,6 @@ export function App() {
     );
   }
 
-  if (view === "automations" && settings && boot && boot.platform === "desktop") {
-    return (
-      <I18nProvider language={language}>
-        <div className="app">
-          <UpdateBanner />
-          <AutomationsView
-            workspaceRoot={workspaceRoot}
-            providers={providers}
-            models={models}
-            selectedModel={selectedModel}
-            selectedProviderId={selectedProviderId}
-            onBack={() => setView("workspace")}
-            onOpenSshSettings={() => {
-              setSettingsPage("sshHosts");
-              setView("settings");
-            }}
-          />
-        </div>
-      </I18nProvider>
-    );
-  }
-
   if (view === "settings" && settings && boot) {
     return (
       <I18nProvider language={language}>
@@ -1247,8 +1225,14 @@ export function App() {
         panelOpen={panelOpen}
         terminalOpen={terminalOpen}
         onOpenFolder={() => void addProjectFolder()}
-        onTogglePanel={() => setPanelOpen((v) => !v)}
-        onToggleTerminal={() => setTerminalOpen((v) => !v)}
+        onTogglePanel={() => {
+          setPanelOpen((v) => !v);
+          setView("workspace");
+        }}
+        onToggleTerminal={() => {
+          setTerminalOpen((v) => !v);
+          setView("workspace");
+        }}
         onThreadAction={handleThreadAction}
       />
       {boot?.platform === "desktop" ? <UpdateBanner /> : null}
@@ -1266,7 +1250,10 @@ export function App() {
           connecting={connecting}
           onNewTask={newTask}
           onNewProject={() => void addProjectFolder()}
-          onSelectProject={selectProject}
+          onSelectProject={(projectId) => {
+            void selectProject(projectId);
+            setView("workspace");
+          }}
           onSelectThread={(_pid, tid) => {
             setActiveThreadId(tid);
             updateThread(tid, { unread: false });
@@ -1286,7 +1273,6 @@ export function App() {
             setView("settings");
           }}
           onOpenPlans={() => setPlansOpen(true)}
-          onOpenAutomations={boot?.platform === "desktop" ? () => setView("automations") : undefined}
           onOpenSettings={() => {
             // The gear always lands on General; deep links (Manage models,
             // browser settings) set their page right before switching views.
@@ -1297,6 +1283,20 @@ export function App() {
         />
 
         <div className="app__center">
+          {view === "automations" && settings && boot?.platform === "desktop" ? (
+            <AutomationsView
+              workspaceRoot={workspaceRoot}
+              providers={providers}
+              models={models}
+              selectedModel={selectedModel}
+              selectedProviderId={selectedProviderId}
+              onOpenSshSettings={() => {
+                setSettingsPage("sshHosts");
+                setView("settings");
+              }}
+            />
+          ) : (
+            <>
           <div className="app__columns">
             <main className="chat-column">
               <div className="chat-column__bar">
@@ -1449,6 +1449,8 @@ export function App() {
               onClose={() => setTerminalOpen(false)}
             />
           )}
+            </>
+          )}
         </div>
       </div>
 
@@ -1481,11 +1483,13 @@ export function App() {
           onSelectThread={(_pid, tid) => {
             setActiveThreadId(tid);
             updateThread(tid, { unread: false });
+            setView("workspace");
           }}
           onOpenUrl={(url) => {
             setPanelOpen(true);
             setPanelTab("browser");
             setBrowserUrl(url);
+            setView("workspace");
           }}
           onClose={() => setSearchOpen(false)}
         />

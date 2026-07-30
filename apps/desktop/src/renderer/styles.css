@@ -3626,9 +3626,11 @@ button.thinking__head:hover {
 
 /* Automations -------------------------------------------------------------- */
 .automations {
+  flex: 1;
   display: grid;
-  grid-template-columns: 320px 1fr;
-  height: 100vh;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
   background: var(--bg);
   color: var(--text);
 }
