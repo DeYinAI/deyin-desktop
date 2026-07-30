@@ -51,9 +51,11 @@ export class PermissionEngine {
 
   actionFor(tool: Pick<ToolDefinition, "name" | "tier">): PermissionAction {
     if (this.skipAll) return "allow";
-    if (this.sessionGrants.has(tool.name)) return "allow";
     const match = this.rules.findLast((r) => r.tool === "*" || r.tool === tool.name);
-    return match?.action ?? tierDefault(tool.tier);
+    const action = match?.action ?? tierDefault(tool.tier);
+    if (action === "deny") return "deny";
+    if (action === "ask" && this.sessionGrants.has(tool.name)) return "allow";
+    return action;
   }
 
   /** Session-scoped "always allow" (the "don't ask again" choice in the prompt). */
