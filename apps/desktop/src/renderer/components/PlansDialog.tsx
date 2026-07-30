@@ -16,7 +16,7 @@ function featureLines(features: string | null): string[] {
   return features.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
-async function fetchPlans(): Promise<[PublicPlan[], AccountUsage | null]> {
+async function fetchPlans(): Promise<[PublicPlan[] | null, AccountUsage | null]> {
   const [catalog, usage] = await Promise.all([
     window.deyin.plans.list(),
     window.deyin.usage.account(true).catch(() => null),

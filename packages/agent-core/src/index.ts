@@ -1,3 +1,4 @@
+export * from "./interaction.js";
 export * from "./types.js";
 export * from "./wire.js";
 export * from "./stream.js";
