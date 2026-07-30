@@ -59,9 +59,10 @@ export function compactMessages(messages: AgentMessage[], budgetTokens: number):
   let dropUpTo = -1;
   for (let g = 0; g < groups.length - 1; g++) {
     dropUpTo = groups[g]!.end;
+    const removed = dropUpTo - systemCount;
     const remaining: AgentMessage[] = [
       ...messages.slice(0, systemCount),
-      marker(0),
+      marker(removed),
       ...messages.slice(dropUpTo),
     ];
     if (estimateTokens(remaining) <= budgetTokens) break;

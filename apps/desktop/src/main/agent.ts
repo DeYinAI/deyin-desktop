@@ -233,7 +233,10 @@ export class DesktopAgentHost {
         afterTool: async (call, result, ok) => {
           await runHooks(hooks, "postToolUse", call.name, { tool: call.name, ok, resultChars: result.length, cwd });
           if (call.name === "bash") {
-            await runHooks(hooks, "afterShellExecution", call.name, { ok, cwd });
+            let args: Record<string, unknown> = {};
+            try { args = call.arguments.trim() ? (JSON.parse(call.arguments) as Record<string, unknown>) : {}; } catch { /* ignore */ }
+            const command = typeof args.command === "string" ? args.command : "";
+            await runHooks(hooks, "afterShellExecution", command, { command, ok, cwd });
           }
         },
         onEvent: (event) => {
