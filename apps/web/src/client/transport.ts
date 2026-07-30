@@ -36,6 +36,7 @@ import type {
   FilesTreeResult,
   FilesWriteResult,
   ServerMessage,
+  TermAttachResult,
   TermCreateResult,
 } from "../shared/protocol.js";
 
@@ -412,6 +413,8 @@ export function createBrowserTransport(): DeyinApi {
     },
     terminal: {
       create: (opts) => host.invoke<TermCreateResult>((id) => ({ type: "term.create", id, opts })).then((r) => r.termId),
+      attach: (termId) =>
+        host.invoke<TermAttachResult>((id) => ({ type: "term.attach", id, termId })),
       write: (id, data) => host.fireAndForget({ type: "term.write", termId: id, data }),
       resize: (id, cols, rows) => host.fireAndForget({ type: "term.resize", termId: id, cols, rows }),
       kill: (id) => host.fireAndForget({ type: "term.kill", termId: id }),
@@ -506,6 +509,7 @@ export function createBrowserTransport(): DeyinApi {
       start: async () => undefined,
       stop: () => undefined,
       approve: () => undefined,
+      disposeShell: () => undefined,
       onEvent: () => () => undefined,
     },
     browserControl: {

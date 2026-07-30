@@ -19,6 +19,8 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Provider prompt-cache hits (OpenAI cached_tokens / Anthropic cache_read). */
+  cachedPromptTokens?: number;
 }
 
 /** JSON Schema for a tool's parameters (OpenAI function-calling format). */
@@ -53,6 +55,19 @@ export interface FileChange {
   after: string;
 }
 
+/** Host-injected persistent shell used by the bash tool when available. */
+export interface ToolShell {
+  run(
+    command: string,
+    opts: {
+      cwd?: string;
+      timeoutS: number;
+      signal?: AbortSignal;
+      onData?: (delta: string) => void;
+    },
+  ): Promise<{ output: string; exitCode: number | null }>;
+}
+
 /** Ambient state passed to every tool execution in one agent run. */
 export interface ToolContext {
   /** Workspace root; all relative tool paths resolve against this. */
@@ -63,6 +78,16 @@ export interface ToolContext {
   onTodosChanged?: (todos: TodoItem[]) => void;
   /** Fired by write/edit after a successful file mutation. */
   onFileChanged?: (change: FileChange) => void;
+  /**
+   * Optional host-backed persistent shell (PTY). When set, bash uses it instead
+   * of a one-shot spawn so cwd/env persist and output can stream live.
+   */
+  shell?: ToolShell;
+  /**
+   * Per-call callback bound by the loop: tools that produce incremental output
+   * (bash) call this to emit `tool-delta` events while still running.
+   */
+  onOutput?: (delta: string) => void;
 }
 
 /** Coarse capability class used for default permissions. */

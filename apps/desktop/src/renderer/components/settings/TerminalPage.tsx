@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PageHeader, SectionTitle, SettingCard } from "./controls.js";
+import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings, EnvInfo } from "../../../shared/types.js";
 
 interface Props {
@@ -80,8 +80,17 @@ export function TerminalPage({ settings, onChange }: Props) {
 
       <SectionTitle>Agent</SectionTitle>
       <SettingCard
+        title="Reveal terminal on agent command"
+        description="Open the terminal panel and focus the Agent tab when the chat agent first runs a shell command."
+      >
+        <Toggle
+          checked={settings.revealTerminalOnAgentCommand}
+          onChange={(v) => onChange({ revealTerminalOnAgentCommand: v })}
+        />
+      </SettingCard>
+      <SettingCard
         title="Agent shell marker"
-        description="Agent-spawned shells set DEYIN_AGENT=1 so your dotfiles can skip heavy prompts and banners."
+        description="Agent-spawned shells set DEYIN_AGENT=1 so your dotfiles can skip heavy prompts and banners. The agent uses its own persistent PTY — never your personal tabs."
       />
     </div>
   );

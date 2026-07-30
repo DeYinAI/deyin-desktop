@@ -1,0 +1,40 @@
+{"query": "Read auth.ts", "positive": "file content of src/auth.ts: export function login() { ... }", "task": "tool_file_read"}
+{"query": "Get content of auth.ts", "positive": "file content of src/auth.ts: export function login() { ... }", "task": "tool_file_read"}
+{"query": "read packages/agent-core/src/loop.ts", "positive": "export async function runAgent(opts) { for (let step = 1; step <= maxSteps; step++) { ... } }", "task": "tool_file_read"}
+{"query": "Show me the agent loop", "positive": "export async function runAgent(opts) { for (let step = 1; step <= maxSteps; step++) { ... } }", "task": "tool_file_read"}
+{"query": "grep for streamChatEvents", "positive": "packages/agent-core/src/stream.ts:55: export async function* streamChatEvents", "task": "tool_search"}
+{"query": "search codebase for streamChatEvents", "positive": "packages/agent-core/src/stream.ts:55: export async function* streamChatEvents", "task": "tool_search"}
+{"query": "find where toWireMessages is defined", "positive": "packages/agent-core/src/wire.ts: export function toWireMessages(messages)", "task": "tool_search"}
+{"query": "ls packages/agent-core/src", "positive": "compaction.ts\ncompression.ts\nloop.ts\nstream.ts\nwire.ts\ntokenizer.ts", "task": "tool_ls"}
+{"query": "list files in agent-core src", "positive": "compaction.ts\ncompression.ts\nloop.ts\nstream.ts\nwire.ts\ntokenizer.ts", "task": "tool_ls"}
+{"query": "git status", "positive": "On branch main\nChanges not staged for commit:\n  modified: packages/agent-core/src/loop.ts", "task": "tool_git"}
+{"query": "show git status", "positive": "On branch main\nChanges not staged for commit:\n  modified: packages/agent-core/src/loop.ts", "task": "tool_git"}
+{"query": "bash npm test", "positive": "PASS packages/agent-core/test/wire.test.ts\nPASS packages/agent-core/test/compaction.test.ts\nTest Suites: 2 passed", "task": "tool_bash"}
+{"query": "run the test suite", "positive": "PASS packages/agent-core/test/wire.test.ts\nPASS packages/agent-core/test/compaction.test.ts\nTest Suites: 2 passed", "task": "tool_bash"}
+{"query": "TypeError: Cannot read properties of undefined", "positive": "TypeError: Cannot read properties of undefined (reading 'map')\n    at toWireMessages (wire.ts:9)", "task": "error_cluster"}
+{"query": "undefined is not an object reading map", "positive": "TypeError: Cannot read properties of undefined (reading 'map')\n    at toWireMessages (wire.ts:9)", "task": "error_cluster"}
+{"query": "ENOENT: no such file or directory", "positive": "Error: ENOENT: no such file or directory, open '/tmp/missing.ts'", "task": "error_cluster"}
+{"query": "file not found error", "positive": "Error: ENOENT: no such file or directory, open '/tmp/missing.ts'", "task": "error_cluster"}
+{"query": "compress tool output before sending", "positive": "class ContentCompressor { compressToolOutput(output, toolName) { ... } }", "task": "code_similarity"}
+{"query": "ContentCompressor compressToolOutput", "positive": "class ContentCompressor { compressToolOutput(output, toolName) { ... } }", "task": "code_similarity"}
+{"query": "estimate token count for messages", "positive": "export function estimateTokens(messages) { return Math.ceil(chars / 4); }", "task": "code_similarity"}
+{"query": "how many tokens in the transcript", "positive": "export function estimateTokens(messages) { return Math.ceil(chars / 4); }", "task": "code_similarity"}
+{"query": "import path from node:path", "positive": "import { join, dirname } from \"node:path\";", "task": "code_similarity"}
+{"query": "use path.join for file paths", "positive": "import { join, dirname } from \"node:path\";", "task": "code_similarity"}
+{"query": "src/components/Button.tsx related files", "positive": "src/components/Button.tsx\nsrc/components/Button.test.tsx\nsrc/styles/button.css", "task": "file_path"}
+{"query": "files related to Button component", "positive": "src/components/Button.tsx\nsrc/components/Button.test.tsx\nsrc/styles/button.css", "task": "file_path"}
+{"query": "packages/host-core/src/openference.ts imports", "positive": "packages/host-core/src/openference.ts\npackages/host-core/src/types.ts\npackages/host-core/src/account.ts", "task": "file_path"}
+{"query": "What does compactMessages do?", "positive": "compactMessages truncates old tool results and drops oldest user-turn groups when the transcript exceeds the token budget.", "task": "response_query"}
+{"query": "Explain context compaction", "positive": "compactMessages truncates old tool results and drops oldest user-turn groups when the transcript exceeds the token budget.", "task": "response_query"}
+{"query": "How do I enable agent mode?", "positive": "Set agentMode to \"agent\" in Settings, or leave the default. Chat mode disables tool calling.", "task": "response_query"}
+{"query": "turn on the tool-calling agent", "positive": "Set agentMode to \"agent\" in Settings, or leave the default. Chat mode disables tool calling.", "task": "response_query"}
+{"query": "ANSI escape codes in terminal output\u001b[31merror\u001b[0m", "positive": "error", "task": "tool_output_noise"}
+{"query": "strip ansi from logs", "positive": "error", "task": "tool_output_noise"}
+{"query": "npm warn deprecated inflight@1.0.6", "positive": "ERROR: build failed\nTypeError: x is not a function", "task": "log_importance"}
+{"query": "keep only errors from npm install log", "positive": "ERROR: build failed\nTypeError: x is not a function", "task": "log_importance"}
+{"query": "JSON with null fields {\"a\":1,\"b\":null,\"c\":2}", "positive": "{\"a\":1,\"c\":2}", "task": "json_minify"}
+{"query": "minify json remove nulls", "positive": "{\"a\":1,\"c\":2}", "task": "json_minify"}
+{"query": "function getUserById(id: string) { return db.users.find(id); }", "positive": "async function fetchUser(userId: string) { return await database.users.get(userId); }", "task": "code_refactor"}
+{"query": "refactored user lookup", "positive": "async function fetchUser(userId: string) { return await database.users.get(userId); }", "task": "code_refactor"}
+{"query": "Permission denied by user for bash", "positive": "Denied: the user rejected this tool call. Do not retry it; adjust your approach or ask the user.", "task": "tool_denied"}
+{"query": "user rejected shell command", "positive": "Denied: the user rejected this tool call. Do not retry it; adjust your approach or ask the user.", "task": "tool_denied"}
