@@ -44,6 +44,16 @@ test("session grants allow without prompting until the process ends", () => {
   assert.deepEqual(engine.listSessionGrants(), ["bash"]);
 });
 
+test("session grants cannot override deny rules", () => {
+  const engine = new PermissionEngine({
+    agentRules: [{ tool: "write", action: "deny" }, { tool: "edit", action: "deny" }],
+  });
+  engine.grantForSession("write");
+  engine.grantForSession("edit");
+  assert.equal(engine.actionFor({ name: "write", tier: "write" }), "deny");
+  assert.equal(engine.actionFor(edit), "deny");
+});
+
 test("skipAll (--yes) allows everything, even explicit denies", () => {
   const engine = new PermissionEngine({ agentRules: [{ tool: "*", action: "deny" }], skipAll: true });
   assert.equal(engine.actionFor(bash), "allow");
