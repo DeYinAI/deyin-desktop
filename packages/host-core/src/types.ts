@@ -723,3 +723,106 @@ export interface DiagnosticsResult {
   sentAt?: string;
   message?: string;
 }
+
+/* Git ------------------------------------------------------------------------ */
+
+/** Per-file change kind, derived from porcelain-v2 XY codes. */
+export type GitFileStatus = "modified" | "added" | "deleted" | "renamed" | "untracked" | "conflicted" | "typechange";
+
+/** One changed path in the working tree or index. */
+export interface GitFileEntry {
+  path: string;
+  /** Previous path for renames/copies. */
+  orig?: string;
+  status: GitFileStatus;
+  /** True when the change is in the index (staged side of the XY code). */
+  staged: boolean;
+}
+
+/** Parsed `git status --porcelain=v2 --branch`. */
+export interface GitStatus {
+  branch: string | null;
+  detached: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  staged: GitFileEntry[];
+  unstaged: GitFileEntry[];
+  untracked: GitFileEntry[];
+  conflicts: GitFileEntry[];
+}
+
+export interface GitBranch {
+  /** Short name, e.g. "main" or "origin/main". */
+  name: string;
+  current: boolean;
+  /** True for refs under refs/remotes. */
+  remote: boolean;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+}
+
+export interface GitRepoInfo {
+  isRepo: boolean;
+  /** Workspace root the info is for (null when not a repo). */
+  root: string | null;
+  branch: string | null;
+  detached: boolean;
+  ahead: number;
+  behind: number;
+  remotes: string[];
+}
+
+export interface GitCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  authorEmail: string;
+  /** ISO 8601 author date. */
+  date: string;
+  parents: string[];
+}
+
+/** A commit plus the files it changed (for the history viewer). */
+export interface GitCommitDetail {
+  commit: GitCommit;
+  files: GitFileEntry[];
+}
+
+/** Before/after blobs for a single file, fed to the LCS diff renderer. */
+export interface GitFileDiff {
+  path: string;
+  orig?: string;
+  before: string;
+  after: string;
+  binary: boolean;
+}
+
+export interface GitStash {
+  index: number;
+  message: string;
+  branch?: string;
+}
+
+export interface GitRemote {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+export interface GitBlameLine {
+  line: number;
+  hash: string;
+  author: string;
+  date: string;
+  summary: string;
+  content: string;
+}
+
+/** Lightweight result for mutating git ops (toast-friendly, no raw stderr structure). */
+export interface GitResultLite {
+  ok: boolean;
+  message: string;
+}

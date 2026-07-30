@@ -9,6 +9,16 @@ import type {
   DiagnosticsResult,
   EnvInfo,
   FileNode,
+  GitBlameLine,
+  GitBranch,
+  GitCommit,
+  GitCommitDetail,
+  GitFileDiff,
+  GitRemote,
+  GitRepoInfo,
+  GitStash,
+  GitStatus,
+  GitResultLite,
   IdentityInfo,
   IdentitySyncResult,
   IndexSearchHit,
@@ -68,6 +78,30 @@ export const CH = {
   workspaceSetRoot: "deyin:workspace:setRoot",
   workspaceGetRoot: "deyin:workspace:getRoot",
   workspaceRootChanged: "deyin:workspace:rootChanged",
+  gitInfo: "deyin:git:info",
+  gitStatus: "deyin:git:status",
+  gitBranches: "deyin:git:branches",
+  gitCheckout: "deyin:git:checkout",
+  gitStage: "deyin:git:stage",
+  gitUnstage: "deyin:git:unstage",
+  gitDiscard: "deyin:git:discard",
+  gitCommit: "deyin:git:commit",
+  gitFetch: "deyin:git:fetch",
+  gitPull: "deyin:git:pull",
+  gitPush: "deyin:git:push",
+  gitCreateBranch: "deyin:git:createBranch",
+  gitDeleteBranch: "deyin:git:deleteBranch",
+  gitLog: "deyin:git:log",
+  gitShow: "deyin:git:show",
+  gitDiffFile: "deyin:git:diffFile",
+  gitDiffCommit: "deyin:git:diffCommit",
+  gitBlame: "deyin:git:blame",
+  gitRemotes: "deyin:git:remotes",
+  gitStashList: "deyin:git:stashList",
+  gitStashPush: "deyin:git:stashPush",
+  gitStashPop: "deyin:git:stashPop",
+  gitStashDrop: "deyin:git:stashDrop",
+  gitChanged: "deyin:git:changed",
   projectsGet: "deyin:projects:get",
   projectsSet: "deyin:projects:set",
   termCreate: "deyin:term:create",
@@ -189,6 +223,45 @@ export interface DeyinApi {
     getRoot(): Promise<string | null>;
     /** Fires when the host workspace/sandbox root changes (desktop setRoot or web reconnect). */
     onRootChanged(cb: (root: string | null) => void): () => void;
+  };
+  git: {
+    /** Repo detection + branch/ahead/behind for the current workspace root. */
+    info(): Promise<GitRepoInfo>;
+    /** Full working-tree/index status (staged, unstaged, untracked, conflicts). */
+    status(): Promise<GitStatus>;
+    /** Local + remote branches. */
+    branches(): Promise<GitBranch[]>;
+    /** Switch to an existing branch. */
+    checkout(name: string): Promise<GitResultLite>;
+    /** Stage paths (empty array stages everything). */
+    stage(paths: string[]): Promise<GitResultLite>;
+    /** Unstage paths (empty array unstages everything). */
+    unstage(paths: string[]): Promise<GitResultLite>;
+    /** Discard working-tree changes / remove untracked paths. */
+    discard(paths: string[]): Promise<GitResultLite>;
+    /** Commit the staged index. */
+    commit(message: string, opts?: { amend?: boolean }): Promise<GitResultLite>;
+    fetch(): Promise<GitResultLite>;
+    pull(opts?: { rebase?: boolean }): Promise<GitResultLite>;
+    push(opts?: { setUpstream?: boolean }): Promise<GitResultLite>;
+    createBranch(name: string, from?: string): Promise<GitResultLite>;
+    deleteBranch(name: string, force?: boolean): Promise<GitResultLite>;
+    /** Commit history (paginated). */
+    log(opts?: { limit?: number; skip?: number; path?: string; ref?: string }): Promise<GitCommit[]>;
+    /** A commit's metadata + changed files. */
+    show(ref: string): Promise<GitCommitDetail>;
+    /** Before/after blobs for a file in the given diff mode. */
+    diffFile(path: string, mode: "worktree" | "staged" | "head"): Promise<GitFileDiff>;
+    /** Before/after blobs for a file at a commit vs its parent. */
+    diffCommit(ref: string, path: string): Promise<GitFileDiff>;
+    blame(path: string): Promise<GitBlameLine[]>;
+    remotes(): Promise<GitRemote[]>;
+    stashList(): Promise<GitStash[]>;
+    stashPush(message?: string, includeUntracked?: boolean): Promise<GitResultLite>;
+    stashPop(index?: number): Promise<GitResultLite>;
+    stashDrop(index: number): Promise<GitResultLite>;
+    /** Fires when the workspace's git state changes (watcher or a completed op). */
+    onChanged(cb: () => void): () => void;
   };
   projects: {
     /** Persisted folder-projects + active selection. The renderer patches projects

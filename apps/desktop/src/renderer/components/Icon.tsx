@@ -40,6 +40,14 @@ const PATHS: Record<string, JSX.Element> = {
       <circle cx="8" cy="8" r="1.8" />
     </>
   ),
+  gitBranch: (
+    <>
+      <path d="M4 3v6" />
+      <circle cx="4" cy="11.5" r="1.6" />
+      <circle cx="12" cy="4.5" r="1.6" />
+      <path d="M12 6.1a5.4 5.4 0 0 1-5.4 5.4" />
+    </>
+  ),
   chevronDown: <path d="M4 6l4 4 4-4" />,
   chevronRight: <path d="M6 4l4 4-4 4" />,
   chevronLeft: <path d="M10 4L6 8l4 4" />,
