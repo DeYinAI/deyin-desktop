@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
+import { findPwsh, resolveShellInfo } from "./env.js";
 import type { TerminalEvents } from "./pty.js";
+import { toWslPath, windowsSpawnCwd } from "./wsl-path.js";
 
 interface IPty {
  onData(cb: (data: string) => void): void;
@@ -62,6 +64,8 @@ export interface AgentShellOptions {
   rows?: number;
   /** Optional stable id; defaults to a fresh UUID. */
   id?: string;
+  /** Shell id from `EnvInfo.shells` (e.g. `wsl:Ubuntu-22.04`); omit for host default. */
+  shell?: string;
 }
 
 let ptyModule: PtyModule | null | undefined;
@@ -83,20 +87,61 @@ export async function agentShellAvailable(): Promise<boolean> {
   return existsSync("/bin/bash") || existsSync("/usr/bin/bash");
 }
 
-function agentShellExecutable(): { file: string; args: string[]; kind: "bash" | "powershell" } {
-  if (platform() === "win32") {
-    return { file: "powershell.exe", args: ["-NoLogo", "-NoProfile"], kind: "powershell" };
-  }
+interface AgentShellTarget {
+  file: string;
+  args: string[];
+  kind: "bash" | "powershell";
+  /** Host path -> path the spawned shell understands (identity outside WSL). */
+  mapPath: (p: string) => string;
+  /** Host path -> working directory node-pty can spawn in (identity outside WSL). */
+  spawnCwd: (p: string) => string;
+}
+
+const identity = (p: string): string => p;
+
+function posixBash(): AgentShellTarget {
   // Require bash on POSIX: dash/sh has no PS0 so marker capture never starts.
-  if (existsSync("/bin/bash")) {
-    return { file: "/bin/bash", args: ["--norc", "--noprofile"], kind: "bash" };
-  }
-  if (existsSync("/usr/bin/bash")) {
-    return { file: "/usr/bin/bash", args: ["--norc", "--noprofile"], kind: "bash" };
+  for (const file of ["/bin/bash", "/usr/bin/bash"]) {
+    if (existsSync(file)) {
+      return { file, args: ["--norc", "--noprofile"], kind: "bash", mapPath: identity, spawnCwd: identity };
+    }
   }
   throw new ShellUnavailableError(
     "/bin/bash not found on POSIX; agent shell requires bash for PS0/PS1 marker capture",
   );
+}
+
+/**
+ * Pick the executable backing the agent PTY. On Windows this follows the user's
+ * configured default shell, so a WSL2 workspace gets a WSL2 agent shell instead
+ * of a PowerShell one that cannot even reach the project directory.
+ */
+async function agentShellExecutable(shellId?: string): Promise<AgentShellTarget> {
+  if (platform() !== "win32") return posixBash();
+
+  const info = await resolveShellInfo(shellId);
+  if (info.kind === "wsl") {
+    return {
+      file: info.path,
+      // `wsl.exe -d <distro>` starts the distro's login shell, which may be zsh
+      // or fish; force bash so the PS0/PS1 markers below apply.
+      args: [...(info.args ?? []), "--", "bash", "--norc", "--noprofile"],
+      kind: "bash",
+      mapPath: toWslPath,
+      spawnCwd: windowsSpawnCwd,
+    };
+  }
+
+  // cmd.exe offers no prompt hook for marker capture, so anything that is not a
+  // PowerShell falls back to one (preferring pwsh 7, which supports `&&`).
+  const isPowerShell = /(?:pwsh|powershell)(?:\.exe)?$/i.test(info.path);
+  return {
+    file: isPowerShell ? info.path : (findPwsh() ?? "powershell.exe"),
+    args: ["-NoLogo", "-NoProfile"],
+    kind: "powershell",
+    mapPath: identity,
+    spawnCwd: identity,
+  };
 }
 
 function stripMarkers(text: string): string {
@@ -131,6 +176,8 @@ export class AgentShell {
   private readonly events: TerminalEvents;
   private readonly cols: number;
   private readonly rows: number;
+  private readonly shellId: string | undefined;
+  private mapPath: (p: string) => string = identity;
   private cwd: string;
   private scrollback = "";
   private queue: Promise<unknown> = Promise.resolve();
@@ -147,6 +194,7 @@ export class AgentShell {
     this.events = opts.events;
     this.cols = opts.cols ?? DEFAULT_COLS;
     this.rows = opts.rows ?? DEFAULT_ROWS;
+    this.shellId = opts.shell;
   }
 
   /** Ring-buffer of raw PTY output for late-attaching tabs. */
@@ -218,14 +266,17 @@ export class AgentShell {
     this.killTerm({ suppressExit: true });
     if (this.disposed) throw new Error("AgentShell has been disposed.");
 
-    const { file, args, kind } = agentShellExecutable();
-    this.kind = kind;
+    const target = await agentShellExecutable(this.shellId);
+    if (this.disposed) throw new Error("AgentShell has been disposed.");
+    this.kind = target.kind;
+    this.mapPath = target.mapPath;
+    const startCwd = target.spawnCwd(this.cwd);
 
-    const term = pty.spawn(file, args, {
+    const term = pty.spawn(target.file, target.args, {
       name: "xterm-color",
       cols: this.cols,
       rows: this.rows,
-      cwd: this.cwd,
+      cwd: startCwd,
       env: { ...process.env, DEYIN_AGENT: "1", TERM: "xterm-256color" },
     });
     this.term = term;
@@ -287,6 +338,12 @@ export class AgentShell {
       throw new Error("AgentShell disposed during spawn");
     }
     this.ready = true;
+
+    // wsl.exe had to be launched from a Windows directory; move the shell to the
+    // translated project path before any command runs. Also restores cwd on recycle.
+    if (target.mapPath(this.cwd) !== startCwd) {
+      await this.execOnce(this.cdCommand(this.cwd), READY_TIMEOUT_MS / 1000, undefined, undefined);
+    }
   }
 
   private appendScrollback(data: string): void {
@@ -408,7 +465,7 @@ export class AgentShell {
     if (this.kind === "powershell") {
       return `Set-Location -LiteralPath '${cwd.replace(/'/g, "''")}'`;
     }
-    return `cd -- '${escapeSingleQuotes(cwd)}'`;
+    return `cd -- '${escapeSingleQuotes(this.mapPath(cwd))}'`;
   }
 
   private execOnce(

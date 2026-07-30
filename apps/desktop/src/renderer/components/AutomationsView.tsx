@@ -139,7 +139,6 @@ interface Props {
   models: ModelInfo[];
   selectedModel: string;
   selectedProviderId: string;
-  onBack: () => void;
   onOpenSshSettings: () => void;
 }
 
@@ -373,10 +372,6 @@ export function AutomationsView(props: Props) {
   return (
     <div className="automations">
       <aside className="automations__list">
-        <button className="settings__back" onClick={props.onBack}>
-          <Icon name="arrowLeft" size={13} />
-          {t("nav.backToWorkspace")}
-        </button>
         <PageHeader title={t("automations.title")} description={t("automations.desc")} />
         <button
           className="btn btn--primary automations__new"
