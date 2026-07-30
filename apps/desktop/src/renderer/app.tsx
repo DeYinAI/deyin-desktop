@@ -14,6 +14,7 @@ import { Sidebar } from "./components/Sidebar.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { TopBar } from "./components/TopBar.js";
+import { UpdateBanner } from "./components/UpdateBanner.js";
 import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
 import { computeLineDiff, diffSnippet, type FileDiff } from "./diff.js";
@@ -1183,18 +1184,21 @@ export function App() {
   if (view === "automations" && settings && boot && boot.platform === "desktop") {
     return (
       <I18nProvider language={language}>
-        <AutomationsView
-          workspaceRoot={workspaceRoot}
-          providers={providers}
-          models={models}
-          selectedModel={selectedModel}
-          selectedProviderId={selectedProviderId}
-          onBack={() => setView("workspace")}
-          onOpenSshSettings={() => {
-            setSettingsPage("sshHosts");
-            setView("settings");
-          }}
-        />
+        <div className="app">
+          <UpdateBanner />
+          <AutomationsView
+            workspaceRoot={workspaceRoot}
+            providers={providers}
+            models={models}
+            selectedModel={selectedModel}
+            selectedProviderId={selectedProviderId}
+            onBack={() => setView("workspace")}
+            onOpenSshSettings={() => {
+              setSettingsPage("sshHosts");
+              setView("settings");
+            }}
+          />
+        </div>
       </I18nProvider>
     );
   }
@@ -1202,27 +1206,30 @@ export function App() {
   if (view === "settings" && settings && boot) {
     return (
       <I18nProvider language={language}>
-        <SettingsView
-          key={settingsPage}
-          initialPage={settingsPage}
-          settings={settings}
-          user={user}
-          busy={busy}
-          version={boot.version}
-          workspaceRoot={workspaceRoot}
-          liveModels={models}
-          onChangeSettings={patchSettings}
-          onConnect={connect}
-          onBack={() => setView("workspace")}
-          onOpenFolder={() => void addProjectFolder()}
-          onOpenTerminal={() => {
-            setView("workspace");
-            setTerminalOpen(true);
-          }}
-          onRefreshLiveModels={async () => {
-            setModels(await window.deyin.models.refresh());
-          }}
-        />
+        <div className="app">
+          {boot.platform === "desktop" ? <UpdateBanner /> : null}
+          <SettingsView
+            key={settingsPage}
+            initialPage={settingsPage}
+            settings={settings}
+            user={user}
+            busy={busy}
+            version={boot.version}
+            workspaceRoot={workspaceRoot}
+            liveModels={models}
+            onChangeSettings={patchSettings}
+            onConnect={connect}
+            onBack={() => setView("workspace")}
+            onOpenFolder={() => void addProjectFolder()}
+            onOpenTerminal={() => {
+              setView("workspace");
+              setTerminalOpen(true);
+            }}
+            onRefreshLiveModels={async () => {
+              setModels(await window.deyin.models.refresh());
+            }}
+          />
+        </div>
       </I18nProvider>
     );
   }
@@ -1244,6 +1251,7 @@ export function App() {
         onToggleTerminal={() => setTerminalOpen((v) => !v)}
         onThreadAction={handleThreadAction}
       />
+      {boot?.platform === "desktop" ? <UpdateBanner /> : null}
 
       <div className="app__body">
         <Sidebar

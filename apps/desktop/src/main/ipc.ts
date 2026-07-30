@@ -133,7 +133,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.updatesCheck, () => updates.check());
   ipcMain.handle(CH.updatesDownload, () => updates.download());
   ipcMain.on(CH.updatesInstall, () => updates.install());
-  if (settings.get().autoUpdate) void updates.check();
+  // Always poll on launch so users with auto-update off still see the banner;
+  // download stays gated by settings.autoUpdate / explicit Download click.
+  void updates.check();
 
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
