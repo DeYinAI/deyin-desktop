@@ -25,12 +25,16 @@ import {
   runHooks,
   type AgentDefinition,
   type AgentMessage,
+  type InteractionRequest,
   type LoadedHook,
+  type ModeChangeRequest,
   type McpConnection,
   type PermissionDecision,
   type PermissionRule,
+  type PlanArtifact,
   type SubagentDefinition,
   type SystemPromptSections,
+  type ToolSessionMeta,
   type ToolShell,
 } from "@deyin/agent-core";
 import {
@@ -61,7 +65,17 @@ const READONLY_RULES: PermissionRule[] = [
   { tool: "glob", action: "allow" },
   { tool: "ls", action: "allow" },
   { tool: "websearch", action: "allow" },
+  { tool: "web_fetch", action: "allow" },
   { tool: "todo_write", action: "allow" },
+  { tool: "todo_read", action: "allow" },
+  { tool: "ask_question", action: "allow" },
+  { tool: "create_plan", action: "allow" },
+  { tool: "enter_plan_mode", action: "allow" },
+  { tool: "exit_plan_mode", action: "allow" },
+  { tool: "switch_mode", action: "allow" },
+  { tool: "skill", action: "allow" },
+  { tool: "read_session_context", action: "allow" },
+  { tool: "send_message", action: "allow" },
   { tool: "codebase_search", action: "allow" },
   { tool: "browser_snapshot", action: "allow" },
   { tool: "browser_screenshot", action: "allow" },
@@ -74,6 +88,8 @@ interface ThreadSession {
   messages: AgentMessage[];
   /** Mode the system prompt was built for; a switch rebuilds messages[0]. */
   mode: ChatMode;
+  /** Mode before entering plan mode (ExitPlanMode restores this). */
+  previousMode?: ChatMode;
   /** Structured system-prompt slices for Context Usage accounting. */
   systemSections?: SystemPromptSections;
   /** Persistent PTY for bash tool calls in this thread; created lazily. */
@@ -121,6 +137,12 @@ export class DesktopAgentHost {
     string,
     { threadId: string; resolve: (decision: PermissionDecision) => void; timer: ReturnType<typeof setTimeout> }
   >();
+  private readonly pendingQuestions = new Map<
+    string,
+    { threadId: string; resolve: (answers: string) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+  private readonly agentInbox = new Map<string, string[]>();
+  private readonly backgroundTasks = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
   private readonly store: SessionStore;
   private optimizationPlugin: OptimizationPlugin | null = null;
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
@@ -297,6 +319,12 @@ export class DesktopAgentHost {
       clearTimeout(pending.timer);
       pending.resolve("deny");
     }
+    for (const [requestId, pending] of [...this.pendingQuestions]) {
+      if (pending.threadId !== threadId) continue;
+      this.pendingQuestions.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.resolve("AskQuestion was cancelled before answers were returned.");
+    }
 
     run.abort.abort();
     // Emit `done` immediately and free the slot so interrupt-and-send can start
@@ -314,6 +342,14 @@ export class DesktopAgentHost {
     this.pendingPermissions.delete(requestId);
     clearTimeout(pending.timer);
     pending.resolve(decision);
+  }
+
+  answerQuestion(requestId: string, answers: Record<string, string | string[]>): void {
+    const pending = this.pendingQuestions.get(requestId);
+    if (!pending) return;
+    this.pendingQuestions.delete(requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(JSON.stringify(answers, null, 2));
   }
 
   async start(options: AgentStartOptions): Promise<void> {
@@ -519,6 +555,14 @@ return;
  }
  }
 
+      const liveMeta: ToolSessionMeta = {
+        threadId: options.threadId,
+        mode: session.mode,
+        approvalMode: options.approvalMode,
+        model: options.model,
+        cwd,
+      };
+
       const result = await runAgent({
         apiBaseUrl,
         getToken,
@@ -534,6 +578,38 @@ return;
         todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
         shell: shellBridge,
         systemSections: session.systemSections,
+        toolContext: {
+          skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
+          sessionMeta: liveMeta,
+          resolveInteraction: (request) => this.resolveInteraction(options.threadId, request),
+          onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
+          onModeChange: async (change) => {
+            const result = await this.handleModeChange(
+              options.threadId,
+              session,
+              options,
+              change,
+              cwd,
+              registry,
+              caps.skills,
+              hooks,
+            );
+            liveMeta.mode = session.mode;
+            return result;
+          },
+          sendMessage: async (to, content) => {
+            const key = `${options.threadId}:${to}`;
+            const list = this.agentInbox.get(key) ?? [];
+            list.push(content);
+            this.agentInbox.set(key, list);
+            return `Message delivered to ${to}.`;
+          },
+          pollBackgroundTask: (taskId, blockUntilMs) => this.pollBackgroundTask(taskId, blockUntilMs),
+          registerBackgroundTask: (taskId, promise) => {
+            this.backgroundTasks.set(taskId, promise);
+            void promise.finally(() => this.backgroundTasks.delete(taskId));
+          },
+        },
         wire: {
           enableCompression: settings.optimizationCompression,
           compressionMode: settings.optimizationCompressionMode,
@@ -718,11 +794,30 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
   ): Promise<ThreadSession> {
     const existing = this.sessions.get(options.threadId);
     if (existing) {
-      // Always rebuild the system prompt so context-file edits and mode switches
-      // stay reflected in messages[0] (and response-cache systemPromptHash).
+      const modeChanged = existing.mode !== options.mode;
+      if (modeChanged && options.mode === "plan") {
+        existing.previousMode = existing.mode;
+      }
       const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks);
       existing.messages[0] = { role: "system", content: parts.content };
       existing.systemSections = { system: parts.system, skills: parts.skills, rules: parts.rules };
+      if (modeChanged) {
+        const reminder = modeReminder({ event: "enter", target: options.mode, previous: existing.previousMode });
+        if (reminder) {
+          const reminderMsg: AgentMessage = {
+            role: "system",
+            content: `<system_reminder>\n${reminder}\n</system_reminder>`,
+          };
+          existing.messages.push(reminderMsg);
+          this.store.append(existing.sessionId, reminderMsg);
+        }
+        this.send(options.threadId, {
+          type: "mode-changed",
+          mode: options.mode,
+          previousMode: existing.previousMode,
+          reminder,
+        });
+      }
       existing.mode = options.mode;
       return existing;
     }
@@ -789,6 +884,113 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
       this.send(threadId, { type: "permission-request", requestId, toolName, summary });
     });
   }
+
+  private askQuestion(threadId: string, request: Extract<InteractionRequest, { type: "ask-question" }>): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const requestId = randomUUID();
+      const timer = setTimeout(() => {
+        this.pendingQuestions.delete(requestId);
+        resolve("AskQuestion timed out before answers were returned.");
+      }, PERMISSION_TIMEOUT_MS);
+      this.pendingQuestions.set(requestId, { threadId, resolve, timer });
+      this.send(threadId, {
+        type: "question-request",
+        requestId,
+        title: request.title,
+        questions: request.questions,
+      });
+    });
+  }
+
+  private resolveInteraction(threadId: string, request: InteractionRequest): Promise<string> {
+    if (request.type === "ask-question") return this.askQuestion(threadId, request);
+    return Promise.resolve("Unknown interaction request.");
+  }
+
+  private onPlanCreated(threadId: string, plan: PlanArtifact): void {
+    this.send(threadId, {
+      type: "plan-created",
+      name: plan.name,
+      overview: plan.overview,
+      plan: plan.plan,
+      filePath: plan.filePath,
+    });
+  }
+
+  private async handleModeChange(
+    threadId: string,
+    session: ThreadSession,
+    options: AgentStartOptions,
+    change: ModeChangeRequest,
+    cwd: string,
+    registry: ToolRegistry,
+    skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
+    hooks: LoadedHook[],
+  ): Promise<string> {
+    const previous = session.mode;
+    if (change.event === "enter" && change.target === "plan") {
+      session.previousMode = previous;
+    }
+    const nextMode = change.target;
+    session.mode = nextMode;
+    options.mode = nextMode;
+
+    const reminder = modeReminder(change);
+    if (reminder) {
+      const reminderMsg: AgentMessage = {
+        role: "system",
+        content: `<system_reminder>\n${reminder}\n</system_reminder>`,
+      };
+      session.messages.push(reminderMsg);
+      this.store.append(session.sessionId, reminderMsg);
+    }
+
+    const parts = await this.systemPromptParts(nextMode, cwd, registry, skills, hooks);
+    session.messages[0] = { role: "system", content: parts.content };
+    session.systemSections = { system: parts.system, skills: parts.skills, rules: parts.rules };
+
+    this.send(threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });
+
+    if (change.event === "exit" && change.previous === "plan") {
+      return change.userApproved
+        ? "Plan mode exited. The user approved the plan — proceed with implementation."
+        : "Plan mode exited. The plan has been presented to the user for approval.";
+    }
+    return `Switched to ${nextMode} mode.${change.explanation ? ` ${change.explanation}` : ""}`;
+  }
+
+  private async pollBackgroundTask(taskId: string, blockUntilMs: number): Promise<string> {
+    const task = this.backgroundTasks.get(taskId);
+    if (!task) return `Unknown background task: ${taskId}`;
+    const timeout = new Promise<{ output: string; exitCode: number | null }>((resolve) => {
+      setTimeout(() => resolve({ output: "(still running)", exitCode: null }), blockUntilMs);
+    });
+    const result = await Promise.race([task, timeout]);
+    if (result.exitCode === null && result.output === "(still running)") {
+      return `Task ${taskId} is still running after ${blockUntilMs}ms.`;
+    }
+    return `Task ${taskId} finished (exit ${result.exitCode ?? "?"}):\n${result.output}`;
+  }
+}
+
+function modeReminder(change: ModeChangeRequest): string {
+  if (change.event === "enter") {
+    switch (change.target) {
+      case "plan":
+        return "You have entered plan mode. You MUST NOT modify the workspace. Use read/grep/glob/ls to gather evidence. If the request is ambiguous, use ask_question to clarify. Then call todo_write with implementation steps and create_plan or output your final plan as markdown.";
+      case "ask":
+        return "You are in ask mode. Answer questions and explore the codebase. You MUST NOT modify the workspace or run commands.";
+      case "agent":
+        return "You are in agent mode. Implement the user's request end to end using all available tools.";
+    }
+  }
+  if (change.event === "exit" && change.previous === "plan") {
+    return "You have exited plan mode. The plan has been presented to the user for approval.";
+  }
+  if (change.event === "switch") {
+    return modeReminder({ ...change, event: "enter" });
+  }
+  return "";
 }
 
 function rulesForMode(mode: ApprovalMode): PermissionRule[] {
