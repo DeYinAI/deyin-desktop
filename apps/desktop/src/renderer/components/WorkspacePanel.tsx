@@ -151,6 +151,7 @@ function PlanTab({
   return (
     <div className="plan-tab">
       <div className="plan-tab__toolbar">
+        <span className="plan-tab__title">{t("chat.planSummary")}</span>
         <span className="plan-tab__toolbar-spacer" />
         {onBuild && (
           <button type="button" className="plan-tab__build" disabled={!canBuild} onClick={onBuild} title={`${t("chat.build")} (Ctrl+Enter)`}>

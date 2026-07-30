@@ -1,0 +1,10 @@
+{
+  "name": "DeYinAI Embedding",
+  "base_model": "Qwen/Qwen3-Embedding-0.6B",
+  "version": "0.1.0",
+  "dimensions": 1024,
+  "context_length": 32768,
+  "description": "Fine-tuned Qwen3-Embedding-0.6B for Deyin code/tool semantic caching. Run scripts/fine-tune-embedding.py to produce deyinai-embedding.onnx.",
+  "status": "placeholder",
+  "onnx": "deyinai-embedding.onnx"
+}

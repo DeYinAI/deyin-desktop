@@ -11,7 +11,7 @@ import { websearchTool } from "./websearch.js";
 import { writeTool } from "./write.js";
 
 export { ToolRegistry } from "./registry.js";
-export { bashTool } from "./bash.js";
+export { bashTool, effectiveShell } from "./bash.js";
 export { readTool } from "./read.js";
 export { writeTool } from "./write.js";
 export { editTool, applyEdit, countOccurrences } from "./edit.js";
@@ -21,7 +21,12 @@ export { lsTool } from "./ls.js";
 export { websearchTool } from "./websearch.js";
 export { todoTool, renderTodos } from "./todo.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
-export { createTaskTool, type TaskToolOptions, type TaskRunResult } from "./task.js";
+export {
+  createTaskTool,
+  TASK_SUBAGENT_CATALOG_MARKER,
+  type TaskToolOptions,
+  type TaskRunResult,
+} from "./task.js";
 export { createCodebaseSearchTool, type CodebaseSearchHit } from "./codebase-search.js";
 
 export const BUILTIN_TOOLS: ToolDefinition[] = [

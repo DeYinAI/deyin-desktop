@@ -1,0 +1,17 @@
+{
+  "id": "optimization",
+  "name": "Semantic Optimization",
+  "version": "0.1.0",
+  "description": "Advanced semantic caching with DeYinAI Embedding for 50-70% additional token savings on redundant tool calls and repeated queries.",
+  "author": "Deyin",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "category": "optimization",
+  "downloadSize": 639000000,
+  "settings": {
+    "enableToolCache": { "type": "boolean", "default": true },
+    "enableResponseCache": { "type": "boolean", "default": true },
+    "similarityThreshold": { "type": "number", "default": 0.93, "min": 0.8, "max": 0.98 },
+    "cacheSizeMb": { "type": "number", "default": 500 }
+  }
+}

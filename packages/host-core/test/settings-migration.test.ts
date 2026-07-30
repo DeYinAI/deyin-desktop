@@ -18,6 +18,7 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   assert.equal(migrated.language, "zh");
   assert.equal(migrated.agentMode, "agent");
   assert.equal(migrated.terminalScrollback, DEFAULT_SETTINGS.terminalScrollback);
+  assert.equal(migrated.revealTerminalOnAgentCommand, true);
   assert.deepEqual(migrated.onboard, { workspaceOpened: false, terminalUsed: false, taskRun: false });
 });
 

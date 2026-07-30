@@ -12,6 +12,14 @@ directories:
 files:
   - out/**/*
   - package.json
+# Ship the bundled DeYinAI Embedding ONNX model pack (if present) alongside
+# the app so the optimization plugin can use it without a user download.
+extraResources:
+  - from: ../../packages/optimization-plugin/models
+    to: optimization-models
+    filter:
+      - "**/*"
+      - "!.gitkeep"
 # node-pty ships a native .node binary; it must stay outside the asar archive
 # so it can be dlopen'd at runtime. The terminal degrades gracefully if absent.
 asarUnpack:

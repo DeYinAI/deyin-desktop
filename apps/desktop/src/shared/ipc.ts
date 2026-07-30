@@ -71,6 +71,7 @@ export const CH = {
   projectsGet: "deyin:projects:get",
   projectsSet: "deyin:projects:set",
   termCreate: "deyin:term:create",
+  termAttach: "deyin:term:attach",
   termWrite: "deyin:term:write",
   termResize: "deyin:term:resize",
   termKill: "deyin:term:kill",
@@ -98,6 +99,7 @@ export const CH = {
   agentStart: "deyin:agent:start",
   agentStop: "deyin:agent:stop",
   agentApprove: "deyin:agent:approve",
+  agentDisposeShell: "deyin:agent:disposeShell",
   agentEvent: "deyin:agent:event",
   browserRegister: "deyin:browser:register",
   browserGetPartition: "deyin:browser:getPartition",
@@ -195,6 +197,8 @@ export interface DeyinApi {
   };
   terminal: {
     create(opts: TerminalCreateOptions): Promise<string>;
+    /** Attach to an existing terminal id (e.g. agent shell) and receive its scrollback. */
+    attach(id: string): Promise<{ scrollback: string }>;
     write(id: string, data: string): void;
     resize(id: string, cols: number, rows: number): void;
     kill(id: string): void;
@@ -243,6 +247,7 @@ export interface DeyinApi {
     start(options: AgentStartOptions): Promise<void>;
     stop(threadId: string): void;
     approve(requestId: string, decision: AgentPermissionDecision): void;
+    disposeShell(threadId: string): void;
     onEvent(cb: (envelope: AgentEventEnvelope) => void): () => void;
   };
   browserControl: {

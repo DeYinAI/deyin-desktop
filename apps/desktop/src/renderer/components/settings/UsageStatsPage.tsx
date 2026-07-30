@@ -132,6 +132,15 @@ export function UsageStatsPage({ stats, account, signedIn, onRefreshAccount, ref
       </div>
 
       <div className="usage-card">
+        <div className="usage-card__title">Token optimization</div>
+        <p className="hint">
+          Compression and prompt caching run in the core agent. Enable the Semantic Optimization plugin under Settings
+          → Optimization for tool/response caches. Per-session savings appear on agent runs when optimization events
+          are emitted.
+        </p>
+      </div>
+
+      <div className="usage-card">
         <div className="usage-card__title">Activity heatmap</div>
         <Heatmap stats={stats} />
       </div>
