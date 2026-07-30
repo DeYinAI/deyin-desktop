@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bashTool } from "../src/tools/bash.js";
+import { bashTool, parseWslPath } from "../src/tools/bash.js";
 import type { ToolContext } from "../src/types.js";
 
 const ctx = (): ToolContext => ({ cwd: process.cwd(), todos: [] });
@@ -17,6 +17,25 @@ function processAlive(pid: number): boolean {
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+test("parseWslPath routes WSL2 project dirs to their distro (any platform)", () => {
+  assert.deepEqual(parseWslPath("\\\\wsl$\\Ubuntu\\home\\anh\\proj"), {
+    distro: "Ubuntu",
+    linuxPath: "/home/anh/proj",
+  });
+  // Win11 UNC form, hyphenated distro, and a trailing separator.
+  assert.deepEqual(parseWslPath("\\\\wsl.localhost\\Ubuntu-22.04\\srv\\www\\"), {
+    distro: "Ubuntu-22.04",
+    linuxPath: "/srv/www",
+  });
+  // Distro root (no sub-path) resolves to "/".
+  assert.deepEqual(parseWslPath("\\\\wsl$\\Debian"), { distro: "Debian", linuxPath: "/" });
+  // Forward-slash variant is tolerated.
+  assert.deepEqual(parseWslPath("//wsl$/Ubuntu/home/x"), { distro: "Ubuntu", linuxPath: "/home/x" });
+  // Native Windows and POSIX paths are not WSL.
+  assert.equal(parseWslPath("C:\\Users\\anh\\proj"), null);
+  assert.equal(parseWslPath("/home/anh/proj"), null);
+});
 
 test("runs a command and reports non-zero exit codes", { skip: !isPosix }, async () => {
   const ok = await bashTool.execute({ command: "echo hello" }, ctx());

@@ -126,11 +126,12 @@ export function compactMessages(messages: AgentMessage[], budgetTokens: number):
   droppable.sort((a, b) => a.start - b.start || a.score - b.score);
 
   let dropUpTo = -1;
-  for (const g of droppable) {
-    dropUpTo = Math.max(dropUpTo, g.end);
+  for (let g = 0; g < groups.length - 1; g++) {
+    dropUpTo = groups[g]!.end;
+    const removed = dropUpTo - systemCount;
     const remaining: AgentMessage[] = [
       ...messages.slice(0, systemCount),
-      marker(0),
+      marker(removed),
       ...messages.slice(dropUpTo),
     ];
     if (estimateTokens(remaining) <= budgetTokens) break;
