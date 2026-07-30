@@ -13,14 +13,16 @@ export type ClientMessage =
   | { type: "auth"; token: string }
   | { type: "files.tree"; id: number; dir?: string }
   | { type: "files.read"; id: number; path: string }
+  | { type: "files.write"; id: number; path: string; content: string }
   | { type: "env.detect"; id: number }
   | { type: "term.create"; id: number; opts: TerminalCreateOptions }
+  | { type: "term.attach"; id: number; termId: string }
   | { type: "term.write"; termId: string; data: string }
   | { type: "term.resize"; termId: string; cols: number; rows: number }
   | { type: "term.kill"; termId: string };
 
 export type ServerMessage =
-  | { type: "auth.ok"; user: { sub: string; email?: string; name?: string; plan?: string } }
+  | { type: "auth.ok"; user: { sub: string; email?: string; name?: string; plan?: string }; workspaceRoot: string }
   | { type: "auth.err"; message: string }
   | { type: "reply"; id: number; ok: true; result: unknown }
   | { type: "reply"; id: number; ok: false; error: string }
@@ -33,8 +35,14 @@ export interface FilesTreeResult {
 export interface FilesReadResult {
   content: string;
 }
+export interface FilesWriteResult {
+  ok: true;
+}
 export interface TermCreateResult {
   termId: string;
+}
+export interface TermAttachResult {
+  scrollback: string;
 }
 export interface EnvDetectResult {
   env: EnvInfo;

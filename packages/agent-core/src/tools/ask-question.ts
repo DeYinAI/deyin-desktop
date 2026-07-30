@@ -1,0 +1,83 @@
+import { formatAskQuestionResponse } from "../interaction.js";
+import type { AskQuestionItem, ToolDefinition } from "../types.js";
+
+function normalizeQuestions(raw: unknown): AskQuestionItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((q): q is Record<string, unknown> => typeof q === "object" && q !== null)
+    .map((q, i) => {
+      const options = Array.isArray(q.options)
+        ? q.options
+            .filter((o): o is Record<string, unknown> => typeof o === "object" && o !== null)
+            .map((o, j) => ({
+              id: typeof o.id === "string" && o.id ? o.id : `opt-${j + 1}`,
+              label: typeof o.label === "string" ? o.label : "",
+            }))
+            .filter((o) => o.label.length > 0)
+        : [];
+      return {
+        id: typeof q.id === "string" && q.id ? q.id : `q-${i + 1}`,
+        prompt: typeof q.prompt === "string" ? q.prompt : "",
+        options,
+        allow_multiple: q.allow_multiple === true,
+      };
+    })
+    .filter((q) => q.prompt.length > 0 && q.options.length >= 2);
+}
+
+export const askQuestionTool: ToolDefinition = {
+  name: "ask_question",
+  description:
+    "Present structured multiple-choice questions to the user. Use when you need a decision that changes what you do next. Never ask these questions in plain text — always use this tool. The turn pauses until the user answers.",
+  tier: "interaction",
+  parameters: {
+    type: "object",
+    properties: {
+      title: { type: "string", description: "Optional dialog title." },
+      questions: {
+        type: "array",
+        description: "One or more questions (max 2 per call).",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            prompt: { type: "string", description: "The question text." },
+            allow_multiple: { type: "boolean", description: "Allow multiple selections." },
+            options: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string" },
+                  label: { type: "string" },
+                },
+                required: ["id", "label"],
+              },
+            },
+          },
+          required: ["prompt", "options"],
+        },
+      },
+    },
+    required: ["questions"],
+  },
+  summarize: (args) => {
+    const questions = normalizeQuestions(args.questions);
+    return questions.length === 1 ? questions[0]!.prompt : `${questions.length} questions`;
+  },
+  async execute(args, ctx): Promise<string> {
+    const questions = normalizeQuestions(args.questions);
+    if (questions.length === 0) {
+      return "ERROR: ask_question requires at least one question with 2+ options.";
+    }
+    if (questions.length > 2) {
+      return "ERROR: ask_question supports at most 2 questions per call.";
+    }
+    if (!ctx.resolveInteraction) {
+      return "AskQuestion is not available in this environment.";
+    }
+    const title = typeof args.title === "string" ? args.title : undefined;
+    const raw = await ctx.resolveInteraction({ type: "ask-question", questions, title });
+    return formatAskQuestionResponse(raw);
+  },
+};

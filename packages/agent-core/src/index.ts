@@ -1,3 +1,4 @@
+export * from "./interaction.js";
 export * from "./types.js";
 export * from "./wire.js";
 export * from "./stream.js";
@@ -5,6 +6,10 @@ export * from "./permissions.js";
 export * from "./agents.js";
 export * from "./prompt.js";
 export * from "./compaction.js";
+export * from "./compression.js";
+export * from "./tokenizer.js";
+export * from "./context-usage.js";
+export * from "./optimization.js";
 export * from "./loop.js";
 export * from "./session.js";
 export * from "./config.js";

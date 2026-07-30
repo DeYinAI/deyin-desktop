@@ -3,6 +3,8 @@ import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentDefinition } from "./agents.js";
 import { skillsPromptSection, type SkillDefinition } from "./capabilities/skills.js";
+import type { SystemPromptSections } from "./context-usage.js";
+import { effectiveShell } from "./tools/bash.js";
 
 const MAX_CONTEXT_FILE_CHARS = 20_000;
 const MAX_PARENT_LEVELS = 5;
@@ -66,29 +68,38 @@ export interface SystemPromptOptions {
   skills?: SkillDefinition[];
 }
 
-/** Assemble the system prompt: identity, agent mode, environment, tool rules, skills, project context. */
-export function buildSystemPrompt(opts: SystemPromptOptions): string {
-  const sections: string[] = [];
+export interface SystemPromptBuildResult extends SystemPromptSections {
+  /** Full joined system prompt for messages[0].content. */
+  content: string;
+}
 
-  sections.push(
+/** Assemble structured system-prompt parts for context accounting + the wire string. */
+export function buildSystemPromptParts(opts: SystemPromptOptions): SystemPromptBuildResult {
+  const systemParts: string[] = [];
+
+  systemParts.push(
     "You are Deyin, an autonomous software engineering agent running in the user's terminal. You accomplish tasks by calling tools; you never pretend to have taken an action without the corresponding tool call.",
   );
 
-  sections.push(opts.agent.prompt);
+  systemParts.push(opts.agent.prompt);
 
-  sections.push(
+  systemParts.push(
     [
       "# Environment",
       `- Working directory: ${opts.cwd}`,
       `- Platform: ${platform()}`,
+      `- Shell: ${effectiveShell()} (the bash tool runs commands through this shell)`,
       `- Date: ${new Date().toDateString()}`,
     ].join("\n"),
   );
 
-  sections.push(
+  systemParts.push(
     [
       "# Tool rules",
       `- Available tools: ${opts.toolNames.join(", ")}.`,
+      "- You can use multiple tools in one response when they are independent. Prefer batching over serial text→one-tool→text turns — each turn re-sends the full context.",
+      "- Do not narrate or probe with one shell command per turn when you can combine checks (`cmd1 && cmd2`) or issue several tool calls together.",
+      "- Reserve a new turn for work that truly depends on a prior tool result.",
       "- Read files before editing them; edits must match the file content exactly.",
       "- Prefer edit over write for existing files; never truncate a file to avoid rewriting it.",
       "- Use bash for builds, tests and git. Commands run non-interactively; avoid anything that waits for input.",
@@ -97,12 +108,29 @@ export function buildSystemPrompt(opts: SystemPromptOptions): string {
     ].join("\n"),
   );
 
-  const skillsSection = skillsPromptSection(opts.skills ?? []);
-  if (skillsSection) sections.push(skillsSection);
+  const system = systemParts.join("\n\n");
+  const skills = skillsPromptSection(opts.skills ?? []) ?? "";
 
+  const ruleParts: string[] = [];
   for (const file of opts.contextFiles ?? []) {
-    sections.push(`# Project instructions from ${file.path}\n${file.content}`);
+    ruleParts.push(`# Project instructions from ${file.path}\n${file.content}`);
   }
+  const rules = ruleParts.join("\n\n");
 
-  return sections.join("\n\n");
+  const content = [system, skills, rules].filter((s) => s.length > 0).join("\n\n");
+  return { system, skills, rules, content };
+}
+
+/** Append sessionStart hook context into the rules bucket (and the joined content). */
+export function appendHookContext(parts: SystemPromptBuildResult, hookLines: string[]): SystemPromptBuildResult {
+  if (hookLines.length === 0) return parts;
+  const block = `# Hook context\n${hookLines.join("\n")}`;
+  const rules = parts.rules.length > 0 ? `${parts.rules}\n\n${block}` : block;
+  const content = parts.content.length > 0 ? `${parts.content}\n\n${block}` : block;
+  return { ...parts, rules, content };
+}
+
+/** Assemble the system prompt: identity, agent mode, environment, tool rules, skills, project context. */
+export function buildSystemPrompt(opts: SystemPromptOptions): string {
+  return buildSystemPromptParts(opts).content;
 }

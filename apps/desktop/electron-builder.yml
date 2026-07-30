@@ -12,10 +12,20 @@ directories:
 files:
   - out/**/*
   - package.json
+# Ship the bundled DeYinAI Embedding ONNX model pack (if present) alongside
+# the app so the optimization plugin can use it without a user download.
+extraResources:
+  - from: ../../packages/optimization-plugin/models
+    to: optimization-models
+    filter:
+      - "**/*"
+      - "!.gitkeep"
 # node-pty ships a native .node binary; it must stay outside the asar archive
 # so it can be dlopen'd at runtime. The terminal degrades gracefully if absent.
 asarUnpack:
   - "**/node_modules/node-pty/**"
+  - "**/node_modules/ssh2/**"
+  - "**/node_modules/cpu-features/**"
 # Custom protocol for the OAuth deep-link callback (deyin://oauth/callback).
 # electron-builder writes the macOS CFBundleURLTypes and the Linux .desktop
 # MimeType; Windows registration happens at runtime via
@@ -30,6 +40,10 @@ protocols:
 win:
   target: [nsis]
   icon: build/icon.ico
+  # Must stay space-free: GitHub rewrites spaces in uploaded asset names to dots
+  # while electron-builder writes hyphenated URLs into latest.yml, and the
+  # mismatch makes electron-updater 404 when fetching the installer.
+  artifactName: Deyin-Setup-${version}.${ext}
 mac:
   target: [dmg]
   icon: build/icon.icns

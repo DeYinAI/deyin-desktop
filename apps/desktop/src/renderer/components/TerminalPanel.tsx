@@ -10,6 +10,14 @@ interface TerminalSession {
   key: string;
   label: string;
   shellId?: string;
+  /** When set, attach to an existing host PTY instead of creating a new one. */
+  attachId?: string;
+  agent?: boolean;
+}
+
+export interface AttachableTerminal {
+  id: string;
+  label: string;
 }
 
 interface TerminalPanelProps {
@@ -19,13 +27,23 @@ interface TerminalPanelProps {
   defaultShell: string | null;
   fontSize: number;
   scrollback: number;
+  /** Agent PTYs for the active thread — shown as attachable Agent tabs. */
+  attachSessions?: AttachableTerminal[];
   onClose: () => void;
 }
 
 let sessionCounter = 0;
 
 /** Bottom-docked terminal: tabbed PTY sessions with a shell picker (incl. WSL2). */
-export function TerminalPanel({ cwd, env, defaultShell, fontSize, scrollback, onClose }: TerminalPanelProps) {
+export function TerminalPanel({
+  cwd,
+  env,
+  defaultShell,
+  fontSize,
+  scrollback,
+  attachSessions,
+  onClose,
+}: TerminalPanelProps) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -43,14 +61,51 @@ export function TerminalPanel({ cwd, env, defaultShell, fontSize, scrollback, on
   };
 
   // Open the configured default shell on first mount (falls back to the host default).
+  // If an agent session is already available, prefer attaching that instead.
   useEffect(() => {
     if (sessions.length === 0) {
+      if (attachSessions && attachSessions.length > 0) {
+        const first = attachSessions[0]!;
+        sessionCounter += 1;
+        const session: TerminalSession = {
+          key: `term-${sessionCounter}`,
+          label: first.label || "Agent",
+          attachId: first.id,
+          agent: true,
+        };
+        setSessions([session]);
+        setActiveKey(session.key);
+        return;
+      }
       const preferred =
         defaultShell && env?.shells.some((s) => s.id === defaultShell) ? defaultShell : undefined;
       addSession(preferred, shellLabel(env, preferred ?? env?.defaultShell));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // When a new agent shell is announced, add/activate an Agent tab.
+  useEffect(() => {
+    if (!attachSessions || attachSessions.length === 0) return;
+    setSessions((cur) => {
+      let next = cur;
+      let changed = false;
+      for (const attach of attachSessions) {
+        if (next.some((s) => s.attachId === attach.id)) continue;
+        sessionCounter += 1;
+        const session: TerminalSession = {
+          key: `term-${sessionCounter}`,
+          label: attach.label || "Agent",
+          attachId: attach.id,
+          agent: true,
+        };
+        next = changed ? [...next, session] : [...cur, session];
+        changed = true;
+        setActiveKey(session.key);
+      }
+      return changed ? next : cur;
+    });
+  }, [attachSessions]);
 
   const closeSession = (key: string) => {
     setSessions((cur) => {
@@ -72,6 +127,7 @@ export function TerminalPanel({ cwd, env, defaultShell, fontSize, scrollback, on
             onClick={() => setActiveKey(session.key)}
           >
             {session.label}
+            {session.agent && <span className="badge badge--quota">Agent</span>}
             <button
               className="termtab__close"
               title="Close session"
@@ -116,6 +172,7 @@ export function TerminalPanel({ cwd, env, defaultShell, fontSize, scrollback, on
             visible={session.key === activeKey}
             cwd={cwd}
             shellId={session.shellId}
+            attachId={session.attachId}
             fontSize={fontSize}
             scrollback={scrollback}
           />
@@ -135,12 +192,14 @@ function TerminalInstance({
   visible,
   cwd,
   shellId,
+  attachId,
   fontSize,
   scrollback,
 }: {
   visible: boolean;
   cwd: string | null;
   shellId?: string;
+  attachId?: string;
   fontSize: number;
   scrollback: number;
 }) {
@@ -195,21 +254,32 @@ function TerminalInstance({
       if (e.id === termId) term.write(`\r\n[process exited: ${e.exitCode}]\r\n`);
     });
 
-    window.deyin.terminal
-      .create({ cwd: cwd ?? undefined, cols: term.cols, rows: term.rows, shell: shellId })
-      .then((id) => {
-        if (disposed) {
-          window.deyin.terminal.kill(id);
-          return;
-        }
-        termId = id;
-        term.onData((data) => window.deyin.terminal.write(id, data));
-        term.onResize(({ cols, rows }) => window.deyin.terminal.resize(id, cols, rows));
-        // The pty was spawned with the pre-create dims; sync once in case a
-        // font-ready or layout refit landed while create() was in flight.
-        window.deyin.terminal.resize(id, term.cols, term.rows);
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    const bind = (id: string) => {
+      if (disposed) {
+        // Agent shells must not be killed when the tab unmounts mid-create.
+        if (!attachId) window.deyin.terminal.kill(id);
+        return;
+      }
+      termId = id;
+      term.onData((data) => window.deyin.terminal.write(id, data));
+      term.onResize(({ cols, rows }) => window.deyin.terminal.resize(id, cols, rows));
+      window.deyin.terminal.resize(id, term.cols, term.rows);
+    };
+
+    if (attachId) {
+      window.deyin.terminal
+        .attach(attachId)
+        .then((result) => {
+          if (result.scrollback) term.write(result.scrollback);
+          bind(attachId);
+        })
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    } else {
+      window.deyin.terminal
+        .create({ cwd: cwd ?? undefined, cols: term.cols, rows: term.rows, shell: shellId })
+        .then(bind)
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    }
 
     // Refit on any host-size change (window resize, side panel toggling,
     // layout shifts), debounced to one fit per frame.
@@ -227,11 +297,12 @@ function TerminalInstance({
       offExit();
       observer.disconnect();
       cancelAnimationFrame(raf);
-      if (termId) window.deyin.terminal.kill(termId);
+      // Never kill an agent shell when the tab closes — the agent still owns it.
+      if (termId && !attachId) window.deyin.terminal.kill(termId);
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shellId]);
+  }, [shellId, attachId]);
 
   // Refit when this tab becomes visible again (hidden tabs measure 0x0).
   useEffect(() => {
