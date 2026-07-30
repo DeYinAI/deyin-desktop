@@ -35,6 +35,9 @@ export type {
   AgentUiEvent,
   AgentEventEnvelope,
   AgentStartOptions,
+  ContextUsageSnapshot,
+  ContextUsageCategory,
+  ContextCategoryId,
   ProviderModel,
   ProviderApiFormat,
   ProviderInfo,
@@ -80,10 +83,19 @@ export type UpdateStatus =
   | "unsupported";
 
 export interface UpdatesState {
-  status: UpdateStatus;
-  currentVersion: string;
-  availableVersion?: string;
-  /** 0-100 while status is "downloading". */
-  progressPercent?: number;
-  error?: string;
+ status: UpdateStatus;
+ currentVersion: string;
+ availableVersion?: string;
+ /** 0-100 while status is "downloading". */
+ progressPercent?: number;
+ error?: string;
+}
+
+/** UI cap for tool result content (both streaming tail and final tool-end result). */
+export const TOOL_RESULT_UI_CAP = 64_000;
+
+/** Keep the last `cap` characters so streaming and tool-end stay consistent. */
+export function truncateToolResultUi(text: string, cap = TOOL_RESULT_UI_CAP): string {
+  if (text.length <= cap) return text;
+  return `… (truncated)\n${text.slice(-cap)}`;
 }

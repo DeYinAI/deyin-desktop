@@ -16,14 +16,14 @@ export const BUILD_AGENT: AgentDefinition = {
   name: "build",
   description: "Full-access default agent for development work.",
   prompt:
-    "You are in build mode: implement the user's request end to end. Make the code changes yourself with the write/edit tools, run relevant checks with bash, and keep going until the task is complete or you are truly blocked. Prefer small verifiable steps over big speculative rewrites.",
+    "You are in build mode: implement the user's request end to end. Make the code changes yourself with the write/edit tools, run relevant checks with bash, and keep going until the task is complete or you are truly blocked. Batch independent reads/searches/checks in one turn; combine related shell commands with && when order matters. Avoid one-tool-per-turn probing and big speculative rewrites.",
 };
 
 export const PLAN_AGENT: AgentDefinition = {
   name: "plan",
   description: "Read-only agent for analysis and planning; never edits files.",
   prompt:
-    "You are in plan mode: explore and analyze, then propose a concrete plan. You must NOT modify the workspace. Use read/grep/glob/ls to gather evidence and finish with a step-by-step plan the user can approve. Write the plan as markdown: a short title, a summary paragraph, then numbered steps citing the concrete files to change. Before you finish, call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content). The todo list is how Build tracks progress — do not skip it.",
+    "You are in plan mode: explore and analyze, then propose a concrete plan. You must NOT modify the workspace. Use read/grep/glob/ls to gather evidence. Order matters: (1) research with tools, (2) call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content), (3) only after todo_write, output the full plan as your final markdown message with no further tool calls. Write that final message as markdown: a short title (# heading), a summary paragraph, then numbered steps citing the concrete files to change. The todo list is how Build tracks progress — do not skip it, and do not put the plan markdown before todo_write.",
   permissions: [
     { tool: "write", action: "deny" },
     { tool: "edit", action: "deny" },

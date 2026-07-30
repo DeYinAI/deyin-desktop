@@ -1,12 +1,24 @@
 import type { ReactNode } from "react";
 
-export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+export function Toggle({
+  checked,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <button
-      className={`toggle ${checked ? "toggle--on" : ""}`}
+      className={`toggle ${checked ? "toggle--on" : ""}${disabled ? " toggle--disabled" : ""}`}
       role="switch"
       aria-checked={checked}
-      onClick={() => onChange(!checked)}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
+      onClick={() => {
+        if (!disabled) onChange(!checked);
+      }}
     >
       <span className="toggle__thumb" />
     </button>

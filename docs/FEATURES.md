@@ -22,9 +22,9 @@ functional specification the apps are built against; it contains no third-party 
   - **Access levels** — "Full access", "Ask before changes", "Read only". Gates tool
     calls through the permission engine; "ask" actions surface an approval prompt with
     Allow once / Allow for session / Deny.
-- Plan flow: a plan-mode run finishes with a plan card in the timeline and the plan
-  document in the workspace panel's Plan tab; **Build** switches the task to Agent mode
-  and executes the plan.
+- Plan flow: while the plan is written, the full markdown streams only into the workspace
+  panel's Plan tab; chat shows a compact plan-file card (Open / Build). **Build** switches
+  the task to Agent mode and executes the plan.
 - Workspace panel (right): **Files** (tree + viewer/editor), **Plan**, **Diff** (latest
   agent edit), and **Browser**. The panel starts collapsed and opens automatically when
   there is content to show (plan, diff, browser, etc.).
@@ -35,12 +35,17 @@ functional specification the apps are built against; it contains no third-party 
 - Change review: file edits are presented as a reviewable diff before they are applied.
 
 ## Host capabilities
-- **Terminal**: full PTY via `node-pty`, streamed to the renderer.
+- **Terminal**: full PTY via `node-pty`, streamed to the renderer. User tabs are
+  independent of the agent; agent sessions appear as attachable **Agent** tabs.
 - **File explorer**: workspace file tree in the workspace panel's **Files** tab — browse
   folders (lazy-loaded), open text files with syntax highlighting, edit and save in place.
   Host RPC: `files.tree`, `files.read`, `files.write` (desktop and web).
 - **Git**: status, diff, stage, commit, branch, log.
-- **Exec**: run build/test/dev commands and stream output.
+- **Exec**: agent `bash` runs in a **persistent per-thread PTY** (desktop). Output
+  streams live into the chat tool card (`tool-delta`) and into the Agent terminal tab.
+  Working directory and environment persist across calls in the same chat. Falls back
+  to one-shot `spawn` when `node-pty` is unavailable (CLI, headless). Settings →
+  Terminal controls whether the panel opens on the first agent command.
 - **Embedded browser preview**: open a local URL, capture DOM elements as agent context.
 
 ## Skills

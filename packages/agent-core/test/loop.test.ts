@@ -7,7 +7,7 @@ import { runAgent } from "../src/loop.js";
 import { PermissionEngine } from "../src/permissions.js";
 import { createBuiltinRegistry } from "../src/tools/index.js";
 import type { AgentMessage } from "../src/types.js";
-import { startMockOpenAI, textResponse, toolCallResponse } from "./helpers/mock-openai.js";
+import { startMockOpenAI, textResponse, toolCallResponse, multiToolCallResponse } from "./helpers/mock-openai.js";
 
 function baseMessages(): AgentMessage[] {
   return [
@@ -147,6 +147,108 @@ test("unknown tools produce an error result instead of crashing", async () => {
     assert.equal(result.reason, "completed");
     const toolMsg = messages.find((m) => m.role === "tool");
     assert.ok(toolMsg && toolMsg.role === "tool" && toolMsg.content.startsWith("ERROR: unknown tool"));
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("executes multiple tool calls from one step concurrently and preserves result order", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-parallel-"));
+  writeFileSync(join(cwd, "a.txt"), "alpha");
+  writeFileSync(join(cwd, "b.txt"), "beta");
+  const server = await startMockOpenAI((i) =>
+    i === 0
+      ? multiToolCallResponse([
+          { id: "c0", name: "read", args: { path: "a.txt" } },
+          { id: "c1", name: "read", args: { path: "b.txt" } },
+        ])
+      : textResponse("both files read"),
+  );
+
+  try {
+    const messages = baseMessages();
+    const starts: string[] = [];
+    const ends: string[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "allow",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "tool-start") starts.push(event.call.id);
+        if (event.type === "tool-end") ends.push(event.call.id);
+      },
+    });
+
+    assert.equal(result.reason, "completed");
+    assert.equal(result.steps, 2);
+    assert.equal(server.requests.length, 2);
+
+    const toolMsgs = messages.filter((m) => m.role === "tool");
+    assert.equal(toolMsgs.length, 2);
+    const first = toolMsgs[0];
+    const second = toolMsgs[1];
+    assert.ok(first && first.role === "tool");
+    assert.ok(second && second.role === "tool");
+    assert.equal(first.toolCallId, "c0");
+    assert.equal(second.toolCallId, "c1");
+    assert.ok(first.content.includes("alpha"));
+    assert.ok(second.content.includes("beta"));
+    assert.deepEqual(starts, ["c0", "c1"]);
+    assert.ok(ends.includes("c0") && ends.includes("c1"));
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("lookupToolCache short-circuits tool execution and emits fromCache", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-loop-cache-"));
+  writeFileSync(join(cwd, "hello.txt"), "should not be read");
+  const server = await startMockOpenAI((i) =>
+    i === 0 ? toolCallResponse("call_cache", "read", { path: "hello.txt" }) : textResponse("From cache."),
+  );
+  const lookupCalls: string[] = [];
+  const storeCalls: string[] = [];
+  const toolEnds: { fromCache?: boolean; result: string }[] = [];
+
+  try {
+    const messages = baseMessages();
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "allow",
+      cwd,
+      lookupToolCache: async (call) => {
+        lookupCalls.push(call.name);
+        return "cached file body";
+      },
+      storeToolCache: async (call) => {
+        storeCalls.push(call.name);
+      },
+      onEvent: (event) => {
+        if (event.type === "tool-end") toolEnds.push({ fromCache: event.fromCache, result: event.result });
+      },
+    });
+
+    assert.equal(result.reason, "completed");
+    assert.deepEqual(lookupCalls, ["read"]);
+    assert.deepEqual(storeCalls, [], "store must not run on cache hit");
+    assert.equal(toolEnds.length, 1);
+    assert.equal(toolEnds[0]?.fromCache, true);
+    assert.equal(toolEnds[0]?.result, "cached file body");
+    const toolMsg = messages.find((m) => m.role === "tool");
+    assert.ok(toolMsg && toolMsg.role === "tool");
+    assert.equal(toolMsg.content, "cached file body");
   } finally {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });

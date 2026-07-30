@@ -19,21 +19,35 @@ import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
 import { computeLineDiff, diffSnippet, type FileDiff } from "./diff.js";
 import { TaskList } from "./components/TaskList.js";
 import { generateThreadTitle } from "./autotitle.js";
-import { DEFAULT_THREAD_TITLE, deriveTitle, emptyThread, newId, toChatMessages, type Project, type Thread, type ThreadEvent } from "./threads.js";
+import {
+  DEFAULT_THREAD_TITLE,
+  deriveTitle,
+  emptyThread,
+  isBetterPlanDoc,
+  newId,
+  planFileNameFromTitle,
+  planTitleFromMarkdown,
+  toChatMessages,
+  type Project,
+  type Thread,
+  type ThreadEvent,
+} from "./threads.js";
 import type { SettingsPage } from "./components/SettingsView.js";
 import type {
-  AgentEventEnvelope,
-  AgentTodoItem,
-  ApprovalMode,
-  Bootstrap,
-  ChatMode,
-  DeyinSettings,
-  DiffSnippetLine,
-  EnvInfo,
-  ModelInfo,
-  ProviderInfo,
-  UserProfile,
+ AgentEventEnvelope,
+ AgentTodoItem,
+ ApprovalMode,
+ Bootstrap,
+ ChatMode,
+ ContextUsageSnapshot,
+ DeyinSettings,
+ DiffSnippetLine,
+ EnvInfo,
+ ModelInfo,
+ ProviderInfo,
+ UserProfile,
 } from "../shared/types.js";
+import { TOOL_RESULT_UI_CAP, truncateToolResultUi } from "../shared/types.js";
 
 /** Above this size we skip diff rendering (LCS is quadratic) but keep the card. */
 const DIFF_MAX_LINES = 2000;
@@ -108,13 +122,35 @@ export function App() {
   const [planStream, setPlanStream] = useState<string | null>(null);
   const runToolIndex = useRef(new Map<string, number>());
   const runTextRef = useRef("");
+  /** Best plan markdown seen during the in-flight plan run (survives tool steps). */
+  const planDocRef = useRef("");
   const runTokensRef = useRef(0);
+  /** Latest per-run optimization metrics (compression + cache savings). */
+  const runOptimizationRef = useRef<Extract<ThreadEvent, { kind: "optimization" }> | null>(null);
   const runReasoningRef = useRef("");
   const reasoningStartRef = useRef(0);
   /** Mode of the in-flight run (drives plan completion handling). */
   const runModeRef = useRef<ChatMode>("agent");
   /** Volatile diff contents per file path; thread events only persist the counts. */
   const fileDiffsRef = useRef(new Map<string, FileDiff>());
+  /** Follow-up queued while a run is active; drained when the run finishes. */
+  const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
+  const queuedPromptRef = useRef<string | null>(null);
+  /** Latest Context Usage snapshot per thread (session-scoped). */
+  const [contextByThread, setContextByThread] = useState<Record<string, ContextUsageSnapshot>>({});
+  /** Interrupt-and-send: start this prompt once the current run's `done` arrives. */
+  const pendingSendNowRef = useRef<{ threadId: string; text: string; mode: ChatMode } | null>(null);
+  /** After the 3s stop watchdog force-clears, ignore the late `done` event. */
+  const ignoreNextDoneRef = useRef(false);
+  const stopWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const plainChatAbortRef = useRef<AbortController | null>(null);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const composerModeRef = useRef(composerMode);
+  composerModeRef.current = composerMode;
+  const startAgentRunRef = useRef<(thread: Thread, text: string, mode: ChatMode) => void>(() => undefined);
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -122,8 +158,10 @@ export function App() {
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
+ /** Agent PTY sessions announced via shell-session, keyed for TerminalPanel attach. */
+ const [agentTerminals, setAgentTerminals] = useState<{ id: string; label: string; threadId: string }[]>([]);
 
-  const [searchOpen, setSearchOpen] = useState(false);
+ const [searchOpen, setSearchOpen] = useState(false);
   const [plansOpen, setPlansOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
@@ -222,6 +260,41 @@ export function App() {
     () => projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId) ?? null,
     [projects, activeThreadId],
   );
+
+  const selectedContextLength = useMemo(() => {
+    const fromModels = models.find((m) => m.id === selectedModel)?.contextLength;
+    if (fromModels) return fromModels;
+    const provider = providers.find((p) => p.id === selectedProviderId);
+    return provider?.models.find((m) => m.id === selectedModel)?.contextLength;
+  }, [models, providers, selectedModel, selectedProviderId]);
+
+  const activeContextSnapshot =
+    activeThreadId !== null ? (contextByThread[activeThreadId] ?? null) : null;
+
+  // Keep baked snapshot window in sync when the user switches models mid-thread.
+  useEffect(() => {
+    if (!activeThreadId || !selectedContextLength) return;
+    setContextByThread((cur) => {
+      const snap = cur[activeThreadId];
+      if (!snap || snap.contextLength === selectedContextLength) return cur;
+      const percent =
+        selectedContextLength > 0
+          ? Math.min(100, Math.round((snap.usedTokens / selectedContextLength) * 100))
+          : 0;
+      return {
+        ...cur,
+        [activeThreadId]: { ...snap, contextLength: selectedContextLength, percent },
+      };
+    });
+  }, [activeThreadId, selectedContextLength]);
+
+  /** Live plan-file card while Plan mode streams markdown into the Plan tab. */
+  const planArtifact = useMemo(() => {
+    if (planStream === null || agentThreadId === null || agentThreadId !== activeThreadId) return null;
+    if (!planStream.trim()) return null;
+    const title = planTitleFromMarkdown(planStream);
+    return { title, fileName: planFileNameFromTitle(title) };
+  }, [planStream, agentThreadId, activeThreadId]);
 
   // Restore the thread's composer mode when switching tasks.
   useEffect(() => {
@@ -371,8 +444,15 @@ export function App() {
         const text = runTextRef.current;
         runTextRef.current = "";
         setStreamText("");
-        // Text flushed before a tool call is pre-tool commentary, not the plan
-        // document — it belongs in the chat; reset the live plan preview.
+        if (runModeRef.current === "plan") {
+          // Plan-mode prose belongs only in the Plan tab. Keep the best document
+          // across tool steps so a later short note cannot wipe a full draft.
+          if (isBetterPlanDoc(text, planDocRef.current)) {
+            planDocRef.current = text;
+          }
+          setPlanStream(planDocRef.current || null);
+          return;
+        }
         setPlanStream(null);
         if (text.trim().length > 0) setRunEvents((cur) => [...cur, { kind: "assistant", text }]);
       };
@@ -387,13 +467,15 @@ export function App() {
           flushReasoning();
           runTextRef.current += event.delta;
           if (runModeRef.current === "plan") {
-            // Plan mode: the streamed text is the plan document. Feed the Plan
-            // tab live and keep the chat timeline free of the markdown dump.
+            // Plan mode: stream the live segment into the Plan tab. Prefer the
+            // longer of the live segment vs the best prior draft so the panel
+            // always shows the fullest plan seen so far.
             if (runTextRef.current === event.delta) {
               setPanelOpen(true);
               setPanelTab("plan");
             }
-            setPlanStream(runTextRef.current);
+            const live = runTextRef.current;
+            setPlanStream(isBetterPlanDoc(live, planDocRef.current) ? live : planDocRef.current);
           } else {
             setStreamText(runTextRef.current);
           }
@@ -406,6 +488,21 @@ export function App() {
           });
           break;
         }
+        case "tool-delta": {
+          setRunEvents((cur) => {
+            const index = runToolIndex.current.get(event.callId);
+            if (index === undefined || !cur[index] || cur[index]!.kind !== "tool") return cur;
+            const prev = cur[index] as Extract<ThreadEvent, { kind: "tool" }>;
+            let result = (prev.result ?? "") + event.delta;
+            if (result.length > TOOL_RESULT_UI_CAP) {
+              result = truncateToolResultUi(result);
+            }
+            const next = [...cur];
+            next[index] = { ...prev, result };
+            return next;
+          });
+          break;
+        }
         case "tool-end": {
           setRunEvents((cur) => {
             const index = runToolIndex.current.get(event.callId);
@@ -414,6 +511,16 @@ export function App() {
             next[index] = { ...(next[index] as Extract<ThreadEvent, { kind: "tool" }>), result: event.result, ok: event.ok, denied: event.denied };
             return next;
           });
+          break;
+        }
+        case "shell-session": {
+          setAgentTerminals((cur) => {
+            if (cur.some((t) => t.id === event.terminalId)) return cur;
+            return [...cur, { id: event.terminalId, label: event.label, threadId }];
+          });
+          if (settingsRef.current?.revealTerminalOnAgentCommand !== false) {
+            setTerminalOpen(true);
+          }
           break;
         }
         case "file-change": {
@@ -457,6 +564,23 @@ export function App() {
         case "usage":
           runTokensRef.current = event.totalTokens;
           break;
+        case "optimization":
+          runOptimizationRef.current = {
+            kind: "optimization",
+            originalInputTokens: event.originalInputTokens,
+            compressedInputTokens: event.compressedInputTokens,
+            compressionRatio: event.compressionRatio,
+            cachedPromptTokens: event.cachedPromptTokens,
+            toolCacheHits: event.toolCacheHits,
+            toolCacheMisses: event.toolCacheMisses,
+            responseCacheHits: event.responseCacheHits,
+            responseCacheMisses: event.responseCacheMisses,
+            estimatedCostSavingsUsd: event.estimatedCostSavingsUsd,
+          };
+          break;
+        case "context-snapshot":
+          setContextByThread((cur) => ({ ...cur, [threadId]: event.snapshot }));
+          break;
         case "permission-request":
           setApproval({ requestId: event.requestId, toolName: event.toolName, summary: event.summary });
           break;
@@ -471,24 +595,49 @@ export function App() {
           setRunEvents((cur) => [...cur, { kind: "error", text: event.message }]);
           break;
         case "done": {
+          if (ignoreNextDoneRef.current) {
+            ignoreNextDoneRef.current = false;
+            break;
+          }
           // Fold the run into the persisted thread: run events + final text.
           const text = runTextRef.current.trim().length > 0 ? runTextRef.current : event.finalText;
           const reasoning = runReasoningRef.current;
           const reasoningSeconds = Math.max(1, Math.round((Date.now() - reasoningStartRef.current) / 1000));
           runTextRef.current = "";
           runReasoningRef.current = "";
-          // Plan mode: the final message is the plan document. It lives in the
-          // Plan tab only — the chat gets a plan-ready card instead of the
-          // markdown dump. Aborted plans still land in the tab (no card).
-          const planRun = runModeRef.current === "plan" && text.trim().length > 0;
+          // Plan mode: keep the best plan document in the Plan tab; chat only
+          // gets a compact plan-file card. Aborted plans still land in the tab.
+          let planText = planDocRef.current;
+          if (runModeRef.current === "plan" && isBetterPlanDoc(text, planText)) {
+            planText = text;
+          }
+          planDocRef.current = "";
+          const planRun = runModeRef.current === "plan" && planText.trim().length > 0;
           const planFinished = planRun && event.reason === "completed";
+          const planTitle = planRun ? planTitleFromMarkdown(planText) : undefined;
+          if (stopWatchdogRef.current) {
+            clearTimeout(stopWatchdogRef.current);
+            stopWatchdogRef.current = null;
+          }
           setRunEvents((cur) => {
             const finished: ThreadEvent[] = [...cur];
             if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
             if (text.trim().length > 0 && !planRun) finished.push({ kind: "assistant", text });
-            if (planFinished) finished.push({ kind: "plan-ready" });
+            if (planFinished) {
+              finished.push({
+                kind: "plan-ready",
+                title: planTitle,
+                fileName: planFileNameFromTitle(planTitle ?? "plan"),
+              });
+            }
             if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
             if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
+            // Optimization summary: surface when compression or caches saved anything.
+            const opt = runOptimizationRef.current;
+            if (opt && (opt.originalInputTokens > opt.compressedInputTokens || opt.cachedPromptTokens > 0 || opt.toolCacheHits > 0 || opt.responseCacheHits > 0)) {
+              finished.push(opt);
+            }
+            runOptimizationRef.current = null;
             appendEvents(threadId, finished);
             return [];
           });
@@ -496,7 +645,7 @@ export function App() {
             setProjects((cur) =>
               cur.map((project) => ({
                 ...project,
-                threads: project.threads.map((th) => (th.id === threadId ? { ...th, planMarkdown: text } : th)),
+                threads: project.threads.map((th) => (th.id === threadId ? { ...th, planMarkdown: planText } : th)),
               })),
             );
             if (planFinished) {
@@ -513,6 +662,31 @@ export function App() {
           markOnboard("taskRun");
           void window.deyin.usage.record({ model: selectedModel, tokens: runTokensRef.current, newSession: false });
           runTokensRef.current = 0;
+
+          // Interrupt-and-send takes priority over a queued follow-up.
+          const sendNow = pendingSendNowRef.current;
+          pendingSendNowRef.current = null;
+          if (sendNow) {
+            queuedPromptRef.current = null;
+            setQueuedPrompt(null);
+            const thread =
+              projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === sendNow.threadId) ?? null;
+            if (thread) {
+              // Defer so main has removed this thread from `active` before restart.
+              queueMicrotask(() => startAgentRunRef.current(thread, sendNow.text, sendNow.mode));
+            }
+            break;
+          }
+          const queued = queuedPromptRef.current;
+          if (queued) {
+            queuedPromptRef.current = null;
+            setQueuedPrompt(null);
+            const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
+            if (thread) {
+              const mode = composerModeRef.current;
+              queueMicrotask(() => startAgentRunRef.current(thread, queued, mode));
+            }
+          }
           break;
         }
       }
@@ -598,6 +772,8 @@ export function App() {
           break;
         case "archive": {
           updateThread(threadId, { archived: true });
+          window.deyin.agent.disposeShell(threadId);
+          setAgentTerminals((cur) => cur.filter((t) => t.threadId !== threadId));
           if (activeThreadId === threadId) {
             const next = projects
               .flatMap((p) => p.threads)
@@ -668,9 +844,12 @@ export function App() {
       setRunEvents([]);
       runToolIndex.current.clear();
       runTextRef.current = "";
+      planDocRef.current = "";
       runReasoningRef.current = "";
       runTokensRef.current = 0;
+      runOptimizationRef.current = null;
       runModeRef.current = mode;
+      ignoreNextDoneRef.current = false;
       if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
       void window.deyin.agent.start({
         threadId: thread.id,
@@ -686,6 +865,67 @@ export function App() {
     },
     [appendEvents, selectedModel, selectedProviderId, settings],
   );
+  startAgentRunRef.current = startAgentRun;
+
+  /** Abort the in-flight agent (or plain-chat) run and unlock the composer. */
+  const stopRun = useCallback(() => {
+    const threadId = agentThreadId;
+    if (plainChatAbortRef.current) {
+      plainChatAbortRef.current.abort();
+      plainChatAbortRef.current = null;
+      setStreamText(null);
+      return;
+    }
+    if (!threadId) {
+      setStreamText(null);
+      setStreamReasoning(null);
+      return;
+    }
+
+    window.deyin.agent?.stop(threadId);
+    setApproval(null);
+    // Unlock the composer immediately; fold + clear still happen on `done`.
+    setStreamText(null);
+    setStreamReasoning(null);
+
+    if (stopWatchdogRef.current) clearTimeout(stopWatchdogRef.current);
+    stopWatchdogRef.current = setTimeout(() => {
+      stopWatchdogRef.current = null;
+      // Main never emitted `done` — force-clear so the UI cannot stay wedged.
+      ignoreNextDoneRef.current = true;
+      setRunEvents((cur) => {
+        const finished = [...cur, { kind: "thought" as const, label: "Run stopped" }];
+        appendEvents(threadId, finished);
+        return [];
+      });
+      runToolIndex.current.clear();
+      runTextRef.current = "";
+      runReasoningRef.current = "";
+      runOptimizationRef.current = null;
+      setStreamText(null);
+      setStreamReasoning(null);
+      setPlanStream(null);
+      setAgentThreadId(null);
+      setApproval(null);
+
+      const sendNow = pendingSendNowRef.current;
+      pendingSendNowRef.current = null;
+      if (sendNow) {
+        queuedPromptRef.current = null;
+        setQueuedPrompt(null);
+        const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === sendNow.threadId) ?? null;
+        if (thread) startAgentRunRef.current(thread, sendNow.text, sendNow.mode);
+        return;
+      }
+      const queued = queuedPromptRef.current;
+      if (queued) {
+        queuedPromptRef.current = null;
+        setQueuedPrompt(null);
+        const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
+        if (thread) startAgentRunRef.current(thread, queued, composerModeRef.current);
+      }
+    }, 3_000);
+  }, [agentThreadId, appendEvents]);
 
   /** Persist manual todo edits and keep the latest timeline todo card in sync. */
   const updatePlanTodos = useCallback(
@@ -730,7 +970,16 @@ export function App() {
 
   const send = useCallback(async () => {
     const text = input.trim();
-    if (!text || streamText !== null || !boot) return;
+    if (!text || !boot) return;
+
+    // While a run is active, Enter/Send queues the follow-up (Cursor-like).
+    const runActive = streamText !== null || agentThreadId !== null;
+    if (runActive) {
+      queuedPromptRef.current = text;
+      setQueuedPrompt(text);
+      setInput("");
+      return;
+    }
 
     // First send before any task exists: create the thread instead of dropping
     // the click — the composer must never silently no-op.
@@ -821,12 +1070,13 @@ export function App() {
     // Inactivity watchdog: a stalled SSE stream must not wedge the composer
     // (streamText stays non-null, which blocks every later send).
     let timedOut = false;
+    const abort = new AbortController();
+    plainChatAbortRef.current = abort;
     const armWatchdog = () =>
       setTimeout(() => {
         timedOut = true;
         abort.abort();
       }, 45_000);
-    const abort = new AbortController();
     let watchdog = armWatchdog();
 
     let acc = "";
@@ -858,12 +1108,40 @@ export function App() {
       appendEvents(thread.id, [{ kind: "assistant", text: `Request failed: ${msg}` }]);
     } finally {
       clearTimeout(watchdog);
+      plainChatAbortRef.current = null;
       setStreamText(null);
       // Real token usage from the provider's final stream frame. Providers that
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, connect, appendEvents, startAgentRun, updateThread]);
+  }, [input, streamText, agentThreadId, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, connect, appendEvents, startAgentRun, updateThread]);
+
+  /** Abort the current run and send immediately (does not wait for natural completion). */
+  const sendNow = useCallback(() => {
+    const fromInput = input.trim();
+    const text = fromInput || queuedPromptRef.current?.trim() || "";
+    if (!text || !activeThread) return;
+
+    setInput("");
+    queuedPromptRef.current = null;
+    setQueuedPrompt(null);
+
+    const runActive = streamText !== null || agentThreadId !== null || plainChatAbortRef.current !== null;
+    if (!runActive) {
+      if ((settings?.agentMode ?? "agent") === "agent" && boot?.platform === "desktop" && window.deyin.agent) {
+        startAgentRun(activeThread, text, composerMode);
+      }
+      return;
+    }
+
+    pendingSendNowRef.current = { threadId: activeThread.id, text, mode: composerMode };
+    stopRun();
+  }, [input, activeThread, streamText, agentThreadId, settings, boot, composerMode, startAgentRun, stopRun]);
+
+  const clearQueue = useCallback(() => {
+    queuedPromptRef.current = null;
+    setQueuedPrompt(null);
+  }, []);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -1028,6 +1306,7 @@ export function App() {
                 streamText={agentThreadId === null || agentThreadId === activeThreadId ? streamText : null}
                 streamReasoning={agentThreadId === null || agentThreadId === activeThreadId ? streamReasoning : null}
                 greetingName={greetingName}
+                threadKey={activeThreadId}
                 codeDisplay={{
                   themeLight: settings?.codeThemeLight ?? "GitHub Light",
                   themeDark: settings?.codeThemeDark ?? "GitHub Dark",
@@ -1043,6 +1322,12 @@ export function App() {
                   setPanelOpen(true);
                   setPanelTab("plan");
                 }}
+                planArtifact={planArtifact}
+                onOpenAgentTerminal={
+                  agentTerminals.some((t) => t.threadId === activeThreadId)
+                    ? () => setTerminalOpen(true)
+                    : undefined
+                }
               />
 
               {(activeThread?.todos?.length ?? 0) > 0 && (
@@ -1069,14 +1354,17 @@ export function App() {
                       : undefined
                   }
                   thinking={settings?.thinking ?? true}
-                  canSend={input.trim().length > 0 && streamText === null}
-                  streaming={streamText !== null}
+                  canSend={input.trim().length > 0}
+                  streaming={streamText !== null || agentThreadId !== null}
+                  queuedPrompt={queuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
                   selectedProviderId={selectedProviderId}
                   onChange={setInput}
                   onSend={() => void send()}
-                  onStop={agentThreadId !== null ? () => window.deyin.agent?.stop(agentThreadId) : undefined}
+                  onSendNow={sendNow}
+                  onClearQueue={clearQueue}
+                  onStop={streamText !== null || agentThreadId !== null ? stopRun : undefined}
                   onSelectModel={(id) => {
                     setSelectedModel(id);
                     patchSettings({ defaultModel: `${selectedProviderId}::${id}` });
@@ -1093,6 +1381,9 @@ export function App() {
                   onSelectApproval={(mode: ApprovalMode) => patchSettings({ approvalMode: mode })}
                   onSelectMode={selectMode}
                   onToggleThinking={(on) => patchSettings({ thinking: on })}
+                  contextSnapshot={activeContextSnapshot}
+                  contextLength={selectedContextLength}
+                  threadKey={activeThreadId}
                 />
               </div>
             </main>
@@ -1144,6 +1435,9 @@ export function App() {
               defaultShell={settings?.defaultShell ?? null}
               fontSize={settings?.terminalFontSize ?? 12}
               scrollback={settings?.terminalScrollback ?? 5000}
+              attachSessions={agentTerminals
+                .filter((t) => t.threadId === activeThreadId)
+                .map((t) => ({ id: t.id, label: t.label }))}
               onClose={() => setTerminalOpen(false)}
             />
           )}

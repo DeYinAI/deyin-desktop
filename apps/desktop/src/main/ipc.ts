@@ -149,6 +149,13 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     onStatus: (status) => broadcast(CH.indexStatusEvent, status),
   });
 
+  const sender = () =>
+    BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null;
+  const terminals = new TerminalManager({
+    onData: (id, data) => sender()?.send(CH.termData, { id, data }),
+    onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
+  });
+
   const agentHost = new DesktopAgentHost({
     config,
     auth,
@@ -156,11 +163,15 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    terminals,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
       const provider = agents.listProviders(true).find((p) => p.id === providerId);
-      return provider?.models.find((m) => m.id === modelId)?.contextLength;
+      const fromProvider = provider?.models.find((m) => m.id === modelId)?.contextLength;
+      if (fromProvider) return fromProvider;
+      // Primary Openference catalog lives in ModelsCache (provider.models is often empty).
+      return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
     },
   });
 
@@ -175,7 +186,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
       const provider = agents.listProviders(true).find((p) => p.id === providerId);
-      return provider?.models.find((m) => m.id === modelId)?.contextLength;
+      const fromProvider = provider?.models.find((m) => m.id === modelId)?.contextLength;
+      if (fromProvider) return fromProvider;
+      return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
     },
   };
 
@@ -198,13 +211,6 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   // left off; the renderer re-reads the project state via projectsGet.
   opts.setWorkspaceRoot(projects.get().workspaceRoot);
   void index.setRoot(projects.get().workspaceRoot);
-
-  const sender = () =>
-    BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null;
-  const terminals = new TerminalManager({
-    onData: (id, data) => sender()?.send(CH.termData, { id, data }),
-    onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
-  });
 
   ipcMain.handle(CH.bootstrap, async (): Promise<Bootstrap> => {
     return {
@@ -265,6 +271,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     const shellId = options.shell ?? settings.get().defaultShell ?? undefined;
     return terminals.create({ ...options, shell: shellId });
   });
+  ipcMain.handle(CH.termAttach, (_e, id: string) => terminals.attach(id));
   ipcMain.on(CH.termWrite, (_e, id: string, data: string) => terminals.write(id, data));
   ipcMain.on(CH.termResize, (_e, id: string, cols: number, rows: number) => terminals.resize(id, cols, rows));
   ipcMain.on(CH.termKill, (_e, id: string) => terminals.kill(id));
@@ -324,10 +331,11 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     telemetry.record("agent-run");
     void agentHost.start(options);
   });
-  ipcMain.on(CH.agentStop, (_e, threadId: string) => agentHost.stop(threadId));
-  ipcMain.on(CH.agentApprove, (_e, requestId: string, decision: PermissionDecision) =>
-    agentHost.approve(requestId, decision),
-  );
+ipcMain.on(CH.agentStop, (_e, threadId: string) => agentHost.stop(threadId));
+ipcMain.on(CH.agentApprove, (_e, requestId: string, decision: PermissionDecision) =>
+ agentHost.approve(requestId, decision),
+);
+ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShell(threadId));
 
   /* Browser control plumbing. */
   ipcMain.on(CH.browserRegister, (_e, webContentsId: number | null) => browser.register(webContentsId));
@@ -460,6 +468,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       });
     },
     dispose: () => {
+      agentHost.disposeAllShells();
       telemetry.stop();
       void telemetry.flush();
       index.dispose();

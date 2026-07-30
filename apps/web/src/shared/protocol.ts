@@ -16,6 +16,7 @@ export type ClientMessage =
   | { type: "files.write"; id: number; path: string; content: string }
   | { type: "env.detect"; id: number }
   | { type: "term.create"; id: number; opts: TerminalCreateOptions }
+  | { type: "term.attach"; id: number; termId: string }
   | { type: "term.write"; termId: string; data: string }
   | { type: "term.resize"; termId: string; cols: number; rows: number }
   | { type: "term.kill"; termId: string };
@@ -39,6 +40,9 @@ export interface FilesWriteResult {
 }
 export interface TermCreateResult {
   termId: string;
+}
+export interface TermAttachResult {
+  scrollback: string;
 }
 export interface EnvDetectResult {
   env: EnvInfo;

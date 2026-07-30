@@ -7,14 +7,41 @@ import { asOptionalNumber, asOptionalString, asString, resolvePath, truncate } f
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_TIMEOUT_S = 600;
 
+/** The real shell that executes `bash` tool commands (cmd.exe on Windows). */
+export function effectiveShell(): string {
+  if (platform() === "win32") return process.env.COMSPEC ?? "cmd.exe";
+  return existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
+}
+
 function shellFor(command: string): { file: string; args: string[] } {
   if (platform() === "win32") {
-    return { file: process.env.COMSPEC ?? "cmd.exe", args: ["/d", "/s", "/c", command] };
+    return { file: effectiveShell(), args: ["/d", "/s", "/c", command] };
   }
   // Always POSIX sh/bash for tool commands: the user's login shell may be fish/nushell
   // whose syntax differs from what models emit.
-  const bash = existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
-  return { file: bash, args: ["-c", command] };
+  return { file: effectiveShell(), args: ["-c", command] };
+}
+
+function bashToolDescription(): string {
+  if (platform() === "win32") {
+    return (
+      "Run a shell command in the workspace via a persistent PowerShell session (when the host " +
+      "provides one) or cmd.exe (/c) otherwise, and return its combined output. Use Windows paths " +
+      "(e.g. dir, type, cd). Do not assume Unix utilities (tail, pwd, ls) or Unix-style paths like " +
+      "/c/Users/.... Working directory and environment persist across calls in the same chat. " +
+      "Interactive commands block until they finish or time out — prefer non-interactive flags. " +
+      "Prefer the read/write/edit/grep/glob tools for file operations. Combine related checks with " +
+      "&& / ; in one call when order matters."
+    );
+  }
+  return (
+    "Run a shell command in the workspace via a persistent bash session (when the host provides " +
+    "one) or a one-shot bash spawn otherwise, and return its combined output. Use for builds, tests, " +
+    "git, package managers and anything else with a CLI. Working directory and environment persist " +
+    "across calls in the same chat. Interactive commands block until they finish or time out — " +
+    "prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file operations. " +
+    "Combine related checks with && in one call when order matters."
+  );
 }
 
 async function runCommand(command: string, cwd: string, timeoutS: number, signal?: AbortSignal): Promise<string> {
@@ -82,8 +109,7 @@ async function runCommand(command: string, cwd: string, timeoutS: number, signal
 
 export const bashTool: ToolDefinition = {
   name: "bash",
-  description:
-    "Run a shell command in the workspace and return its combined output. Use for builds, tests, git, package managers and anything else with a CLI. Commands run non-interactively (no TTY); avoid commands that wait for input. Prefer the read/write/edit/grep/glob tools for file operations.",
+  description: bashToolDescription(),
   tier: "execute",
   parameters: {
     type: "object",
@@ -102,6 +128,40 @@ export const bashTool: ToolDefinition = {
     const command = asString(args.command, "command");
     const cwd = asOptionalString(args.cwd) ? resolvePath(ctx.cwd, String(args.cwd)) : ctx.cwd;
     const timeoutS = Math.min(asOptionalNumber(args.timeout_seconds) ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
+
+    if (ctx.shell) {
+      try {
+        const result = await ctx.shell.run(command, {
+          cwd,
+          timeoutS,
+          signal: ctx.signal,
+          onData: ctx.onOutput,
+        });
+        return truncate(result.output);
+      } catch (err) {
+        // Only fall through to one-shot spawn when the PTY itself cannot be
+        // created (no node-pty, no bash on POSIX). A mid-run failure (timeout,
+        // cancel, write to a dead PTY) must NOT re-exec the command — that
+        // would double side effects. Surface it as an error result instead.
+        if (isShellUnavailable(err)) {
+          // Fall through to spawn below.
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          return `ERROR: shell command failed: ${msg}`;
+        }
+      }
+    }
+
     return runCommand(command, cwd, timeoutS, ctx.signal);
   },
 };
+
+function isShellUnavailable(err: unknown): boolean {
+  if (err && typeof err === "object") {
+    const name = (err as { name?: string }).name;
+    const code = (err as { code?: string }).code;
+    if (name === "ShellUnavailableError") return true;
+    if (code === "SHELL_UNAVAILABLE") return true;
+  }
+  return false;
+}

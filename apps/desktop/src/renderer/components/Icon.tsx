@@ -47,6 +47,7 @@ const PATHS: Record<string, JSX.Element> = {
   arrowLeft: <path d="M13 8H3m4-4L3 8l4 4" />,
   arrowRight: <path d="M3 8h10M9 4l4 4-4 4" />,
   arrowUp: <path d="M8 13V3M4 7l4-4 4 4" />,
+  arrowDown: <path d="M8 3v10M12 9l-4 4-4-4" />,
   close: <path d="M4 4l8 8M12 4l-8 8" />,
   minimize: <path d="M3 8.5h10" />,
   maximize: <rect x="3.5" y="3.5" width="9" height="9" rx="1" />,

@@ -69,6 +69,9 @@ export class Session {
         case "term.create":
           this.send({ type: "reply", id: msg.id, ok: true, result: { termId: await this.host.createTerminal(msg.opts) } });
           break;
+        case "term.attach":
+          this.send({ type: "reply", id: msg.id, ok: true, result: this.host.attachTerminal(msg.termId) });
+          break;
         case "term.write":
           this.host.writeTerminal(msg.termId, msg.data);
           break;

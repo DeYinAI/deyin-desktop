@@ -1,0 +1,8 @@
+# Optional deps for scripts/fine-tune-embedding.py (not needed at runtime).
+torch>=2.2.0
+sentence-transformers>=3.0.0
+datasets>=2.19.0
+transformers>=4.51.0
+optimum[onnxruntime]>=1.23.0
+onnx>=1.16.0
+onnxruntime>=1.19.0
