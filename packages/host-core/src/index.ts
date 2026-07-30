@@ -5,6 +5,7 @@ export * from "./automations.js";
 export * from "./host/files.js";
 export * from "./host/paths.js";
 export * from "./host/env.js";
+export * from "./host/wsl-path.js";
 export * from "./host/fingerprint.js";
 export * from "./host/logger.js";
 export * from "./host/pty.js";

@@ -27,8 +27,8 @@ export function TerminalPage({ settings, onChange }: Props) {
         title="Default shell"
         description={
           env?.wsl2
-            ? "WSL2 distros are detected automatically and listed alongside native shells."
-            : "New terminals start with this shell."
+            ? "WSL2 distros are detected automatically and listed alongside native shells. The agent's shell follows this choice too."
+            : "New terminals and the agent's shell start with this shell."
         }
       >
         <select
