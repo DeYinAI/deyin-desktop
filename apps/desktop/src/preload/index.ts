@@ -50,6 +50,7 @@ const api: DeyinApi = {
   },
   terminal: {
     create: (opts) => ipcRenderer.invoke(CH.termCreate, opts),
+    attach: (id) => ipcRenderer.invoke(CH.termAttach, id),
     write: (id, data) => ipcRenderer.send(CH.termWrite, id, data),
     resize: (id, cols, rows) => ipcRenderer.send(CH.termResize, id, cols, rows),
     kill: (id) => ipcRenderer.send(CH.termKill, id),
@@ -99,16 +100,17 @@ const api: DeyinApi = {
       return () => ipcRenderer.removeListener(CH.indexStatusEvent, listener);
     },
   },
-  agent: {
-    start: (options) => ipcRenderer.invoke(CH.agentStart, options),
-    stop: (threadId) => ipcRenderer.send(CH.agentStop, threadId),
-    approve: (requestId, decision) => ipcRenderer.send(CH.agentApprove, requestId, decision),
-    onEvent: (cb) => {
-      const listener = (_e: unknown, envelope: AgentEventEnvelope) => cb(envelope);
-      ipcRenderer.on(CH.agentEvent, listener);
-      return () => ipcRenderer.removeListener(CH.agentEvent, listener);
-    },
-  },
+agent: {
+ start: (options) => ipcRenderer.invoke(CH.agentStart, options),
+ stop: (threadId) => ipcRenderer.send(CH.agentStop, threadId),
+ approve: (requestId, decision) => ipcRenderer.send(CH.agentApprove, requestId, decision),
+ disposeShell: (threadId) => ipcRenderer.send(CH.agentDisposeShell, threadId),
+ onEvent: (cb) => {
+ const listener = (_e: unknown, envelope: AgentEventEnvelope) => cb(envelope);
+ ipcRenderer.on(CH.agentEvent, listener);
+ return () => ipcRenderer.removeListener(CH.agentEvent, listener);
+ },
+ },
   browserControl: {
     register: (webContentsId) => ipcRenderer.send(CH.browserRegister, webContentsId),
     getPartition: () => ipcRenderer.invoke(CH.browserGetPartition),

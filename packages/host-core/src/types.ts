@@ -85,7 +85,8 @@ export type ThreadEvent =
   | { kind: "assistant"; text: string }
   | { kind: "reasoning"; text: string; seconds?: number }
   | { kind: "plan"; steps: PlanStep[]; badge?: string }
-  | { kind: "plan-ready" }
+  /** Compact plan artifact in chat; full markdown lives in the Plan tab. */
+  | { kind: "plan-ready"; title?: string; fileName?: string }
   | {
       kind: "file";
       name: string;
@@ -102,6 +103,19 @@ export type ThreadEvent =
   | { kind: "thought"; label: string }
   | { kind: "worked"; seconds: number }
   | { kind: "tool"; name: string; summary: string; result?: string; ok?: boolean; denied?: boolean }
+  /** Per-run token-optimization summary card (compression + cache savings). */
+  | {
+      kind: "optimization";
+      originalInputTokens: number;
+      compressedInputTokens: number;
+      compressionRatio: number;
+      cachedPromptTokens: number;
+      toolCacheHits: number;
+      toolCacheMisses: number;
+      responseCacheHits: number;
+      responseCacheMisses: number;
+      estimatedCostSavingsUsd: number;
+    }
   | { kind: "error"; text: string };
 
 export interface Thread {
@@ -201,6 +215,8 @@ export interface DeyinSettings {
   defaultShell: string | null;
   terminalFontSize: number;
   terminalScrollback: number;
+  /** Open the terminal panel when the agent first runs a shell command. */
+  revealTerminalOnAgentCommand: boolean;
   /** Live local semantic indexing of the workspace. */
   indexingEnabled: boolean;
   onboard: OnboardProgress;
@@ -208,6 +224,20 @@ export interface DeyinSettings {
   automationsCatchUp: boolean;
   /** Keep scheduler alive in the tray when all windows are closed. */
   keepRunningInBackground: boolean;
+  /** Tier-1: compress tool/user payloads before sending to the LLM. */
+  optimizationCompression: boolean;
+  /** Tier-1 compression aggressiveness. */
+  optimizationCompressionMode: "aggressive" | "balanced" | "conservative";
+  /** Tier-1: send provider prompt-cache keys / markers. */
+  optimizationPromptCaching: boolean;
+  /** Tier-2: load semantic optimization plugin. */
+  optimizationPluginEnabled: boolean;
+  /** Tier-2: semantic tool-result cache. */
+  optimizationToolCache: boolean;
+  /** Tier-2: semantic response cache. */
+  optimizationResponseCache: boolean;
+  /** Cosine similarity threshold for semantic cache hits (0.80–0.98). */
+  optimizationSimilarityThreshold: number;
 }
 
 /* Automations ------------------------------------------------------------- */
@@ -420,20 +450,51 @@ export interface AgentTodoItem {
   status: AgentTodoStatus;
 }
 
+/** Context Usage category ids (mirrors agent-core context-usage). */
+export type ContextCategoryId =
+  | "system"
+  | "tools"
+  | "rules"
+  | "skills"
+  | "mcp"
+  | "subagents"
+  | "conversation";
+
+export interface ContextUsageCategory {
+  id: ContextCategoryId;
+  label: string;
+  tokens: number;
+}
+
+/** Live context-window fill estimate for the active thread. */
+export interface ContextUsageSnapshot {
+  contextLength: number;
+  usedTokens: number;
+  percent: number;
+  categories: ContextUsageCategory[];
+  wire?: { originalTokens: number; compressedTokens: number };
+  cached?: boolean;
+}
+
 /** Renderer-facing events streamed from the main-process agent runtime. */
 export type AgentUiEvent =
-  | { type: "text-delta"; delta: string }
-  | { type: "reasoning-delta"; delta: string }
-  | { type: "tool-start"; callId: string; name: string; summary: string }
-  | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
-  | { type: "file-change"; path: string; before: string; after: string }
-  | { type: "todos"; todos: AgentTodoItem[] }
-  | { type: "usage"; totalTokens: number }
-  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
-  | { type: "subagent-start"; name: string; prompt: string }
-  | { type: "subagent-end"; name: string; ok: boolean }
-  | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
-  | { type: "error"; message: string };
+ | { type: "text-delta"; delta: string }
+ | { type: "reasoning-delta"; delta: string }
+ | { type: "tool-start"; callId: string; name: string; summary: string }
+ | { type: "tool-delta"; callId: string; delta: string }
+ | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
+ | { type: "file-change"; path: string; before: string; after: string }
+ | { type: "todos"; todos: AgentTodoItem[] }
+ | { type: "usage"; totalTokens: number }
+ | { type: "context-snapshot"; snapshot: ContextUsageSnapshot }
+ | { type: "optimization"; originalInputTokens: number; compressedInputTokens: number; compressionRatio: number; cachedPromptTokens: number; toolCacheHits: number; toolCacheMisses: number; responseCacheHits: number; responseCacheMisses: number; estimatedCostSavingsUsd: number }
+ | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+ | { type: "subagent-start"; name: string; prompt: string }
+ | { type: "subagent-end"; name: string; ok: boolean }
+ /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */
+ | { type: "shell-session"; terminalId: string; label: string }
+ | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
+ | { type: "error"; message: string };
 
 export interface AgentEventEnvelope {
   threadId: string;

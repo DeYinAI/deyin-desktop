@@ -54,3 +54,24 @@ export const toolCallResponse = (id: string, name: string, args: object): unknow
   },
   { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
 ];
+
+/** Multiple tool_calls in one completion (parallel batch). */
+export const multiToolCallResponse = (
+  calls: { id: string; name: string; args: object }[],
+): unknown[] => [
+  {
+    choices: [
+      {
+        delta: {
+          tool_calls: calls.map((c, index) => ({
+            index,
+            id: c.id,
+            type: "function",
+            function: { name: c.name, arguments: JSON.stringify(c.args) },
+          })),
+        },
+      },
+    ],
+  },
+  { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+];

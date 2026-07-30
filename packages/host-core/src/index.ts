@@ -8,6 +8,7 @@ export * from "./host/env.js";
 export * from "./host/fingerprint.js";
 export * from "./host/logger.js";
 export * from "./host/pty.js";
+export * from "./host/agent-shell.js";
 export * from "./indexer/manager.js";
 export * from "./indexer/embedder.js";
 export * from "./indexer/chunker.js";

@@ -58,25 +58,6 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <aside className="sidebar">
-      <nav className="sidebar__nav">
-        <button className="nav-item" onClick={props.onNewTask}>
-          <Icon name="plus" size={13} />
-          <span>{t("nav.newTask")}</span>
-          <span className="kbd">Ctrl+N</span>
-        </button>
-        <button className="nav-item" onClick={props.onOpenSearch}>
-          <Icon name="search" size={13} />
-          <span>{t("nav.search")}</span>
-          <span className="kbd">Ctrl+K</span>
-        </button>
-        {props.platform === "desktop" && props.onOpenAutomations && (
-          <button className="nav-item" onClick={props.onOpenAutomations}>
-            <Icon name="sparkles" size={13} />
-            <span>{t("nav.automations")}</span>
-          </button>
-        )}
-      </nav>
-
       <div className="sidebar__scroll">
         <div className="sidebar__section-row">
           <div className="sidebar__section">{t("nav.projects")}</div>
@@ -133,6 +114,7 @@ export function Sidebar(props: SidebarProps) {
                 <button
                   key={thread.id}
                   className={`thread-row ${thread.id === props.activeThreadId ? "thread-row--active" : ""}`}
+                  aria-current={thread.id === props.activeThreadId ? "page" : undefined}
                   onClick={() => props.onSelectThread(project.id, thread.id)}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -181,6 +163,17 @@ export function Sidebar(props: SidebarProps) {
           onOpenPlans={props.onOpenPlans}
         />
         <div className="sidebar__footer-spacer" />
+        <button className="icon-btn" title={`${t("nav.newTask")} (Ctrl+N)`} onClick={props.onNewTask}>
+          <Icon name="plus" size={15} />
+        </button>
+        <button className="icon-btn" title={`${t("nav.search")} (Ctrl+K)`} onClick={props.onOpenSearch}>
+          <Icon name="search" size={14} />
+        </button>
+        {props.platform === "desktop" && props.onOpenAutomations && (
+          <button className="icon-btn" title={t("nav.automations")} onClick={props.onOpenAutomations}>
+            <Icon name="sparkles" size={14} />
+          </button>
+        )}
         <button className="icon-btn" title={t("nav.settings")} onClick={props.onOpenSettings}>
           <Icon name="gear" size={15} />
         </button>

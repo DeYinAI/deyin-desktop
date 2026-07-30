@@ -46,6 +46,10 @@ export class SessionHost {
     return this.terminals.create({ ...opts, cwd: this.root });
   }
 
+  attachTerminal(id: string): { scrollback: string } {
+    return this.terminals.attach(id);
+  }
+
   writeTerminal(id: string, data: string): void {
     this.terminals.write(id, data);
   }

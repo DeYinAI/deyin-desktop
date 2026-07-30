@@ -14,6 +14,16 @@ interface PtyModule {
   spawn(file: string, args: string[], opts: Record<string, unknown>): IPty;
 }
 
+/** Minimal handle for an externally-owned PTY (e.g. AgentShell) registered for attach. */
+export interface RegisteredTerminal {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  /** Kill the underlying process. Owner still owns lifecycle; this is best-effort. */
+  kill(): void;
+  /** Raw scrollback to replay when a tab attaches. */
+  getScrollback(): string;
+}
+
 let ptyModule: PtyModule | null | undefined;
 
 async function loadPty(): Promise<PtyModule | null> {
@@ -38,9 +48,14 @@ export interface TerminalManagerOptions {
   defaultCwd?: () => string | undefined;
 }
 
+export interface TerminalAttachResult {
+  scrollback: string;
+}
+
 /** Manages PTY-backed terminals and streams their output to the host's sink. */
 export class TerminalManager {
   private terminals = new Map<string, IPty>();
+  private registered = new Map<string, RegisteredTerminal>();
 
   constructor(
     private readonly events: TerminalEvents,
@@ -71,21 +86,65 @@ export class TerminalManager {
     return id;
   }
 
+  /**
+   * Register an externally-owned PTY (e.g. AgentShell) so the renderer can
+   * attach, write, and resize it via the normal terminal IPC path. Data must
+   * already be pushed through `events.onData`/`onExit` by the owner.
+   */
+  register(id: string, handle: RegisteredTerminal): void {
+    this.registered.set(id, handle);
+  }
+
+  /** True when an externally-owned terminal handle is currently registered. */
+  isRegistered(id: string): boolean {
+    return this.registered.has(id);
+  }
+
+  unregister(id: string): void {
+    this.registered.delete(id);
+  }
+
+  /** Return scrollback for a registered (or unknown-empty) terminal id. */
+  attach(id: string): TerminalAttachResult {
+    const handle = this.registered.get(id);
+    if (handle) return { scrollback: handle.getScrollback() };
+    // Owned PTYs have no ring buffer; attach still succeeds so the tab can listen.
+    if (this.terminals.has(id)) return { scrollback: "" };
+    throw new Error(`Unknown terminal: ${id}`);
+  }
+
   write(id: string, data: string): void {
-    this.terminals.get(id)?.write(data);
+    const owned = this.terminals.get(id);
+    if (owned) {
+      owned.write(data);
+      return;
+    }
+    this.registered.get(id)?.write(data);
   }
 
   resize(id: string, cols: number, rows: number): void {
-    this.terminals.get(id)?.resize(cols, rows);
+    const owned = this.terminals.get(id);
+    if (owned) {
+      owned.resize(cols, rows);
+      return;
+    }
+    this.registered.get(id)?.resize(cols, rows);
   }
 
   kill(id: string): void {
-    this.terminals.get(id)?.kill();
-    this.terminals.delete(id);
+    const owned = this.terminals.get(id);
+    if (owned) {
+      owned.kill();
+      this.terminals.delete(id);
+      return;
+    }
+    // Externally owned: do not kill the agent shell from a tab close — just detach.
+    // The Agent tab close should leave the shell running for subsequent tool calls.
   }
 
   disposeAll(): void {
     for (const term of this.terminals.values()) term.kill();
     this.terminals.clear();
+    this.registered.clear();
   }
 }
