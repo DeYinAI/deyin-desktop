@@ -58,6 +58,43 @@ function windowsPowerShell(): string {
   return cachedPowerShell;
 }
 
+/**
+ * Human label for the shell the bash tool will run commands through, shown in
+ * the system prompt so the model uses the right syntax. Reflects WSL2 routing
+ * when the cwd lives inside a distro (`\\wsl$\<distro>\…`), PowerShell on native
+ * Windows, and bash on POSIX.
+ */
+export function effectiveShell(cwd?: string): string {
+  if (platform() === "win32") {
+    const wsl = cwd ? parseWslPath(cwd) : null;
+    if (wsl) return `wsl.exe -d ${wsl.distro} (bash)`;
+    return windowsPowerShell();
+  }
+  return existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
+}
+
+/** Platform-specific tool description so the model emits the right shell syntax. */
+function bashToolDescription(): string {
+  if (platform() === "win32") {
+    return (
+      "Run a shell command in the workspace and return its combined output. On native Windows the " +
+      "command runs in PowerShell (use PowerShell/Windows syntax); when the project lives inside a " +
+      "WSL2 distro it runs in that distro's bash (use Unix syntax). Working directory and environment " +
+      "persist across calls in the same chat. Interactive commands block until they finish or time " +
+      "out — prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file " +
+      "operations. Combine related checks with && / ; in one call when order matters."
+    );
+  }
+  return (
+    "Run a shell command in the workspace via a persistent bash session (when the host provides " +
+    "one) or a one-shot bash spawn otherwise, and return its combined output. Use for builds, tests, " +
+    "git, package managers and anything else with a CLI. Working directory and environment persist " +
+    "across calls in the same chat. Interactive commands block until they finish or time out — " +
+    "prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file operations. " +
+    "Combine related checks with && in one call when order matters."
+  );
+}
+
 interface ShellInvocation {
   file: string;
   args: string[];
@@ -161,12 +198,12 @@ function runBackgroundCommand(
   command: string,
   cwd: string,
 ): Promise<{ output: string; exitCode: number | null }> {
-  const { file, args } = shellFor(command);
+  const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
   return new Promise((resolve) => {
     const child = spawn(file, args, {
-      cwd,
-      env: { ...process.env, DEYIN_AGENT: "1" },
+      cwd: spawnCwd,
+      env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv },
       windowsHide: true,
       detached: posix,
     });
