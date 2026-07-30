@@ -13,7 +13,7 @@
     "host.browserPreview": true,
     "skills.registry": true,
     "plugins.registry": true,
-    "automations": false,
+    "automations": true,
     "mcp.client": true
   },
   "community": {

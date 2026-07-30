@@ -1,6 +1,7 @@
 import {
   AuthRequiredError,
   PermissionEngine,
+  autoSelectAskQuestionAnswers,
   buildSystemPrompt,
   connectMcpServers,
   createBuiltinRegistry,
@@ -146,6 +147,16 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       resolvePermission: async (req) => {
         stderr.write(dim(`[permission] auto-denied ${req.toolName} (${req.summary}); pass --yes to allow\n`));
         return "deny";
+      },
+      toolContext: {
+        resolveInteraction: async (request) => {
+          if (request.type !== "ask-question") return "Interaction not supported.";
+          if (opts.yes) {
+            return JSON.stringify(autoSelectAskQuestionAnswers(request), null, 2);
+          }
+          stderr.write(dim("[ask_question] no TTY interaction in headless mode; auto-selecting first options\n"));
+          return JSON.stringify(autoSelectAskQuestionAnswers(request), null, 2);
+        },
       },
       onEvent,
       onMessage: (message) => ctx.sessions.append(sessionId, message),

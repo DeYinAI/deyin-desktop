@@ -62,30 +62,80 @@ export interface ChatMessage {
 /** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
 export type ChatMode = "agent" | "plan" | "ask";
 
+export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+
+/** One checklist entry of the in-chat todo card (status added later; `done` kept
+ *  so timelines persisted by older builds still render). */
+export interface PlanStep {
+  text: string;
+  done: boolean;
+  status?: AgentTodoStatus;
+}
+
+/** One rendered line of a chat file-card diff snippet (persisted with the thread). */
+export interface DiffSnippetLine {
+  type: "context" | "add" | "del";
+  text: string;
+  oldNo: number | null;
+  newNo: number | null;
+}
+
 export type ThreadEvent =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "reasoning"; text: string; seconds?: number }
-  | { kind: "plan"; steps: { text: string; done: boolean }[]; badge?: string }
-  | { kind: "plan-ready" }
-  | { kind: "file"; name: string; subtitle: string; adds: number; dels: number }
+  | { kind: "plan"; steps: PlanStep[]; badge?: string }
+  /** Compact plan artifact in chat; full markdown lives in the Plan tab. */
+  | { kind: "plan-ready"; title?: string; fileName?: string }
+  | {
+      kind: "file";
+      name: string;
+      subtitle: string;
+      adds: number;
+      dels: number;
+      /** Capped color-coded diff excerpt rendered inside the chat card. */
+      snippet?: DiffSnippetLine[];
+      /** Changed lines beyond the snippet cap ("… N more"). */
+      snippetMore?: number;
+    }
   | { kind: "model-switch"; from: string; to: string }
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string }
   | { kind: "worked"; seconds: number }
   | { kind: "tool"; name: string; summary: string; result?: string; ok?: boolean; denied?: boolean }
+  /** Per-run token-optimization summary card (compression + cache savings). */
+  | {
+      kind: "optimization";
+      originalInputTokens: number;
+      compressedInputTokens: number;
+      compressionRatio: number;
+      cachedPromptTokens: number;
+      toolCacheHits: number;
+      toolCacheMisses: number;
+      responseCacheHits: number;
+      responseCacheMisses: number;
+      estimatedCostSavingsUsd: number;
+    }
   | { kind: "error"; text: string };
 
 export interface Thread {
   id: string;
   title: string;
-  /** Relative age label shown in the sidebar ("now", "2h", "4d"). */
-  age: string;
+  /** Epoch ms of the last activity; the sidebar renders it as a relative age. */
+  updatedAt: number;
   events: ThreadEvent[];
   /** Composer mode this thread runs in; defaults to "agent". */
   mode?: ChatMode;
+  /** Mode before entering plan mode; used by ExitPlanMode. */
+  previousMode?: ChatMode;
+  /** Whether the user approved the latest plan via ExitPlanMode. */
+  planApproved?: boolean;
   /** Markdown produced by the latest plan-mode run; feeds the Plan tab. */
   planMarkdown?: string;
+  /** Path to the latest plan artifact on disk. */
+  planFilePath?: string;
+  /** Latest agent todo list; feeds the pinned task list above the composer. */
+  todos?: AgentTodoItem[];
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
@@ -171,9 +221,124 @@ export interface DeyinSettings {
   defaultShell: string | null;
   terminalFontSize: number;
   terminalScrollback: number;
+  /** Open the terminal panel when the agent first runs a shell command. */
+  revealTerminalOnAgentCommand: boolean;
   /** Live local semantic indexing of the workspace. */
   indexingEnabled: boolean;
   onboard: OnboardProgress;
+  /** Run missed cron automations once on app startup. */
+  automationsCatchUp: boolean;
+  /** Keep scheduler alive in the tray when all windows are closed. */
+  keepRunningInBackground: boolean;
+  /** Tier-1: compress tool/user payloads before sending to the LLM. */
+  optimizationCompression: boolean;
+  /** Tier-1 compression aggressiveness. */
+  optimizationCompressionMode: "aggressive" | "balanced" | "conservative";
+  /** Tier-1: send provider prompt-cache keys / markers. */
+  optimizationPromptCaching: boolean;
+  /** Tier-2: load semantic optimization plugin. */
+  optimizationPluginEnabled: boolean;
+  /** Tier-2: semantic tool-result cache. */
+  optimizationToolCache: boolean;
+  /** Tier-2: semantic response cache. */
+  optimizationResponseCache: boolean;
+  /** Cosine similarity threshold for semantic cache hits (0.80–0.98). */
+  optimizationSimilarityThreshold: number;
+}
+
+/* Automations ------------------------------------------------------------- */
+
+export type AutomationTarget =
+  | { kind: "local"; workspacePath: string }
+  | { kind: "ssh"; hostId: string; workspacePath: string };
+
+export type AutomationTrigger =
+  | { kind: "cron"; expression: string }
+  | { kind: "manual" };
+
+export interface Automation {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  prompt: string;
+  trigger: AutomationTrigger;
+  target: AutomationTarget;
+  model: string;
+  providerId: string;
+  createdAt: number;
+  updatedAt: number;
+  /** Unix ms of last successful scheduled slot (for catch-up). */
+  lastScheduledAt?: number;
+}
+
+export type AutomationRunStatus = "queued" | "running" | "completed" | "failed" | "aborted";
+
+export interface AutomationRun {
+  id: string;
+  automationId: string;
+  status: AutomationRunStatus;
+  startedAt: number;
+  finishedAt?: number;
+  reason?: string;
+  finalText?: string;
+  events: AgentUiEvent[];
+}
+
+export type SshAuthMethod = "privateKey" | "password";
+
+/** Persisted SSH host metadata; secrets stored as cipher fields. */
+export interface StoredSshHost {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: SshAuthMethod;
+  keyCipher?: string;
+  passphraseCipher?: string;
+  passwordCipher?: string;
+  knownHostFingerprint?: string;
+}
+
+/** SSH host as exposed to the renderer (no secret values). */
+export interface SshHostInfo {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  username: string;
+  authMethod: SshAuthMethod;
+  hasKey: boolean;
+  hasPassword: boolean;
+  knownHostFingerprint?: string;
+}
+
+export interface SshHostInput {
+  label: string;
+  host: string;
+  port?: number;
+  username: string;
+  authMethod: SshAuthMethod;
+}
+
+export interface SshHostCredentials {
+  privateKey?: string;
+  passphrase?: string;
+  password?: string;
+}
+
+export interface SshTestResult {
+  ok: boolean;
+  message: string;
+  nodeVersion?: string;
+  deyinVersion?: string;
+  /** Set on first connect when no fingerprint is pinned yet. */
+  hostFingerprint?: string;
+}
+
+export interface AutomationInfo extends Automation {
+  lastRun?: AutomationRun;
 }
 
 /* Capabilities (plugins / skills / subagents / MCP / commands / hooks) ----- */
@@ -288,23 +453,73 @@ export interface IndexSearchHit {
 export interface AgentTodoItem {
   id: string;
   content: string;
-  status: "pending" | "in_progress" | "completed" | "cancelled";
+  status: AgentTodoStatus;
+}
+
+/** Context Usage category ids (mirrors agent-core context-usage). */
+export type ContextCategoryId =
+  | "system"
+  | "tools"
+  | "rules"
+  | "skills"
+  | "mcp"
+  | "subagents"
+  | "conversation";
+
+export interface ContextUsageCategory {
+  id: ContextCategoryId;
+  label: string;
+  tokens: number;
+}
+
+/** Live context-window fill estimate for the active thread. */
+export interface ContextUsageSnapshot {
+  contextLength: number;
+  usedTokens: number;
+  percent: number;
+  categories: ContextUsageCategory[];
+  wire?: { originalTokens: number; compressedTokens: number };
+  cached?: boolean;
 }
 
 /** Renderer-facing events streamed from the main-process agent runtime. */
 export type AgentUiEvent =
-  | { type: "text-delta"; delta: string }
-  | { type: "reasoning-delta"; delta: string }
-  | { type: "tool-start"; callId: string; name: string; summary: string }
-  | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
-  | { type: "file-change"; path: string; before: string; after: string }
-  | { type: "todos"; todos: AgentTodoItem[] }
-  | { type: "usage"; totalTokens: number }
-  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
-  | { type: "subagent-start"; name: string; prompt: string }
-  | { type: "subagent-end"; name: string; ok: boolean }
-  | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
-  | { type: "error"; message: string };
+ | { type: "text-delta"; delta: string }
+ | { type: "reasoning-delta"; delta: string }
+ | { type: "tool-start"; callId: string; name: string; summary: string }
+ | { type: "tool-delta"; callId: string; delta: string }
+ | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
+ | { type: "file-change"; path: string; before: string; after: string }
+ | { type: "todos"; todos: AgentTodoItem[] }
+ | { type: "usage"; totalTokens: number }
+ | { type: "context-snapshot"; snapshot: ContextUsageSnapshot }
+ | { type: "optimization"; originalInputTokens: number; compressedInputTokens: number; compressionRatio: number; cachedPromptTokens: number; toolCacheHits: number; toolCacheMisses: number; responseCacheHits: number; responseCacheMisses: number; estimatedCostSavingsUsd: number }
+ | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+ | {
+     type: "question-request";
+     requestId: string;
+     title?: string;
+     questions: Array<{
+       id: string;
+       prompt: string;
+       allow_multiple?: boolean;
+       options: Array<{ id: string; label: string }>;
+     }>;
+   }
+ | {
+     type: "plan-created";
+     name: string;
+     overview?: string;
+     plan: string;
+     filePath?: string;
+   }
+ | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
+ | { type: "subagent-start"; name: string; prompt: string }
+ | { type: "subagent-end"; name: string; ok: boolean }
+ /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */
+ | { type: "shell-session"; terminalId: string; label: string }
+ | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
+ | { type: "error"; message: string };
 
 export interface AgentEventEnvelope {
   threadId: string;
@@ -322,6 +537,8 @@ export interface AgentStartOptions {
   mode: ChatMode;
   /** Prior plain-text turns used to rebuild context after a restart. */
   history: { role: "user" | "assistant"; content: string }[];
+  /** Seed the agent loop's todo list (e.g. plan todos handed to Build). */
+  initialTodos?: AgentTodoItem[];
 }
 
 /* Model providers ---------------------------------------------------------- */

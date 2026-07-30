@@ -138,9 +138,10 @@ rolls a long conversation into a model-written summary in a new session.
 
 ## Built-in tools
 
-`bash` (non-interactive shell, timeout + output caps), `read`, `write`, `edit`
-(exact-match string replace), `grep` (ripgrep with JS fallback), `glob`, `ls`,
-`websearch` (DuckDuckGo, no API key), `todo_write` (task tracking shown in the TUI).
+`bash` (one-shot shell via spawn — the desktop app uses a persistent PTY instead;
+timeout + output caps), `read`, `write`, `edit` (exact-match string replace),
+`grep` (ripgrep with JS fallback), `glob`, `ls`, `websearch` (DuckDuckGo, no API
+key), `todo_write` (task tracking shown in the TUI).
 
 ## Updating
 

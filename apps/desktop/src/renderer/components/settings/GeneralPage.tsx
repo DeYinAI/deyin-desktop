@@ -36,6 +36,12 @@ export function GeneralPage({ settings, version, onChange }: Props) {
           onChange={(v) => onChange({ agentMode: v ? "agent" : "chat" })}
         />
       </SettingCard>
+      <SettingCard title={t("general.automationsCatchUp")} description={t("general.automationsCatchUpDesc")}>
+        <Toggle checked={settings.automationsCatchUp} onChange={(v) => onChange({ automationsCatchUp: v })} />
+      </SettingCard>
+      <SettingCard title={t("general.keepRunningInBackground")} description={t("general.keepRunningInBackgroundDesc")}>
+        <Toggle checked={settings.keepRunningInBackground} onChange={(v) => onChange({ keepRunningInBackground: v })} />
+      </SettingCard>
 
       <SectionTitle>{t("general.privacy")}</SectionTitle>
       <SettingCard title={t("general.telemetry")} description={t("general.telemetryDesc")}>

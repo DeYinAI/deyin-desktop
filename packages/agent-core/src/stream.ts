@@ -1,30 +1,44 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
-import { toWireMessages } from "./wire.js";
+import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
 
 export interface StreamChatEventsOptions {
-  apiBaseUrl: string;
-  token: string;
-  model: string;
-  messages: AgentMessage[];
-  /** Declared tools; omitted from the request when empty so plain chat still works. */
-  tools?: WireTool[];
-  /** Request model reasoning ("thinking") when supported. */
-  thinking?: boolean;
-  temperature?: number;
-  signal?: AbortSignal;
+ apiBaseUrl: string;
+ token: string;
+ model: string;
+ messages: AgentMessage[];
+ /** Declared tools; omitted from the request when empty so plain chat still works. */
+ tools?: WireTool[];
+ /** Request model reasoning ("thinking") when supported. */
+ thinking?: boolean;
+ temperature?: number;
+ signal?: AbortSignal;
+ /** Compression + Anthropic cache_control markers. */
+ wire?: WireOptions;
+ /** OpenAI / Openference prompt cache routing key. */
+ promptCacheKey?: string;
+ promptCacheOptions?: {
+ mode?: "implicit" | "explicit";
+ ttl?: string;
+ };
 }
 
 export type StreamEvent =
-  | { type: "text"; delta: string }
-  | { type: "reasoning"; delta: string }
-  | {
-      type: "done";
-      content: string;
-      reasoning: string;
-      toolCalls: AgentToolCall[];
-      finishReason: string | null;
-      usage: TokenUsage | null;
-    };
+ | { type: "text"; delta: string }
+ | { type: "reasoning"; delta: string }
+ | {
+ type: "done";
+ content: string;
+ reasoning: string;
+ toolCalls: AgentToolCall[];
+ finishReason: string | null;
+ usage: TokenUsage | null;
+ compression?: {
+ originalTokens: number;
+ compressedTokens: number;
+ ratio: number;
+ results: CompressionResult[];
+ };
+ };
 
 interface WireDelta {
   content?: string | null;
@@ -44,6 +58,8 @@ interface WireChunk {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+    cache_read_input_tokens?: number;
   } | null;
 }
 
@@ -53,68 +69,81 @@ interface WireChunk {
  * Yields text/reasoning deltas as they arrive and exactly one final "done" event.
  */
 export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGenerator<StreamEvent> {
-  const body: Record<string, unknown> = {
-    model: opts.model,
-    messages: toWireMessages(opts.messages),
-    stream: true,
-  };
-  if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
-  if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
-  if (opts.temperature !== undefined) body.temperature = opts.temperature;
+ const built = buildWireMessages(opts.messages, opts.wire ?? {});
+ const body: Record<string, unknown> = {
+ model: opts.model,
+ messages: built.messages,
+ stream: true,
+ };
+ if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
+ if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
+ if (opts.temperature !== undefined) body.temperature = opts.temperature;
+ // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
+ if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
+ if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
 
-  const res = await fetch(`${opts.apiBaseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${opts.token}`,
-    },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+ const res = await fetch(`${opts.apiBaseUrl}/chat/completions`, {
+ method: "POST",
+ headers: {
+ "content-type": "application/json",
+ authorization: `Bearer ${opts.token}`,
+ },
+ body: JSON.stringify(body),
+ signal: opts.signal,
+ });
 
-  if (!res.ok || !res.body) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
-  }
+ if (!res.ok || !res.body) {
+ const detail = await res.text().catch(() => "");
+ throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
+ }
 
-  const parser = new StreamAccumulator();
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let sawDone = false;
+ const parser = new StreamAccumulator(built.compression);
+ const reader = res.body.getReader();
+ const decoder = new TextDecoder();
+ let buffer = "";
+ let sawDone = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const event = parser.push(line);
-      if (!event) continue;
-      if (event.type === "done") {
-        sawDone = true;
-        yield event;
-        return;
-      }
-      yield event;
-    }
-  }
+ while (true) {
+ const { done, value } = await reader.read();
+ if (done) break;
+ buffer += decoder.decode(value, { stream: true });
+ const lines = buffer.split("\n");
+ buffer = lines.pop() ?? "";
+ for (const line of lines) {
+ const event = parser.push(line);
+ if (!event) continue;
+ if (event.type === "done") {
+ sawDone = true;
+ yield event;
+ return;
+ }
+ yield event;
+ }
+ }
 
-  if (!sawDone) yield parser.finish();
+ if (!sawDone) yield parser.finish();
 }
+
+/** Fallback tool-call ids must be unique across the whole transcript: some providers
+ * reject requests where two tool_calls share an id, and the loop runs many steps. */
+let syntheticCallCounter = 0;
 
 /**
  * Incremental SSE-chunk accumulator, exposed separately so it can be unit-tested
  * without a network. Feed raw SSE lines; get stream events back.
  */
 export class StreamAccumulator {
-  private content = "";
-  private reasoning = "";
-  private finishReason: string | null = null;
-  private usage: TokenUsage | null = null;
-  private calls = new Map<number, { id: string; name: string; arguments: string }>();
-  private nextImplicitIndex = 0;
+ private content = "";
+ private reasoning = "";
+ private finishReason: string | null = null;
+ private usage: TokenUsage | null = null;
+ private calls = new Map<number, { id: string; name: string; arguments: string }>();
+ private nextImplicitIndex = 0;
+ private readonly compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
+
+ constructor(compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] }) {
+ this.compression = compression;
+ }
 
   /** Process one SSE line. Returns an event when the line produced one. */
   push(line: string): StreamEvent | null {
@@ -131,10 +160,13 @@ export class StreamAccumulator {
     }
 
     if (chunk.usage) {
+      const cached =
+        chunk.usage.prompt_tokens_details?.cached_tokens ?? chunk.usage.cache_read_input_tokens;
       this.usage = {
         promptTokens: chunk.usage.prompt_tokens ?? 0,
         completionTokens: chunk.usage.completion_tokens ?? 0,
         totalTokens: chunk.usage.total_tokens ?? (chunk.usage.prompt_tokens ?? 0) + (chunk.usage.completion_tokens ?? 0),
+        ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
       };
     }
 
@@ -171,24 +203,25 @@ export class StreamAccumulator {
     return null;
   }
 
-  finish(): StreamEvent {
-    const toolCalls: AgentToolCall[] = [...this.calls.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([i, c]) => ({
-        id: c.id || `call_${i}`,
-        name: c.name,
-        arguments: c.arguments,
-      }))
-      .filter((c) => c.name.length > 0);
-    return {
-      type: "done",
-      content: this.content,
-      reasoning: this.reasoning,
-      toolCalls,
-      finishReason: this.finishReason,
-      usage: this.usage,
-    };
-  }
+finish(): StreamEvent {
+ const toolCalls: AgentToolCall[] = [...this.calls.entries()]
+ .sort(([a], [b]) => a - b)
+ .map(([i, c]) => ({
+ id: c.id || `call_${i}_${(syntheticCallCounter++).toString(36)}`,
+ name: c.name,
+ arguments: c.arguments,
+ }))
+ .filter((c) => c.name.length > 0);
+ return {
+ type: "done",
+ content: this.content,
+ reasoning: this.reasoning,
+ toolCalls,
+ finishReason: this.finishReason,
+ usage: this.usage,
+ ...(this.compression ? { compression: this.compression } : {}),
+ };
+ }
 }
 
 /** Collect a non-streamed completion (used by /compact summarization). */
