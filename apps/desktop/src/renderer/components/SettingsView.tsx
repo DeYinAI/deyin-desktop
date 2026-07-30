@@ -10,8 +10,10 @@ import { IndexingPage } from "./settings/IndexingPage.js";
 import { McpPage } from "./settings/McpPage.js";
 import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
 import { OnboardPage } from "./settings/OnboardPage.js";
+import { OptimizationPage } from "./settings/OptimizationPage.js";
 import { PluginsPage } from "./settings/PluginsPage.js";
 import { TerminalPage } from "./settings/TerminalPage.js";
+import { SshHostsPage } from "./settings/SshHostsPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
 import type { MessageKey } from "@deyin/host-core/shared";
 import type {
@@ -38,7 +40,9 @@ export type SettingsPage =
   | "hooks"
   | "indexing"
   | "usage"
+  | "optimization"
   | "identity"
+  | "sshHosts"
   | "onboard";
 
 /** Pages rendered by the generic CapabilityPage (file-backed registries). */
@@ -82,6 +86,8 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     entries: [
       { page: "indexing", labelKey: "settings.nav.indexing", icon: "search" },
       { page: "usage", labelKey: "settings.nav.usage", icon: "chart" },
+      { page: "optimization", labelKey: "settings.nav.optimization", icon: "sparkles" },
+      { page: "sshHosts", labelKey: "settings.nav.sshHosts", icon: "terminal" },
     ],
   },
   {
@@ -194,6 +200,7 @@ export function SettingsView(props: SettingsViewProps) {
         )}
         {page === "browser" && <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />}
         {page === "terminal" && <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />}
+        {page === "sshHosts" && <SshHostsPage />}
         {page === "plugins" && <PluginsPage onToggle={toggleCap} />}
         {page === "mcp" && <McpPage onToggle={toggleCap} />}
         {capKind && (
@@ -210,6 +217,9 @@ export function SettingsView(props: SettingsViewProps) {
             onRefreshAccount={() => void refreshAccount()}
             refreshing={accountRefreshing}
           />
+        )}
+        {page === "optimization" && (
+          <OptimizationPage settings={props.settings} onChange={props.onChangeSettings} />
         )}
         {page === "identity" && (
           <IdentityPage

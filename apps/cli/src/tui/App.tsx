@@ -17,6 +17,7 @@ import {
   type McpConnection,
   type PermissionDecision,
   type PermissionRequest,
+  type InteractionRequest,
   type TodoItem,
   type ToolRegistry,
 } from "@deyin/agent-core";
@@ -29,6 +30,7 @@ import { tokenSource } from "../context.js";
 import { updateNotice } from "../version.js";
 import { Composer } from "./Composer.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
+import { QuestionPrompt } from "./QuestionPrompt.js";
 import { Picker, type PickerItem } from "./Picker.js";
 import { messagesToItems, nextId, toolPreview, type TranscriptItem } from "./items.js";
 import { renderMarkdown, tailLines } from "./markdown.js";
@@ -58,6 +60,11 @@ interface PermissionState {
   resolve: (decision: PermissionDecision) => void;
 }
 
+interface QuestionState {
+  request: Extract<InteractionRequest, { type: "ask-question" }>;
+  resolve: (answers: string) => void;
+}
+
 interface PickerState {
   kind: "model" | "agent" | "session";
   title: string;
@@ -79,6 +86,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [updateLine, setUpdateLine] = useState<string | null>(null);
   const [permission, setPermission] = useState<PermissionState | null>(null);
+  const [question, setQuestion] = useState<QuestionState | null>(null);
   const [picker, setPicker] = useState<PickerState | null>(null);
   const [input, setInput] = useState("");
   const [exitArmed, setExitArmed] = useState(false);
@@ -285,6 +293,22 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
                 },
               });
             }),
+          toolContext: {
+            resolveInteraction: (request) =>
+              new Promise<string>((resolve) => {
+                if (request.type !== "ask-question") {
+                  resolve("Interaction not supported.");
+                  return;
+                }
+                setQuestion({
+                  request,
+                  resolve: (answers) => {
+                    setQuestion(null);
+                    resolve(answers);
+                  },
+                });
+              }),
+          },
           onEvent: handleEvent,
           onMessage: (message) => {
             if (sessionIdRef.current) ctx.sessions.append(sessionIdRef.current, message);
@@ -551,6 +575,18 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       ) : null}
 
       {permission ? <PermissionPrompt request={permission.request} onDecision={permission.resolve} /> : null}
+      {question ? (
+        <QuestionPrompt
+          title={question.request.title}
+          questions={question.request.questions}
+          onSubmit={(answers) => question.resolve(JSON.stringify(answers, null, 2))}
+          onCancel={() =>
+            question.resolve(
+              JSON.stringify({ __cancelled: "AskQuestion was cancelled before answers were returned." }),
+            )
+          }
+        />
+      ) : null}
       {picker ? (
         <Picker title={picker.title} items={picker.items} onSelect={onPickerSelect} onCancel={() => setPicker(null)} />
       ) : null}
@@ -569,7 +605,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         value={input}
         onChange={setInput}
         onSubmit={handleSubmit}
-        active={!permission && !picker}
+        active={!permission && !picker && !question}
         history={historyRef.current}
         placeholder={running ? "running\u2026 esc to cancel" : 'Ask anything \u00b7 "/" for commands'}
       />

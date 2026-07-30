@@ -29,6 +29,9 @@ jobs:
       # with contents:write on DeYinAI/deyin-releases stored as RELEASES_TOKEN.
       # Non-fatal: a missing/invalid token must not block the installer builds
       # (the source-repo draft above is still created either way).
+      # No generate_release_notes here: deyin-releases holds no commits, so
+      # GitHub cannot resolve a target_commitish to diff against and the
+      # generate-notes call 400s. Release notes live on the source-repo draft.
       - name: Create draft in public releases repo
         continue-on-error: true
         uses: softprops/action-gh-release@v2
@@ -37,7 +40,7 @@ jobs:
           token: ${{ secrets.RELEASES_TOKEN }}
           tag_name: ${{ github.ref_name }}
           draft: true
-          generate_release_notes: true
+          body: Installers and update manifests for Deyin ${{ github.ref_name }}.
 
   build:
     # Tag pushes attach installers to the draft; workflow_dispatch runs are
@@ -185,41 +188,3 @@ jobs:
           draft: true
           files: apps/cli/dist-bin/*
 
-  # Publish the CLI (and the workspace packages it depends on) to npm with provenance
-  # attestations. pnpm rewrites workspace:* ranges to real versions at pack time.
-  # Requires the NPM_TOKEN secret; id-token grants the OIDC token provenance needs.
-  publish-npm:
-    needs: cli
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: [self-hosted, Linux, X64]
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Build packages + CLI
-        run: |
-          pnpm --filter "./packages/**" build
-          pnpm --filter @deyin/cli build
-
-      - name: Publish to npm
-        run: >
-          pnpm publish -r --access public --no-git-checks --provenance
-          --filter @deyin/oauth-client
-          --filter @deyin/host-core
-          --filter @deyin/agent-core
-          --filter @deyin/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

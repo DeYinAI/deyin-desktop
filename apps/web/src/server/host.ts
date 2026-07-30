@@ -1,5 +1,4 @@
-import { resolve } from "node:path";
-import { TerminalManager, detectEnv, readTextFile, readTree } from "@deyin/host-core";
+import { TerminalManager, assertInsideRoot, detectEnv, readTextFile, readTree, writeTextFile } from "@deyin/host-core";
 import type { EnvInfo, FileNode, TerminalCreateOptions } from "../shared/protocol.js";
 
 /**
@@ -25,22 +24,17 @@ export class SessionHost {
     );
   }
 
-  /** Reject any path that escapes the session root (path traversal guard). */
-  private safeResolve(path: string): string {
-    const abs = resolve(this.root, path);
-    if (abs !== this.root && !abs.startsWith(this.root + "/")) {
-      throw new Error("Path escapes session root");
-    }
-    return abs;
-  }
-
   async tree(dir?: string): Promise<FileNode[]> {
-    const start = dir ? this.safeResolve(dir) : this.root;
+    const start = dir ? assertInsideRoot(this.root, dir) : this.root;
     return readTree(start, 2);
   }
 
   async read(path: string): Promise<string> {
-    return readTextFile(this.safeResolve(path));
+    return readTextFile(assertInsideRoot(this.root, path));
+  }
+
+  async write(path: string, content: string): Promise<void> {
+    return writeTextFile(assertInsideRoot(this.root, path), content);
   }
 
   env(): Promise<EnvInfo> {
@@ -50,6 +44,10 @@ export class SessionHost {
   async createTerminal(opts: TerminalCreateOptions): Promise<string> {
     // Terminals are always rooted in the sandbox, regardless of the requested cwd.
     return this.terminals.create({ ...opts, cwd: this.root });
+  }
+
+  attachTerminal(id: string): { scrollback: string } {
+    return this.terminals.attach(id);
   }
 
   writeTerminal(id: string, data: string): void {

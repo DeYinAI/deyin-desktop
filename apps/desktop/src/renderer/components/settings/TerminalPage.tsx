@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { PageHeader, SectionTitle, SettingCard } from "./controls.js";
+import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings, EnvInfo } from "../../../shared/types.js";
 
 interface Props {
@@ -27,8 +27,8 @@ export function TerminalPage({ settings, onChange }: Props) {
         title="Default shell"
         description={
           env?.wsl2
-            ? "WSL2 distros are detected automatically and listed alongside native shells."
-            : "New terminals start with this shell."
+            ? "WSL2 distros are detected automatically and listed alongside native shells. The agent's shell follows this choice too."
+            : "New terminals and the agent's shell start with this shell."
         }
       >
         <select
@@ -80,9 +80,14 @@ export function TerminalPage({ settings, onChange }: Props) {
 
       <SectionTitle>Agent</SectionTitle>
       <SettingCard
-        title="Agent shell marker"
-        description="Agent-spawned shells set DEYIN_AGENT=1 so your dotfiles can skip heavy prompts and banners."
-      />
+        title="Reveal terminal on agent command"
+        description="Open the terminal panel and focus the Agent tab when the chat agent first runs a shell command."
+      >
+        <Toggle
+          checked={settings.revealTerminalOnAgentCommand}
+          onChange={(v) => onChange({ revealTerminalOnAgentCommand: v })}
+        />
+      </SettingCard>
     </div>
   );
 }

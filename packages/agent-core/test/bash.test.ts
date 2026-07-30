@@ -75,7 +75,7 @@ test("abort cancels the command and kills its tree", { skip: !isPosix }, async (
     { command: "sleep 30 & echo CHILD:$!; wait" },
     { ...ctx(), signal: controller.signal },
   );
-  await sleep(300); // let the shell start and echo the pid
+  await sleep(300);
   controller.abort();
   const result = await pending;
   assert.ok(result.includes("cancelled"), `expected cancellation note, got: ${result}`);
@@ -88,4 +88,22 @@ test("abort cancels the command and kills its tree", { skip: !isPosix }, async (
     alive = processAlive(Number(match![1]));
   }
   assert.equal(alive, false, "grandchild survived the abort kill");
+});
+
+test("block_until_ms=0 registers a background task and returns task_id", { skip: !isPosix }, async () => {
+  const tasks = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
+  const toolCtx: ToolContext = {
+    ...ctx(),
+    registerBackgroundTask: (taskId, promise) => {
+      tasks.set(taskId, promise);
+    },
+  };
+  const result = await bashTool.execute({ command: "echo bg-ok", block_until_ms: 0 }, toolCtx);
+  assert.match(result, /task_id: /);
+  const taskId = result.match(/task_id: ([^\n]+)/)?.[1];
+  assert.ok(taskId);
+  const done = await tasks.get(taskId!);
+  assert.ok(done);
+  const output = await done!;
+  assert.ok(output.output.includes("bg-ok"));
 });

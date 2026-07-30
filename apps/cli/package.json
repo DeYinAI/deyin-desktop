@@ -1,5 +1,6 @@
 {
   "name": "@deyin/cli",
+  "private": true,
   "version": "0.1.1",
   "description": "Deyin in your terminal: an agentic coding CLI (chat TUI + headless mode) with the same Openference account, models, agents and web search as the Deyin desktop app.",
   "license": "MIT",
@@ -16,9 +17,6 @@
   },
   "main": "./dist/index.js",
   "files": ["dist"],
-  "publishConfig": {
-    "access": "public"
-  },
   "engines": {
     "node": ">=20"
   },

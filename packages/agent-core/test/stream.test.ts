@@ -90,12 +90,13 @@ test("parses usage from the final chunk and ignores keep-alives", () => {
   assert.deepEqual(done.usage, { promptTokens: 11, completionTokens: 7, totalTokens: 18 });
 });
 
-test("synthesizes ids for providers that omit them and drops nameless calls", () => {
-  const events = feed([
-    data({ choices: [{ delta: { tool_calls: [{ index: 2, function: { name: "bash", arguments: "{}" } }] } }] }),
-    "data: [DONE]",
-  ]);
-  const done = events.at(-1);
-  if (done?.type !== "done") throw new Error("expected done");
-  assert.equal(done.toolCalls[0]?.id, "call_2");
+test("synthesizes unique ids for providers that omit them", () => {
+  const chunk = data({ choices: [{ delta: { tool_calls: [{ index: 2, function: { name: "bash", arguments: "{}" } }] } }] });
+  const first = feed([chunk, "data: [DONE]"]).at(-1);
+  const second = feed([chunk, "data: [DONE]"]).at(-1);
+  if (first?.type !== "done" || second?.type !== "done") throw new Error("expected done");
+  assert.ok(first.toolCalls[0]!.id.startsWith("call_2"));
+  // Ids repeated across steps poison the transcript for providers that require
+  // globally unique tool_call ids — each synthesis must produce a fresh one.
+  assert.notEqual(first.toolCalls[0]!.id, second.toolCalls[0]!.id);
 });

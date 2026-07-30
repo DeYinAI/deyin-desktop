@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import { ProfileMenu } from "./ProfileMenu.js";
-import type { Project, Thread } from "../threads.js";
-import type { UserProfile } from "../../shared/types.js";
+import { formatThreadAge, type Project, type Thread } from "../threads.js";
+import type { DeyinSettings, UserProfile } from "../../shared/types.js";
 
 interface SidebarProps {
   platform: "desktop" | "web";
@@ -12,7 +12,9 @@ interface SidebarProps {
   activeThreadId: string | null;
   renamingThreadId: string | null;
   user: UserProfile | null;
+  settings: DeyinSettings;
   busy: boolean;
+  connecting: boolean;
   onNewTask: () => void;
   onNewProject: () => void;
   onSelectProject: (projectId: string) => void;
@@ -22,7 +24,20 @@ interface SidebarProps {
   onRenameSubmit: (threadId: string, title: string) => void;
   onConnect: () => void;
   onLogout: () => void;
+  onChangeSettings: (patch: Partial<DeyinSettings>) => void;
+  onOpenUsage: () => void;
+  onOpenPlans: () => void;
   onOpenSettings: () => void;
+}
+
+/** Ticking clock so the relative age labels keep up without a state change. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 function orderThreads(threads: Thread[]): Thread[] {
@@ -35,6 +50,7 @@ export function Sidebar(props: SidebarProps) {
   const t = useT();
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const now = useNow(30_000);
 
   // "Search projects…": match project names and thread titles; threads in a
   // matching project are all kept, otherwise only matching threads show.
@@ -54,12 +70,12 @@ export function Sidebar(props: SidebarProps) {
     <aside className="sidebar">
       <nav className="sidebar__nav">
         <button className="nav-item" onClick={props.onNewTask}>
-          <Icon name="plus" size={15} />
+          <Icon name="plus" size={13} />
           <span>{t("nav.newTask")}</span>
           <span className="kbd">Ctrl+N</span>
         </button>
         <button className="nav-item" onClick={props.onOpenSearch}>
-          <Icon name="search" size={15} />
+          <Icon name="search" size={13} />
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
         </button>
@@ -121,6 +137,7 @@ export function Sidebar(props: SidebarProps) {
                 <button
                   key={thread.id}
                   className={`thread-row ${thread.id === props.activeThreadId ? "thread-row--active" : ""}`}
+                  aria-current={thread.id === props.activeThreadId ? "page" : undefined}
                   onClick={() => props.onSelectThread(project.id, thread.id)}
                   onContextMenu={(e) => {
                     e.preventDefault();
@@ -130,9 +147,7 @@ export function Sidebar(props: SidebarProps) {
                   {thread.pinned && <Icon name="pin" size={11} />}
                   {thread.unread && <span className="thread-row__unread" />}
                   <span className="thread-row__title">{thread.title}</span>
-                  <span className={`thread-row__age ${thread.age === "now" ? "thread-row__age--now" : ""}`}>
-                    {thread.age}
-                  </span>
+                  <ThreadAge updatedAt={thread.updatedAt} now={now} />
                 </button>
               ),
             )}
@@ -156,13 +171,36 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <div className="sidebar__footer">
-        <ProfileMenu user={props.user} busy={props.busy} onConnect={props.onConnect} onLogout={props.onLogout} />
+        <ProfileMenu
+          platform={props.platform}
+          user={props.user}
+          busy={props.busy}
+          connecting={props.connecting}
+          settings={props.settings}
+          onChangeSettings={props.onChangeSettings}
+          onConnect={props.onConnect}
+          onLogout={props.onLogout}
+          onOpenUsage={props.onOpenUsage}
+          onOpenPlans={props.onOpenPlans}
+        />
         <div className="sidebar__footer-spacer" />
         <button className="icon-btn" title={t("nav.settings")} onClick={props.onOpenSettings}>
           <Icon name="gear" size={15} />
         </button>
       </div>
     </aside>
+  );
+}
+
+function ThreadAge({ updatedAt, now }: { updatedAt: number; now: number }) {
+  const label = formatThreadAge(updatedAt, now);
+  return (
+    <span
+      className={`thread-row__age ${label === "now" ? "thread-row__age--now" : ""}`}
+      title={new Date(updatedAt).toLocaleString()}
+    >
+      {label}
+    </span>
   );
 }
 
