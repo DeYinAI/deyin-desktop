@@ -231,6 +231,7 @@ export class DesktopAgentHost {
       BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null;
     const shell = new AgentShell({
       cwd,
+      shell: this.opts.settings.get().defaultShell ?? undefined,
       events: {
         onData: (id, data) => sender()?.send(CH.termData, { id, data }),
         onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
