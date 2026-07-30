@@ -99,6 +99,7 @@ export const CH = {
   agentStart: "deyin:agent:start",
   agentStop: "deyin:agent:stop",
   agentApprove: "deyin:agent:approve",
+  agentAnswerQuestion: "deyin:agent:answerQuestion",
   agentDisposeShell: "deyin:agent:disposeShell",
   agentEvent: "deyin:agent:event",
   browserRegister: "deyin:browser:register",
@@ -247,6 +248,7 @@ export interface DeyinApi {
     start(options: AgentStartOptions): Promise<void>;
     stop(threadId: string): void;
     approve(requestId: string, decision: AgentPermissionDecision): void;
+    answerQuestion(requestId: string, answers: Record<string, string | string[]>): void;
     disposeShell(threadId: string): void;
     onEvent(cb: (envelope: AgentEventEnvelope) => void): () => void;
   };

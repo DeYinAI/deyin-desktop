@@ -88,10 +88,6 @@ export function TerminalPage({ settings, onChange }: Props) {
           onChange={(v) => onChange({ revealTerminalOnAgentCommand: v })}
         />
       </SettingCard>
-      <SettingCard
-        title="Agent shell marker"
-        description="Agent-spawned shells set DEYIN_AGENT=1 so your dotfiles can skip heavy prompts and banners. The agent uses its own persistent PTY — never your personal tabs."
-      />
     </div>
   );
 }

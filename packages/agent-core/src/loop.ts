@@ -76,6 +76,8 @@ export interface AgentRunOptions {
   todos?: TodoItem[];
   /** Optional host-backed persistent shell for the bash tool. */
   shell?: ToolShell;
+  /** Extra tool context hooks (interaction, mode changes, skills, etc.). */
+  toolContext?: Partial<ToolContext>;
   /** Wire-level compression + Anthropic cache_control. */
   wire?: WireOptions;
   /** Stable prompt cache key for OpenAI-compatible providers (shared across steps). */
@@ -122,6 +124,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     onTodosChanged: (t) => emit({ type: "todos", todos: [...t] }),
     onFileChanged: (change) => emit({ type: "file-change", change }),
     shell: opts.shell,
+    messages: opts.messages,
+    ...opts.toolContext,
   };
 
   const append = (message: AgentMessage): void => {

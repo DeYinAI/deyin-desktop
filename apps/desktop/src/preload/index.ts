@@ -104,6 +104,7 @@ agent: {
  start: (options) => ipcRenderer.invoke(CH.agentStart, options),
  stop: (threadId) => ipcRenderer.send(CH.agentStop, threadId),
  approve: (requestId, decision) => ipcRenderer.send(CH.agentApprove, requestId, decision),
+ answerQuestion: (requestId, answers) => ipcRenderer.send(CH.agentAnswerQuestion, requestId, answers),
  disposeShell: (threadId) => ipcRenderer.send(CH.agentDisposeShell, threadId),
  onEvent: (cb) => {
  const listener = (_e: unknown, envelope: AgentEventEnvelope) => cb(envelope);

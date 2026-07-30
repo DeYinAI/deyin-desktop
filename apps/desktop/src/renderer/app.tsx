@@ -3,6 +3,8 @@ import { DEFAULT_SETTINGS } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { I18nProvider } from "./i18n.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
+import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
+import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
@@ -24,7 +26,9 @@ import {
   DEFAULT_THREAD_TITLE,
   deriveTitle,
   emptyThread,
+  hydrateProjects,
   isBetterPlanDoc,
+  looksLikePlan,
   newId,
   planFileNameFromTitle,
   planTitleFromMarkdown,
@@ -90,6 +94,19 @@ interface PendingApproval {
   summary: string;
 }
 
+interface PendingQuestion {
+  requestId: string;
+  title?: string;
+  questions: QuestionItem[];
+}
+
+interface PendingPlanApproval {
+  title: string;
+  overview?: string;
+  plan: string;
+  filePath?: string;
+}
+
 export function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -118,6 +135,8 @@ export function App() {
   const [agentThreadId, setAgentThreadId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<ThreadEvent[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [question, setQuestion] = useState<PendingQuestion | null>(null);
+  const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
   const [streamReasoning, setStreamReasoning] = useState<string | null>(null);
   /** Plan-mode text streams into the Plan tab, not the chat; null when not planning. */
   const [planStream, setPlanStream] = useState<string | null>(null);
@@ -125,6 +144,8 @@ export function App() {
   const runTextRef = useRef("");
   /** Best plan markdown seen during the in-flight plan run (survives tool steps). */
   const planDocRef = useRef("");
+  /** True when create_plan already surfaced a plan-ready card this run. */
+  const planArtifactRef = useRef(false);
   const runTokensRef = useRef(0);
   /** Latest per-run optimization metrics (compression + cache savings). */
   const runOptimizationRef = useRef<Extract<ThreadEvent, { kind: "optimization" }> | null>(null);
@@ -151,6 +172,7 @@ export function App() {
   settingsRef.current = settings;
   const composerModeRef = useRef(composerMode);
   composerModeRef.current = composerMode;
+  const selectModeRef = useRef<(mode: ChatMode) => void>(() => undefined);
   const startAgentRunRef = useRef<(thread: Thread, text: string, mode: ChatMode) => void>(() => undefined);
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
@@ -190,7 +212,7 @@ export function App() {
       setSettings(s);
       setEnv(e);
       setProviders(provs);
-      setProjects(projState.projects);
+      setProjects(hydrateProjects(projState.projects));
       setActiveProjectId(projState.activeProjectId);
       setActiveThreadId(
         projState.activeThreadId ??
@@ -421,7 +443,7 @@ export function App() {
       cur.map((project) => ({
         ...project,
         threads: project.threads.map((thread) =>
-          thread.id === threadId ? { ...thread, events: [...thread.events, ...events], age: "now" } : thread,
+          thread.id === threadId ? { ...thread, events: [...thread.events, ...events], updatedAt: Date.now() } : thread,
         ),
       })),
     );
@@ -446,12 +468,14 @@ export function App() {
         runTextRef.current = "";
         setStreamText("");
         if (runModeRef.current === "plan") {
-          // Plan-mode prose belongs only in the Plan tab. Keep the best document
-          // across tool steps so a later short note cannot wipe a full draft.
-          if (isBetterPlanDoc(text, planDocRef.current)) {
+          // Only structured plan documents belong in the Plan tab.
+          if (looksLikePlan(text) && isBetterPlanDoc(text, planDocRef.current)) {
             planDocRef.current = text;
+            setPlanStream(planDocRef.current || null);
+            return;
           }
           setPlanStream(planDocRef.current || null);
+          if (text.trim().length > 0) setRunEvents((cur) => [...cur, { kind: "assistant", text }]);
           return;
         }
         setPlanStream(null);
@@ -468,15 +492,19 @@ export function App() {
           flushReasoning();
           runTextRef.current += event.delta;
           if (runModeRef.current === "plan") {
-            // Plan mode: stream the live segment into the Plan tab. Prefer the
-            // longer of the live segment vs the best prior draft so the panel
-            // always shows the fullest plan seen so far.
-            if (runTextRef.current === event.delta) {
-              setPanelOpen(true);
-              setPanelTab("plan");
-            }
             const live = runTextRef.current;
-            setPlanStream(isBetterPlanDoc(live, planDocRef.current) ? live : planDocRef.current);
+            if (looksLikePlan(live)) {
+              if (live === event.delta) {
+                setPanelOpen(true);
+                setPanelTab("plan");
+              }
+              if (isBetterPlanDoc(live, planDocRef.current)) {
+                planDocRef.current = live;
+              }
+              setPlanStream(planDocRef.current || null);
+            } else {
+              setStreamText(live);
+            }
           } else {
             setStreamText(runTextRef.current);
           }
@@ -585,6 +613,50 @@ export function App() {
         case "permission-request":
           setApproval({ requestId: event.requestId, toolName: event.toolName, summary: event.summary });
           break;
+        case "question-request":
+          setQuestion({ requestId: event.requestId, title: event.title, questions: event.questions });
+          break;
+        case "plan-created": {
+          const planTitle = planTitleFromMarkdown(event.plan);
+          planDocRef.current = event.plan;
+          planArtifactRef.current = true;
+          setPlanStream(event.plan);
+          setPanelOpen(true);
+          setPanelTab("plan");
+          setPlanApproval({
+            title: event.name || planTitle,
+            overview: event.overview,
+            plan: event.plan,
+            filePath: event.filePath,
+          });
+          setProjects((cur) =>
+            cur.map((project) => ({
+              ...project,
+              threads: project.threads.map((th) =>
+                th.id === threadId
+                  ? {
+                      ...th,
+                      planMarkdown: event.plan,
+                      planFilePath: event.filePath,
+                      planApproved: false,
+                    }
+                  : th,
+              ),
+            })),
+          );
+          setRunEvents((cur) => [
+            ...cur,
+            {
+              kind: "plan-ready",
+              title: event.name || planTitle,
+              fileName: planFileNameFromTitle(event.name || planTitle),
+            },
+          ]);
+          break;
+        }
+        case "mode-changed":
+          if (event.mode) selectModeRef.current(event.mode);
+          break;
         case "subagent-start":
           flushText();
           setRunEvents((cur) => [...cur, { kind: "thought", label: `Subagent ${event.name} started` }]);
@@ -609,11 +681,12 @@ export function App() {
           // Plan mode: keep the best plan document in the Plan tab; chat only
           // gets a compact plan-file card. Aborted plans still land in the tab.
           let planText = planDocRef.current;
-          if (runModeRef.current === "plan" && isBetterPlanDoc(text, planText)) {
+          if (runModeRef.current === "plan" && looksLikePlan(text) && isBetterPlanDoc(text, planText)) {
             planText = text;
           }
           planDocRef.current = "";
-          const planRun = runModeRef.current === "plan" && planText.trim().length > 0;
+          const planRun =
+            runModeRef.current === "plan" && planText.trim().length > 0 && looksLikePlan(planText);
           const planFinished = planRun && event.reason === "completed";
           const planTitle = planRun ? planTitleFromMarkdown(planText) : undefined;
           if (stopWatchdogRef.current) {
@@ -624,7 +697,7 @@ export function App() {
             const finished: ThreadEvent[] = [...cur];
             if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
             if (text.trim().length > 0 && !planRun) finished.push({ kind: "assistant", text });
-            if (planFinished) {
+            if (planFinished && !planArtifactRef.current) {
               finished.push({
                 kind: "plan-ready",
                 title: planTitle,
@@ -660,6 +733,7 @@ export function App() {
           setPlanStream(null);
           setAgentThreadId(null);
           setApproval(null);
+          setQuestion(null);
           markOnboard("taskRun");
           void window.deyin.usage.record({ model: selectedModel, tokens: runTokensRef.current, newSession: false });
           runTokensRef.current = 0;
@@ -759,6 +833,7 @@ export function App() {
     },
     [activeThreadId, updateThread],
   );
+  selectModeRef.current = selectMode;
 
   const handleThreadAction = useCallback(
     (threadId: string, action: ThreadAction) => {
@@ -846,6 +921,7 @@ export function App() {
       runToolIndex.current.clear();
       runTextRef.current = "";
       planDocRef.current = "";
+      planArtifactRef.current = false;
       runReasoningRef.current = "";
       runTokensRef.current = 0;
       runOptimizationRef.current = null;
@@ -959,7 +1035,16 @@ export function App() {
       ? `${BUILD_PROMPT}\n\n---\nPlan to implement:\n${plan}\n---`
       : BUILD_PROMPT;
     startAgentRun(activeThread, prompt, "agent");
-  }, [activeThread, streamText, selectMode, startAgentRun]);
+    setPlanApproval(null);
+    if (activeThreadId) updateThread(activeThreadId, { planApproved: true });
+  }, [activeThread, activeThreadId, streamText, selectMode, startAgentRun, updateThread]);
+
+  const rejectPlan = useCallback(() => {
+    setPlanApproval(null);
+    if (!activeThread || streamText !== null || agentThreadId !== null) return;
+    selectMode("plan");
+    startAgentRun(activeThread, "Please revise the plan based on my feedback.", "plan");
+  }, [activeThread, agentThreadId, streamText, selectMode, startAgentRun]);
 
   /** File card "Open": show that change in the Diff tab (when we still hold it). */
   const openFileDiff = useCallback((path: string) => {
@@ -1461,6 +1546,36 @@ export function App() {
           onDecision={(decision) => {
             window.deyin.agent?.approve(approval.requestId, decision);
             setApproval(null);
+          }}
+        />
+      )}
+
+      {question && (
+        <AskQuestionDialog
+          title={question.title}
+          questions={question.questions}
+          onSubmit={(answers) => {
+            window.deyin.agent?.answerQuestion(question.requestId, answers);
+            setQuestion(null);
+          }}
+          onCancel={() => {
+            window.deyin.agent?.answerQuestion(question.requestId, {
+              __cancelled: "AskQuestion was cancelled before answers were returned.",
+            });
+            setQuestion(null);
+          }}
+        />
+      )}
+
+      {planApproval && (
+        <PlanApprovalDialog
+          title={planApproval.title}
+          overview={planApproval.overview}
+          onApprove={buildFromPlan}
+          onReject={rejectPlan}
+          onEdit={() => {
+            if (planApproval.filePath) void window.deyin.shell.showItem(planApproval.filePath);
+            setPlanApproval(null);
           }}
         />
       )}

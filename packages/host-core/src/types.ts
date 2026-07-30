@@ -121,13 +121,19 @@ export type ThreadEvent =
 export interface Thread {
   id: string;
   title: string;
-  /** Relative age label shown in the sidebar ("now", "2h", "4d"). */
-  age: string;
+  /** Epoch ms of the last activity; the sidebar renders it as a relative age. */
+  updatedAt: number;
   events: ThreadEvent[];
   /** Composer mode this thread runs in; defaults to "agent". */
   mode?: ChatMode;
+  /** Mode before entering plan mode; used by ExitPlanMode. */
+  previousMode?: ChatMode;
+  /** Whether the user approved the latest plan via ExitPlanMode. */
+  planApproved?: boolean;
   /** Markdown produced by the latest plan-mode run; feeds the Plan tab. */
   planMarkdown?: string;
+  /** Path to the latest plan artifact on disk. */
+  planFilePath?: string;
   /** Latest agent todo list; feeds the pinned task list above the composer. */
   todos?: AgentTodoItem[];
   pinned?: boolean;
@@ -489,6 +495,25 @@ export type AgentUiEvent =
  | { type: "context-snapshot"; snapshot: ContextUsageSnapshot }
  | { type: "optimization"; originalInputTokens: number; compressedInputTokens: number; compressionRatio: number; cachedPromptTokens: number; toolCacheHits: number; toolCacheMisses: number; responseCacheHits: number; responseCacheMisses: number; estimatedCostSavingsUsd: number }
  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+ | {
+     type: "question-request";
+     requestId: string;
+     title?: string;
+     questions: Array<{
+       id: string;
+       prompt: string;
+       allow_multiple?: boolean;
+       options: Array<{ id: string; label: string }>;
+     }>;
+   }
+ | {
+     type: "plan-created";
+     name: string;
+     overview?: string;
+     plan: string;
+     filePath?: string;
+   }
+ | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
  | { type: "subagent-start"; name: string; prompt: string }
  | { type: "subagent-end"; name: string; ok: boolean }
  /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */

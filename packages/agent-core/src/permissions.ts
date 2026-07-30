@@ -23,7 +23,8 @@ export type PermissionDecision = "allow" | "allow-always" | "deny";
 export type PermissionResolver = (req: PermissionRequest) => Promise<PermissionDecision>;
 
 function tierDefault(tier: ToolPermissionTier): PermissionAction {
-  return tier === "read" ? "allow" : "ask";
+  if (tier === "read" || tier === "interaction") return "allow";
+  return "ask";
 }
 
 export interface PermissionEngineOptions {
