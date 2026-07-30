@@ -8,6 +8,7 @@ import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
+import { GitBranchBadge } from "./components/GitBranchBadge.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { PlansDialog } from "./components/PlansDialog.js";
 import { SettingsView } from "./components/SettingsView.js";
@@ -1389,6 +1390,13 @@ export function App() {
                   env={env}
                   onPickShell={() => setTerminalOpen(true)}
                 />
+                <GitBranchBadge
+                  workspaceRoot={workspaceRoot}
+                  onOpenSourceControl={() => {
+                    setPanelOpen(true);
+                    setPanelTab("git");
+                  }}
+                />
               </div>
 
               <ChatView
@@ -1508,6 +1516,11 @@ export function App() {
                 }}
                 browserControlEnabled={settings?.browserControlEnabled ?? true}
                 onSelectTab={setPanelTab}
+                onOpenGitDiff={(d) => {
+                  setDiff(d);
+                  setPanelOpen(true);
+                  setPanelTab("diff");
+                }}
                 onNavigate={setBrowserUrl}
                 onCollapse={() => setPanelOpen(false)}
                 onOpenFolder={() => void addProjectFolder()}

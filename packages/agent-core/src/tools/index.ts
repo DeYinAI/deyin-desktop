@@ -21,6 +21,7 @@ import { webFetchTool } from "./web-fetch.js";
 import { websearchTool } from "./websearch.js";
 import { writeTool } from "./write.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
+import { GIT_TOOLS } from "./git.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell } from "./bash.js";
@@ -43,6 +44,20 @@ export { sendMessageTool } from "./send-message.js";
 export { deleteTool } from "./delete.js";
 export { awaitTaskTool } from "./await-task.js";
 export { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
+export {
+  GIT_TOOLS,
+  gitStatusTool,
+  gitLogTool,
+  gitDiffTool,
+  gitBlameTool,
+  gitAddTool,
+  gitCommitTool,
+  gitBranchTool,
+  gitStashTool,
+  gitFetchTool,
+  gitPullTool,
+  gitPushTool,
+} from "./git.js";
 export { notebookEditTool } from "./notebook-edit.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export {
@@ -77,6 +92,7 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   awaitTaskTool,
   enterWorktreeTool,
   exitWorktreeTool,
+  ...GIT_TOOLS,
   notebookEditTool,
 ];
 
