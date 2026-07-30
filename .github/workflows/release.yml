@@ -29,6 +29,9 @@ jobs:
       # with contents:write on DeYinAI/deyin-releases stored as RELEASES_TOKEN.
       # Non-fatal: a missing/invalid token must not block the installer builds
       # (the source-repo draft above is still created either way).
+      # No generate_release_notes here: deyin-releases holds no commits, so
+      # GitHub cannot resolve a target_commitish to diff against and the
+      # generate-notes call 400s. Release notes live on the source-repo draft.
       - name: Create draft in public releases repo
         continue-on-error: true
         uses: softprops/action-gh-release@v2
@@ -37,7 +40,7 @@ jobs:
           token: ${{ secrets.RELEASES_TOKEN }}
           tag_name: ${{ github.ref_name }}
           draft: true
-          generate_release_notes: true
+          body: Installers and update manifests for Deyin ${{ github.ref_name }}.
 
   build:
     # Tag pushes attach installers to the draft; workflow_dispatch runs are
