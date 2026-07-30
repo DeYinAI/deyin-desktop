@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 5;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -24,8 +24,18 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   defaultShell: null,
   terminalFontSize: 12,
   terminalScrollback: 5000,
+  revealTerminalOnAgentCommand: true,
   indexingEnabled: true,
   onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
+  automationsCatchUp: true,
+  keepRunningInBackground: false,
+  optimizationCompression: true,
+  optimizationCompressionMode: "balanced",
+  optimizationPromptCaching: true,
+  optimizationPluginEnabled: false,
+  optimizationToolCache: true,
+  optimizationResponseCache: true,
+  optimizationSimilarityThreshold: 0.93,
 };
 
 /**
@@ -46,6 +56,33 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   merged.codeFontSize = clamp(merged.codeFontSize, 10, 20, DEFAULT_SETTINGS.codeFontSize);
   merged.terminalFontSize = clamp(merged.terminalFontSize, 10, 20, DEFAULT_SETTINGS.terminalFontSize);
   merged.terminalScrollback = clamp(merged.terminalScrollback, 200, 100_000, DEFAULT_SETTINGS.terminalScrollback);
+  if (typeof merged.revealTerminalOnAgentCommand !== "boolean") {
+    merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
+  }
+  if (typeof merged.optimizationCompression !== "boolean") {
+    merged.optimizationCompression = DEFAULT_SETTINGS.optimizationCompression;
+  }
+  if (!["aggressive", "balanced", "conservative"].includes(merged.optimizationCompressionMode)) {
+    merged.optimizationCompressionMode = DEFAULT_SETTINGS.optimizationCompressionMode;
+  }
+  if (typeof merged.optimizationPromptCaching !== "boolean") {
+    merged.optimizationPromptCaching = DEFAULT_SETTINGS.optimizationPromptCaching;
+  }
+  if (typeof merged.optimizationPluginEnabled !== "boolean") {
+    merged.optimizationPluginEnabled = DEFAULT_SETTINGS.optimizationPluginEnabled;
+  }
+  if (typeof merged.optimizationToolCache !== "boolean") {
+    merged.optimizationToolCache = DEFAULT_SETTINGS.optimizationToolCache;
+  }
+  if (typeof merged.optimizationResponseCache !== "boolean") {
+    merged.optimizationResponseCache = DEFAULT_SETTINGS.optimizationResponseCache;
+  }
+  merged.optimizationSimilarityThreshold = clamp(
+    merged.optimizationSimilarityThreshold,
+    0.8,
+    0.98,
+    DEFAULT_SETTINGS.optimizationSimilarityThreshold,
+  );
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";

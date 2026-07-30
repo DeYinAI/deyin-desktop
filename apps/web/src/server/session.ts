@@ -42,7 +42,7 @@ export class Session {
       const root = await mkdtemp(join(tmpdir(), "deyin-session-"));
       this.host = new SessionHost(root, (m) => this.send(m));
       this.authed = true;
-      this.send({ type: "auth.ok", user: { sub: result.sub ?? "unknown", plan: result.plan } });
+      this.send({ type: "auth.ok", user: { sub: result.sub ?? "unknown", plan: result.plan }, workspaceRoot: root });
       return;
     }
 
@@ -59,11 +59,18 @@ export class Session {
         case "files.read":
           this.send({ type: "reply", id: msg.id, ok: true, result: { content: await this.host.read(msg.path) } });
           break;
+        case "files.write":
+          await this.host.write(msg.path, msg.content);
+          this.send({ type: "reply", id: msg.id, ok: true, result: { ok: true } });
+          break;
         case "env.detect":
           this.send({ type: "reply", id: msg.id, ok: true, result: { env: await this.host.env() } });
           break;
         case "term.create":
           this.send({ type: "reply", id: msg.id, ok: true, result: { termId: await this.host.createTerminal(msg.opts) } });
+          break;
+        case "term.attach":
+          this.send({ type: "reply", id: msg.id, ok: true, result: this.host.attachTerminal(msg.termId) });
           break;
         case "term.write":
           this.host.writeTerminal(msg.termId, msg.data);

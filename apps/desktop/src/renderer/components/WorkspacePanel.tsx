@@ -1,26 +1,28 @@
-import { createElement, useEffect, useMemo, useState } from "react";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import { themeByName } from "../code.js";
 import { computeLineDiff, type FileDiff } from "../diff.js";
+import { useT } from "../i18n.js";
+import { FilesTab } from "./FilesTab.js";
 import { Icon } from "./Icon.js";
 import { Markdown } from "./Markdown.js";
+import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
+import type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
+import type { AgentTodoItem } from "../../shared/types.js";
 
-export type PanelTab = "plan" | "diff" | "browser";
-
-export interface CodeDisplaySettings {
-  showLineNumbers: boolean;
-  wrapLongLines: boolean;
-  codeFontSize: number;
-  /** Code theme routing for markdown rendered inside the panel (Plan tab). */
-  themeLight?: string;
-  themeDark?: string;
-  variant?: "light" | "dark";
-}
+export type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
 
 interface WorkspacePanelProps {
   platform: "desktop" | "web";
   projectName: string;
+  workspaceRoot: string | null;
   activeTab: PanelTab;
   planMarkdown: string;
+  /** Structured todos for the Plan tab footer (from thread.todos). */
+  planTodos?: AgentTodoItem[];
+  /** True while the agent run for the active thread is streaming. */
+  planTodosRunning?: boolean;
+  /** Whether Build can be started from the plan toolbar. */
+  canBuildPlan?: boolean;
   diff: FileDiff | null;
   browserUrl: string;
   /** Per-workspace persistent session partition (cookies survive restarts). */
@@ -30,10 +32,14 @@ interface WorkspacePanelProps {
   onSelectTab: (tab: PanelTab) => void;
   onNavigate: (url: string) => void;
   onCollapse: () => void;
+  onOpenFolder?: () => void;
   onOpenBrowserSettings?: () => void;
+  onBuildPlan?: () => void;
+  /** Persist manual edits to the plan todo list (idle only). */
+  onPlanTodosChange?: (todos: AgentTodoItem[]) => void;
 }
 
-/** Right-hand workspace panel: agent plan, latest diff, built-in browser. */
+/** Right-hand workspace panel: files, agent plan, latest diff, built-in browser. */
 export function WorkspacePanel(props: WorkspacePanelProps) {
   return (
     <section className="wspanel">
@@ -41,6 +47,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <button className="icon-btn icon-btn--small" title="Collapse panel" onClick={props.onCollapse}>
           <Icon name="chevronsRight" size={13} />
         </button>
+        <TabButton label="Files" active={props.activeTab === "files"} onClick={() => props.onSelectTab("files")} />
         <TabButton label="Plan" active={props.activeTab === "plan"} onClick={() => props.onSelectTab("plan")} />
         <TabButton
           label={props.diff ? props.diff.fileName : "Diff"}
@@ -52,11 +59,32 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
       </div>
 
-      {props.activeTab === "plan" && <PlanTab markdown={props.planMarkdown} display={props.codeDisplay} />}
-      {props.activeTab === "diff" && (
+      {/* Keep tab bodies mounted so FilesTab (and others) retain editor/view state across switches. */}
+      <div className="wspanel__pane" hidden={props.activeTab !== "files"}>
+        <FilesTab
+          platform={props.platform}
+          active={props.activeTab === "files"}
+          workspaceRoot={props.workspaceRoot}
+          codeDisplay={props.codeDisplay}
+          onOpenFolder={props.onOpenFolder}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "plan"}>
+        <PlanTab
+          active={props.activeTab === "plan"}
+          markdown={props.planMarkdown}
+          display={props.codeDisplay}
+          todos={props.planTodos ?? []}
+          running={props.planTodosRunning ?? false}
+          canBuild={props.canBuildPlan ?? false}
+          onBuild={props.onBuildPlan}
+          onTodosChange={props.onPlanTodosChange}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "diff"}>
         <DiffTab projectName={props.projectName} diff={props.diff} display={props.codeDisplay} />
-      )}
-      {props.activeTab === "browser" && (
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "browser"}>
         <BrowserTab
           platform={props.platform}
           url={props.browserUrl}
@@ -65,7 +93,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onNavigate={props.onNavigate}
           onOpenBrowserSettings={props.onOpenBrowserSettings}
         />
-      )}
+      </div>
     </section>
   );
 }
@@ -82,28 +110,179 @@ function TabButton(props: { label: string; active: boolean; badge?: string; dot?
 
 /* Plan tab ----------------------------------------------------------------- */
 
-function PlanTab({ markdown, display }: { markdown: string; display: CodeDisplaySettings }) {
-  if (markdown.trim() === "") {
+function PlanTab({
+  active,
+  markdown,
+  display,
+  todos,
+  running,
+  canBuild,
+  onBuild,
+  onTodosChange,
+}: {
+  active: boolean;
+  markdown: string;
+  display: CodeDisplaySettings;
+  todos: AgentTodoItem[];
+  running: boolean;
+  canBuild: boolean;
+  onBuild?: () => void;
+  onTodosChange?: (todos: AgentTodoItem[]) => void;
+}) {
+  const t = useT();
+  const empty = markdown.trim() === "";
+
+  useEffect(() => {
+    if (!active || !canBuild || !onBuild) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== "Enter") return;
+      e.preventDefault();
+      onBuild();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, canBuild, onBuild]);
+
+  if (empty) {
     return <div className="wspanel__body wspanel__empty">No plan yet. Run a task in Plan mode and the proposed plan lands here.</div>;
   }
+
   const variant = display.variant ?? "dark";
   return (
-    <div className="wspanel__body plan-doc">
-      <Markdown
-        text={markdown}
-        theme={themeByName(
-          variant === "light" ? (display.themeLight ?? "GitHub Light") : (display.themeDark ?? "GitHub Dark"),
-          variant,
+    <div className="plan-tab">
+      <div className="plan-tab__toolbar">
+        <span className="plan-tab__title">{t("chat.planSummary")}</span>
+        <span className="plan-tab__toolbar-spacer" />
+        {onBuild && (
+          <button type="button" className="plan-tab__build" disabled={!canBuild} onClick={onBuild} title={`${t("chat.build")} (Ctrl+Enter)`}>
+            <Icon name="play" size={11} />
+            {t("chat.build")}
+            <span className="plan-tab__shortcut">Ctrl+↵</span>
+          </button>
         )}
-        display={{
-          themeLight: display.themeLight ?? "GitHub Light",
-          themeDark: display.themeDark ?? "GitHub Dark",
-          variant,
-          fontSize: display.codeFontSize,
-          showLineNumbers: display.showLineNumbers,
-          wrapLongLines: display.wrapLongLines,
-        }}
-      />
+      </div>
+      <div className="plan-doc wspanel__body">
+        <Markdown
+          text={markdown}
+          theme={themeByName(
+            variant === "light" ? (display.themeLight ?? "GitHub Light") : (display.themeDark ?? "GitHub Dark"),
+            variant,
+          )}
+          display={{
+            themeLight: display.themeLight ?? "GitHub Light",
+            themeDark: display.themeDark ?? "GitHub Dark",
+            variant,
+            fontSize: display.codeFontSize,
+            showLineNumbers: display.showLineNumbers,
+            wrapLongLines: display.wrapLongLines,
+          }}
+        />
+      </div>
+      <PlanTodosFooter todos={todos} running={running} onTodosChange={onTodosChange} />
+    </div>
+  );
+}
+
+function PlanTodosFooter({
+  todos,
+  running,
+  onTodosChange,
+}: {
+  todos: AgentTodoItem[];
+  running: boolean;
+  onTodosChange?: (todos: AgentTodoItem[]) => void;
+}) {
+  const t = useT();
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const { visible } = countVisibleTodos(todos);
+  const editable = Boolean(onTodosChange) && !running;
+
+  useEffect(() => {
+    if (drafting) inputRef.current?.focus();
+  }, [drafting]);
+
+  const commitDraft = () => {
+    const content = draft.trim();
+    if (!content || !onTodosChange) {
+      setDrafting(false);
+      setDraft("");
+      return;
+    }
+    const id = `manual-${Date.now().toString(36)}`;
+    onTodosChange([...todos, { id, content, status: "pending" }]);
+    setDraft("");
+    setDrafting(false);
+  };
+
+  const toggleTodo = (id: string) => {
+    if (!onTodosChange || running) return;
+    onTodosChange(
+      todos.map((todo) => {
+        if (todo.id !== id) return todo;
+        if (todo.status === "completed") return { ...todo, status: "pending" };
+        if (todo.status === "pending") return { ...todo, status: "completed" };
+        return todo;
+      }),
+    );
+  };
+
+  return (
+    <div className="plan-todos">
+      <div className="plan-todos__head">
+        <span className="plan-todos__title">
+          {visible} {t("tasks.todos")}
+        </span>
+        <button
+          type="button"
+          className="plan-todos__new"
+          disabled={!editable}
+          onClick={() => {
+            setDrafting(true);
+            setDraft("");
+          }}
+        >
+          <Icon name="plus" size={11} />
+          {t("tasks.new")}
+        </button>
+      </div>
+      <div className="plan-todos__body">
+        {drafting && (
+          <div className="plan-todos__composer">
+            <span className="todo-indicator todo-indicator--pending" aria-hidden="true" />
+            <input
+              ref={inputRef}
+              className="plan-todos__input"
+              value={draft}
+              placeholder={t("tasks.newPlaceholder")}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitDraft();
+                }
+                if (e.key === "Escape") {
+                  setDrafting(false);
+                  setDraft("");
+                }
+              }}
+              onBlur={() => {
+                if (draft.trim()) commitDraft();
+                else {
+                  setDrafting(false);
+                  setDraft("");
+                }
+              }}
+            />
+          </div>
+        )}
+        {todos.length === 0 && !drafting ? (
+          <div className="plan-todos__empty">{t("tasks.empty")}</div>
+        ) : (
+          <TodoRows items={todosToDisplay(todos)} running={running} onToggle={editable ? toggleTodo : undefined} />
+        )}
+      </div>
     </div>
   );
 }

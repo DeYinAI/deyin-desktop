@@ -1,0 +1,3 @@
+# Place deyinai-embedding.onnx here after running:
+#   python scripts/fine-tune-embedding.py
+# Until then the plugin uses the offline hash embedder.

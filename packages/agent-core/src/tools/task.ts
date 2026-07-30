@@ -18,6 +18,9 @@ export interface TaskToolOptions {
   onBackgroundDone?: (def: SubagentDefinition, result: TaskRunResult) => void;
 }
 
+/** Shared with context-usage so the subagent catalog can be split from the task schema. */
+export const TASK_SUBAGENT_CATALOG_MARKER = "Available subagents:\n";
+
 /**
  * The Task tool: lets the model delegate work to a named subagent. Subagents
  * get a clean context window, so the description tells the model to embed all
@@ -31,7 +34,8 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
   return {
     name: "task",
     description:
-      "Delegate a self-contained task to a specialized subagent and get its report back. The subagent starts with a CLEAN context: include every needed detail (paths, requirements, expected output) in the prompt. Available subagents:\n" +
+      "Delegate a self-contained task to a specialized subagent and get its report back. The subagent starts with a CLEAN context: include every needed detail (paths, requirements, expected output) in the prompt. " +
+      TASK_SUBAGENT_CATALOG_MARKER +
       catalog,
     tier: "execute",
     parameters: {

@@ -390,6 +390,11 @@ export class ModelsCache {
     return this.inflight;
   }
 
+  /** Sync peek of the last cached catalog (no network). Empty until first fetch. */
+  listCached(): ModelInfo[] {
+    return this.state.models;
+  }
+
   fetchedAt(): number {
     return this.state.fetchedAt;
   }

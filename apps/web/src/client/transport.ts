@@ -7,6 +7,7 @@ import {
   applyEvent,
   computeStats,
   fetchAccountUsage,
+  fetchPublicPlans,
   redactObject,
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
@@ -33,7 +34,9 @@ import type {
   EnvDetectResult,
   FilesReadResult,
   FilesTreeResult,
+  FilesWriteResult,
   ServerMessage,
+  TermAttachResult,
   TermCreateResult,
 } from "../shared/protocol.js";
 
@@ -79,39 +82,124 @@ class HostSocket {
   private ws?: WebSocket;
   private ready?: Promise<void>;
   private nextId = 1;
+  /** Bumped on each new connection attempt; stale sockets ignore late messages. */
+  private connGen = 0;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private dataHandlers = new Set<(e: { id: string; data: string }) => void>();
   private exitHandlers = new Set<(e: { id: string; exitCode: number }) => void>();
+  private rootHandlers = new Set<(root: string | null) => void>();
+  /** Sandbox root assigned by the host after auth; kept across transient disconnects. */
+  workspaceRoot: string | null = null;
+
+  private emitRoot(root: string | null): void {
+    this.workspaceRoot = root;
+    this.rootHandlers.forEach((h) => h(root));
+  }
+
+  private failPending(err: Error): void {
+    for (const p of this.pending.values()) p.reject(err);
+    this.pending.clear();
+  }
+
+  onRootChanged(cb: (root: string | null) => void): () => void {
+    this.rootHandlers.add(cb);
+    cb(this.workspaceRoot);
+    return () => {
+      this.rootHandlers.delete(cb);
+    };
+  }
 
   async ensure(): Promise<void> {
-    if (this.ready) return this.ready;
+    if (this.ready && this.ws?.readyState === WebSocket.OPEN) return this.ready;
+    this.ready = undefined;
+    const gen = ++this.connGen;
+    const disconnectErr = () => new Error("Host disconnected");
+
     this.ready = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const resolveReady = () => {
+        if (settled || gen !== this.connGen) return;
+        settled = true;
+        resolve();
+      };
+      const rejectReady = (err: Error) => {
+        if (settled || gen !== this.connGen) return;
+        settled = true;
+        reject(err);
+      };
+
       void (async () => {
-        const token = await oauth.getAccessToken().catch(() => null);
-        if (!token) return reject(new Error("Not authenticated"));
-        const url = `${location.origin.replace(/^http/, "ws")}/host`;
-        const ws = new WebSocket(url);
-        this.ws = ws;
-        ws.onmessage = (ev) => this.onMessage(JSON.parse(ev.data as string) as ServerMessage, resolve, reject);
-        ws.onerror = () => reject(new Error("Host socket error"));
-        ws.onclose = () => {
+        try {
+          const token = await oauth.getAccessToken().catch(() => null);
+          if (gen !== this.connGen) return;
+          if (!token) {
+            this.ready = undefined;
+            this.emitRoot(null);
+            rejectReady(new Error("Not authenticated"));
+            return;
+          }
+
+          const url = `${location.origin.replace(/^http/, "ws")}/host`;
+          const ws = new WebSocket(url);
+          this.ws = ws;
+
+          ws.onmessage = (ev) => {
+            if (this.ws !== ws || gen !== this.connGen) return;
+            this.onMessage(JSON.parse(ev.data as string) as ServerMessage, resolveReady, rejectReady);
+          };
+          // Browsers often fire close without a useful error; settle in onclose.
+          ws.onerror = () => undefined;
+          ws.onclose = () => {
+            if (this.ws !== ws) return; // superseded by a newer socket
+            this.ws = undefined;
+            this.ready = undefined;
+            this.failPending(disconnectErr());
+            if (!settled) {
+              // Handshake never completed — treat as ensure failure and clear root.
+              this.emitRoot(null);
+              rejectReady(disconnectErr());
+            }
+            // If already authed, keep last workspaceRoot until next auth.ok or failed ensure.
+          };
+          ws.onopen = () => {
+            if (this.ws !== ws) return;
+            this.raw({ type: "auth", token });
+          };
+        } catch (err) {
+          if (gen !== this.connGen) return;
           this.ready = undefined;
-          this.ws = undefined;
-        };
-        ws.onopen = () => this.raw({ type: "auth", token });
+          this.emitRoot(null);
+          rejectReady(err instanceof Error ? err : new Error(String(err)));
+        }
       })();
     });
+
     return this.ready;
   }
 
-  private onMessage(msg: ServerMessage, resolveReady: () => void, rejectReady: (e: Error) => void) {
+  private onMessage(
+    msg: ServerMessage,
+    resolveReady: () => void,
+    rejectReady: (e: Error) => void,
+  ) {
     switch (msg.type) {
       case "auth.ok":
+        this.emitRoot(msg.workspaceRoot);
         resolveReady();
         break;
-      case "auth.err":
-        rejectReady(new Error(msg.message));
+      case "auth.err": {
+        const err = new Error(msg.message);
+        this.ready = undefined;
+        this.emitRoot(null);
+        this.failPending(err);
+        rejectReady(err);
+        try {
+          this.ws?.close();
+        } catch {
+          /* ignore */
+        }
         break;
+      }
       case "reply": {
         const p = this.pending.get(msg.id);
         if (!p) return;
@@ -143,7 +231,9 @@ class HostSocket {
   }
 
   fireAndForget(msg: ClientMessage): void {
-    void this.ensure().then(() => this.raw(msg));
+    void this.ensure()
+      .then(() => this.raw(msg))
+      .catch(() => undefined);
   }
 
   onData(cb: (e: { id: string; data: string }) => void): () => void {
@@ -228,13 +318,21 @@ export function createBrowserTransport(): DeyinApi {
   return {
     async bootstrap(): Promise<Bootstrap> {
       let user: UserProfile | null = null;
+      let workspaceRoot: string | null = null;
       if (await oauth.isAuthenticated()) {
         user = await oauth.getUser().then(toProfile).catch(() => null);
+        // Connect the host socket so we learn the per-session sandbox root.
+        try {
+          await host.ensure();
+          workspaceRoot = host.workspaceRoot;
+        } catch {
+          workspaceRoot = null;
+        }
       }
       return {
         config: { oauthIssuer: OAUTH_ISSUER, apiBaseUrl: API_BASE, clientId: CLIENT_ID },
         user,
-        workspaceRoot: null,
+        workspaceRoot,
         version: "web",
         platform: "web",
       };
@@ -274,10 +372,21 @@ export function createBrowserTransport(): DeyinApi {
     files: {
       tree: (dir) => host.invoke<FilesTreeResult>((id) => ({ type: "files.tree", id, dir })).then((r) => r.nodes),
       read: (path) => host.invoke<FilesReadResult>((id) => ({ type: "files.read", id, path })).then((r) => r.content),
+      write: (path, content) =>
+        host.invoke<FilesWriteResult>((id) => ({ type: "files.write", id, path, content })).then(() => undefined),
     },
     workspace: {
       openFolder: async () => null, // web sessions use the server-provisioned sandbox root
       setRoot: async () => undefined, // sandbox root is server-owned; nothing to switch
+      getRoot: async () => {
+        try {
+          await host.ensure();
+          return host.workspaceRoot;
+        } catch {
+          return null;
+        }
+      },
+      onRootChanged: (cb) => host.onRootChanged(cb),
     },
     projects: {
       get: async () =>
@@ -304,6 +413,8 @@ export function createBrowserTransport(): DeyinApi {
     },
     terminal: {
       create: (opts) => host.invoke<TermCreateResult>((id) => ({ type: "term.create", id, opts })).then((r) => r.termId),
+      attach: (termId) =>
+        host.invoke<TermAttachResult>((id) => ({ type: "term.attach", id, termId })),
       write: (id, data) => host.fireAndForget({ type: "term.write", termId: id, data }),
       resize: (id, cols, rows) => host.fireAndForget({ type: "term.resize", termId: id, cols, rows }),
       kill: (id) => host.fireAndForget({ type: "term.kill", termId: id }),
@@ -398,6 +509,8 @@ export function createBrowserTransport(): DeyinApi {
       start: async () => undefined,
       stop: () => undefined,
       approve: () => undefined,
+      answerQuestion: () => undefined,
+      disposeShell: () => undefined,
       onEvent: () => () => undefined,
     },
     browserControl: {
@@ -515,6 +628,9 @@ export function createBrowserTransport(): DeyinApi {
       record: async (event) => recordUsage(event),
       account: () =>
         fetchAccountUsage({ oauthIssuer: OAUTH_ISSUER }, () => oauth.getAccessToken().catch(() => null)),
+    },
+    plans: {
+      list: () => fetchPublicPlans({ oauthIssuer: OAUTH_ISSUER }),
     },
     win: {
       // No window chrome to control in a browser tab.
@@ -635,6 +751,34 @@ export function createBrowserTransport(): DeyinApi {
         else if (level === "warn") console.warn("[deyin]", message);
         else console.info("[deyin]", message);
       },
+    },
+    automations: {
+      list: async () => [],
+      create: async (): Promise<never> => {
+        throw new Error("Automations are not available in the web app.");
+      },
+      update: async (): Promise<never> => {
+        throw new Error("Automations are not available in the web app.");
+      },
+      remove: async () => [],
+      toggle: async () => [],
+      run: async (): Promise<never> => {
+        throw new Error("Automations are not available in the web app.");
+      },
+      stop: () => undefined,
+      runs: async () => [],
+      onEvent: () => () => undefined,
+      onRunFinished: () => () => undefined,
+    },
+    sshHosts: {
+      list: async () => [],
+      add: async () => [],
+      update: async () => [],
+      remove: async () => [],
+      setCredentials: async () => [],
+      test: async () => ({ ok: false, message: "SSH hosts are not available in the web app." }),
+      pinFingerprint: async () => [],
+      importKey: async () => null,
     },
   };
 }

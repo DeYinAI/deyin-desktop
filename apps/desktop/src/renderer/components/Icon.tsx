@@ -36,8 +36,8 @@ const PATHS: Record<string, JSX.Element> = {
   ),
   gear: (
     <>
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" />
+      <path d="M12.2 6.7 14.1 6.9 14.1 9.1 12.2 9.3 11.9 10.1 13.1 11.6 11.6 13.1 10.1 11.9 9.3 12.2 9.1 14.1 6.9 14.1 6.7 12.2 5.9 11.9 4.4 13.1 2.9 11.6 4.1 10.1 3.8 9.3 1.9 9.1 1.9 6.9 3.8 6.7 4.1 5.9 2.9 4.4 4.4 2.9 5.9 4.1 6.7 3.8 6.9 1.9 9.1 1.9 9.3 3.8 10.1 4.1 11.6 2.9 13.1 4.4 11.9 5.9Z" />
+      <circle cx="8" cy="8" r="1.8" />
     </>
   ),
   chevronDown: <path d="M4 6l4 4 4-4" />,
@@ -47,6 +47,7 @@ const PATHS: Record<string, JSX.Element> = {
   arrowLeft: <path d="M13 8H3m4-4L3 8l4 4" />,
   arrowRight: <path d="M3 8h10M9 4l4 4-4 4" />,
   arrowUp: <path d="M8 13V3M4 7l4-4 4 4" />,
+  arrowDown: <path d="M8 3v10M12 9l-4 4-4-4" />,
   close: <path d="M4 4l8 8M12 4l-8 8" />,
   minimize: <path d="M3 8.5h10" />,
   maximize: <rect x="3.5" y="3.5" width="9" height="9" rx="1" />,
@@ -157,6 +158,14 @@ const PATHS: Record<string, JSX.Element> = {
   flag: <path d="M4 14V2.5M4 3h8l-1.8 2.5L12 8H4" />,
   route: <path d="M4 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM12 5.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM12 5.5v3a2 2 0 01-2 2H5.5" />,
   message: <path d="M2.5 4.5A1.5 1.5 0 014 3h8a1.5 1.5 0 011.5 1.5v4A1.5 1.5 0 0112 10H7l-3 3v-3a1.5 1.5 0 01-1.5-1.5z" />,
+  zoom: (
+    <>
+      <circle cx="7" cy="7" r="4" />
+      <path d="M10 10l3 3M7 5v4M5 7h4" />
+    </>
+  ),
+  rocket: <path d="M8 1.5l1.5 3 3 1.5-3 1.5L8 11l-1.5-3-3-1.5 3-1.5zM5.5 10.5L4 13M10.5 10.5L12 13" />,
+  logout: <path d="M6 8H2.5M5 5L2.5 8l2.5 3M9 2.5h2.5A1.5 1.5 0 0113 4v8a1.5 1.5 0 01-1.5 1.5H9" />,
 };
 
 export type IconName = keyof typeof PATHS & string;

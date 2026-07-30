@@ -1,4 +1,11 @@
 import { compactMessages } from "./compaction.js";
+import {
+  estimateContextUsage,
+  splitToolSchemaTokens,
+  type ContextSnapshot,
+  type SystemPromptSections,
+} from "./context-usage.js";
+import { OptimizationTracker, type OptimizationMetrics } from "./optimization.js";
 import type { PermissionEngine, PermissionResolver } from "./permissions.js";
 import { streamChatEvents } from "./stream.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -10,7 +17,9 @@ import {
   type TodoItem,
   type TokenUsage,
   type ToolContext,
+  type ToolShell,
 } from "./types.js";
+import type { WireOptions } from "./wire.js";
 
 const DEFAULT_MAX_STEPS = 40;
 const DEFAULT_CONTEXT_TOKENS = 128_000;
@@ -24,11 +33,14 @@ export type AgentEvent =
   | { type: "reasoning-delta"; delta: string }
   | { type: "assistant-message"; message: AgentMessage }
   | { type: "tool-start"; call: AgentToolCall; summary: string }
-  | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean }
+  | { type: "tool-delta"; call: AgentToolCall; delta: string }
+  | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean; fromCache?: boolean }
   | { type: "file-change"; change: FileChange }
   | { type: "todos"; todos: TodoItem[] }
   | { type: "usage"; usage: TokenUsage }
-  | { type: "compaction"; truncatedToolResults: number; droppedMessages: number }
+  | { type: "context-snapshot"; snapshot: ContextSnapshot }
+  | { type: "optimization"; metrics: OptimizationMetrics }
+  | { type: "compaction"; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
   | { type: "done"; reason: AgentRunResult["reason"] };
 
 export interface AgentRunOptions {
@@ -50,11 +62,28 @@ export interface AgentRunOptions {
   /** Lifecycle hooks (hooks.json): return { block } to veto a tool call. */
   beforeTool?: (call: AgentToolCall, args: Record<string, unknown>, summary: string) => Promise<{ block?: string } | void>;
   afterTool?: (call: AgentToolCall, result: string, ok: boolean) => Promise<void>;
+  /**
+   * Optional semantic tool-result cache (from @deyin/optimization-plugin).
+   * Return a cached result string to skip execution; return null to execute.
+   */
+  lookupToolCache?: (call: AgentToolCall, args: Record<string, unknown>) => Promise<string | null>;
+  /** Store a successful tool result in the semantic cache. */
+  storeToolCache?: (call: AgentToolCall, args: Record<string, unknown>, result: string) => Promise<void>;
   cwd: string;
   thinking?: boolean;
   maxSteps?: number;
   signal?: AbortSignal;
   todos?: TodoItem[];
+  /** Optional host-backed persistent shell for the bash tool. */
+  shell?: ToolShell;
+  /** Extra tool context hooks (interaction, mode changes, skills, etc.). */
+  toolContext?: Partial<ToolContext>;
+  /** Wire-level compression + Anthropic cache_control. */
+  wire?: WireOptions;
+  /** Stable prompt cache key for OpenAI-compatible providers (shared across steps). */
+  promptCacheKey?: string;
+  /** Structured system-prompt slices for Context Usage category accounting. */
+  systemSections?: SystemPromptSections;
 }
 
 export interface AgentRunResult {
@@ -62,6 +91,7 @@ export interface AgentRunResult {
   finalText: string;
   usage: TokenUsage;
   steps: number;
+  optimization?: OptimizationMetrics;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -76,9 +106,16 @@ function isAbortError(err: unknown): boolean {
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const emit = opts.onEvent ?? (() => undefined);
   const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
-  const budget = Math.floor((opts.contextLength ?? DEFAULT_CONTEXT_TOKENS) * BUDGET_FRACTION);
-  const usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  const contextTokens = opts.contextLength ?? DEFAULT_CONTEXT_TOKENS;
+  const toolSchemas = opts.tools.toWire();
+  const schemaSplit = splitToolSchemaTokens(toolSchemas);
+  const schemaTokens = schemaSplit.tools + schemaSplit.mcp + schemaSplit.subagents;
+  // Leave room for tool schemas on every request; compactMessages only sees transcript tokens.
+  const budget = Math.max(1_024, Math.floor(contextTokens * BUDGET_FRACTION) - schemaTokens);
+  const usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedPromptTokens: 0 };
   const todos = opts.todos ?? [];
+  const tracker = new OptimizationTracker();
+  const promptCacheKey = opts.promptCacheKey ?? `deyin-agent:${opts.model}:${opts.cwd}`;
 
   const ctx: ToolContext = {
     cwd: opts.cwd,
@@ -86,6 +123,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     todos,
     onTodosChanged: (t) => emit({ type: "todos", todos: [...t] }),
     onFileChanged: (change) => emit({ type: "file-change", change }),
+    shell: opts.shell,
+    messages: opts.messages,
+    ...opts.toolContext,
   };
 
   const append = (message: AgentMessage): void => {
@@ -99,9 +139,22 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
     const compaction = compactMessages(opts.messages, budget);
-    if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0) {
+    if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0 || compaction.truncatedToolArgs > 0) {
       emit({ type: "compaction", ...compaction });
     }
+
+    // Post-compaction / pre-request: the window the model actually sees this step.
+    // Never invent a contextLength for the UI — compaction alone uses DEFAULT_CONTEXT_TOKENS.
+    emit({
+      type: "context-snapshot",
+      snapshot: estimateContextUsage({
+        contextLength: opts.contextLength ?? 0,
+        messages: opts.messages,
+        systemSections: opts.systemSections,
+        tools: toolSchemas,
+        wire: opts.wire,
+      }),
+    });
 
     const token = await opts.getToken();
     if (!token) throw new AuthRequiredError();
@@ -117,25 +170,37 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         token,
         model: opts.model,
         messages: opts.messages,
-        tools: opts.tools.toWire(),
+        tools: toolSchemas,
         thinking: opts.thinking,
         signal: opts.signal,
+        wire: opts.wire,
+        promptCacheKey,
+        promptCacheOptions: opts.wire?.enablePromptCaching === false ? undefined : { mode: "implicit" },
       })) {
         if (event.type === "text") {
           emit({ type: "text-delta", delta: event.delta });
         } else if (event.type === "reasoning") {
           emit({ type: "reasoning-delta", delta: event.delta });
-        } else {
-          content = event.content;
-          reasoning = event.reasoning;
-          toolCalls = event.toolCalls;
-          if (event.usage) {
-            usage.promptTokens += event.usage.promptTokens;
-            usage.completionTokens += event.usage.completionTokens;
-            usage.totalTokens += event.usage.totalTokens;
-            emit({ type: "usage", usage: { ...usage } });
-          }
-        }
+} else {
+ content = event.content;
+ reasoning = event.reasoning;
+ toolCalls = event.toolCalls;
+ if (event.usage) {
+ usage.promptTokens += event.usage.promptTokens;
+ usage.completionTokens += event.usage.completionTokens;
+ usage.totalTokens += event.usage.totalTokens;
+ if (event.usage.cachedPromptTokens) {
+ usage.cachedPromptTokens = (usage.cachedPromptTokens ?? 0) + event.usage.cachedPromptTokens;
+ tracker.recordCachedPromptTokens(event.usage.cachedPromptTokens);
+ }
+ emit({ type: "usage", usage: { ...usage } });
+ }
+ if (event.compression) {
+ tracker.recordCompression(event.compression.originalTokens, event.compression.compressedTokens);
+ }
+ // Single optimization emit per done event (avoids duplicate IPC for usage + compression).
+ emit({ type: "optimization", metrics: tracker.get() });
+ }
       }
     } catch (err) {
       if (opts.signal?.aborted || isAbortError(err)) return finish("aborted", step);
@@ -154,13 +219,19 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
 
     if (toolCalls.length === 0) return finish("completed", step);
 
-    for (const call of toolCalls) {
-      if (opts.signal?.aborted) {
+    // Run same-step tool calls concurrently (Cursor-style). Results are appended
+    // in the original tool_calls order so the transcript stays valid for providers
+    // that require matching order.
+    if (opts.signal?.aborted) {
+      for (const call of toolCalls) {
         append(toolResult(call, "Aborted by the user before execution."));
-        continue;
       }
-      const outcome = await executeCall(call, opts, ctx, emit);
-      append(toolResult(call, outcome));
+    } else {
+      const outcomes = await Promise.all(toolCalls.map((call) => executeCall(call, opts, ctx, emit, tracker)));
+      for (let i = 0; i < toolCalls.length; i++) {
+        append(toolResult(toolCalls[i]!, outcomes[i]!));
+      }
+      emit({ type: "optimization", metrics: tracker.get() });
     }
   }
 
@@ -168,7 +239,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
 
   function finish(reason: AgentRunResult["reason"], steps: number): AgentRunResult {
     emit({ type: "done", reason });
-    return { reason, finalText, usage, steps };
+    return { reason, finalText, usage, steps, optimization: tracker.get() };
   }
 }
 
@@ -186,6 +257,7 @@ async function executeCall(
   opts: AgentRunOptions,
   ctx: ToolContext,
   emit: (event: AgentEvent) => void,
+  tracker: OptimizationTracker,
 ): Promise<string> {
   const tool = opts.tools.get(call.name);
   if (!tool) {
@@ -240,8 +312,25 @@ async function executeCall(
   }
 
   try {
-    const result = await tool.execute(args, ctx);
+    if (opts.lookupToolCache) {
+      const cached = await opts.lookupToolCache(call, args);
+      if (cached !== null) {
+        tracker.recordToolCache(true);
+        emit({ type: "tool-end", call, result: cached, ok: true, fromCache: true });
+        if (opts.afterTool) await opts.afterTool(call, cached, true).catch(() => undefined);
+        return cached;
+      }
+      tracker.recordToolCache(false);
+    }
+
+    // Bind onOutput per call so streaming tool output carries the right call id.
+    const callCtx: ToolContext = {
+      ...ctx,
+      onOutput: (delta) => emit({ type: "tool-delta", call, delta }),
+    };
+    const result = await tool.execute(args, callCtx);
     emit({ type: "tool-end", call, result, ok: true });
+    if (opts.storeToolCache) await opts.storeToolCache(call, args, result).catch(() => undefined);
     if (opts.afterTool) await opts.afterTool(call, result, true).catch(() => undefined);
     return result;
   } catch (err) {

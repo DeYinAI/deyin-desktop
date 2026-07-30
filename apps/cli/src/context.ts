@@ -42,6 +42,8 @@ export function createContext(opts: { cwd?: string; overrides?: Partial<DeyinCli
 /** Access-token source for the agent loop; null when signed out or refresh fails. */
 export function tokenSource(ctx: CliContext): () => Promise<string | null> {
   return async () => {
+    const fromEnv = process.env.DEYIN_TOKEN?.trim();
+    if (fromEnv) return fromEnv;
     try {
       if (!(await ctx.oauth.isAuthenticated())) return null;
       return await ctx.oauth.getAccessToken();
