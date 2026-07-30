@@ -1,6 +1,6 @@
 {
   "name": "@deyin/desktop",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Deyin desktop app (Electron).",
   "license": "MIT",
   "author": "Deyin <hello@deyin.dev>",
