@@ -88,7 +88,7 @@ export function buildSystemPromptParts(opts: SystemPromptOptions): SystemPromptB
       "# Environment",
       `- Working directory: ${opts.cwd}`,
       `- Platform: ${platform()}`,
-      `- Shell: ${effectiveShell()} (the bash tool runs commands through this shell)`,
+      `- Shell: ${effectiveShell(opts.cwd)} (the bash tool runs commands through this shell)`,
       `- Date: ${new Date().toDateString()}`,
     ].join("\n"),
   );
