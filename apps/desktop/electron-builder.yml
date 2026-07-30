@@ -40,6 +40,10 @@ protocols:
 win:
   target: [nsis]
   icon: build/icon.ico
+  # Must stay space-free: GitHub rewrites spaces in uploaded asset names to dots
+  # while electron-builder writes hyphenated URLs into latest.yml, and the
+  # mismatch makes electron-updater 404 when fetching the installer.
+  artifactName: Deyin-Setup-${version}.${ext}
 mac:
   target: [dmg]
   icon: build/icon.icns
