@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import type { ToolContext, ToolDefinition } from "../types.js";
@@ -31,7 +32,7 @@ function bashToolDescription(): string {
       "/c/Users/.... Working directory and environment persist across calls in the same chat. " +
       "Interactive commands block until they finish or time out — prefer non-interactive flags. " +
       "Prefer the read/write/edit/grep/glob tools for file operations. Combine related checks with " +
-      "&& / ; in one call when order matters."
+      "&& / ; in one call when order matters. Set block_until_ms to 0 to run in the background and use the await tool with the returned task_id."
     );
   }
   return (
@@ -40,7 +41,7 @@ function bashToolDescription(): string {
     "git, package managers and anything else with a CLI. Working directory and environment persist " +
     "across calls in the same chat. Interactive commands block until they finish or time out — " +
     "prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file operations. " +
-    "Combine related checks with && in one call when order matters."
+    "Combine related checks with && in one call when order matters. Set block_until_ms to 0 to run in the background and use the await tool with the returned task_id."
   );
 }
 
@@ -107,6 +108,33 @@ async function runCommand(command: string, cwd: string, timeoutS: number, signal
   });
 }
 
+function runBackgroundCommand(
+  command: string,
+  cwd: string,
+): Promise<{ output: string; exitCode: number | null }> {
+  const { file, args } = shellFor(command);
+  const posix = platform() !== "win32";
+  return new Promise((resolve) => {
+    const child = spawn(file, args, {
+      cwd,
+      env: { ...process.env, DEYIN_AGENT: "1" },
+      windowsHide: true,
+      detached: posix,
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+    child.on("error", (err) => resolve({ output: `spawn error: ${err.message}`, exitCode: null }));
+    child.on("close", (code) => {
+      let out = truncate(stdout);
+      if (stderr.trim().length > 0) out += `${out ? "\n" : ""}[stderr]\n${truncate(stderr, 10_000)}`;
+      resolve({ output: out || "(no output)", exitCode: code });
+    });
+    child.unref();
+  });
+}
+
 export const bashTool: ToolDefinition = {
   name: "bash",
   description: bashToolDescription(),
@@ -120,6 +148,11 @@ export const bashTool: ToolDefinition = {
         type: "number",
         description: `Kill the command after this many seconds (default ${DEFAULT_TIMEOUT_S}, max ${MAX_TIMEOUT_S}).`,
       },
+      block_until_ms: {
+        type: "number",
+        description:
+          "Milliseconds to wait before returning. Set to 0 to run in the background and return a task_id for the await tool.",
+      },
     },
     required: ["command"],
   },
@@ -127,6 +160,17 @@ export const bashTool: ToolDefinition = {
   async execute(args, ctx: ToolContext): Promise<string> {
     const command = asString(args.command, "command");
     const cwd = asOptionalString(args.cwd) ? resolvePath(ctx.cwd, String(args.cwd)) : ctx.cwd;
+    const blockUntilMs = asOptionalNumber(args.block_until_ms);
+    if (blockUntilMs === 0) {
+      if (!ctx.registerBackgroundTask) {
+        return "ERROR: background bash tasks are not supported in this environment.";
+      }
+      const taskId = randomUUID();
+      const promise = runBackgroundCommand(command, cwd);
+      ctx.registerBackgroundTask(taskId, promise);
+      return `Background task started.\ntask_id: ${taskId}\nUse the await tool to poll for completion.`;
+    }
+
     const timeoutS = Math.min(asOptionalNumber(args.timeout_seconds) ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
 
     if (ctx.shell) {

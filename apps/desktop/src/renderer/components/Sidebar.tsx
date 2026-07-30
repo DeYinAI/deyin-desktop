@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import { ProfileMenu } from "./ProfileMenu.js";
-import type { Project, Thread } from "../threads.js";
+import { formatThreadAge, type Project, type Thread } from "../threads.js";
 import type { DeyinSettings, UserProfile } from "../../shared/types.js";
 
 interface SidebarProps {
@@ -30,6 +30,16 @@ interface SidebarProps {
   onOpenSettings: () => void;
 }
 
+/** Ticking clock so the relative age labels keep up without a state change. */
+function useNow(intervalMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
 function orderThreads(threads: Thread[]): Thread[] {
   return threads
     .filter((t) => !t.archived)
@@ -40,6 +50,7 @@ export function Sidebar(props: SidebarProps) {
   const t = useT();
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const now = useNow(30_000);
 
   // "Search projects…": match project names and thread titles; threads in a
   // matching project are all kept, otherwise only matching threads show.
@@ -136,9 +147,7 @@ export function Sidebar(props: SidebarProps) {
                   {thread.pinned && <Icon name="pin" size={11} />}
                   {thread.unread && <span className="thread-row__unread" />}
                   <span className="thread-row__title">{thread.title}</span>
-                  <span className={`thread-row__age ${thread.age === "now" ? "thread-row__age--now" : ""}`}>
-                    {thread.age}
-                  </span>
+                  <ThreadAge updatedAt={thread.updatedAt} now={now} />
                 </button>
               ),
             )}
@@ -180,6 +189,18 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
     </aside>
+  );
+}
+
+function ThreadAge({ updatedAt, now }: { updatedAt: number; now: number }) {
+  const label = formatThreadAge(updatedAt, now);
+  return (
+    <span
+      className={`thread-row__age ${label === "now" ? "thread-row__age--now" : ""}`}
+      title={new Date(updatedAt).toLocaleString()}
+    >
+      {label}
+    </span>
   );
 }
 

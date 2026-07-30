@@ -509,6 +509,7 @@ export function createBrowserTransport(): DeyinApi {
       start: async () => undefined,
       stop: () => undefined,
       approve: () => undefined,
+      answerQuestion: () => undefined,
       disposeShell: () => undefined,
       onEvent: () => () => undefined,
     },

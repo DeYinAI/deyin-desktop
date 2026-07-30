@@ -90,6 +90,7 @@ test("compaction truncation does not alias external toolCall references", () => 
   compactMessages(messages, 1_000);
   // The external reference captured before compaction must still hold the original
   // (untruncated) arguments — the store replaced the array, not the element.
+  assert.ok(externalRef);
   assert.equal(JSON.parse(externalRef.arguments).content.length, 5000);
 });
 

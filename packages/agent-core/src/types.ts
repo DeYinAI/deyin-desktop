@@ -88,10 +88,77 @@ export interface ToolContext {
    * (bash) call this to emit `tool-delta` events while still running.
    */
   onOutput?: (delta: string) => void;
+  /** Host bridge for structured user-input tools (AskQuestion). */
+  resolveInteraction?: (request: InteractionRequest) => Promise<string>;
+  /** Fired when create_plan writes a plan artifact. */
+  onPlanCreated?: (plan: PlanArtifact) => void;
+  /** Host bridge for EnterPlanMode / ExitPlanMode / SwitchMode. */
+  onModeChange?: (change: ModeChangeRequest) => Promise<string>;
+  /** Skills discovered for this run (Skill tool). */
+  skills?: DiscoveredSkill[];
+  /** Session metadata for read_session_context. */
+  sessionMeta?: ToolSessionMeta;
+  /** Transcript snapshot for read_session_context (read-only). */
+  messages?: readonly AgentMessage[];
+  /** Inter-agent messaging bus (SendMessage tool). */
+  sendMessage?: (to: string, content: string) => Promise<string>;
+  /** Poll a background shell task started earlier in this session. */
+  pollBackgroundTask?: (taskId: string, blockUntilMs: number) => Promise<string>;
+  /** Register a detached background shell task (bash with block_until_ms=0). */
+  registerBackgroundTask?: (
+    taskId: string,
+    promise: Promise<{ output: string; exitCode: number | null }>,
+  ) => void;
 }
 
 /** Coarse capability class used for default permissions. */
-export type ToolPermissionTier = "read" | "write" | "execute";
+export type ToolPermissionTier = "read" | "write" | "execute" | "interaction";
+
+export interface AskQuestionOption {
+  id: string;
+  label: string;
+}
+
+export interface AskQuestionItem {
+  id: string;
+  prompt: string;
+  options: AskQuestionOption[];
+  allow_multiple?: boolean;
+}
+
+/** Structured user-input requests (AskQuestion, etc.). */
+export type InteractionRequest =
+  | { type: "ask-question"; questions: AskQuestionItem[]; title?: string };
+
+export interface ModeChangeRequest {
+  target: "agent" | "plan" | "ask";
+  previous?: "agent" | "plan" | "ask";
+  userApproved?: boolean;
+  explanation?: string;
+  event: "enter" | "exit" | "switch";
+}
+
+export interface PlanArtifact {
+  name: string;
+  overview?: string;
+  plan: string;
+  filePath?: string;
+  todos?: TodoItem[];
+}
+
+export interface DiscoveredSkill {
+  name: string;
+  path: string;
+  description?: string;
+}
+
+export interface ToolSessionMeta {
+  threadId?: string;
+  mode?: string;
+  approvalMode?: string;
+  model?: string;
+  cwd?: string;
+}
 
 export interface ToolDefinition {
   name: string;
