@@ -2,51 +2,100 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
+import { join } from "node:path";
 import type { ToolContext, ToolDefinition } from "../types.js";
 import { asOptionalNumber, asOptionalString, asString, resolvePath, truncate } from "./util.js";
 
 const DEFAULT_TIMEOUT_S = 120;
 const MAX_TIMEOUT_S = 600;
 
-/** The real shell that executes `bash` tool commands (cmd.exe on Windows). */
-export function effectiveShell(): string {
-  if (platform() === "win32") return process.env.COMSPEC ?? "cmd.exe";
-  return existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
+/** A working directory that lives inside a WSL2 distro. */
+export interface WslLocation {
+  /** The distro to run in, e.g. "Ubuntu-22.04". */
+  distro: string;
+  /** POSIX path inside the distro, e.g. "/home/user/project". */
+  linuxPath: string;
 }
 
-function shellFor(command: string): { file: string; args: string[] } {
+/**
+ * Detect a WSL2 UNC working directory. When a Windows-hosted app opens a folder
+ * that lives inside a WSL2 distro, the native folder picker returns a
+ * `\\wsl$\<distro>\…` (older Windows) or `\\wsl.localhost\<distro>\…` (Win11)
+ * path. Recognizing it lets the agent run commands in that same distro — the
+ * WSL2 userland the integrated terminal uses — instead of Windows cmd.exe.
+ * Returns null for native Windows (`C:\…`) and POSIX paths.
+ */
+export function parseWslPath(cwd: string): WslLocation | null {
+  const match = /^[\\/]{2}wsl(?:\$|\.localhost)[\\/]+([^\\/]+)(?:[\\/]+([\s\S]*))?$/i.exec(cwd);
+  if (!match) return null;
+  const rest = (match[2] ?? "").replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+  return { distro: match[1]!, linuxPath: `/${rest}` };
+}
+
+/** Single-quote a value for safe interpolation into a POSIX shell command. */
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/** First matching executable on PATH, or null. */
+function findOnPath(exe: string): string | null {
+  const sep = platform() === "win32" ? ";" : ":";
+  for (const dir of (process.env.PATH ?? "").split(sep)) {
+    if (dir && existsSync(join(dir, exe))) return join(dir, exe);
+  }
+  return null;
+}
+
+let cachedPowerShell: string | undefined;
+
+/**
+ * The Windows shell for agent commands: PowerShell 7 (`pwsh.exe`) when it is on
+ * PATH — it supports `&&`/`||` and modern piping — otherwise Windows PowerShell
+ * (`powershell.exe`, always present). Resolved once and cached.
+ */
+function windowsPowerShell(): string {
+  if (cachedPowerShell === undefined) cachedPowerShell = findOnPath("pwsh.exe") ?? "powershell.exe";
+  return cachedPowerShell;
+}
+
+interface ShellInvocation {
+  file: string;
+  args: string[];
+  /** cwd to spawn from; undefined inherits the parent (WSL: `\\wsl$` UNC paths
+   *  are not valid CreateProcess cwds, so we cd inside the distro instead). */
+  spawnCwd?: string;
+  /** Extra env merged over process.env for this invocation. */
+  env?: Record<string, string>;
+}
+
+function shellFor(command: string, cwd: string): ShellInvocation {
   if (platform() === "win32") {
-    return { file: effectiveShell(), args: ["/d", "/s", "/c", command] };
+    // A project inside WSL2 (a \\wsl$ path) runs in its distro, matching the
+    // integrated terminal; a native Windows path runs in PowerShell.
+    const wsl = parseWslPath(cwd);
+    if (wsl) {
+      const script = `cd ${shQuote(wsl.linuxPath)} && ${command}`;
+      return {
+        file: "wsl.exe",
+        args: ["-d", wsl.distro, "bash", "-c", script],
+        // Share the agent marker into the distro so dotfiles can detect it.
+        env: { WSLENV: process.env.WSLENV ? `${process.env.WSLENV}:DEYIN_AGENT` : "DEYIN_AGENT" },
+      };
+    }
+    return {
+      file: windowsPowerShell(),
+      args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+      spawnCwd: cwd,
+    };
   }
   // Always POSIX sh/bash for tool commands: the user's login shell may be fish/nushell
   // whose syntax differs from what models emit.
-  return { file: effectiveShell(), args: ["-c", command] };
-}
-
-function bashToolDescription(): string {
-  if (platform() === "win32") {
-    return (
-      "Run a shell command in the workspace via a persistent PowerShell session (when the host " +
-      "provides one) or cmd.exe (/c) otherwise, and return its combined output. Use Windows paths " +
-      "(e.g. dir, type, cd). Do not assume Unix utilities (tail, pwd, ls) or Unix-style paths like " +
-      "/c/Users/.... Working directory and environment persist across calls in the same chat. " +
-      "Interactive commands block until they finish or time out — prefer non-interactive flags. " +
-      "Prefer the read/write/edit/grep/glob tools for file operations. Combine related checks with " +
-      "&& / ; in one call when order matters. Set block_until_ms to 0 to run in the background and use the await tool with the returned task_id."
-    );
-  }
-  return (
-    "Run a shell command in the workspace via a persistent bash session (when the host provides " +
-    "one) or a one-shot bash spawn otherwise, and return its combined output. Use for builds, tests, " +
-    "git, package managers and anything else with a CLI. Working directory and environment persist " +
-    "across calls in the same chat. Interactive commands block until they finish or time out — " +
-    "prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file operations. " +
-    "Combine related checks with && in one call when order matters. Set block_until_ms to 0 to run in the background and use the await tool with the returned task_id."
-  );
+  const bash = existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
+  return { file: bash, args: ["-c", command], spawnCwd: cwd };
 }
 
 async function runCommand(command: string, cwd: string, timeoutS: number, signal?: AbortSignal): Promise<string> {
-  const { file, args } = shellFor(command);
+  const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
   return new Promise((resolvePromise) => {
     // detached on POSIX gives the shell its own process group, so timeouts and
@@ -54,8 +103,8 @@ async function runCommand(command: string, cwd: string, timeoutS: number, signal
     // not just the shell itself. DEYIN_AGENT=1 lets dotfiles detect agent shells
     // (skip heavy prompts/banners), mirroring Cursor's CURSOR_AGENT.
     const child = spawn(file, args, {
-      cwd,
-      env: { ...process.env, DEYIN_AGENT: "1" },
+      cwd: spawnCwd,
+      env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv },
       windowsHide: true,
       detached: posix,
     });
