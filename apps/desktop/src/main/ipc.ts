@@ -5,6 +5,7 @@ import {
   AccountCache,
   AgentsStore,
   IndexManager,
+  MemoryStore,
   ModelsCache,
   ProjectsStore,
   SettingsStore,
@@ -13,6 +14,9 @@ import {
   UsageStore,
   assertInsideRoot,
   detectEnv,
+  git,
+  GitWatcher,
+  type GitResult,
   readTextFile,
   readTree,
   writeTextFile,
@@ -26,6 +30,10 @@ import type {
   Bootstrap,
   CapabilityKind,
   DeyinSettings,
+  GitBranch,
+  GitRepoInfo,
+  GitResultLite,
+  GitStatus,
   McpServerInput,
   ProjectsState,
   ProviderPatch,
@@ -140,7 +148,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
   const builtinSkillsDir = join(app.getPath("userData"), "builtin-skills");
-  const capabilities = new CapabilityService(agents, opts.getWorkspaceRoot, pluginsDir, builtinSkillsDir);
+  const capabilities = new CapabilityService(agents, opts.getWorkspaceRoot, pluginsDir, builtinSkillsDir, () => settings.get());
   const plugins = new PluginService(pluginsDir, storage, agents, capabilities);
   const browser = new BrowserControlService(opts.getWorkspaceRoot, () => settings.get().browserControlEnabled);
 
@@ -158,6 +166,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
   });
 
+  const memory = new MemoryStore(app.getPath("userData"));
+
   const agentHost = new DesktopAgentHost({
     config,
     auth,
@@ -166,6 +176,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     capabilities,
     browser,
     terminals,
+    memory,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
@@ -184,6 +195,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    memory,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
@@ -201,18 +213,24 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     isCatchUpEnabled: () => settings.get().automationsCatchUp,
   });
 
+  // Watches .git for external changes (terminal/agent) and pings the renderer.
+  const gitWatcher = new GitWatcher(() => broadcast(CH.gitChanged, undefined));
+
   /* Workspace root changes fan out to the index, capability scanner, and renderer. */
   const applyWorkspaceRoot = (root: string | null): void => {
     opts.setWorkspaceRoot(root);
     projects.set({ workspaceRoot: root });
     capabilities.invalidate();
     void index.setRoot(root);
+    gitWatcher.watch(root);
     broadcast(CH.workspaceRootChanged, root);
+    broadcast(CH.gitChanged, undefined);
   };
   // Restore the last workspace folder so terminals/files land where the user
   // left off; the renderer re-reads the project state via projectsGet.
   opts.setWorkspaceRoot(projects.get().workspaceRoot);
   void index.setRoot(projects.get().workspaceRoot);
+  gitWatcher.watch(projects.get().workspaceRoot);
 
   ipcMain.handle(CH.bootstrap, async (): Promise<Bootstrap> => {
     return {
@@ -253,6 +271,63 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     if (!root) throw new Error("No workspace open");
     return writeTextFile(assertInsideRoot(root, path), content);
   });
+
+  /* Git: system-`git` via host-core, scoped to the workspace root. Read ops degrade
+     gracefully (no root / not a repo → empty); mutations re-broadcast gitChanged. */
+  ipcMain.handle(CH.gitInfo, (): Promise<GitRepoInfo> => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) return Promise.resolve({ isRepo: false, root: null, branch: null, detached: false, ahead: 0, behind: 0, remotes: [] });
+    return git.repoInfo(root);
+  });
+  ipcMain.handle(CH.gitStatus, (): Promise<GitStatus> => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) return Promise.resolve({ branch: null, detached: false, upstream: null, ahead: 0, behind: 0, staged: [], unstaged: [], untracked: [], conflicts: [] });
+    return git.status(root);
+  });
+  ipcMain.handle(CH.gitBranches, (): Promise<GitBranch[]> => {
+    const root = opts.getWorkspaceRoot();
+    return root ? git.branches(root) : Promise.resolve([]);
+  });
+  // Run a mutating git op scoped to the workspace root, then ping the renderer.
+  const gitMutate = async (run: (root: string) => Promise<GitResult>, okMsg: string): Promise<GitResultLite> => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) return { ok: false, message: "No workspace open" };
+    const result = await run(root);
+    broadcast(CH.gitChanged, undefined);
+    return { ok: result.ok, message: (result.ok ? result.stdout : result.stderr).trim() || (result.ok ? okMsg : "git command failed") };
+  };
+  const gitRead = <T>(run: (root: string) => Promise<T>, fallback: T): Promise<T> => {
+    const root = opts.getWorkspaceRoot();
+    return root ? run(root) : Promise.resolve(fallback);
+  };
+
+  ipcMain.handle(CH.gitCheckout, (_e, name: string) => gitMutate((r) => git.checkout(r, name), `Switched to ${name}`));
+  ipcMain.handle(CH.gitStage, (_e, paths: string[]) => gitMutate((r) => git.stage(r, paths), "Staged"));
+  ipcMain.handle(CH.gitUnstage, (_e, paths: string[]) => gitMutate((r) => git.unstage(r, paths), "Unstaged"));
+  ipcMain.handle(CH.gitDiscard, (_e, paths: string[]) => gitMutate((r) => git.discard(r, paths), "Discarded"));
+  ipcMain.handle(CH.gitCommit, (_e, message: string, o?: { amend?: boolean }) => gitMutate((r) => git.commit(r, message, o), "Committed"));
+  ipcMain.handle(CH.gitFetch, () => gitMutate((r) => git.fetch(r), "Fetched"));
+  ipcMain.handle(CH.gitPull, (_e, o?: { rebase?: boolean }) => gitMutate((r) => git.pull(r, o), "Pulled"));
+  ipcMain.handle(CH.gitPush, (_e, o?: { setUpstream?: boolean }) => gitMutate((r) => git.push(r, o), "Pushed"));
+  ipcMain.handle(CH.gitCreateBranch, (_e, name: string, from?: string) => gitMutate((r) => git.createBranch(r, name, from), `Created ${name}`));
+  ipcMain.handle(CH.gitDeleteBranch, (_e, name: string, force?: boolean) => gitMutate((r) => git.deleteBranch(r, name, force), `Deleted ${name}`));
+  ipcMain.handle(CH.gitStashPush, (_e, message?: string, u?: boolean) => gitMutate((r) => git.stashPush(r, message, u), "Stashed"));
+  ipcMain.handle(CH.gitStashPop, (_e, index?: number) => gitMutate((r) => git.stashPop(r, index), "Popped stash"));
+  ipcMain.handle(CH.gitStashDrop, (_e, index: number) => gitMutate((r) => git.stashDrop(r, index), "Dropped stash"));
+
+  ipcMain.handle(CH.gitLog, (_e, o?: { limit?: number; skip?: number; path?: string; ref?: string }) => gitRead((r) => git.log(r, o), []));
+  ipcMain.handle(CH.gitShow, (_e, ref: string) =>
+    gitRead((r) => git.show(r, ref), { commit: { hash: ref, shortHash: ref.slice(0, 7), subject: "", author: "", authorEmail: "", date: "", parents: [] }, files: [] }),
+  );
+  ipcMain.handle(CH.gitDiffFile, (_e, path: string, mode: "worktree" | "staged" | "head") =>
+    gitRead((r) => git.diffFile(r, path, mode), { path, before: "", after: "", binary: false }),
+  );
+  ipcMain.handle(CH.gitDiffCommit, (_e, ref: string, path: string) =>
+    gitRead((r) => git.diffCommit(r, ref, path), { path, before: "", after: "", binary: false }),
+  );
+  ipcMain.handle(CH.gitBlame, (_e, path: string) => gitRead((r) => git.blame(r, path), []));
+  ipcMain.handle(CH.gitRemotes, () => gitRead((r) => git.remotes(r), []));
+  ipcMain.handle(CH.gitStashList, () => gitRead((r) => git.stashList(r), []));
 
   ipcMain.handle(CH.workspaceOpen, async () => {
     const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
@@ -478,6 +553,7 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       void telemetry.flush();
       index.dispose();
       automations.dispose();
+      gitWatcher.stop();
     },
   };
 }

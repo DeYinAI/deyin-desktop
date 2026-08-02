@@ -388,6 +388,36 @@ export function createBrowserTransport(): DeyinApi {
       },
       onRootChanged: (cb) => host.onRootChanged(cb),
     },
+    git: (() => {
+      // The web sandbox has no git integration yet: report "not a repo".
+      const unavailable = { ok: false, message: "Git is not available in the web sandbox." };
+      return {
+        info: async () => ({ isRepo: false, root: null, branch: null, detached: false, ahead: 0, behind: 0, remotes: [] }),
+        status: async () => ({ branch: null, detached: false, upstream: null, ahead: 0, behind: 0, staged: [], unstaged: [], untracked: [], conflicts: [] }),
+        branches: async () => [],
+        checkout: async () => unavailable,
+        stage: async () => unavailable,
+        unstage: async () => unavailable,
+        discard: async () => unavailable,
+        commit: async () => unavailable,
+        fetch: async () => unavailable,
+        pull: async () => unavailable,
+        push: async () => unavailable,
+        createBranch: async () => unavailable,
+        deleteBranch: async () => unavailable,
+        log: async () => [],
+        show: async (ref: string) => ({ commit: { hash: ref, shortHash: ref.slice(0, 7), subject: "", author: "", authorEmail: "", date: "", parents: [] }, files: [] }),
+        diffFile: async (path: string) => ({ path, before: "", after: "", binary: false }),
+        diffCommit: async (_ref: string, path: string) => ({ path, before: "", after: "", binary: false }),
+        blame: async () => [],
+        remotes: async () => [],
+        stashList: async () => [],
+        stashPush: async () => unavailable,
+        stashPop: async () => unavailable,
+        stashDrop: async () => unavailable,
+        onChanged: () => () => undefined,
+      };
+    })(),
     projects: {
       get: async () =>
         readLocal<ProjectsState>("deyin.projects", {

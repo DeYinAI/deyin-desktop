@@ -44,6 +44,36 @@ const api: DeyinApi = {
       };
     },
   },
+  git: {
+    info: () => ipcRenderer.invoke(CH.gitInfo),
+    status: () => ipcRenderer.invoke(CH.gitStatus),
+    branches: () => ipcRenderer.invoke(CH.gitBranches),
+    checkout: (name) => ipcRenderer.invoke(CH.gitCheckout, name),
+    stage: (paths) => ipcRenderer.invoke(CH.gitStage, paths),
+    unstage: (paths) => ipcRenderer.invoke(CH.gitUnstage, paths),
+    discard: (paths) => ipcRenderer.invoke(CH.gitDiscard, paths),
+    commit: (message, opts) => ipcRenderer.invoke(CH.gitCommit, message, opts),
+    fetch: () => ipcRenderer.invoke(CH.gitFetch),
+    pull: (opts) => ipcRenderer.invoke(CH.gitPull, opts),
+    push: (opts) => ipcRenderer.invoke(CH.gitPush, opts),
+    createBranch: (name, from) => ipcRenderer.invoke(CH.gitCreateBranch, name, from),
+    deleteBranch: (name, force) => ipcRenderer.invoke(CH.gitDeleteBranch, name, force),
+    log: (opts) => ipcRenderer.invoke(CH.gitLog, opts),
+    show: (ref) => ipcRenderer.invoke(CH.gitShow, ref),
+    diffFile: (path, mode) => ipcRenderer.invoke(CH.gitDiffFile, path, mode),
+    diffCommit: (ref, path) => ipcRenderer.invoke(CH.gitDiffCommit, ref, path),
+    blame: (path) => ipcRenderer.invoke(CH.gitBlame, path),
+    remotes: () => ipcRenderer.invoke(CH.gitRemotes),
+    stashList: () => ipcRenderer.invoke(CH.gitStashList),
+    stashPush: (message, includeUntracked) => ipcRenderer.invoke(CH.gitStashPush, message, includeUntracked),
+    stashPop: (index) => ipcRenderer.invoke(CH.gitStashPop, index),
+    stashDrop: (index) => ipcRenderer.invoke(CH.gitStashDrop, index),
+    onChanged: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(CH.gitChanged, listener);
+      return () => ipcRenderer.removeListener(CH.gitChanged, listener);
+    },
+  },
   projects: {
     get: () => ipcRenderer.invoke(CH.projectsGet),
     set: (patch) => ipcRenderer.invoke(CH.projectsSet, patch),

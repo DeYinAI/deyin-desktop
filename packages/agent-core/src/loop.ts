@@ -6,14 +6,17 @@ import {
   type SystemPromptSections,
 } from "./context-usage.js";
 import { OptimizationTracker, type OptimizationMetrics } from "./optimization.js";
+import { buildRecallSuffix } from "./recall.js";
 import type { PermissionEngine, PermissionResolver } from "./permissions.js";
 import { streamChatEvents } from "./stream.js";
+import type { ProviderApiFormat } from "./transports.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import {
   AuthRequiredError,
   type AgentMessage,
   type AgentToolCall,
   type FileChange,
+  type MemoryBridge,
   type TodoItem,
   type TokenUsage,
   type ToolContext,
@@ -71,6 +74,14 @@ export interface AgentRunOptions {
   storeToolCache?: (call: AgentToolCall, args: Record<string, unknown>, result: string) => Promise<void>;
   cwd: string;
   thinking?: boolean;
+  /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
+  effort?: "low" | "medium" | "high";
+  /** Provider wire format; defaults to "chat-completions". */
+  apiFormat?: ProviderApiFormat;
+  /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
+  authHeader?: boolean;
+  /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
+  maxTokens?: number;
   maxSteps?: number;
   signal?: AbortSignal;
   todos?: TodoItem[];
@@ -78,6 +89,8 @@ export interface AgentRunOptions {
   shell?: ToolShell;
   /** Extra tool context hooks (interaction, mode changes, skills, etc.). */
   toolContext?: Partial<ToolContext>;
+  /** Background-memory bridge: enables automatic recall before the run's user turn. */
+  memory?: MemoryBridge;
   /** Wire-level compression + Anthropic cache_control. */
   wire?: WireOptions;
   /** Stable prompt cache key for OpenAI-compatible providers (shared across steps). */
@@ -133,6 +146,18 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     opts.onMessage?.(message);
   };
 
+  // Automatic memory recall: append a bounded, low-authority suffix to the run's
+  // user turn (the transcript's last message). The suffix lives only in this
+  // run's in-memory transcript — it is never persisted or injected elsewhere.
+  // Idempotent: a message that already carries a recall suffix is left alone.
+  if (opts.memory) {
+    const last = opts.messages.at(-1);
+    if (last && last.role === "user" && !last.content.includes("<recall>")) {
+      const suffix = buildRecallSuffix(opts.memory, last.content);
+      if (suffix) last.content = `${last.content}\n\n${suffix}`;
+    }
+  }
+
   let finalText = "";
 
   for (let step = 1; step <= maxSteps; step++) {
@@ -172,6 +197,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         messages: opts.messages,
         tools: toolSchemas,
         thinking: opts.thinking,
+        effort: opts.effort,
+        apiFormat: opts.apiFormat,
+        authHeader: opts.authHeader,
+        maxTokens: opts.maxTokens,
         signal: opts.signal,
         wire: opts.wire,
         promptCacheKey,

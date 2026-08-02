@@ -3,6 +3,7 @@ import { themeByName } from "../code.js";
 import { computeLineDiff, type FileDiff } from "../diff.js";
 import { useT } from "../i18n.js";
 import { FilesTab } from "./FilesTab.js";
+import { GitTab } from "./GitTab.js";
 import { Icon } from "./Icon.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
@@ -30,6 +31,8 @@ interface WorkspacePanelProps {
   codeDisplay: CodeDisplaySettings;
   browserControlEnabled: boolean;
   onSelectTab: (tab: PanelTab) => void;
+  /** Open a git file diff in the Diff tab. */
+  onOpenGitDiff?: (diff: FileDiff) => void;
   onNavigate: (url: string) => void;
   onCollapse: () => void;
   onOpenFolder?: () => void;
@@ -56,6 +59,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           active={props.activeTab === "diff"}
           onClick={() => props.onSelectTab("diff")}
         />
+        <TabButton label="Source Control" active={props.activeTab === "git"} onClick={() => props.onSelectTab("git")} />
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
       </div>
 
@@ -83,6 +87,13 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "diff"}>
         <DiffTab projectName={props.projectName} diff={props.diff} display={props.codeDisplay} />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "git"}>
+        <GitTab
+          active={props.activeTab === "git"}
+          workspaceRoot={props.workspaceRoot}
+          onOpenDiff={(d) => props.onOpenGitDiff?.(d)}
+        />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "browser"}>
         <BrowserTab

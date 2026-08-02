@@ -62,3 +62,51 @@ test("stores persist through Storage and keep provider keys ciphered", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("provider wire formats: responses/anthropic persist, authHeader round-trips, junk falls back", () => {
+  const dir = tempDir();
+  try {
+    const storage = new FileStorage(dir);
+    const agents = new AgentsStore(storage);
+    agents.addProvider({ name: "Claude", baseUrl: "https://api.anthropic.com" });
+    const claude = agents.listProviders(true).find((p) => p.name === "Claude");
+    assert.ok(claude, "provider added");
+    agents.updateProvider(claude!.id, { apiFormat: "anthropic", authHeader: true });
+    const updated = agents.listProviders(true).find((p) => p.id === claude!.id);
+    assert.equal(updated?.apiFormat, "anthropic");
+    assert.equal(updated?.authHeader, true);
+
+    // Unknown formats in persisted files are normalized to chat-completions.
+    storage.writeJson("agents.json", {
+      ...storage.readJson("agents.json", {}),
+      providers: [
+        { id: "legacy", name: "Legacy", kind: "custom", apiFormat: "weird-format", enabled: true, models: [], disabledModels: [] },
+      ],
+    });
+    const normalized = new AgentsStore(storage).listProviders(true).find((p) => p.id === "legacy");
+    assert.equal(normalized?.apiFormat, "chat-completions");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("provider base URLs must be http(s) — the API key is sent to that origin", () => {
+  const dir = tempDir();
+  try {
+    const storage = new FileStorage(dir);
+    const agents = new AgentsStore(storage);
+    // Valid schemes are accepted.
+    agents.addProvider({ name: "Local", baseUrl: "http://localhost:11434/v1" });
+    assert.ok(agents.listProviders(true).some((p) => p.name === "Local"), "http:// accepted");
+    // Missing / non-http schemes are rejected outright.
+    agents.addProvider({ name: "Bad", baseUrl: "api.example.com/v1" });
+    agents.addProvider({ name: "Bad2", baseUrl: "file:///etc/passwd" });
+    agents.addProvider({ name: "Bad3", baseUrl: "ftp://example.com/v1" });
+    const providers = agents.listProviders(true);
+    assert.ok(!providers.some((p) => p.name === "Bad"), "scheme-less URL rejected");
+    assert.ok(!providers.some((p) => p.name === "Bad2"), "file: URL rejected");
+    assert.ok(!providers.some((p) => p.name === "Bad3"), "ftp: URL rejected");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

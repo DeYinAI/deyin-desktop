@@ -114,6 +114,14 @@ function ProviderRow({ provider, active, onClick }: { provider: ProviderInfo; ac
 
 /* New provider draft (unsaved until Save) -------------------------------------- */
 
+/** One-click provider presets: name/baseUrl/format prefilled, key left to the user. */
+const PROVIDER_PRESETS = [
+  { label: "OpenAI", name: "OpenAI", baseUrl: "https://api.openai.com/v1", apiFormat: "chat-completions" as const },
+  { label: "Anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com", apiFormat: "anthropic" as const },
+  { label: "DeepSeek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", apiFormat: "chat-completions" as const },
+  { label: "Ollama (local)", name: "Ollama", baseUrl: "http://localhost:11434/v1", apiFormat: "chat-completions" as const },
+];
+
 function ProviderDraft({
   onCancel,
   onCreated,
@@ -124,13 +132,31 @@ function ProviderDraft({
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiFormat, setApiFormat] = useState<ProviderInfo["apiFormat"]>("chat-completions");
+  const [authHeader, setAuthHeader] = useState(false);
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const applyPreset = (preset: (typeof PROVIDER_PRESETS)[number]) => {
+    setName(preset.name);
+    setBaseUrl(preset.baseUrl);
+    setApiFormat(preset.apiFormat);
+  };
+
   const save = async () => {
     if (!name.trim() || !baseUrl.trim()) {
       setError("Name and base URL are required.");
+      return;
+    }
+    let scheme = "";
+    try {
+      scheme = new URL(baseUrl.trim()).protocol;
+    } catch {
+      setError("Base URL is not a valid URL (expected http:// or https://).");
+      return;
+    }
+    if (scheme !== "http:" && scheme !== "https:") {
+      setError("Base URL must start with http:// or https://.");
       return;
     }
     setSaving(true);
@@ -144,6 +170,9 @@ function ProviderDraft({
       }
       if (apiFormat !== "chat-completions") {
         providers = await window.deyin.providers.update(created.id, { apiFormat });
+      }
+      if (apiFormat === "anthropic" && authHeader) {
+        providers = await window.deyin.providers.update(created.id, { authHeader: true });
       }
       if (key.trim()) {
         providers = await window.deyin.providers.setKey(created.id, key.trim());
@@ -162,6 +191,16 @@ function ProviderDraft({
         <div className="providers__detail-spacer" />
       </div>
 
+      <div className="field">
+        <label className="field__label">Presets</label>
+        <div className="field__row" style={{ flexWrap: "wrap", gap: 6 }}>
+          {PROVIDER_PRESETS.map((preset) => (
+            <button key={preset.label} type="button" className="chip chip--small" onClick={() => applyPreset(preset)}>
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="field">
         <label className="field__label">Name</label>
         <input className="input" placeholder="My provider" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
@@ -185,8 +224,15 @@ function ProviderDraft({
         >
           <option value="chat-completions">Chat completions (/chat/completions)</option>
           <option value="responses">Responses (/responses)</option>
+          <option value="anthropic">Anthropic (/v1/messages)</option>
         </select>
       </div>
+      {apiFormat === "anthropic" && (
+        <label className="field__row" style={{ gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={authHeader} onChange={(e) => setAuthHeader(e.target.checked)} />
+          <span>Use Authorization: Bearer instead of x-api-key (Anthropic-compatible gateways)</span>
+        </label>
+      )}
       <div className="field">
         <label className="field__label">API key (optional)</label>
         <input className="input" type="password" placeholder="sk-..." value={key} onChange={(e) => setKey(e.target.value)} />
@@ -396,8 +442,19 @@ function ProviderDetail({ provider, liveModels, planName, busy, onConnect, onPro
         >
           <option value="chat-completions">Chat completions (/chat/completions)</option>
           <option value="responses">Responses (/responses)</option>
+          <option value="anthropic">Anthropic (/v1/messages)</option>
         </select>
       </div>
+      {provider.apiFormat === "anthropic" && provider.kind === "custom" && (
+        <label className="field__row" style={{ gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={provider.authHeader === true}
+            onChange={(e) => void apply({ authHeader: e.target.checked })}
+          />
+          <span>Use Authorization: Bearer instead of x-api-key (Anthropic-compatible gateways)</span>
+        </label>
+      )}
 
       <div className="field">
         <label className="field__label">API key</label>

@@ -152,6 +152,13 @@ export function SettingsView(props: SettingsViewProps) {
 
   const capKind = CAPABILITY_PAGES[page];
 
+  const setSubagentModel = (name: string, model: string | undefined) => {
+    const next = { ...(props.settings.subagentModels ?? {}) };
+    if (model) next[name] = model;
+    else delete next[name];
+    props.onChangeSettings({ subagentModels: next });
+  };
+
   return (
     <div className="settings">
       <aside className="settings__nav">
@@ -204,7 +211,14 @@ export function SettingsView(props: SettingsViewProps) {
         {page === "plugins" && <PluginsPage onToggle={toggleCap} />}
         {page === "mcp" && <McpPage onToggle={toggleCap} />}
         {capKind && (
-          <CapabilityPage kind={capKind} items={caps.filter((c) => c.kind === capKind)} onToggle={toggleCap} />
+          <CapabilityPage
+            kind={capKind}
+            items={caps.filter((c) => c.kind === capKind)}
+            onToggle={toggleCap}
+            providers={providers}
+            liveModels={props.liveModels}
+            onSetSubagentModel={capKind === "subagent" ? setSubagentModel : undefined}
+          />
         )}
         {page === "indexing" && (
           <IndexingPage workspaceRoot={props.workspaceRoot} settings={props.settings} onChange={props.onChangeSettings} />
