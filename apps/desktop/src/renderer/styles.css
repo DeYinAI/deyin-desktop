@@ -3970,41 +3970,9 @@ button.thinking__head:hover {
 }
 
 /* Composer mode picker ------------------------------------------------------------ */
-/* Cursor-style segmented control: mode options visible above the chatbox, no popup. */
-.mode-seg {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 2px;
-  gap: 2px;
-  background: var(--color-surface);
-}
-.mode-seg__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-faint);
-  font-size: 12px;
-  font-weight: 500;
-  padding: 3px 9px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
-  white-space: nowrap;
-}
-.mode-seg__item:hover {
-  color: var(--color-text);
-  background: rgba(127, 127, 127, 0.1);
-}
-.mode-seg__item--active {
+.chip--mode {
   color: var(--color-accent);
-  background: rgba(79, 124, 255, 0.12);
-}
-.mode-seg__item--active:hover {
-  background: rgba(79, 124, 255, 0.18);
+  border-color: rgba(79, 124, 255, 0.4);
 }
 .menu__item-body {
   display: flex;
