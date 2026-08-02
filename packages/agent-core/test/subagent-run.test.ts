@@ -51,3 +51,12 @@ test("agentForMode maps composer modes to built-in agents", () => {
   assert.equal(agentForMode("ask").name, "ask");
   assert.equal(agentForMode("agent").name, "build");
 });
+
+test("plan mode denies bash so it stays read-only even under full access", () => {
+  const plan = agentForMode("plan");
+  const bashRule = plan.permissions?.find((r) => r.tool === "bash");
+  assert.equal(bashRule?.action, "deny");
+  for (const tool of ["write", "edit", "delete", "notebook_edit"]) {
+    assert.equal(plan.permissions?.find((r) => r.tool === tool)?.action, "deny");
+  }
+});
