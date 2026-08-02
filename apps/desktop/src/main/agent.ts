@@ -2,16 +2,12 @@ import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BrowserWindow, app } from "electron";
-import { AgentShell, ShellUnavailableError, type AgentsStore, type SettingsStore, type TerminalManager } from "@deyin/host-core";
+import { AgentShell, ShellUnavailableError, type AgentsStore, type MemoryStore, type SettingsStore, type TerminalManager } from "@deyin/host-core";
 import {
-  ASK_AGENT,
-  BUILD_AGENT,
-  PLAN_AGENT,
   PermissionEngine,
   SessionStore,
   ToolRegistry,
   appendHookContext,
-  buildSystemPrompt,
   buildSystemPromptParts,
   connectMcpDefinitions,
   createBuiltinRegistry,
@@ -23,16 +19,20 @@ import {
   matchCommand,
   runAgent,
   runHooks,
-  type AgentDefinition,
+  Semaphore,
+  agentForMode,
+  rulesForApprovalMode,
+  runSubagent,
+  subagentReadonlyRules,
   type AgentMessage,
   type InteractionRequest,
   type LoadedHook,
   type ModeChangeRequest,
   type McpConnection,
   type PermissionDecision,
-  type PermissionRule,
   type PlanArtifact,
   type SubagentDefinition,
+  subagentEffort,
   type SystemPromptSections,
   type ToolSessionMeta,
   type ToolShell,
@@ -42,7 +42,8 @@ import {
   createOptimizationPlugin,
   type OptimizationPlugin,
 } from "@deyin/optimization-plugin";
-import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ApprovalMode, ChatMode, IndexSearchHit } from "../shared/types.js";
+import type { ProviderApiFormat } from "@deyin/agent-core";
+import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ChatMode, IndexSearchHit } from "../shared/types.js";
 import { truncateToolResultUi } from "../shared/types.js";
 import { CH } from "../shared/ipc.js";
 import type { DeyinConfig } from "../shared/config.js";
@@ -58,30 +59,6 @@ const FILE_DIFF_CAP = 400_000;
 function shortHash(text: string): string {
  return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
-const READONLY_RULES: PermissionRule[] = [
-  { tool: "*", action: "deny" },
-  { tool: "read", action: "allow" },
-  { tool: "grep", action: "allow" },
-  { tool: "glob", action: "allow" },
-  { tool: "ls", action: "allow" },
-  { tool: "websearch", action: "allow" },
-  { tool: "web_fetch", action: "allow" },
-  { tool: "todo_write", action: "allow" },
-  { tool: "todo_read", action: "allow" },
-  { tool: "ask_question", action: "allow" },
-  { tool: "create_plan", action: "allow" },
-  { tool: "enter_plan_mode", action: "allow" },
-  { tool: "exit_plan_mode", action: "allow" },
-  { tool: "switch_mode", action: "allow" },
-  { tool: "skill", action: "allow" },
-  { tool: "read_session_context", action: "allow" },
-  { tool: "send_message", action: "allow" },
-  { tool: "codebase_search", action: "allow" },
-  { tool: "browser_snapshot", action: "allow" },
-  { tool: "browser_screenshot", action: "allow" },
-  { tool: "browser_console", action: "allow" },
-  { tool: "browser_network", action: "allow" },
-];
 
 interface ThreadSession {
   sessionId: string;
@@ -118,6 +95,8 @@ export interface AgentHostOptions {
   capabilities: CapabilityService;
   browser: BrowserControlService;
   terminals: TerminalManager;
+  /** Background memory store (remember/forget tools + recall). */
+  memory: MemoryStore;
   getWorkspaceRoot: () => string | null;
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   /** Context window for the model, when known (drives compaction). */
@@ -144,6 +123,8 @@ export class DesktopAgentHost {
   private readonly agentInbox = new Map<string, string[]>();
   private readonly backgroundTasks = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
   private readonly store: SessionStore;
+  /** Caps how many task-tool subagent runs execute in parallel (settings.subagentConcurrency). */
+  private readonly subagentLimiter = new Semaphore(() => this.opts.settings.get().subagentConcurrency);
   private optimizationPlugin: OptimizationPlugin | null = null;
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   private optimizationPluginLoadError: string | null = null;
@@ -439,7 +420,7 @@ export class DesktopAgentHost {
     // read-only even under "full access". skipAll only ever applies to agent mode.
     const modeAgent = agentForMode(options.mode);
     const permissions = new PermissionEngine({
-      agentRules: rulesForMode(options.approvalMode),
+      agentRules: rulesForApprovalMode(options.approvalMode),
       configRules: modeAgent.permissions ?? [],
       skipAll: options.approvalMode === "full-access" && options.mode === "agent",
     });
@@ -566,6 +547,8 @@ return;
       const result = await runAgent({
         apiBaseUrl,
         getToken,
+        apiFormat: provider?.apiFormat ?? "chat-completions",
+        authHeader: provider?.authHeader,
         model: options.model,
         contextLength: this.opts.getContextLength(options.providerId, options.model),
         messages: session.messages,
@@ -578,9 +561,11 @@ return;
         todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
         shell: shellBridge,
         systemSections: session.systemSections,
+        memory: settings.memoryEnabled ? this.opts.memory : undefined,
         toolContext: {
           skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
           sessionMeta: liveMeta,
+          memory: settings.memoryEnabled ? this.opts.memory : undefined,
           resolveInteraction: (request) => this.resolveInteraction(options.threadId, request),
           onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
           onModeChange: async (change) => {
@@ -726,8 +711,19 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     }
   }
 
-  /** Fresh, clean-context run for the Task tool. */
+  /** Fresh, clean-context run for the Task tool, gated by the concurrency cap. */
   private async runSubagent(
+    parent: AgentStartOptions,
+    def: SubagentDefinition,
+    prompt: string,
+    apiBaseUrl: string,
+    getToken: () => Promise<string | null>,
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; report: string }> {
+    return this.subagentLimiter.run(() => this.runSubagentUncapped(parent, def, prompt, apiBaseUrl, getToken, signal));
+  }
+
+  private async runSubagentUncapped(
     parent: AgentStartOptions,
     def: SubagentDefinition,
     prompt: string,
@@ -737,55 +733,50 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
   ): Promise<{ ok: boolean; report: string }> {
     this.send(parent.threadId, { type: "subagent-start", name: def.name, prompt: prompt.slice(0, 200) });
     const cwd = this.opts.getWorkspaceRoot() ?? process.cwd();
-    // Subagents get the built-in toolset (no nested task tool → max depth 2).
-    const registry = createBuiltinRegistry();
-    if (this.opts.settings.get().indexingEnabled) {
-      registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
-    }
-    const readonlyRules: PermissionRule[] = def.readonly
-      ? [
-          { tool: "write", action: "deny" },
-          { tool: "edit", action: "deny" },
-          { tool: "bash", action: "ask" },
-        ]
-      : [];
-    // Subagents inherit the parent run's mode restrictions: a plan/ask session
-    // must stay read-only even inside a spawned task.
-    const permissions = new PermissionEngine({
-      agentRules: rulesForMode(parent.approvalMode),
-      configRules: [...(agentForMode(parent.mode).permissions ?? []), ...readonlyRules],
-      skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
-    });
-    const messages: AgentMessage[] = [
-      {
-        role: "system",
-        content: buildSystemPrompt({
-          cwd,
-          agent: { name: def.name, description: def.description, prompt: def.prompt },
-          toolNames: registry.names(),
-        }),
+    const parentProvider = this.opts.agents.listProviders(true).find((p) => p.id === parent.providerId);
+    const parentProviderWire: { apiFormat: ProviderApiFormat; authHeader?: boolean } = {
+      apiFormat: parentProvider?.apiFormat ?? "chat-completions",
+      authHeader: parentProvider?.authHeader,
+    };
+    const result = await runSubagent(def, prompt, {
+      cwd,
+      parent: { model: parent.model, providerId: parent.providerId, thinking: parent.thinking },
+      modelOverride: this.opts.settings.get().subagentModels[def.name],
+      effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
+      maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
+      parentRouting: { apiBaseUrl, getToken, apiFormat: parentProviderWire.apiFormat, authHeader: parentProviderWire.authHeader },
+      resolveProvider: (providerId) => {
+        const provider = this.opts.agents.listProviders(true).find((p) => p.id === providerId);
+        if (provider && provider.kind === "custom") {
+          return {
+            apiBaseUrl: provider.baseUrl ?? this.opts.config.apiBaseUrl,
+            getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id)),
+            apiFormat: provider.apiFormat ?? "chat-completions",
+            authHeader: provider.authHeader,
+          };
+        }
+        return {
+          apiBaseUrl: this.opts.config.apiBaseUrl,
+          getToken: () => this.opts.auth.getAccessToken(),
+          apiFormat: parentProviderWire.apiFormat,
+          authHeader: parentProviderWire.authHeader,
+        };
       },
-      { role: "user", content: prompt },
-    ];
-    try {
-      const result = await runAgent({
-        apiBaseUrl,
-        getToken,
-        model: def.model ?? parent.model,
-        messages,
-        tools: registry,
-        permissions,
-        resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
-        cwd,
-        thinking: parent.thinking,
-        signal,
-      });
-      this.send(parent.threadId, { type: "subagent-end", name: def.name, ok: true });
-      return { ok: true, report: result.finalText || "(subagent returned no text)" };
-    } catch (err) {
-      this.send(parent.threadId, { type: "subagent-end", name: def.name, ok: false });
-      return { ok: false, report: err instanceof Error ? err.message : String(err) };
-    }
+      // Subagents inherit the parent run's mode restrictions: a plan/ask session
+      // must stay read-only even inside a spawned task.
+      permissionEngine: new PermissionEngine({
+        agentRules: rulesForApprovalMode(parent.approvalMode),
+        configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules(def)],
+        skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
+      }),
+      resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
+      extraTools: this.opts.settings.get().indexingEnabled
+        ? [createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK))]
+        : [],
+      signal,
+    });
+    this.send(parent.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
+    return result;
   }
 
   private async ensureSession(
@@ -994,28 +985,4 @@ function modeReminder(change: ModeChangeRequest): string {
     return modeReminder({ ...change, event: "enter" });
   }
   return "";
-}
-
-function rulesForMode(mode: ApprovalMode): PermissionRule[] {
-  switch (mode) {
-    case "full-access":
-      return [];
-    case "ask-first":
-      // Tier defaults already ask for write/execute; nothing to override.
-      return [];
-    case "read-only":
-      return READONLY_RULES;
-  }
-}
-
-/** The built-in agent definition backing each composer mode. */
-function agentForMode(mode: ChatMode): AgentDefinition {
-  switch (mode) {
-    case "plan":
-      return PLAN_AGENT;
-    case "ask":
-      return ASK_AGENT;
-    default:
-      return BUILD_AGENT;
-  }
 }

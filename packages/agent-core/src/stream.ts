@@ -1,5 +1,14 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
 import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
+import {
+  normalizeUsage,
+  streamAnthropicEvents,
+  streamResponsesEvents,
+  type ProviderApiFormat,
+  type StreamEvent,
+} from "./transports.js";
+
+export type { ProviderApiFormat, StreamEvent };
 
 export interface StreamChatEventsOptions {
  apiBaseUrl: string;
@@ -10,7 +19,11 @@ export interface StreamChatEventsOptions {
  tools?: WireTool[];
  /** Request model reasoning ("thinking") when supported. */
  thinking?: boolean;
+ /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
+ effort?: "low" | "medium" | "high";
  temperature?: number;
+ /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
+ maxTokens?: number;
  signal?: AbortSignal;
  /** Compression + Anthropic cache_control markers. */
  wire?: WireOptions;
@@ -20,25 +33,17 @@ export interface StreamChatEventsOptions {
  mode?: "implicit" | "explicit";
  ttl?: string;
  };
+ /**
+  * Provider wire format. "chat-completions" (default) is the OpenAI-compatible
+  * /chat/completions stream; "responses" speaks the OpenAI Responses API;
+  * "anthropic" speaks the Anthropic Messages API (x-api-key, /v1/messages).
+  */
+ apiFormat?: ProviderApiFormat;
+ /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
+ authHeader?: boolean;
+ /** Anthropic API version header; default "2023-06-01". */
+ anthropicVersion?: string;
 }
-
-export type StreamEvent =
- | { type: "text"; delta: string }
- | { type: "reasoning"; delta: string }
- | {
- type: "done";
- content: string;
- reasoning: string;
- toolCalls: AgentToolCall[];
- finishReason: string | null;
- usage: TokenUsage | null;
- compression?: {
- originalTokens: number;
- compressedTokens: number;
- ratio: number;
- results: CompressionResult[];
- };
- };
 
 interface WireDelta {
   content?: string | null;
@@ -60,15 +65,33 @@ interface WireChunk {
     total_tokens?: number;
     prompt_tokens_details?: { cached_tokens?: number };
     cache_read_input_tokens?: number;
+    prompt_cache_hit_tokens?: number;
   } | null;
 }
 
 /**
- * Stream a chat completion, accumulating fragmented `tool_calls` deltas (ids, names and
- * argument JSON arrive split across many SSE chunks) and the final `finish_reason`.
- * Yields text/reasoning deltas as they arrive and exactly one final "done" event.
+ * Stream a chat completion from any supported provider wire format, accumulating
+ * fragmented tool_calls deltas and the final finish_reason. Yields text/reasoning
+ * deltas as they arrive and exactly one final "done" event.
  */
 export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGenerator<StreamEvent> {
+  if (opts.apiFormat === "anthropic") {
+    yield* streamAnthropicEvents(opts);
+    return;
+  }
+  if (opts.apiFormat === "responses") {
+    yield* streamResponsesEvents(opts);
+    return;
+  }
+  yield* streamChatCompletionsEvents(opts);
+}
+
+/**
+ * Stream a chat completion from an OpenAI-compatible endpoint, accumulating
+ * fragmented `tool_calls` deltas (ids, names and argument JSON arrive split across
+ * many SSE chunks) and the final `finish_reason`.
+ */
+async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): AsyncGenerator<StreamEvent> {
  const built = buildWireMessages(opts.messages, opts.wire ?? {});
  const body: Record<string, unknown> = {
  model: opts.model,
@@ -77,12 +100,14 @@ export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGen
  };
  if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
  if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
+ if (opts.effort) body.reasoning_effort = opts.effort;
  if (opts.temperature !== undefined) body.temperature = opts.temperature;
  // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
  if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
  if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
 
- const res = await fetch(`${opts.apiBaseUrl}/chat/completions`, {
+ const base = opts.apiBaseUrl.replace(/\/+$/, "");
+ const res = await fetch(`${base}/chat/completions`, {
  method: "POST",
  headers: {
  "content-type": "application/json",
@@ -117,6 +142,14 @@ export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGen
  yield event;
  return;
  }
+ yield event;
+ }
+ }
+ // Flush the trailing buffer: providers may end the stream without a final "\n".
+ if (buffer.length > 0) {
+ const event = parser.push(buffer);
+ if (event) {
+ if (event.type === "done") sawDone = true;
  yield event;
  }
  }
@@ -160,14 +193,13 @@ export class StreamAccumulator {
     }
 
     if (chunk.usage) {
-      const cached =
-        chunk.usage.prompt_tokens_details?.cached_tokens ?? chunk.usage.cache_read_input_tokens;
-      this.usage = {
-        promptTokens: chunk.usage.prompt_tokens ?? 0,
-        completionTokens: chunk.usage.completion_tokens ?? 0,
-        totalTokens: chunk.usage.total_tokens ?? (chunk.usage.prompt_tokens ?? 0) + (chunk.usage.completion_tokens ?? 0),
-        ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
-      };
+      this.usage = normalizeUsage({
+        promptTokens: chunk.usage.prompt_tokens,
+        completionTokens: chunk.usage.completion_tokens,
+        totalTokens: chunk.usage.total_tokens,
+        cachedTokens: chunk.usage.prompt_tokens_details?.cached_tokens,
+        promptCacheHitTokens: chunk.usage.prompt_cache_hit_tokens,
+      });
     }
 
     const choice = chunk.choices?.[0];

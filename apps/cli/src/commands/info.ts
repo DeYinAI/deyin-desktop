@@ -64,3 +64,20 @@ export async function sessionsCommand(ctx: CliContext): Promise<number> {
   console.log(dim("\nResume with `deyin resume <id>` or continue the latest with `deyin -c`."));
   return 0;
 }
+
+export async function memoryCommand(ctx: CliContext, query?: string): Promise<number> {
+  const q = query?.trim();
+  const facts = q ? ctx.memory.search(q).map((h) => h.fact) : ctx.memory.list();
+  if (facts.length === 0) {
+    console.log(q ? `No relevant memories for "${q}".` : "No saved memories. The agent can save them with its remember tool.");
+    return 0;
+  }
+  for (const f of facts) {
+    const marks: string[] = [dim(`${f.type} \u00b7 ${f.scope}`), dim(`rev ${f.revision}`)];
+    if (f.updatedAt !== f.createdAt) marks.push(dim(`updated ${f.updatedAt.slice(0, 10)}`));
+    console.log(`${bold(f.scope + "/" + f.name).padEnd(36)} ${f.title} ${marks.join("  ")}`);
+    if (f.description) console.log(dim(`  ${f.description}`));
+  }
+  console.log(dim(`\n${facts.length} fact(s)${q ? ` for "${q}"` : ""}. Forget with the agent's forget tool or delete the file under ${ctx.dataDir}/memory.`));
+  return 0;
+}

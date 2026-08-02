@@ -10,14 +10,16 @@ import {
   createCodebaseSearchTool,
   createTaskTool,
   loadContextFiles,
-  runAgent,
   runHooks,
+  Semaphore,
+  runSubagent,
+  subagentReadonlyRules,
   type AgentDefinition,
-  type AgentMessage,
   type LoadedHook,
   type McpConnection,
   type PermissionRule,
   type SubagentDefinition,
+  subagentEffort,
 } from "@deyin/agent-core";
 import type { ApprovalMode, IndexSearchHit } from "../../shared/types.js";
 import type { DeyinConfig } from "../../shared/config.js";
@@ -40,6 +42,10 @@ const READONLY_RULES: PermissionRule[] = [
   { tool: "browser_network", action: "allow" },
 ];
 
+/** Caps concurrent subagent runs inside automation agent runs (settings.subagentConcurrency). */
+let automationSubagentLimit = 6;
+const automationSubagentLimiter = new Semaphore(() => automationSubagentLimit);
+
 export interface AgentRunContextDeps {
   config: DeyinConfig;
   auth: AuthManager;
@@ -47,6 +53,7 @@ export interface AgentRunContextDeps {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
+  memory: import("@deyin/host-core").MemoryStore;
   getWorkspaceRoot: () => string | null;
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   getContextLength: (providerId: string, modelId: string) => number | undefined;
@@ -211,50 +218,55 @@ async function runSubagentInline(
   prompt: string,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; report: string }> {
-  const registry = createBuiltinRegistry();
-  if (deps.settings.get().indexingEnabled) {
-    registry.register(createCodebaseSearchTool((query, topK) => deps.searchIndex(query, topK)));
-  }
-  const readonlyRules: PermissionRule[] = def.readonly
-    ? [
-        { tool: "write", action: "deny" },
-        { tool: "edit", action: "deny" },
-        { tool: "bash", action: "ask" },
-      ]
-    : [];
+  automationSubagentLimit = deps.settings.get().subagentConcurrency;
+  return automationSubagentLimiter.run(() => runSubagentInlineUncapped(deps, cwd, def, prompt, signal));
+}
+
+async function runSubagentInlineUncapped(
+  deps: AgentRunContextDeps,
+  cwd: string,
+  def: SubagentDefinition,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; report: string }> {
   const permissions = new PermissionEngine({
     agentRules: [],
-    configRules: readonlyRules,
+    configRules: subagentReadonlyRules(def),
     skipAll: !def.readonly,
   });
-  const routing = resolveProviderRouting(deps, "openference");
-  const messages: AgentMessage[] = [
-    {
-      role: "system",
-      content: buildSystemPrompt({
-        cwd,
-        agent: { name: def.name, description: def.description, prompt: def.prompt },
-        toolNames: registry.names(),
-      }),
-    },
-    { role: "user", content: prompt },
-  ];
-  try {
-    const result = await runAgent({
-      apiBaseUrl: routing.apiBaseUrl,
-      getToken: routing.getToken,
-      model: def.model ?? deps.settings.get().defaultModel ?? "GLM-5.2",
-      messages,
-      tools: registry,
-      permissions,
-      resolvePermission: async () => "deny",
-      cwd,
-      signal,
-    });
-    return { ok: true, report: result.finalText || "(subagent returned no text)" };
-  } catch (err) {
-    return { ok: false, report: err instanceof Error ? err.message : String(err) };
+  // Resolve provider + model for this subagent. Settings store "providerId::modelId"
+  // (same format as defaultModel): split and route to that provider, send the bare id.
+  const override = deps.settings.get().subagentModels[def.name];
+  const dm = deps.settings.get().defaultModel;
+  let providerId = "openference";
+  let model: string | undefined;
+  if (override) {
+    const sep = override.indexOf("::");
+    providerId = sep >= 0 ? override.slice(0, sep) : "openference";
+    model = sep >= 0 ? override.slice(sep + 2) : override;
+  } else if (def.model) {
+    model = def.model;
+  } else if (dm && dm.includes("::")) {
+    [providerId, model] = dm.split("::") as [string, string];
+  } else {
+    model = dm ?? "GLM-5.2";
   }
+  const routing = resolveProviderRouting(deps, providerId);
+  return runSubagent(def, prompt, {
+    cwd,
+    parent: { model: model ?? "GLM-5.2", providerId, thinking: undefined },
+    modelOverride: override,
+    effortOverride: subagentEffort(deps.settings.get().subagentEfforts[def.name], def.effort),
+    maxStepsDefault: deps.settings.get().subagentMaxSteps,
+    parentRouting: routing,
+    resolveProvider: (id) => resolveProviderRouting(deps, id),
+    permissionEngine: permissions,
+    resolvePermission: async () => "deny",
+    extraTools: deps.settings.get().indexingEnabled
+      ? [createCodebaseSearchTool((query, topK) => deps.searchIndex(query, topK))]
+      : [],
+    signal,
+  });
 }
 
 export function defaultAutomationCwd(deps: AgentRunContextDeps): string {
