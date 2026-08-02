@@ -22,6 +22,10 @@ import { websearchTool } from "./websearch.js";
 import { writeTool } from "./write.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 import { GIT_TOOLS } from "./git.js";
+import { fileTreeTool } from "./tree.js";
+import { envInfoTool } from "./env-info.js";
+import { diffTextTool } from "./diff.js";
+import { processListTool } from "./process-list.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell } from "./bash.js";
@@ -59,6 +63,10 @@ export {
   gitPushTool,
 } from "./git.js";
 export { notebookEditTool } from "./notebook-edit.js";
+export { fileTreeTool } from "./tree.js";
+export { envInfoTool } from "./env-info.js";
+export { diffTextTool, lcsDiff } from "./diff.js";
+export { processListTool, redactArgs } from "./process-list.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export {
   createTaskTool,
@@ -67,6 +75,7 @@ export {
   type TaskRunResult,
 } from "./task.js";
 export { createCodebaseSearchTool, type CodebaseSearchHit } from "./codebase-search.js";
+import { createForgetTool, createMemoryTool, createRememberTool } from "./memory.js";
 
 export const BUILTIN_TOOLS: ToolDefinition[] = [
   bashTool,
@@ -82,6 +91,9 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   todoTool,
   todoReadTool,
   askQuestionTool,
+  createRememberTool(),
+  createForgetTool(),
+  createMemoryTool(),
   createPlanTool,
   enterPlanModeTool,
   exitPlanModeTool,
@@ -94,6 +106,10 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   exitWorktreeTool,
   ...GIT_TOOLS,
   notebookEditTool,
+  fileTreeTool,
+  envInfoTool,
+  diffTextTool,
+  processListTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

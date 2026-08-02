@@ -40,3 +40,6 @@ coverage/
 
 # Local upstream reference (never committed - proprietary)
 .legacy-upstream/
+
+# Local agent-session artifacts
+.agent/

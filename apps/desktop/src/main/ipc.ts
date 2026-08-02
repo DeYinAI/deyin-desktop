@@ -5,6 +5,7 @@ import {
   AccountCache,
   AgentsStore,
   IndexManager,
+  MemoryStore,
   ModelsCache,
   ProjectsStore,
   SettingsStore,
@@ -147,7 +148,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
   const builtinSkillsDir = join(app.getPath("userData"), "builtin-skills");
-  const capabilities = new CapabilityService(agents, opts.getWorkspaceRoot, pluginsDir, builtinSkillsDir);
+  const capabilities = new CapabilityService(agents, opts.getWorkspaceRoot, pluginsDir, builtinSkillsDir, () => settings.get());
   const plugins = new PluginService(pluginsDir, storage, agents, capabilities);
   const browser = new BrowserControlService(opts.getWorkspaceRoot, () => settings.get().browserControlEnabled);
 
@@ -165,6 +166,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
   });
 
+  const memory = new MemoryStore(app.getPath("userData"));
+
   const agentHost = new DesktopAgentHost({
     config,
     auth,
@@ -173,6 +176,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     capabilities,
     browser,
     terminals,
+    memory,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
@@ -191,6 +195,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    memory,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {

@@ -17,6 +17,7 @@ import {
 import type { CliContext } from "./context.js";
 import { tokenSource } from "./context.js";
 import { dim, red } from "./output.js";
+import { registerCliSubagentTool } from "./subagents.js";
 
 export interface HeadlessOptions {
   ctx: CliContext;
@@ -60,6 +61,15 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 
   const agent = resolveAgent(ctx.config, ctx.config.agent) ?? BUILD_AGENT;
   const tools = createBuiltinRegistry();
+  await registerCliSubagentTool(tools, {
+    ctx,
+    skipAll: opts.yes ?? false,
+    resolvePermission: async (req) => {
+      stderr.write(dim(`[permission] auto-denied ${req.toolName} (${req.summary}); pass --yes to allow\n`));
+      return "deny";
+    },
+    onBackgroundDone: (def) => stderr.write(dim(`[subagent] background \u201c${def.name}\u201d finished\n`)),
+  });
   const mcp: McpConnection[] = await connectMcpServers(ctx.config.mcpServers, tools, {
     onError: (server, err) =>
       stderr.write(dim(`[mcp] ${server}: failed to start (${err instanceof Error ? err.message : String(err)})\n`)),
@@ -157,7 +167,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
           stderr.write(dim("[ask_question] no TTY interaction in headless mode; auto-selecting first options\n"));
           return JSON.stringify(autoSelectAskQuestionAnswers(request), null, 2);
         },
+        memory: ctx.config.memoryEnabled ? ctx.memory : undefined,
       },
+      memory: ctx.config.memoryEnabled ? ctx.memory : undefined,
       onEvent,
       onMessage: (message) => ctx.sessions.append(sessionId, message),
       cwd: ctx.cwd,

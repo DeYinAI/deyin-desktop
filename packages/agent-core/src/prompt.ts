@@ -1,6 +1,6 @@
-import { readFile, readdir } from "node:fs/promises";
-import { platform } from "node:os";
-import { dirname, join } from "node:path";
+import { readFile, readdir, realpath } from "node:fs/promises";
+import { homedir, platform } from "node:os";
+import { dirname, join, sep } from "node:path";
 import type { AgentDefinition } from "./agents.js";
 import { skillsPromptSection, type SkillDefinition } from "./capabilities/skills.js";
 import type { SystemPromptSections } from "./context-usage.js";
@@ -8,19 +8,63 @@ import { effectiveShell } from "./tools/bash.js";
 
 const MAX_CONTEXT_FILE_CHARS = 20_000;
 const MAX_PARENT_LEVELS = 5;
+/** Nested @import expansion depth cap (Advanced agent-style instruction imports). */
+const MAX_IMPORT_DEPTH = 5;
+
+/** Instruction files recognized in a directory, normal first then .local variants (local wins). */
+const INSTRUCTION_ORDER = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "DEYIN.md",
+  "AGENTS.local.md",
+  "CLAUDE.local.md",
+  "DEYIN.local.md",
+];
 
 export interface ContextFile {
   path: string;
   content: string;
 }
 
+export interface LoadContextFilesOptions {
+  /** Directory holding user-global instruction files (defaults to ~/.deyin). */
+  userDir?: string;
+}
+
+export interface LoadContextFilesResult {
+  files: ContextFile[];
+  /** Import/precedence diagnostics (cycles, escapes, depth, missing imports). */
+  diagnostics: string[];
+}
+
 /**
- * Load project instructions: AGENTS.md from cwd up to MAX_PARENT_LEVELS ancestors
- * (nearest last so it wins), plus every markdown file in <cwd>/.deyin/rules/.
+ * Load project + user instructions with Advanced agent-style layering and precedence
+ * (later entries win):
+ *
+ *   1. user-global instruction files from `~/.deyin/` (lowest priority);
+ *   2. instruction files (`AGENTS.md` / `CLAUDE.md` / `DEYIN.md` and their
+ *      `.local.md` variants) walking from the farthest ancestor to cwd — deeper
+ *      directories beat broader ones, and a `.local` variant beats normal files
+ *      in the same directory;
+ *   3. every markdown file in `<cwd>/.deyin/rules/` (highest priority).
+ *
+ * Standalone `@path` lines import another instruction file relative to the
+ * importing file's directory (max 5 levels, no absolute paths, no parent or
+ * symlink escapes, no cycles). Files whose expanded content is identical are
+ * deduplicated, keeping the more specific (later) source.
  */
-export async function loadContextFiles(cwd: string): Promise<ContextFile[]> {
+export async function loadContextFilesDetailed(
+  cwd: string,
+  opts: LoadContextFilesOptions = {},
+): Promise<LoadContextFilesResult> {
+  const diagnostics: string[] = [];
   const files: ContextFile[] = [];
 
+  // 1) User-global instructions: ~/.deyin/{AGENTS,CLAUDE,DEYIN}(.local).md
+  const userDir = opts.userDir ?? join(homedir(), ".deyin");
+  files.push(...(await instructionFilesIn(userDir)));
+
+  // 2) Workspace walk, farthest ancestor first so the nearest appears last.
   const dirs: string[] = [];
   let dir = cwd;
   for (let i = 0; i < MAX_PARENT_LEVELS; i++) {
@@ -29,26 +73,105 @@ export async function loadContextFiles(cwd: string): Promise<ContextFile[]> {
     if (parent === dir) break;
     dir = parent;
   }
-  // Farthest ancestor first, so the nearest AGENTS.md appears last (highest priority).
   for (const d of dirs.reverse()) {
-    const path = join(d, "AGENTS.md");
-    const content = await readOptional(path);
-    if (content) files.push({ path, content: content.slice(0, MAX_CONTEXT_FILE_CHARS) });
+    files.push(...(await instructionFilesIn(d)));
   }
 
+  // 3) Project rules.
   try {
     const rulesDir = join(cwd, ".deyin", "rules");
     const entries = await readdir(rulesDir, { withFileTypes: true });
     for (const entry of entries.filter((e) => e.isFile() && e.name.endsWith(".md")).sort((a, b) => a.name.localeCompare(b.name))) {
       const path = join(rulesDir, entry.name);
       const content = await readOptional(path);
-      if (content) files.push({ path, content: content.slice(0, MAX_CONTEXT_FILE_CHARS) });
+      if (content) files.push({ path, content });
     }
   } catch {
     // no rules dir
   }
 
-  return files;
+  // 4) Expand @imports per file.
+  const expanded: ContextFile[] = [];
+  for (const file of files) {
+    const expandedFile = await expandImports(file, new Set(), diagnostics);
+    if (expandedFile) expanded.push(expandedFile);
+  }
+
+  // 5) Dedup identical expanded content, keeping the more specific (later) source.
+  const byContent = new Map<string, ContextFile>();
+  for (const file of expanded) byContent.set(file.content, file);
+  const deduped = [...byContent.values()];
+
+  // Re-apply the per-file cap after expansion.
+  return { files: deduped.map((f) => ({ ...f, content: f.content.slice(0, MAX_CONTEXT_FILE_CHARS) })), diagnostics };
+}
+
+/** Convenience wrapper returning just the files (diagnostics dropped). */
+export async function loadContextFiles(cwd: string, opts: LoadContextFilesOptions = {}): Promise<ContextFile[]> {
+  return (await loadContextFilesDetailed(cwd, opts)).files;
+}
+
+/** Read the recognized instruction files of one directory in precedence order. */
+async function instructionFilesIn(dir: string): Promise<ContextFile[]> {
+  const out: ContextFile[] = [];
+  for (const base of INSTRUCTION_ORDER) {
+    const path = join(dir, base);
+    const content = await readOptional(path);
+    if (content) out.push({ path, content });
+  }
+  return out;
+}
+
+/** Expand standalone `@path` import lines, confining imports to the file's directory. */
+async function expandImports(file: ContextFile, stack: Set<string>, diagnostics: string[]): Promise<ContextFile | null> {
+  const real = await realpathSafe(file.path);
+  if (real && stack.has(real)) {
+    diagnostics.push(`import cycle at ${file.path}`);
+    return null;
+  }
+  if (real) stack.add(real);
+  const lines = file.content.split("\n");
+  const parts: string[] = [];
+  for (const line of lines) {
+    const match = /^\s*@(\S+)\s*$/.exec(line);
+    if (!match) {
+      parts.push(line);
+      continue;
+    }
+    const ref = match[1]!;
+    if (stack.size > MAX_IMPORT_DEPTH) {
+      diagnostics.push(`import depth exceeded at ${file.path} (${ref})`);
+      parts.push(line);
+      continue;
+    }
+    if (ref.startsWith("/") || ref.includes("..")) {
+      diagnostics.push(`import "${ref}" in ${file.path} rejected (absolute or parent escape)`);
+      continue;
+    }
+    const dirReal = await realpathSafe(dirname(file.path));
+    const target = join(dirname(file.path), ref);
+    const targetReal = await realpathSafe(target);
+    if (targetReal === null || dirReal === null) {
+      diagnostics.push(`import "${ref}" in ${file.path}: file not found`);
+      continue;
+    }
+    if (!targetReal.startsWith(dirReal + sep)) {
+      diagnostics.push(`import "${ref}" in ${file.path} rejected (escapes its directory)`);
+      continue;
+    }
+    const nested = await expandImports({ path: target, content: await readOptional(target) ?? "" }, stack, diagnostics);
+    if (nested) parts.push(nested.content);
+  }
+  if (real) stack.delete(real);
+  return { path: file.path, content: parts.join("\n") };
+}
+
+async function realpathSafe(path: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch {
+    return null;
+  }
 }
 
 async function readOptional(path: string): Promise<string | null> {
@@ -113,7 +236,7 @@ export function buildSystemPromptParts(opts: SystemPromptOptions): SystemPromptB
 
   const ruleParts: string[] = [];
   for (const file of opts.contextFiles ?? []) {
-    ruleParts.push(`# Project instructions from ${file.path}\n${file.content}`);
+    ruleParts.push(`# Instructions from ${file.path}\n${file.content}`);
   }
   const rules = ruleParts.join("\n\n");
 
