@@ -1,9 +1,19 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { threadPreview } from "@deyin/host-core/shared";
 import { useT } from "../i18n.js";
 import { ContextUsage } from "./ContextUsage.js";
 import { Icon, type IconName } from "./Icon.js";
 import { ModelPicker } from "./ModelPicker.js";
-import type { ApprovalMode, ChatMode, ContextUsageSnapshot, ModelInfo } from "../../shared/types.js";
+import type {
+  ApprovalMode,
+  ChatMode,
+  ContextAttachment,
+  ContextSearchHit,
+  ContextUsageSnapshot,
+  LinkedThreadRef,
+  ModelInfo,
+  Thread,
+} from "../../shared/types.js";
 
 interface ComposerProps {
   value: string;
@@ -12,6 +22,8 @@ interface ComposerProps {
   approvalMode: ApprovalMode;
   /** Composer mode (Agent/Plan/Ask); hidden when undefined (e.g. web plain chat). */
   mode?: ChatMode;
+  /** When false, Delivery mode is hidden from the mode switcher. */
+  deliveryModeEnabled?: boolean;
   thinking: boolean;
   canSend: boolean;
   streaming: boolean;
@@ -39,6 +51,20 @@ interface ComposerProps {
   contextLength?: number;
   /** Active thread id — resets the Context Usage popover on switch. */
   threadKey?: string | null;
+  /** Run status from event-sourced agent state. */
+  runStatus?: { phase: string; label: string; retryCount: number; maxRetries: number; workDurationMs: number } | null;
+  /** Soft compaction warning from the agent loop (50% context threshold). */
+  compactionNotice?: string | null;
+  attachments?: ContextAttachment[];
+  onAttachmentsChange?: (next: ContextAttachment[]) => void;
+  linkedThreads?: LinkedThreadRef[];
+  onLinkedThreadsChange?: (next: LinkedThreadRef[]) => void;
+  /** Other threads in the project for # linking. */
+  threadsForPicker?: Thread[];
+  activeThreadId?: string | null;
+  workspaceRoot?: string | null;
+  goalText?: string | null;
+  onSetGoal?: (text: string | null) => void;
 }
 
 const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "hand" | "eye" }> = {
@@ -47,9 +73,17 @@ const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "han
   "read-only": { label: "Read only", icon: "eye" },
 };
 
-const MODE_ORDER: ChatMode[] = ["agent", "plan", "ask"];
-const MODE_META: Record<ChatMode, { labelKey: "mode.agent" | "mode.plan" | "mode.ask"; descKey: "mode.agentDesc" | "mode.planDesc" | "mode.askDesc"; icon: IconName }> = {
+const MODE_ORDER: ChatMode[] = ["agent", "delivery", "plan", "ask"];
+const MODE_META: Record<
+  ChatMode,
+  {
+    labelKey: "mode.agent" | "mode.delivery" | "mode.plan" | "mode.ask";
+    descKey: "mode.agentDesc" | "mode.deliveryDesc" | "mode.planDesc" | "mode.askDesc";
+    icon: IconName;
+  }
+> = {
   agent: { labelKey: "mode.agent", descKey: "mode.agentDesc", icon: "bolt" },
+  delivery: { labelKey: "mode.delivery", descKey: "mode.deliveryDesc", icon: "shield" },
   plan: { labelKey: "mode.plan", descKey: "mode.planDesc", icon: "route" },
   ask: { labelKey: "mode.ask", descKey: "mode.askDesc", icon: "message" },
 };
@@ -62,15 +96,41 @@ interface SlashItem {
 export function Composer(props: ComposerProps) {
   const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
+  const modeOrder = useMemo(
+    () => (props.deliveryModeEnabled === false ? MODE_ORDER.filter((m) => m !== "delivery") : MODE_ORDER),
+    [props.deliveryModeEnabled],
+  );
   const [plusOpen, setPlusOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
+  const [atHits, setAtHits] = useState<ContextSearchHit[]>([]);
+  const [hashHits, setHashHits] = useState<LinkedThreadRef[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const attachments = props.attachments ?? [];
+  const linkedThreads = props.linkedThreads ?? [];
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
+
+  const attachmentEstimateTokens = useMemo(
+    () =>
+      Math.round(
+        attachments.reduce(
+          (sum, a) => sum + Math.max(2_000, (a.path.length + (a.label?.length ?? 0)) * 80),
+          0,
+        ) / 4,
+      ),
+    [attachments],
+  );
+  const contextLimit = props.contextLength ?? props.contextSnapshot?.contextLength ?? 0;
+  const attachmentHeavy =
+    attachmentEstimateTokens > 0 && contextLimit > 0 && attachmentEstimateTokens / contextLimit > 0.5;
 
   const cycleMode = () => {
     if (!props.mode || !props.onSelectMode) return;
-    const next = MODE_ORDER[(MODE_ORDER.indexOf(props.mode) + 1) % MODE_ORDER.length]!;
+    const next = modeOrder[(modeOrder.indexOf(props.mode!) + 1) % modeOrder.length]!;
     props.onSelectMode(next);
   };
 
@@ -87,6 +147,16 @@ export function Composer(props: ComposerProps) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [props.mode]);
+
+  // Escape closes goal modal
+  useEffect(() => {
+    if (!goalOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setGoalOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [goalOpen]);
 
   // Slash autocomplete sources: commands plus skills (invocable as /skill-name).
   useEffect(() => {
@@ -114,6 +184,89 @@ export function Composer(props: ComposerProps) {
     const query = props.value.slice(1).toLowerCase();
     return slashItems.filter((i) => i.name.startsWith(query)).slice(0, 8);
   })();
+
+  const atQuery = (() => {
+    const m = props.value.match(/@([^\s@]*)$/);
+    return m ? m[1]! : null;
+  })();
+
+  const hashQuery = (() => {
+    const m = props.value.match(/#([^\s#]*)$/);
+    return m ? m[1]! : null;
+  })();
+
+  useEffect(() => {
+    if (atQuery === null || !props.workspaceRoot) {
+      setAtHits([]);
+      return;
+    }
+    let alive = true;
+    const timer = setTimeout(() => {
+      void window.deyin.context.search(atQuery).then((hits) => {
+        if (alive) setAtHits(hits);
+      });
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [atQuery, props.workspaceRoot]);
+
+  useEffect(() => {
+    if (hashQuery === null) {
+      setHashHits([]);
+      return;
+    }
+    const q = hashQuery.toLowerCase();
+    const pool =
+      props.threadsForPicker?.filter((t) => t.id !== props.activeThreadId && !t.archived) ?? [];
+    setHashHits(
+      pool
+        .filter((t) => t.title.toLowerCase().includes(q) || t.id.includes(q))
+        .slice(0, 8)
+        .map((t) => ({ threadId: t.id, title: t.title, preview: threadPreview(t.events) })),
+    );
+  }, [hashQuery, props.threadsForPicker, props.activeThreadId]);
+
+  const addAttachment = useCallback(
+    (hit: ContextSearchHit) => {
+      if (!props.onAttachmentsChange) return;
+      const next = [...attachments];
+      if (!next.some((a) => a.path === hit.path)) {
+        next.push({ kind: hit.kind, path: hit.path, label: hit.label });
+      }
+      props.onAttachmentsChange(next);
+      props.onChange(props.value.replace(/@([^\s@]*)$/, "").trimEnd());
+      ref.current?.focus();
+    },
+    [attachments, props],
+  );
+
+  const addLinkedThread = useCallback(
+    (linked: LinkedThreadRef) => {
+      if (!props.onLinkedThreadsChange) return;
+      const next = [...linkedThreads];
+      if (!next.some((l) => l.threadId === linked.threadId)) next.push(linked);
+      props.onLinkedThreadsChange(next);
+      props.onChange(props.value.replace(/#([^\s#]*)$/, "").trimEnd());
+      ref.current?.focus();
+    },
+    [linkedThreads, props],
+  );
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    if (!props.onAttachmentsChange || !props.workspaceRoot) return;
+    const paths = [...e.dataTransfer.files].map((f) => (f as File & { path?: string }).path).filter(Boolean) as string[];
+    if (paths.length === 0) return;
+    const next = [...attachments];
+    for (const path of paths) {
+      if (!next.some((a) => a.path === path)) {
+        next.push({ kind: "file", path, label: path.split(/[\\/]/).pop() });
+      }
+    }
+    props.onAttachmentsChange(next);
+  };
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -164,7 +317,55 @@ export function Composer(props: ComposerProps) {
   const showSendNow = props.streaming && !!props.onSendNow && (props.canSend || queued.length > 0);
 
   return (
-    <div className="composer" ref={rootRef}>
+    <div className="composer" ref={rootRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+      {(attachments.length > 0 || linkedThreads.length > 0) && (
+        <div className="composer__chips">
+          {attachments.map((a) => (
+            <span key={a.path} className="chip chip--attach">
+              <Icon name={a.kind === "folder" ? "folder" : "file"} size={12} />
+              <span>{a.label ?? a.path.split(/[\\/]/).pop()}</span>
+              <button
+                type="button"
+                className="chip__remove"
+                aria-label="Remove attachment"
+                onClick={() =>
+                  props.onAttachmentsChange?.(attachments.filter((x) => x.path !== a.path))
+                }
+              >
+                <Icon name="close" size={10} />
+              </button>
+            </span>
+          ))}
+          {linkedThreads.map((l) => (
+            <span key={l.threadId} className="chip chip--link">
+              <Icon name="hash" size={12} />
+              <span>{l.title}</span>
+              <button
+                type="button"
+                className="chip__remove"
+                aria-label="Remove linked thread"
+                onClick={() =>
+                  props.onLinkedThreadsChange?.(linkedThreads.filter((x) => x.threadId !== l.threadId))
+                }
+              >
+                <Icon name="close" size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {props.compactionNotice && (
+        <div className="composer__compact-warn" role="status">
+          {props.compactionNotice}
+        </div>
+      )}
+      {attachmentHeavy && (
+        <div className="composer__attach-warn" role="status">
+          Attachments may use ~{attachmentEstimateTokens.toLocaleString()} tokens (
+          {Math.round((attachmentEstimateTokens / contextLimit) * 100)}% of context). Consider fewer or smaller
+          files.
+        </div>
+      )}
       {queued.length > 0 && (
         <div className="composer__queue" title={queued}>
           <span className="composer__queue-label">Queued</span>
@@ -209,6 +410,53 @@ export function Composer(props: ComposerProps) {
           ))}
         </div>
       )}
+      {atQuery !== null && atHits.length > 0 && (
+        <div className="slashmenu">
+          {atHits.map((hit) => (
+            <button key={hit.path} className="slashmenu__item" onClick={() => addAttachment(hit)}>
+              <Icon name={hit.kind === "folder" ? "folder" : "file"} size={14} />
+              <span>{hit.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {hashQuery !== null && hashHits.length > 0 && (
+        <div className="slashmenu">
+          {hashHits.map((hit) => (
+            <button key={hit.threadId} className="slashmenu__item" onClick={() => addLinkedThread(hit)}>
+              <Icon name="hash" size={14} />
+              <span>
+                {hit.title}
+                {"preview" in hit && hit.preview ? (
+                  <span className="slashmenu__desc">{String(hit.preview)}</span>
+                ) : null}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          setPlusOpen(false);
+          if (!props.onAttachmentsChange) return;
+          const picked = [...e.target.files ?? []]
+            .map((f) => (f as File & { path?: string }).path)
+            .filter((p): p is string => Boolean(p));
+          if (picked.length === 0) return;
+          const next = [...attachments];
+          for (const path of picked) {
+            if (!next.some((a) => a.path === path)) {
+              next.push({ kind: "file", path, label: path.split(/[\\/]/).pop() });
+            }
+          }
+          props.onAttachmentsChange(next);
+          e.target.value = "";
+        }}
+      />
       <textarea
         ref={ref}
         className="composer__input"
@@ -218,9 +466,11 @@ export function Composer(props: ComposerProps) {
             ? t("composer.placeholderPlan")
             : props.mode === "ask"
               ? t("composer.placeholderAsk")
-              : props.hasEvents
-                ? t("composer.placeholderFollowUp")
-                : t("composer.placeholder")
+              : props.mode === "delivery"
+                ? t("composer.placeholderDelivery")
+                : props.hasEvents
+                  ? t("composer.placeholderFollowUp")
+                  : t("composer.placeholder")
         }
         value={props.value}
         onChange={(e) => {
@@ -236,7 +486,13 @@ export function Composer(props: ComposerProps) {
           </button>
           {plusOpen && (
             <div className="menu__panel menu__panel--up">
-              <button className="menu__item" onClick={() => setPlusOpen(false)}>
+              <button
+                className="menu__item"
+                onClick={() => {
+                  fileInputRef.current?.click();
+                  setPlusOpen(false);
+                }}
+              >
                 <Icon name="attach" size={14} />
                 Add attachment
               </button>
@@ -269,7 +525,7 @@ export function Composer(props: ComposerProps) {
             </button>
             {modeOpen && (
               <div className="menu__panel menu__panel--up">
-                {MODE_ORDER.map((mode) => (
+                {modeOrder.map((mode) => (
                   <button
                     key={mode}
                     className={`menu__item ${mode === props.mode ? "menu__item--active" : ""}`}
@@ -325,6 +581,7 @@ export function Composer(props: ComposerProps) {
           snapshot={props.contextSnapshot ?? null}
           contextLength={props.contextLength}
           threadKey={props.threadKey}
+          attachmentEstimateTokens={attachmentEstimateTokens}
         />
 
         <ModelPicker
@@ -345,6 +602,20 @@ export function Composer(props: ComposerProps) {
           <Icon name="brain" size={12} />
           <span>{props.thinking ? "On" : "Off"}</span>
         </button>
+
+        {props.onSetGoal && (
+          <button
+            className={`chip ${props.goalText ? "chip--mode" : ""}`}
+            title="Set a verifiable goal for this task"
+            onClick={() => {
+              setGoalDraft(props.goalText ?? "");
+              setGoalOpen(true);
+            }}
+          >
+            <Icon name="flag" size={12} />
+            <span>{props.goalText ? "Goal" : "Set goal"}</span>
+          </button>
+        )}
 
         <div className="composer__actions">
           {showStop && (
@@ -375,6 +646,55 @@ export function Composer(props: ComposerProps) {
           )}
         </div>
       </div>
+      {goalOpen && props.onSetGoal && (
+        <div className="goal-modal-backdrop" onClick={() => setGoalOpen(false)}>
+          <div
+            className="goal-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Set goal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="goal-modal__title">Task goal</div>
+            <p className="hint">A verifiable objective. The agent stops when it reports the goal met.</p>
+            <textarea
+              className="input goal-modal__input"
+              rows={3}
+              placeholder="e.g. All tests pass and README documents the new API"
+              value={goalDraft}
+              onChange={(e) => setGoalDraft(e.target.value)}
+              autoFocus
+            />
+            <div className="goal-modal__actions">
+              <button type="button" className="chip chip--small" onClick={() => setGoalOpen(false)}>
+                Cancel
+              </button>
+              {props.goalText && (
+                <button
+                  type="button"
+                  className="chip chip--small"
+                  onClick={() => {
+                    props.onSetGoal?.(null);
+                    setGoalOpen(false);
+                  }}
+                >
+                  Clear goal
+                </button>
+              )}
+              <button
+                type="button"
+                className="chip chip--small chip--active"
+                onClick={() => {
+                  props.onSetGoal?.(goalDraft.trim() || null);
+                  setGoalOpen(false);
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

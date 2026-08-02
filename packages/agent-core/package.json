@@ -2,7 +2,7 @@
   "name": "@deyin/agent-core",
   "private": true,
   "version": "0.1.1",
-  "description": "Deyin's agentic runtime: OpenAI-compatible streaming with tool_calls accumulation, the agent loop, built-in tools (bash, read, write, edit, grep, glob, ls, websearch, todo), the permission engine, session persistence, layered config, prompts/compaction, and an MCP client. Consumed by the CLI today and the desktop app later.",
+  "description": "Deyin's agentic runtime: OpenAI-compatible streaming with tool_calls accumulation, the agent loop, built-in tools (bash, read, write, edit, grep, glob, ls, websearch, todo), the permission engine, session persistence, layered config, prompts/compaction, and an MCP client. Consumed by the desktop app and CLI.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -24,13 +24,20 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts src/cache/__tests__/*.test.ts",
+    "test:e2e": "tsx --test test/e2e/*.test.ts",
+    "test:migration": "tsx --test test/migration.test.ts",
+    "test:edge": "tsx --test test/edge-cases.test.ts",
+    "test:load": "tsx --test test/load.test.ts",
+    "test:agent": "tsx --test test/*.test.ts test/e2e/*.test.ts src/cache/__tests__/*.test.ts",
+    "benchmark": "tsx test/performance/run-benchmarks.ts"
   },
   "dependencies": {
     "@deyin/host-core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/client": "^2.0.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "@types/node": "^22.10.2",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"

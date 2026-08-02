@@ -1,0 +1,22 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "description": "Repositories, issues, pull requests, and code search.",
+  "category": "devtools",
+  "vendor": "GitHub",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://api.githubcopilot.com/mcp/",
+  "headers": {
+    "Authorization": "Bearer ${env:GITHUB_PERSONAL_ACCESS_TOKEN}"
+  },
+  "secrets": [
+    {
+      "envKey": "GITHUB_PERSONAL_ACCESS_TOKEN",
+      "label": "GitHub personal access token",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://github.com/github/github-mcp-server",
+  "featured": true
+}

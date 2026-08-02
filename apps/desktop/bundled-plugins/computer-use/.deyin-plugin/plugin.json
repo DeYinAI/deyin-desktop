@@ -1,0 +1,18 @@
+{
+  "name": "computer-use",
+  "version": "1.0.0",
+  "description": "OS-level Windows desktop automation via accessibility tree and screenshots.",
+  "bundled": true,
+  "hostModule": "computer-use",
+  "platform": "windows",
+  "interface": {
+    "displayName": "Computer Use",
+    "shortDescription": "Control allowed Windows apps with screenshots and input.",
+    "longDescription": "List windows, capture state, click, type, and scroll in desktop applications on Windows. Requires explicit enable and app allowlist.",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "brandColor": "#8B5CF6",
+    "defaultPrompt": ["Open Notepad and type a hello message", "List open windows and describe what's on screen"],
+    "logo": "logo.svg"
+  }
+}

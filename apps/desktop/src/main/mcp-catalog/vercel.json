@@ -1,0 +1,19 @@
+{
+  "id": "vercel",
+  "name": "Vercel",
+  "description": "Deployments, logs, env vars, and project management.",
+  "category": "cloud-infra",
+  "vendor": "Vercel",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.vercel.com",
+  "secrets": [
+    {
+      "envKey": "VERCEL_TOKEN",
+      "label": "Vercel access token",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://vercel.com/docs/mcp",
+  "featured": true
+}

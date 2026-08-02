@@ -34,6 +34,19 @@ export interface PermissionEngineOptions {
   configRules?: PermissionRule[];
   /** --yes / -y: skip every prompt and allow everything (headless/CI). */
   skipAll?: boolean;
+  /** Exact tool names that must never be auto-allowed by skipAll. */
+  neverSkipTools?: Iterable<string>;
+  /** Prefix patterns (e.g. "computer_") that must never be auto-allowed by skipAll. */
+  neverSkipPrefixes?: Iterable<string>;
+}
+
+function matchesNeverSkip(
+  toolName: string,
+  neverSkipTools: Set<string>,
+  neverSkipPrefixes: string[],
+): boolean {
+  if (neverSkipTools.has(toolName)) return true;
+  return neverSkipPrefixes.some((prefix) => toolName.startsWith(prefix));
 }
 
 /**
@@ -42,21 +55,37 @@ export interface PermissionEngineOptions {
  */
 export class PermissionEngine {
   private readonly rules: PermissionRule[];
-  private readonly skipAll: boolean;
+  private skipAll: boolean;
+  private readonly neverSkipTools: Set<string>;
+  private readonly neverSkipPrefixes: string[];
   private readonly sessionGrants = new Set<string>();
 
   constructor(opts: PermissionEngineOptions = {}) {
     this.rules = [...(opts.agentRules ?? []), ...(opts.configRules ?? [])];
     this.skipAll = opts.skipAll ?? false;
+    this.neverSkipTools = new Set(opts.neverSkipTools ?? []);
+    this.neverSkipPrefixes = [...(opts.neverSkipPrefixes ?? [])];
   }
 
   actionFor(tool: Pick<ToolDefinition, "name" | "tier">): PermissionAction {
-    if (this.skipAll) return "allow";
+    const protectedTool = matchesNeverSkip(tool.name, this.neverSkipTools, this.neverSkipPrefixes);
     const match = this.rules.findLast((r) => r.tool === "*" || r.tool === tool.name);
-    const action = match?.action ?? tierDefault(tool.tier);
-    if (action === "deny") return "deny";
-    if (action === "ask" && this.sessionGrants.has(tool.name)) return "allow";
-    return action;
+    const ruleAction = match?.action ?? tierDefault(tool.tier);
+    if (ruleAction === "deny") return "deny";
+    if (this.skipAll && !protectedTool) return "allow";
+    if (ruleAction === "ask" && this.sessionGrants.has(tool.name) && !protectedTool) return "allow";
+    return ruleAction;
+  }
+
+  /** Rebuild rules and skipAll after a mode switch mid-run. */
+  reconfigure(opts: PermissionEngineOptions): void {
+    this.rules.length = 0;
+    this.rules.push(...(opts.agentRules ?? []), ...(opts.configRules ?? []));
+    this.skipAll = opts.skipAll ?? false;
+    this.neverSkipTools.clear();
+    for (const t of opts.neverSkipTools ?? []) this.neverSkipTools.add(t);
+    this.neverSkipPrefixes.length = 0;
+    this.neverSkipPrefixes.push(...(opts.neverSkipPrefixes ?? []));
   }
 
   /** Session-scoped "always allow" (the "don't ask again" choice in the prompt). */

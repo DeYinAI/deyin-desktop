@@ -25,18 +25,22 @@ export interface ContextUsageProps {
   contextLength?: number;
   /** Close the popover when this changes (active thread id). */
   threadKey?: string | null;
+  /** Rough token estimate for pending @ attachments (chars / 4). */
+  attachmentEstimateTokens?: number;
 }
 
 /** Circular meter + Cursor-style Context Usage popover above the composer. */
-export function ContextUsage({ snapshot, contextLength, threadKey }: ContextUsageProps) {
+export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEstimateTokens = 0 }: ContextUsageProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const measured = snapshot != null;
 
   // Prefer the live model window so model switches update % without waiting for a new run.
-  const used = snapshot?.usedTokens ?? 0;
+  const used = (snapshot?.usedTokens ?? 0) + attachmentEstimateTokens;
   const limit = (contextLength && contextLength > 0 ? contextLength : 0) || snapshot?.contextLength || 0;
   const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const ringTone = percent >= 90 ? "critical" : percent >= 70 ? "warn" : "ok";
+  const attachmentHeavy = attachmentEstimateTokens > 0 && limit > 0 && attachmentEstimateTokens / limit > 0.5;
   const categories = (snapshot?.categories ?? []).filter((c) => c.tokens > 0);
 
   useEffect(() => {
@@ -82,7 +86,7 @@ export function ContextUsage({ snapshot, contextLength, threadKey }: ContextUsag
     <div className="context-usage" ref={rootRef}>
       <button
         type="button"
-        className={`context-usage__meter ${open ? "context-usage__meter--open" : ""}`}
+        className={`context-usage__meter context-usage__meter--${ringTone} ${open ? "context-usage__meter--open" : ""}`}
         title={meterTitle}
         aria-label={meterAria}
         aria-expanded={open}
@@ -99,7 +103,7 @@ export function ContextUsage({ snapshot, contextLength, threadKey }: ContextUsag
             strokeWidth={stroke}
           />
           <circle
-            className="context-usage__fill"
+            className={`context-usage__fill context-usage__fill--${ringTone}`}
             cx={size / 2}
             cy={size / 2}
             r={r}
@@ -184,10 +188,21 @@ export function ContextUsage({ snapshot, contextLength, threadKey }: ContextUsag
             )}
           </ul>
 
-          {(snapshot?.cached || wireSaved > 0) && (
+          {(attachmentHeavy || snapshot?.cached || wireSaved > 0 || snapshot?.cache) && (
             <div className="context-usage__footer">
+              {attachmentHeavy && <span>Large attachments may exceed the context budget</span>}
               {snapshot?.cached && <span>Served from response cache</span>}
               {wireSaved > 0 && <span>Wire compression saved ~{formatTokens(wireSaved)}</span>}
+              {snapshot?.cache && snapshot.cache.sessionHit + snapshot.cache.sessionMiss > 0 && (
+                <span>
+                  Prefix cache: {Math.round(snapshot.cache.hitRate * 100)}% hit (
+                  {formatTokens(snapshot.cache.sessionHit)} cached /{" "}
+                  {formatTokens(snapshot.cache.sessionMiss)} new)
+                  {snapshot.cache.prefixChanged && snapshot.cache.changeReasons?.length
+                    ? ` · churn: ${snapshot.cache.changeReasons.join(", ")}`
+                    : ""}
+                </span>
+              )}
             </div>
           )}
         </div>

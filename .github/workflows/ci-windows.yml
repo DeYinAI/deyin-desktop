@@ -1,0 +1,30 @@
+name: CI Windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  computer-use-host:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Build computer-use-host TS
+        run: pnpm --filter @deyin/computer-use-host build
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build native host
+        run: dotnet publish packages/computer-use-host/native -c Release -r win-x64 --self-contained false
+      - name: Pipe handshake smoke
+        shell: pwsh
+        run: ./scripts/smoke-computer-use.ps1

@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "../Icon.js";
 import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
 import type { PluginCatalogEntry, PluginInfo } from "../../../shared/types.js";
 
+const CATEGORIES = ["All", "Productivity", "Security", "Engineering"] as const;
+
 /**
  * Plugins: bundles of skills/commands/subagents/MCP servers/hooks installed
- * from GitHub into the user's plugin directory. The catalog comes from the
- * official DeYinAI/registry repo; any GitHub repo can be installed by URL.
+ * from GitHub or shipped as bundled first-party plugins.
  */
 export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: boolean) => void }) {
   const [installed, setInstalled] = useState<PluginInfo[]>([]);
@@ -14,6 +15,7 @@ export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: bool
   const [source, setSource] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>("All");
 
   const reload = useCallback(() => {
     void window.deyin.plugins.list().then(setInstalled).catch(() => setInstalled([]));
@@ -48,38 +50,60 @@ export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: bool
   };
 
   const installedNames = new Set(installed.map((p) => p.name));
+  const filtered = useMemo(() => {
+    if (category === "All") return installed;
+    return installed.filter((p) => p.interface?.category === category);
+  }, [installed, category]);
 
   return (
     <div className="settings-page">
       <PageHeader
         title="Plugins"
-        description="Bundles of skills, commands, subagents, MCP servers and hooks. Installed from GitHub into your plugin library."
+        description="First-party bundled plugins and community packs from GitHub. Each plugin contributes skills, MCP servers, and host tools."
       >
         <button className="icon-btn" title="Refresh" onClick={reload}>
           <Icon name="refresh" size={14} />
         </button>
       </PageHeader>
 
-      <SectionTitle>Installed</SectionTitle>
-      {installed.map((plugin) => (
-        <div key={plugin.name}>
-          <SettingCard
-            title={plugin.name + (plugin.version ? ` · v${plugin.version}` : "")}
-            description={`${plugin.description ?? "No description."} — ${plugin.source} · ${componentSummary(plugin)}`}
+      <div className="plugin-filters">
+        {CATEGORIES.map((c) => (
+          <button
+            key={c}
+            className={`chip chip--small${category === c ? " chip--active" : ""}`}
+            onClick={() => setCategory(c)}
           >
-            <div className="field__row">
-              <button className="icon-btn icon-btn--small" title="Uninstall" onClick={() => void uninstall(plugin.name)}>
-                <Icon name="trash" size={12} />
-              </button>
-              <Toggle checked={plugin.enabled} onChange={(v) => toggle(plugin, v)} />
-            </div>
-          </SettingCard>
-          {plugin.variables && plugin.variables.length > 0 && (
-            <PluginVariables plugin={plugin.name} names={plugin.variables} />
-          )}
-        </div>
-      ))}
-      {installed.length === 0 && <div className="hint">No plugins installed yet.</div>}
+            {c}
+          </button>
+        ))}
+      </div>
+
+      <SectionTitle>Installed</SectionTitle>
+      <div className="plugin-grid">
+        {filtered.map((plugin) => (
+          <PluginCard
+            key={plugin.name}
+            plugin={plugin}
+            onToggle={(v) => toggle(plugin, v)}
+            onUninstall={() => void uninstall(plugin.name)}
+          />
+        ))}
+      </div>
+      {filtered.length === 0 && <div className="hint">No plugins in this category.</div>}
+
+      {installed.some((p) => p.variables && p.variables.length > 0) && (
+        <>
+          <SectionTitle>Plugin secrets</SectionTitle>
+          {installed
+            .filter((p) => p.variables && p.variables.length > 0)
+            .map((plugin) => (
+              <div key={`vars-${plugin.name}`}>
+                <div className="plugin-vars__heading">{plugin.interface?.displayName ?? plugin.name}</div>
+                <PluginVariables plugin={plugin.name} names={plugin.variables!} />
+              </div>
+            ))}
+        </>
+      )}
 
       <SectionTitle>Install from GitHub</SectionTitle>
       <div className="field__row" style={{ marginBottom: 12 }}>
@@ -122,6 +146,57 @@ export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: bool
   );
 }
 
+function PluginCard({
+  plugin,
+  onToggle,
+  onUninstall,
+}: {
+  plugin: PluginInfo;
+  onToggle: (enabled: boolean) => void;
+  onUninstall: () => void;
+}) {
+  const ui = plugin.interface;
+  const color = ui?.brandColor ?? "var(--accent)";
+  const caps = ui?.capabilities?.join(" · ") ?? componentSummary(plugin);
+
+  return (
+    <div className="plugin-card">
+      <div className="plugin-card__accent" style={{ background: color }} />
+      <div className="plugin-card__body">
+        <div className="plugin-card__header">
+          <div>
+            <div className="plugin-card__title">{ui?.displayName ?? plugin.name}</div>
+            <div className="plugin-card__meta">
+              {plugin.bundled && <span className="badge">Bundled</span>}
+              {plugin.version && <span>v{plugin.version}</span>}
+              {plugin.platform === "windows" && <span className="badge">Windows</span>}
+            </div>
+          </div>
+          <Toggle checked={plugin.enabled} onChange={onToggle} />
+        </div>
+        <p className="plugin-card__desc">{ui?.shortDescription ?? plugin.description ?? "No description."}</p>
+        <div className="plugin-card__footer">
+          <span className="plugin-card__caps">{caps}</span>
+          {!plugin.bundled && (
+            <button className="icon-btn icon-btn--small" title="Uninstall" onClick={onUninstall}>
+              <Icon name="trash" size={12} />
+            </button>
+          )}
+        </div>
+        {ui?.defaultPrompt && ui.defaultPrompt.length > 0 && (
+          <div className="plugin-card__prompts">
+            {ui.defaultPrompt.slice(0, 2).map((p) => (
+              <span key={p} className="chip chip--small">
+                {p}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function componentSummary(plugin: PluginInfo): string {
   const c = plugin.components;
   const parts = [
@@ -131,7 +206,7 @@ function componentSummary(plugin: PluginInfo): string {
     c.mcpServers > 0 ? `${c.mcpServers} MCP` : null,
     c.hooks > 0 ? `${c.hooks} hooks` : null,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : "no components detected";
+  return parts.length > 0 ? parts.join(", ") : "no components";
 }
 
 /** Secret variables a plugin declares; values are stored encrypted, write-only. */

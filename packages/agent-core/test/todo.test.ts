@@ -54,6 +54,17 @@ test("todo_write replaces the list, normalizes ids/status, and notifies listener
   assert.match(result, /\[~\] Wire UI/);
 });
 
+test("todo_write preserves acceptanceCriteria for delivery mode", async () => {
+  const toolCtx = ctx();
+  await todoTool.execute(
+    {
+      todos: [{ id: "s1", content: "Add tests", status: "pending", acceptanceCriteria: "npm test passes" }],
+    },
+    toolCtx,
+  );
+  assert.equal(toolCtx.todos[0]?.acceptanceCriteria, "npm test passes");
+});
+
 test("todo_write summarize reports completed/total", () => {
   const summary = todoTool.summarize({
     todos: [

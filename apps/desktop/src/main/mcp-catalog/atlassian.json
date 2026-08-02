@@ -1,0 +1,11 @@
+{
+  "id": "atlassian",
+  "name": "Atlassian",
+  "description": "Jira issues and Confluence pages.",
+  "category": "project-mgmt",
+  "vendor": "Atlassian",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://mcp.atlassian.com/v1/mcp",
+  "docsUrl": "https://developer.atlassian.com"
+}

@@ -8,9 +8,15 @@ import {
   computeStats,
   fetchAccountUsage,
   fetchPublicPlans,
+  selectPlan,
+  fetchBillingOverview,
+  fetchBillingPublishableKey,
+  completeCrossCurrencyUpgrade,
+  abortCrossCurrencyUpgrade,
   redactObject,
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
+  emptyAdvanced agentMetrics,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import type { DeyinApi } from "@contract/ipc.js";
@@ -500,6 +506,21 @@ export function createBrowserTransport(): DeyinApi {
       },
       remove: async () => [],
       test: async () => ({ ok: false, message: "MCP servers run in the desktop app." }),
+      catalog: {
+        list: async () => [],
+        install: async () => {
+          throw new Error("MCP catalog install requires the desktop app.");
+        },
+      },
+      modules: {
+        list: async () => [],
+        uninstall: async () => [],
+      },
+      authenticate: async () => ({ ok: false, message: "MCP OAuth requires the desktop app." }),
+      auth: {
+        revoke: async () => undefined,
+        status: async () => ({}),
+      },
     },
     plugins: {
       list: async () => [],
@@ -543,11 +564,54 @@ export function createBrowserTransport(): DeyinApi {
       disposeShell: () => undefined,
       onEvent: () => () => undefined,
     },
+    context: {
+      search: async () => [],
+      resolve: async () => [],
+    },
+    review: {
+      list: async () => [],
+      approve: async () => false,
+      reject: async () => false,
+      approveAll: async () => 0,
+      rejectAll: async () => 0,
+    },
+    git: {
+      status: async () => null,
+      diff: async () => "",
+      stage: async () => undefined,
+      commit: async () => "",
+      branches: async () => [],
+      checkout: async () => undefined,
+      log: async () => [],
+    },
+    security: {
+      listFindings: async () => null,
+      clearFindings: async () => undefined,
+      scanDiff: async () => ({ version: "1", scannedAt: new Date().toISOString(), findings: [] }),
+      onFindingsChanged: () => () => undefined,
+    },
     browserControl: {
       register: () => undefined,
+      syncTab: () => undefined,
+      removeTab: () => undefined,
       getPartition: async () => "",
       clearProfile: async () => undefined,
       onEnsure: () => () => undefined,
+      onTabCommand: () => () => undefined,
+      onActive: () => () => undefined,
+    },
+    computerUse: {
+      getAllowlist: async () => [],
+      setAllowlist: async () => undefined,
+      listApps: async () => [],
+      onActive: () => () => undefined,
+    },
+    chrome: {
+      onConsentRequest: () => () => undefined,
+      respondConsent: () => undefined,
+    },
+    visualize: {
+      read: async () => "",
     },
     telemetry: {
       // Web builds do not report telemetry.
@@ -661,6 +725,26 @@ export function createBrowserTransport(): DeyinApi {
     },
     plans: {
       list: () => fetchPublicPlans({ oauthIssuer: OAUTH_ISSUER }),
+    },
+    billing: {
+      overview: () =>
+        fetchBillingOverview({ oauthIssuer: OAUTH_ISSUER }, () => oauth.getAccessToken().catch(() => null)),
+      selectPlan: (planId, options) =>
+        selectPlan({ oauthIssuer: OAUTH_ISSUER }, () => oauth.getAccessToken().catch(() => null), planId, options),
+      publishableKey: () =>
+        fetchBillingPublishableKey({ oauthIssuer: OAUTH_ISSUER }, () => oauth.getAccessToken().catch(() => null)),
+      completeCrossCurrencyUpgrade: (newSubscriptionId) =>
+        completeCrossCurrencyUpgrade(
+          { oauthIssuer: OAUTH_ISSUER },
+          () => oauth.getAccessToken().catch(() => null),
+          newSubscriptionId,
+        ),
+      abortCrossCurrencyUpgrade: (newSubscriptionId) =>
+        abortCrossCurrencyUpgrade(
+          { oauthIssuer: OAUTH_ISSUER },
+          () => oauth.getAccessToken().catch(() => null),
+          newSubscriptionId,
+        ),
     },
     win: {
       // No window chrome to control in a browser tab.
@@ -809,6 +893,31 @@ export function createBrowserTransport(): DeyinApi {
       test: async () => ({ ok: false, message: "SSH hosts are not available in the web app." }),
       pinFingerprint: async () => [],
       importKey: async () => null,
+    },
+    agent: {
+      metrics: async () => emptyAdvanced agentMetrics(),
+      weeklyReport: async () => ({
+        generatedAt: new Date().toISOString(),
+        weekBucket: emptyAdvanced agentMetrics().weekBucket,
+        snapshot: emptyAdvanced agentMetrics(),
+        notes: ["Advanced agent metrics are not available in the web app."],
+      }),
+      diagnostics: async () => ({
+        cache: {
+          prefixShape: null,
+          invalidationHistory: [],
+          sessionHit: 0,
+          sessionMiss: 0,
+          hitRate: 0,
+        },
+        coordinator: [],
+        fleet: [],
+        evidence: [],
+      }),
+      clearThreadCache: async () => undefined,
+    },
+    beta: {
+      submitFeedback: async () => ({ ok: false }),
     },
   };
 }
