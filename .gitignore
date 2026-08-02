@@ -37,6 +37,7 @@ Thumbs.db
 
 # Test / coverage
 coverage/
+/index-*.js
 
 # Local upstream reference (never committed - proprietary)
 .zcode-upstream/

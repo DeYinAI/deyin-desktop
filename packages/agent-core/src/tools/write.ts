@@ -1,7 +1,6 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import type { ToolDefinition } from "../types.js";
-import { asString, resolvePath } from "./util.js";
+import { commitFileMutation, readFileForMutation } from "./file-mutation.js";
+import { asString, resolvePathInWorkspace } from "./util.js";
 
 export const writeTool: ToolDefinition = {
   name: "write",
@@ -18,12 +17,13 @@ export const writeTool: ToolDefinition = {
   },
   summarize: (args) => String(args.path ?? ""),
   async execute(args, ctx): Promise<string> {
-    const path = resolvePath(ctx.cwd, asString(args.path, "path"));
+    const path = resolvePathInWorkspace(ctx.cwd, asString(args.path, "path"));
     const content = typeof args.content === "string" ? args.content : "";
-    const before = await readFile(path, "utf8").catch(() => "");
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, content, "utf8");
-    ctx.onFileChanged?.({ path, before, after: content });
+    const before = await readFileForMutation(path);
+    const outcome = await commitFileMutation({ path, before, after: content, operation: "write" }, ctx);
+    if (outcome === "rejected") {
+      return "Change rejected by the user during review. Do not retry the same edit; ask what to do next.";
+    }
     return `Wrote ${Buffer.byteLength(content, "utf8")} bytes to ${path}`;
   },
 };

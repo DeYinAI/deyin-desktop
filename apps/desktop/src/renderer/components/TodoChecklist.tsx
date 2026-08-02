@@ -7,6 +7,8 @@ export interface TodoDisplayItem {
   id: string;
   content: string;
   status: TodoDisplayStatus;
+  acceptanceCriteria?: string;
+  signedOff?: boolean;
 }
 
 /** Exclude cancelled items from progress totals (matches TaskList / TodoCard). */
@@ -22,7 +24,13 @@ export function countVisibleTodos(todos: ReadonlyArray<{ status?: TodoDisplaySta
 }
 
 export function todosToDisplay(todos: AgentTodoItem[]): TodoDisplayItem[] {
-  return todos.map((t) => ({ id: t.id, content: t.content, status: t.status }));
+  return todos.map((t) => ({
+    id: t.id,
+    content: t.content,
+    status: t.status,
+    acceptanceCriteria: t.acceptanceCriteria,
+    signedOff: t.signedOff,
+  }));
 }
 
 /** Circular Cursor-style status marker for a single todo. */
@@ -72,7 +80,15 @@ export function TodoRow({
   const body = (
     <>
       <TodoStatusIndicator status={item.status} running={running} interactive={canToggle} />
-      <span className="todo-row__text">{item.content}</span>
+      <span className="todo-row__main">
+        <span className="todo-row__text">{item.content}</span>
+        {item.acceptanceCriteria ? (
+          <span className="todo-row__criteria" title={item.acceptanceCriteria}>
+            Verify: {item.acceptanceCriteria}
+          </span>
+        ) : null}
+        {item.signedOff ? <span className="todo-row__signed-off">Signed off</span> : null}
+      </span>
     </>
   );
 

@@ -1,0 +1,12 @@
+{
+  "id": "cloudflare-docs",
+  "name": "Cloudflare Docs",
+  "description": "Search Cloudflare product documentation.",
+  "category": "cloud-infra",
+  "vendor": "Cloudflare",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://docs.mcp.cloudflare.com/mcp",
+  "docsUrl": "https://github.com/cloudflare/mcp-server-cloudflare",
+  "featured": true
+}

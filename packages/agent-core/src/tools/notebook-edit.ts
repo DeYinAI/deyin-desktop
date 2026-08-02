@@ -1,6 +1,7 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import type { ToolDefinition } from "../types.js";
-import { asOptionalString, asString, resolvePath } from "./util.js";
+import { commitFileMutation, readFileForMutation } from "./file-mutation.js";
+import { asOptionalString, asString, resolvePathInWorkspace } from "./util.js";
 
 interface NotebookCell {
   cell_type?: string;
@@ -42,16 +43,17 @@ export const notebookEditTool: ToolDefinition = {
   summarize: (args) => `notebook ${String(args.path ?? "")} cell ${String(args.cell_idx ?? "")}`,
   async execute(args, ctx): Promise<string> {
     const rel = asString(args.path, "path");
-    const abs = resolvePath(ctx.cwd, rel);
+    const abs = resolvePathInWorkspace(ctx.cwd, rel);
     const cellIdx = typeof args.cell_idx === "number" ? Math.max(0, Math.floor(args.cell_idx)) : 0;
     const isNew = args.is_new_cell === true;
     const newString = asOptionalString(args.new_string) ?? "";
     const lang = asOptionalString(args.cell_language) ?? "python";
     const cellType = lang === "markdown" ? "markdown" : "code";
 
+    const before = await readFileForMutation(abs);
     let notebook: NotebookJson;
     try {
-      notebook = JSON.parse(await readFile(abs, "utf8")) as NotebookJson;
+      notebook = JSON.parse(before || (await readFile(abs, "utf8"))) as NotebookJson;
     } catch (err) {
       return `ERROR reading notebook: ${err instanceof Error ? err.message : String(err)}`;
     }
@@ -74,7 +76,11 @@ export const notebookEditTool: ToolDefinition = {
       if (cellType === "markdown") cell.cell_type = "markdown";
     }
 
-    await writeFile(abs, `${JSON.stringify(notebook, null, 1)}\n`, "utf8");
+    const after = `${JSON.stringify(notebook, null, 1)}\n`;
+    const outcome = await commitFileMutation({ path: abs, before, after, operation: "edit" }, ctx);
+    if (outcome === "rejected") {
+      return "Change rejected by the user during review. Do not retry the same edit; ask what to do next.";
+    }
     return `Notebook ${rel} updated (${notebook.cells.length} cells).`;
   },
 };

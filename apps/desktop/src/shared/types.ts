@@ -61,6 +61,10 @@ export type {
   UsageStats,
   AccountUsage,
   PublicPlan,
+  SelectPlanOptions,
+  SelectPlanResponse,
+  BillingOverview,
+  Upgrade3dsResult,
   LocalizedPrice,
   ServerIdentity,
   IdentityInfo,
@@ -81,6 +85,29 @@ export type {
   SshHostCredentials,
   SshTestResult,
   SshAuthMethod,
+  ContextAttachment,
+  LinkedThreadRef,
+  ContextSearchHit,
+  ContextRef,
+  ResolvedContextFile,
+  PendingChange,
+  ReviewMode,
+  ThreadGoal,
+  GitStatus,
+  GitFileStatus,
+  GitBranch,
+  GitLogEntry,
+  McpAuthMode,
+  McpAuthResult,
+  McpAuthStatus,
+  McpCatalogCategory,
+  McpCatalogEntry,
+  McpCatalogInstallInput,
+  McpCatalogSecret,
+  McpModuleManifest,
+  ReasonixMetricsSnapshot,
+  ReasonixWeeklyReport,
+  ReasonixDiagnostics,
 } from "@deyin/host-core/shared";
 
 /** Desktop-only: lifecycle state of the in-app updater (main -> renderer). */
@@ -101,6 +128,33 @@ export interface UpdatesState {
  /** 0-100 while status is "downloading". */
  progressPercent?: number;
  error?: string;
+}
+
+export type SecuritySeverity = "critical" | "high" | "medium" | "low" | "info";
+export type SecurityFindingSource = "semgrep" | "regex" | "npm-audit";
+
+export interface SecurityFindingLocation {
+  file: string;
+  line?: number;
+  column?: number;
+}
+
+export interface SecurityFinding {
+  id: string;
+  ruleId: string;
+  severity: SecuritySeverity;
+  message: string;
+  source: SecurityFindingSource;
+  location?: SecurityFindingLocation;
+}
+
+export interface SecurityFindingsReport {
+  version: "1";
+  scannedAt: string;
+  root?: string;
+  scanned?: number;
+  sources?: SecurityFindingSource[];
+  findings: SecurityFinding[];
 }
 
 /** UI cap for tool result content (both streaming tail and final tool-end result). */

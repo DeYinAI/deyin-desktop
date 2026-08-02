@@ -54,8 +54,14 @@ test("session grants cannot override deny rules", () => {
   assert.equal(engine.actionFor(edit), "deny");
 });
 
-test("skipAll (--yes) allows everything, even explicit denies", () => {
+test("skipAll (--yes) allows non-denied tools but explicit denies still win", () => {
   const engine = new PermissionEngine({ agentRules: [{ tool: "*", action: "deny" }], skipAll: true });
+  assert.equal(engine.actionFor(bash), "deny");
+  assert.equal(engine.actionFor(edit), "deny");
+});
+
+test("skipAll allows tools without explicit deny rules", () => {
+  const engine = new PermissionEngine({ skipAll: true });
   assert.equal(engine.actionFor(bash), "allow");
   assert.equal(engine.actionFor(edit), "allow");
 });

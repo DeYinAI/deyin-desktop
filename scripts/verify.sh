@@ -7,6 +7,9 @@ cd "$(dirname "$0")/.."
 echo "==> Building shared packages (needed for app type resolution)"
 pnpm --filter "./packages/**" build
 
+echo "==> Building computer-use-host"
+pnpm --filter @deyin/computer-use-host build
+
 echo "==> Typechecking all workspaces"
 pnpm -r typecheck
 

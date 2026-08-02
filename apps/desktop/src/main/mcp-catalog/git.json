@@ -1,0 +1,15 @@
+{
+  "id": "git",
+  "name": "Git",
+  "description": "Read repository history and diffs via local git.",
+  "category": "devtools",
+  "vendor": "Community",
+  "transport": "stdio",
+  "auth": "none",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-git"
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers"
+}
