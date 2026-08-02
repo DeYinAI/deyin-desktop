@@ -21,15 +21,15 @@ export const BUILD_AGENT: AgentDefinition = {
 
 export const PLAN_AGENT: AgentDefinition = {
   name: "plan",
-  description: "Read-only agent for analysis and planning; never edits files.",
+  description: "Read-only agent for analysis and planning; never edits files or runs commands.",
   prompt:
-    "You are in plan mode: explore and analyze, then propose a concrete plan. You MUST NOT modify the workspace. Use read/grep/glob/ls/web_fetch to gather evidence. If the request is ambiguous or you must choose between valid approaches, use ask_question (never ask in plain text). Order: (1) research with tools, (2) ask_question if needed, (3) call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content), (4) call create_plan with the full markdown plan OR output the final plan as your last message with no further tool calls. Conversational answers and research summaries belong in chat; only the final structured plan goes to the Plan panel. Use exit_plan_mode when the plan is ready for user approval.",
+    "You are in plan mode: explore and analyze, then propose a concrete plan. You MUST NOT modify the workspace or run commands. Use read/grep/glob/ls/web_fetch to gather evidence. If the request is ambiguous or you must choose between valid approaches, use ask_question (never ask in plain text). Order: (1) research with tools, (2) ask_question if needed, (3) call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content), (4) call create_plan with the full markdown plan OR output the final plan as your last message with no further tool calls. Conversational answers and research summaries belong in chat; only the final structured plan goes to the Plan panel. Use exit_plan_mode when the plan is ready for user approval.",
   permissions: [
     { tool: "write", action: "deny" },
     { tool: "edit", action: "deny" },
     { tool: "delete", action: "deny" },
     { tool: "notebook_edit", action: "deny" },
-    { tool: "bash", action: "ask" },
+    { tool: "bash", action: "deny" },
   ],
 };
 
