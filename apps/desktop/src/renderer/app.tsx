@@ -4,14 +4,12 @@ import { streamChat } from "./api/openference.js";
 import { I18nProvider } from "./i18n.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
-import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { GitBranchBadge } from "./components/GitBranchBadge.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
-import { PlansDialog } from "./components/PlansDialog.js";
-import { SettingsView } from "./components/SettingsView.js";
+import { PlansDialog } from "./components/PlansDialog.js";import { SettingsView } from "./components/SettingsView.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
@@ -102,6 +100,8 @@ interface PendingQuestion {
 }
 
 interface PendingPlanApproval {
+  /** Owning thread — actions only render/apply while it is the active thread. */
+  threadId: string;
   title: string;
   overview?: string;
   plan: string;
@@ -625,6 +625,7 @@ export function App() {
           setPanelOpen(true);
           setPanelTab("plan");
           setPlanApproval({
+            threadId,
             title: event.name || planTitle,
             overview: event.overview,
             plan: event.plan,
@@ -1175,6 +1176,8 @@ export function App() {
         model: selectedModel,
         messages: history,
         thinking: settings?.thinking,
+        apiFormat: provider?.apiFormat ?? "chat-completions",
+        authHeader: provider?.authHeader,
         signal: abort.signal,
         onUsage: (u) => {
           reportedTokens = u.totalTokens;
@@ -1419,6 +1422,12 @@ export function App() {
                 onOpenFile={openFileDiff}
                 onUndo={() => setDiff(null)}
                 onBuild={buildFromPlan}
+                onRevisePlan={rejectPlan}
+                onEditPlan={() => {
+                  if (planApproval?.filePath) void window.deyin.shell.showItem(planApproval.filePath);
+                  setPlanApproval(null);
+                }}
+                pendingPlan={planApproval && planApproval.threadId === activeThreadId ? planApproval : null}
                 onOpenPlan={() => {
                   setPanelOpen(true);
                   setPanelTab("plan");
@@ -1576,19 +1585,6 @@ export function App() {
               __cancelled: "AskQuestion was cancelled before answers were returned.",
             });
             setQuestion(null);
-          }}
-        />
-      )}
-
-      {planApproval && (
-        <PlanApprovalDialog
-          title={planApproval.title}
-          overview={planApproval.overview}
-          onApprove={buildFromPlan}
-          onReject={rejectPlan}
-          onEdit={() => {
-            if (planApproval.filePath) void window.deyin.shell.showItem(planApproval.filePath);
-            setPlanApproval(null);
           }}
         />
       )}

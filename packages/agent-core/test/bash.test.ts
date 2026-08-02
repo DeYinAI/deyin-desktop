@@ -102,8 +102,16 @@ test("block_until_ms=0 registers a background task and returns task_id", { skip:
   assert.match(result, /task_id: /);
   const taskId = result.match(/task_id: ([^\n]+)/)?.[1];
   assert.ok(taskId);
-  const done = await tasks.get(taskId!);
-  assert.ok(done);
-  const output = await done!;
+  const promise = tasks.get(taskId!);
+  assert.ok(promise);
+  // The child is spawned detached and unref'd (background tasks must not hold the
+  // app open), so under parallel-suite load the event loop can drain before the
+  // close event is delivered. Bound the wait instead of awaiting it bare.
+  const output = await Promise.race([
+    promise!.then((o) => o),
+    sleep(10_000).then(() => {
+      throw new Error("background task did not resolve within 10s");
+    }),
+  ]);
   assert.ok(output.output.includes("bg-ok"));
 });

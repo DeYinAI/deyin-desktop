@@ -19,6 +19,16 @@ export class ToolRegistry {
     return [...this.tools.keys()];
   }
 
+  /** New registry containing only the named tools; unknown names are skipped. */
+  filtered(names: Iterable<string>): ToolRegistry {
+    const allowed = new Set(names);
+    const out = new ToolRegistry();
+    for (const [name, tool] of this.tools) {
+      if (allowed.has(name)) out.register(tool);
+    }
+    return out;
+  }
+
   toWire(): WireTool[] {
     return this.list().map((t) => ({
       type: "function",

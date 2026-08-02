@@ -109,6 +109,24 @@ export interface ToolContext {
     taskId: string,
     promise: Promise<{ output: string; exitCode: number | null }>,
   ) => void;
+  /** Background-memory bridge (remember / forget / memory tools). */
+  memory?: MemoryBridge;
+}
+
+/** Host bridge over the durable memory store (remember/forget/memory tools). */
+export interface MemoryBridge {
+  create(input: import("@deyin/host-core").MemoryInput): import("@deyin/host-core").MemoryFact;
+  read(ref: string): import("@deyin/host-core").MemoryFact | undefined;
+  list(): import("@deyin/host-core").MemoryFact[];
+  search(query: string, limit?: number): import("@deyin/host-core").MemoryRecallHit[];
+  update(
+    ref: string,
+    patch: Partial<Pick<import("@deyin/host-core").MemoryFact, "title" | "description" | "type" | "scope" | "body">>,
+    expectedRevision?: number,
+  ): import("@deyin/host-core").MemoryFact;
+  forget(ref: string): void;
+  archived(): import("@deyin/host-core").MemoryFact[];
+  recover(ref: string): import("@deyin/host-core").MemoryFact;
 }
 
 /** Coarse capability class used for default permissions. */

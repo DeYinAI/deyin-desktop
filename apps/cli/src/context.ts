@@ -5,7 +5,7 @@ import {
   type DeyinCliConfigFile,
   type ResolvedCliConfig,
 } from "@deyin/agent-core";
-import { DEFAULT_CONFIG, FileStorage, UsageStore, defaultDataDir } from "@deyin/host-core";
+import { DEFAULT_CONFIG, FileStorage, MemoryStore, UsageStore, defaultDataDir } from "@deyin/host-core";
 import { OAuthClient } from "@deyin/oauth-client";
 import { FileTokenStore } from "@deyin/oauth-client/node";
 
@@ -17,6 +17,7 @@ export interface CliContext {
   oauth: OAuthClient;
   sessions: SessionStore;
   usage: UsageStore;
+  memory: MemoryStore;
 }
 
 export function createContext(opts: { cwd?: string; overrides?: Partial<DeyinCliConfigFile> } = {}): CliContext {
@@ -36,6 +37,7 @@ export function createContext(opts: { cwd?: string; overrides?: Partial<DeyinCli
     oauth,
     sessions: new SessionStore(join(dataDir, "sessions")),
     usage: new UsageStore(storage),
+    memory: new MemoryStore(dataDir),
   };
 }
 

@@ -40,3 +40,6 @@ coverage/
 
 # Local upstream reference (never committed - proprietary)
 .zcode-upstream/
+
+# Local agent-session artifacts
+.reasonix/
