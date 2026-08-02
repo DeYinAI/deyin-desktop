@@ -1,0 +1,11 @@
+{
+  "id": "context7",
+  "name": "Context7",
+  "description": "Up-to-date library documentation lookup.",
+  "category": "devtools",
+  "vendor": "Context7",
+  "transport": "http",
+  "auth": "none",
+  "url": "https://mcp.context7.com/mcp",
+  "docsUrl": "https://context7.com"
+}

@@ -1,6 +1,6 @@
-import { readFile, writeFile } from "node:fs/promises";
 import type { ToolDefinition } from "../types.js";
-import { asOptionalBoolean, asString, resolvePath } from "./util.js";
+import { commitFileMutation, readFileForMutation } from "./file-mutation.js";
+import { asOptionalBoolean, asString, resolvePathInWorkspace } from "./util.js";
 
 export function countOccurrences(haystack: string, needle: string): number {
   if (needle.length === 0) return 0;
@@ -54,15 +54,20 @@ export const editTool: ToolDefinition = {
   },
   summarize: (args) => String(args.path ?? ""),
   async execute(args, ctx): Promise<string> {
-    const path = resolvePath(ctx.cwd, asString(args.path, "path"));
+    const path = resolvePathInWorkspace(ctx.cwd, asString(args.path, "path"));
     const oldString = asString(args.old_string, "old_string");
     const newString = typeof args.new_string === "string" ? args.new_string : "";
     const replaceAll = asOptionalBoolean(args.replace_all) ?? false;
 
-    const content = await readFile(path, "utf8");
+    const content = await readFileForMutation(path);
+    if (!content && oldString) {
+      throw new Error("File not found or empty. Read the file first.");
+    }
     const { next, replacements } = applyEdit(content, oldString, newString, replaceAll);
-    await writeFile(path, next, "utf8");
-    ctx.onFileChanged?.({ path, before: content, after: next });
+    const outcome = await commitFileMutation({ path, before: content, after: next, operation: "edit" }, ctx);
+    if (outcome === "rejected") {
+      return "Change rejected by the user during review. Do not retry the same edit; ask what to do next.";
+    }
     return `Replaced ${replacements} occurrence${replacements === 1 ? "" : "s"} in ${path}`;
   },
 };

@@ -1,0 +1,11 @@
+{
+  "id": "notion",
+  "name": "Notion",
+  "description": "Read and write Notion pages and databases.",
+  "category": "project-mgmt",
+  "vendor": "Notion",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://mcp.notion.com/mcp",
+  "docsUrl": "https://developers.notion.com"
+}

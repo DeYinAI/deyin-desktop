@@ -1,19 +1,19 @@
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { computePrefixShape } from "./cache/prefix-tracker.js";
+import {
+  migrateSessionMeta,
+  SESSION_SCHEMA_VERSION,
+  sessionNeedsMigration,
+  type SessionMetaRecord,
+  type SessionMetaV2,
+  buildCacheStats,
+} from "./migration/session-v2.js";
 import type { AgentMessage } from "./types.js";
 
-export interface SessionMeta {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  cwd: string;
-  model: string;
-  agent: string;
-  messageCount: number;
-}
+export type SessionMeta = SessionMetaV2;
 
-type SessionRecord = { type: "meta"; meta: Omit<SessionMeta, "updatedAt" | "messageCount"> } | { type: "message"; message: AgentMessage };
+type SessionRecord = { type: "meta"; meta: SessionMetaRecord } | { type: "message"; message: AgentMessage };
 
 function newId(): string {
   return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -43,10 +43,19 @@ export class SessionStore {
       model: init.model,
       agent: init.agent,
       messageCount: 0,
+      schemaVersion: SESSION_SCHEMA_VERSION,
     };
     const record: SessionRecord = {
       type: "meta",
-      meta: { id: meta.id, title: "", createdAt: now, cwd: init.cwd, model: init.model, agent: init.agent },
+      meta: {
+        id: meta.id,
+        title: "",
+        createdAt: now,
+        cwd: init.cwd,
+        model: init.model,
+        agent: init.agent,
+        schemaVersion: SESSION_SCHEMA_VERSION,
+      },
     };
     appendFileSync(this.file(meta.id), `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
     return meta;
@@ -65,7 +74,9 @@ export class SessionStore {
       return null;
     }
     const messages: AgentMessage[] = [];
-    let metaBase: Omit<SessionMeta, "updatedAt" | "messageCount"> | null = null;
+    let metaBase: SessionMetaRecord | null = null;
+    let metaLineRaw: unknown = null;
+    let needsPersist = false;
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       let record: SessionRecord;
@@ -74,10 +85,52 @@ export class SessionStore {
       } catch {
         continue;
       }
-      if (record.type === "meta") metaBase = record.meta;
-      else if (record.type === "message") messages.push(record.message);
+      if (record.type === "meta") {
+        metaLineRaw = record.meta;
+        if (sessionNeedsMigration(record.meta)) {
+          metaBase = migrateSessionMeta(record.meta);
+          needsPersist = true;
+        } else {
+          metaBase = migrateSessionMeta(record.meta);
+        }
+      } else if (record.type === "message") messages.push(record.message);
     }
     if (!metaBase) return null;
+
+    if (needsPersist || !metaBase.prefixHash) {
+      const systemMsg = messages.find((m) => m.role === "system");
+      const toolCount = Math.max(8, Math.min(16, 8 + messages.filter((m) => m.role === "tool").length));
+      const tools = Array.from({ length: toolCount }, (_, j) => ({
+        type: "function" as const,
+        function: { name: `tool_${j}`, description: "d", parameters: { type: "object", properties: {} } },
+      }));
+      const shape = computePrefixShape(systemMsg, tools, metaBase.cacheStats?.logRewriteVersion ?? 0, toolCount * 50);
+      if (!metaBase.prefixHash) metaBase.prefixHash = shape.prefixHash;
+      if (!metaBase.cacheStats) metaBase.cacheStats = buildCacheStats({ sessionCacheHit: 0, sessionCacheMiss: 0 }, shape);
+      needsPersist = true;
+    }
+
+    if (needsPersist) {
+      try {
+        const upgraded = raw
+          .split("\n")
+          .map((line) => {
+            if (!line.trim()) return line;
+            try {
+              const rec = JSON.parse(line) as SessionRecord;
+              if (rec.type === "meta") return JSON.stringify({ type: "meta", meta: metaBase });
+            } catch {
+              // keep line
+            }
+            return line;
+          })
+          .join("\n");
+        writeFileSync(this.file(id), upgraded.endsWith("\n") ? upgraded : `${upgraded}\n`, { encoding: "utf8", mode: 0o600 });
+      } catch {
+        // load still succeeds even if persist fails
+      }
+    }
+    void metaLineRaw;
 
     let updatedAt = metaBase.createdAt;
     try {

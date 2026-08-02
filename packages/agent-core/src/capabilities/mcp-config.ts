@@ -47,6 +47,7 @@ export interface InterpolationContext {
   workspaceFolder?: string | null;
   env?: Record<string, string | undefined>;
   userHome?: string;
+  pluginDir?: string;
 }
 
 export function interpolate(value: string, ctx: InterpolationContext): string {
@@ -57,6 +58,7 @@ export function interpolate(value: string, ctx: InterpolationContext): string {
     .replaceAll("${workspaceFolder}", ctx.workspaceFolder ?? "")
     .replaceAll("${workspaceFolderBasename}", (ctx.workspaceFolder ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "")
     .replaceAll("${userHome}", home)
+    .replaceAll("${pluginDir}", ctx.pluginDir ?? "")
     .replaceAll("${pathSeparator}", process.platform === "win32" ? "\\" : "/")
     .replaceAll("${/}", process.platform === "win32" ? "\\" : "/");
 }
@@ -68,11 +70,18 @@ function normalizeServer(name: string, raw: RawServer, source: string, path: str
 
   if (raw.url) {
     const transport = raw.type === "sse" || raw.url.endsWith("/sse") ? "sse" : "http";
+    const localCtx: InterpolationContext = {
+      ...ctx,
+      env: { ...process.env, ...(ctx.env ?? {}), ...(raw.env ?? {}) },
+    };
+    const applyRemote = (v: string) => interpolate(v, localCtx);
+    const applyRemoteRecord = (record?: Record<string, string>) =>
+      record ? Object.fromEntries(Object.entries(record).map(([k, v]) => [k, applyRemote(v)])) : undefined;
     return {
       name,
       transport,
-      url: apply(raw.url),
-      headers: applyRecord(raw.headers),
+      url: applyRemote(raw.url),
+      headers: applyRemoteRecord(raw.headers),
       enabled: raw.enabled !== false,
       source,
       path,

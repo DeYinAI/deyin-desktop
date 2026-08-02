@@ -1,0 +1,16 @@
+{
+  "id": "playwright",
+  "name": "Playwright",
+  "description": "Browser automation for testing and scraping.",
+  "category": "devtools",
+  "vendor": "Microsoft",
+  "transport": "stdio",
+  "auth": "none",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@playwright/mcp@latest"
+  ],
+  "docsUrl": "https://github.com/microsoft/playwright-mcp",
+  "featured": true
+}

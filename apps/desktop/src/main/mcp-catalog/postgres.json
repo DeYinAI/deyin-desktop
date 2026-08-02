@@ -1,0 +1,23 @@
+{
+  "id": "postgres",
+  "name": "PostgreSQL",
+  "description": "Query and inspect a PostgreSQL database (reference server).",
+  "category": "database",
+  "vendor": "Community",
+  "transport": "stdio",
+  "auth": "token",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-postgres",
+    "${env:POSTGRES_CONNECTION_STRING}"
+  ],
+  "secrets": [
+    {
+      "envKey": "POSTGRES_CONNECTION_STRING",
+      "label": "PostgreSQL connection URL",
+      "required": true
+    }
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers-archived"
+}

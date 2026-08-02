@@ -1,6 +1,6 @@
-import { unlink } from "node:fs/promises";
 import type { ToolDefinition } from "../types.js";
-import { asString, resolvePath } from "./util.js";
+import { commitFileMutation, readFileForMutation } from "./file-mutation.js";
+import { asString, resolvePathInWorkspace } from "./util.js";
 
 export const deleteTool: ToolDefinition = {
   name: "delete",
@@ -16,9 +16,13 @@ export const deleteTool: ToolDefinition = {
   summarize: (args) => String(args.path ?? ""),
   async execute(args, ctx): Promise<string> {
     const rel = asString(args.path, "path");
-    const abs = resolvePath(ctx.cwd, rel);
+    const abs = resolvePathInWorkspace(ctx.cwd, rel);
     try {
-      await unlink(abs);
+      const before = await readFileForMutation(abs);
+      const outcome = await commitFileMutation({ path: abs, before, after: "", operation: "delete" }, ctx);
+      if (outcome === "rejected") {
+        return "Delete rejected by the user during review. Do not retry; ask what to do next.";
+      }
       return `Deleted ${rel}`;
     } catch (err) {
       return `ERROR deleting ${rel}: ${err instanceof Error ? err.message : String(err)}`;

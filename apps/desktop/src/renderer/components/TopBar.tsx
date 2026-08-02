@@ -12,10 +12,38 @@ interface TopBarProps {
   workspaceRoot: string | null;
   panelOpen: boolean;
   terminalOpen: boolean;
+  /** Session prefix cache hit rate (0–1), when measured. */
+  cacheHitRate?: number | null;
+  sessionCacheHit?: number;
+  sessionCacheMiss?: number;
+  /** Live token counters for the session. */
+  tokenStats?: {
+    inputCached: number;
+    inputUncached: number;
+    output: number;
+    sessionTotal: number;
+  } | null;
   onOpenFolder: () => void;
   onTogglePanel: () => void;
   onToggleTerminal: () => void;
   onThreadAction: (threadId: string, action: ThreadAction) => void;
+}
+
+function cacheHitTone(rate: number): "good" | "warn" | "bad" {
+  if (rate >= 0.8) return "good";
+  if (rate >= 0.5) return "warn";
+  return "bad";
+}
+
+function formatCachePct(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
+function formatCompact(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}K`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(Math.round(n));
 }
 
 /** Custom title bar: brand, session breadcrumb, layout toggles, window controls. */
@@ -59,6 +87,35 @@ export function TopBar(props: TopBarProps) {
       <div className="titlebar__drag" />
 
       <div className="titlebar__right">
+        {props.cacheHitRate != null && (
+          <span
+            className={`titlebar__cache titlebar__cache--${cacheHitTone(props.cacheHitRate)}`}
+            title={[
+              `Prefix cache hit rate: ${formatCachePct(props.cacheHitRate)}`,
+              props.sessionCacheHit != null && props.sessionCacheMiss != null
+                ? `Cached: ${props.sessionCacheHit.toLocaleString()} · Uncached: ${props.sessionCacheMiss.toLocaleString()}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n")}
+          >
+            <Icon name="sparkles" size={12} />
+            <span>{formatCachePct(props.cacheHitRate)} cache</span>
+          </span>
+        )}
+        {props.tokenStats && (
+          <span className="titlebar__tokens" title="Session token totals">
+            <span className="titlebar__token-seg" title="Cached input tokens">
+              ↓{formatCompact(props.tokenStats.inputCached)}
+            </span>
+            <span className="titlebar__token-seg" title="Uncached input tokens">
+              ↓{formatCompact(props.tokenStats.inputUncached)}
+            </span>
+            <span className="titlebar__token-seg" title="Output tokens">
+              ↑{formatCompact(props.tokenStats.output)}
+            </span>
+          </span>
+        )}
         <button
           className={`icon-btn ${props.terminalOpen ? "icon-btn--active" : ""}`}
           title="Toggle terminal"

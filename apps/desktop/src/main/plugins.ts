@@ -5,7 +5,9 @@ import type { AgentsStore, Storage } from "@deyin/host-core";
 import {
   discoverPlugins,
   installPluginFromGitHub,
+  materializeBundledPlugins,
   parseGitHubSource,
+  resolveBundledPluginsDir,
   uninstallPlugin,
   type InstalledPlugin,
 } from "@deyin/agent-core";
@@ -37,7 +39,16 @@ export class PluginService {
     private readonly storage: Storage,
     private readonly agents: AgentsStore,
     private readonly capabilities: CapabilityService,
-  ) {}
+    bundledSrcDir?: string,
+  ) {
+    if (bundledSrcDir) {
+      try {
+        materializeBundledPlugins(bundledSrcDir, this.pluginsDir);
+      } catch {
+        // read-only userData must not break startup
+      }
+    }
+  }
 
   async list(): Promise<PluginInfo[]> {
     const plugins = await discoverPlugins(this.pluginsDir);
@@ -50,6 +61,10 @@ export class PluginService {
         source: plugin.source,
         enabled: !disabled.has(`plugin:${plugin.name}`),
         installedAt: plugin.installedAt,
+        interface: plugin.interface,
+        bundled: plugin.bundled,
+        hostModule: plugin.hostModule,
+        platform: plugin.platform,
         components: await countComponents(plugin),
         variables: plugin.variables.length > 0 ? plugin.variables : undefined,
       })),
@@ -114,11 +129,17 @@ export class PluginService {
       source: plugin.source,
       enabled: !this.agents.disabledCaps().has(`plugin:${plugin.name}`),
       installedAt: plugin.installedAt,
+      interface: plugin.interface,
+      bundled: plugin.bundled,
+      hostModule: plugin.hostModule,
+      platform: plugin.platform,
       components: await countComponents(plugin),
       variables: plugin.variables.length > 0 ? plugin.variables : undefined,
     };
   }
 }
+
+export { resolveBundledPluginsDir };
 
 async function countComponents(plugin: InstalledPlugin): Promise<PluginInfo["components"]> {
   const [skills, commands, subagents, mcpServers, hooks] = await Promise.all([

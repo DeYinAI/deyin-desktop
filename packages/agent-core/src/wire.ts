@@ -330,6 +330,14 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
               arguments: c.arguments,
             },
           }));
+          
+          // DeepSeek requires reasoning_content on assistant tool_calls turns when
+          // replaying history. Missing it causes 400 errors and breaks prefix stability.
+          // Send empty string if reasoning was never captured (graceful degradation).
+          const isDeepSeek = provider === "openai" || provider === "openference";
+          if (isDeepSeek && hasToolCalls) {
+            wireMsg.reasoning_content = m.reasoning ?? "";
+          }
         }
         return wireMsg;
       }
