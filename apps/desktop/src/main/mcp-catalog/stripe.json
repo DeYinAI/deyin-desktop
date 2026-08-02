@@ -1,0 +1,26 @@
+{
+  "id": "stripe",
+  "name": "Stripe",
+  "description": "Payments, customers, subscriptions, invoices, and Stripe docs search.",
+  "category": "payments",
+  "vendor": "Stripe",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.stripe.com",
+  "headers": {
+    "Authorization": "Bearer ${env:STRIPE_SECRET_KEY}"
+  },
+  "secrets": [
+    {
+      "envKey": "STRIPE_SECRET_KEY",
+      "label": "Restricted API key (rk_...)",
+      "required": true
+    }
+  ],
+  "docsUrl": "https://docs.stripe.com/mcp",
+  "featured": true,
+  "tags": [
+    "payments",
+    "billing"
+  ]
+}

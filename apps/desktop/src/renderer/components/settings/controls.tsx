@@ -30,7 +30,7 @@ export function SectionTitle({ children }: { children: ReactNode }) {
 }
 
 /** One settings row: title + description on the left, a control on the right. */
-export function SettingCard(props: { title: string; description?: string; children?: ReactNode }) {
+export function SettingCard(props: { title: ReactNode; description?: string; children?: ReactNode }) {
   return (
     <div className="setting-card">
       <div className="setting-card__meta">

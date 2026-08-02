@@ -9,6 +9,7 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Openference OAuth sign-in | Done | `@deyin/oauth-provider`, `@deyin/oauth-client`, `main/auth.ts`, `client/transport.ts` |
 | Reusable OAuth for other CLIs | Done | `@deyin/oauth-client` + `examples/cli-login.ts` |
 | Profile menu (name/email/avatar/plan) | Done | `renderer/components/ProfileMenu.tsx` |
+| Plans & billing (catalog, checkout, downgrade, cross-currency) | Done | `components/PlansView.tsx`, `host-core/src/billing*.ts`, `renderer/billing/*` |
 | Multi-model picker (`/v1/models`) | Done | `main/models.ts`, `client/transport.ts`, `components/ModelPicker.tsx` |
 | Streaming agent chat | Done | `renderer/api/openference.ts`, `renderer/app.tsx` |
 | 3-pane workspace shell (sidebar / chat / panel) | Done | `renderer/app.tsx`, `components/TopBar.tsx`, `styles.css` |
@@ -21,9 +22,14 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Markdown chat output (GFM tables, themed code blocks) | Done | `components/Markdown.tsx` (react-markdown + remark-gfm over the custom `CodeBlock`) |
 | Reasoning ("thinking") cards, live + collapsed with duration | Done | `components/ChatView.tsx` (`ThinkingCard`), `app.tsx` (reasoning-delta handling) |
 | File-change cards with +/− counts feeding the Diff tab | Done | `agent-core` `file-change` event, `main/agent.ts` forward, `app.tsx` (`diffStats`) |
-| Projects / threads sidebar | Done (in-memory; persistence pending) | `components/Sidebar.tsx`, `renderer/threads.ts` |
+| Projects / threads sidebar | Done (persisted via ProjectsStore) | `components/Sidebar.tsx`, `renderer/threads.ts`, `host-core/src/stores.ts` |
 | Workspace panel: Plan tab | Done (agent-fed live stream + todos) | `components/WorkspacePanel.tsx`, `app.tsx` (`planStream`) |
-| Workspace panel: Diff tab | Done (LCS line diff + source preview) | `components/WorkspacePanel.tsx`, `renderer/diff.ts` |
+| Workspace panel: Diff tab | Done (LCS line diff + source preview + review Accept/Reject) | `components/WorkspacePanel.tsx`, `renderer/diff.ts`, `components/ReviewBanner.tsx` |
+| Workspace panel: Git tab | Done (status, stage, commit, branches, log) | `components/GitTab.tsx`, `host-core/src/host/git.ts`, `main/ipc.ts` |
+| Composer: @ file/folder context chips + resolver | Done | `components/Composer.tsx`, `host-core/src/context-refs.ts`, `app.tsx` |
+| Composer: # linked thread context | Done | `components/Composer.tsx`, `host-core/src/linked-thread-context.ts` |
+| Change review before apply | Done | `main/pending-review.ts`, `agent-core/src/tools/file-mutation.ts`, `ReviewBanner.tsx` |
+| Goal mode (UI modal + report_goal_met tool) | Done | `agent-core/src/tools/report-goal-met.ts`, `Composer.tsx`, `app.tsx` |
 | Workspace panel: Browser tab | Done | `components/WorkspacePanel.tsx` (`<webview>` desktop, iframe web) |
 | Settings: General (live i18n en/zh/de, auto-update, telemetry, agent mode) | Done | `components/settings/GeneralPage.tsx`, `host-core/src/i18n.ts`, `host-core/src/telemetry.ts` |
 | Settings: Appearance (interface font size, real code theme palettes + highlighter) | Done | `settings/AppearancePage.tsx`, `renderer/code.tsx` |
@@ -33,6 +39,13 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Settings: Skills / Subagents / Commands / Hooks (live `.deyin` registry) | Done | `settings/CapabilityPage.tsx`, `agent-core/src/capabilities/*`, `main/capabilities.ts` |
 | Built-in default skills (13, materialized + overridable) | Done | `agent-core/src/capabilities/builtin-skills.ts` |
 | Settings: MCP servers (list/add/remove/test, stdio+SSE+HTTP) | Done | `settings/McpPage.tsx`, `agent-core/src/mcp.ts` |
+| Settings: MCP catalog (browse, install, secrets, native OAuth) | Done | `settings/McpPage.tsx`, `main/mcp-catalog.ts`, `main/mcp-modules.ts`, `main/mcp-oauth.ts`, `docs/mcp-catalog.json` |
+| MCP per-module install (`~/.deyin/mcp-modules/<id>/`) | Done | `main/mcp-modules.ts`, `agent-core/capabilities/mcp-config.ts` |
+| Goal modal + clear goal | Done | `components/Composer.tsx` |
+| Context attachment budget warning | Done | `components/Composer.tsx`, `components/ContextUsage.tsx` |
+| Chat history attachment / linked-thread chips | Done | `components/ChatView.tsx` |
+| Tray pending-review indicator | Done | `main/tray.ts`, `main/ipc.ts` |
+| Reject-all / approve-all review sync | Done | `main/agent.ts`, `main/pending-review.ts` |
 | Settings: Plugins (GitHub install, DeYinAI catalog, secret variables) | Done | `settings/PluginsPage.tsx`, `main/plugins.ts`, `agent-core/src/capabilities/plugin-install.ts` |
 | Settings: Indexing (live local semantic index + search probe) | Done | `settings/IndexingPage.tsx`, `host-core/src/indexer/*` |
 | Settings: Usage stats (cards, heatmap, per-day chart, cached account snapshot) | Done | `components/settings/UsageStatsPage.tsx`, `main/usage.ts` |
@@ -59,11 +72,16 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Plugins (GitHub tarball install, auto-discovery, variables) | Done | `agent-core/src/capabilities/plugins.ts`, `plugin-install.ts`, `main/plugins.ts` |
 | Live local semantic index + `codebase_search` tool | Done | `host-core/src/indexer/*`, `agent-core/src/tools/codebase-search.ts` |
 | Browser control (CDP navigate/click/type/screenshot/console/network, per-workspace profile) | Done | `main/browser.ts`, `components/WorkspacePanel.tsx` |
-| File explorer / read | Foundation | `main/host/files.ts`, web `server/host.ts` (tree/read wired; UI panel pending) |
-| Workspace / open folder | Foundation | `main/ipc.ts` (`workspace:open`) |
-| Goal mode / automations engine | Shipped (desktop) | cron + manual; local or SSH |
+| File explorer / read | Done | `components/WorkspacePanel.tsx` (Files tab), `main/host/files.ts`, `host-core/src/context-refs.ts`, web `server/host.ts` |
+| Workspace folder picker (open/switch) | Foundation | `main/ipc.ts` (`workspace:open`) |
+| Automations engine (cron + manual; local or SSH) | Shipped (desktop) | `main/automations/*`, `components/settings/AutomationsPage.tsx` |
 | Agent runtime on the web (WS channel to the session host) | Planned | web falls back to plain chat streaming today |
-| OS-level computer use | Out of scope for now | browser control covers in-app automation |
+| OS-level computer use (Windows) | Done | C# `deyin-computer-use-host.exe` (UIA + capture + SendInput), named-pipe client, default-deny allowlist, Esc cancel |
+| Chrome CDP (logged-in sessions) | Done (Windows) | Consent dialog, Default profile attach, origin policy, expanded `chrome_*` tools |
+| Inline visualizations | Done | `visualize_write` tool, path-safe read/write, tightened CSP in `InlineVisualization.tsx` |
+| Security findings panel | Done | `SecurityFindingsPanel.tsx`, semgrep/npm audit MCP, workspace-bounded scans |
+| Security scan plugin | Done (MVP) | bundled `security` plugin + MCP `deyin-security` |
+| Bundled first-party plugins | Done | `apps/desktop/bundled-plugins/`, materialize on startup, marketplace cards |
 | Web hosting (same renderer) | Done | `@deyin/web` reuses `apps/desktop/src/renderer` verbatim |
 | Auto-update | Done (packaged builds) | `main/updater.ts` |
 

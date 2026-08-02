@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SecurityFindingsReport",
+  "type": "object",
+  "required": ["version", "scannedAt", "findings"],
+  "properties": {
+    "version": { "type": "string", "const": "1" },
+    "scannedAt": { "type": "string" },
+    "root": { "type": "string" },
+    "scanned": { "type": "integer", "minimum": 0 },
+    "sources": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["semgrep", "regex", "npm-audit"] }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/finding" }
+    }
+  },
+  "definitions": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "ruleId", "severity", "message", "source"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "ruleId": { "type": "string", "minLength": 1 },
+        "severity": { "type": "string", "enum": ["critical", "high", "medium", "low", "info"] },
+        "message": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "enum": ["semgrep", "regex", "npm-audit"] },
+        "location": {
+          "type": "object",
+          "required": ["file"],
+          "properties": {
+            "file": { "type": "string", "minLength": 1 },
+            "line": { "type": "integer", "minimum": 1 },
+            "column": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    }
+  }
+}

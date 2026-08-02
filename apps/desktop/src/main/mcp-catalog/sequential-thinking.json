@@ -1,0 +1,15 @@
+{
+  "id": "sequential-thinking",
+  "name": "Sequential Thinking",
+  "description": "Structured step-by-step reasoning helper.",
+  "category": "local",
+  "vendor": "Community",
+  "transport": "stdio",
+  "auth": "none",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-sequential-thinking"
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers"
+}

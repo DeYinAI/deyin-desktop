@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "deyin-security": {
+      "command": "node",
+      "args": ["${pluginDir}/mcp/server.mjs"],
+      "env": {
+        "DEYIN_WORKSPACE": "${workspaceFolder}"
+      }
+    }
+  }
+}

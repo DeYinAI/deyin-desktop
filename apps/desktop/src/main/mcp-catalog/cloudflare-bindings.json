@@ -1,0 +1,11 @@
+{
+  "id": "cloudflare-bindings",
+  "name": "Cloudflare Bindings",
+  "description": "Manage Workers bindings (KV, R2, D1, etc.).",
+  "category": "cloud-infra",
+  "vendor": "Cloudflare",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://bindings.mcp.cloudflare.com/mcp",
+  "docsUrl": "https://github.com/cloudflare/mcp-server-cloudflare"
+}

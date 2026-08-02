@@ -1,11 +1,17 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  Client,
+  SSEClientTransport,
+  StreamableHTTPClientTransport,
+  type OAuthClientProvider,
+} from "@modelcontextprotocol/client";
+import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
 import type { McpServerDefinition } from "./capabilities/mcp-config.js";
 import type { McpServerConfig } from "./config.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import type { ToolDefinition, ToolSchema } from "./types.js";
+
+export type { OAuthClientProvider };
+export { UnauthorizedError } from "@modelcontextprotocol/client";
 
 export interface McpConnection {
   name: string;
@@ -34,7 +40,7 @@ function contentToText(content: unknown): string {
     .join("\n");
 }
 
-function transportFor(def: McpServerDefinition) {
+function transportFor(def: McpServerDefinition, authProvider?: OAuthClientProvider) {
   if (def.transport === "stdio") {
     if (!def.command) throw new Error(`MCP server ${def.name} has no command.`);
     return new StdioClientTransport({
@@ -47,17 +53,20 @@ function transportFor(def: McpServerDefinition) {
   if (!def.url) throw new Error(`MCP server ${def.name} has no url.`);
   const url = new URL(def.url);
   const requestInit = def.headers ? { headers: def.headers } : undefined;
-  if (def.transport === "sse") return new SSEClientTransport(url, { requestInit });
-  return new StreamableHTTPClientTransport(url, { requestInit });
+  if (def.transport === "sse") return new SSEClientTransport(url, { requestInit, authProvider });
+  return new StreamableHTTPClientTransport(url, { requestInit, authProvider });
 }
 
 /** Connect one MCP server and return the live client plus its tool list. */
-export async function connectMcpServer(def: McpServerDefinition): Promise<{
+export async function connectMcpServer(
+  def: McpServerDefinition,
+  opts: { authProvider?: OAuthClientProvider } = {},
+): Promise<{
   client: Client;
   tools: { name: string; description?: string; inputSchema?: unknown }[];
   close(): Promise<void>;
 }> {
-  const transport = transportFor(def);
+  const transport = transportFor(def, opts.authProvider);
   const client = new Client({ name: "deyin", version: "0.1.0" }, { capabilities: {} });
   await client.connect(transport);
   const { tools } = await client.listTools();
@@ -101,13 +110,18 @@ function registerServerTools(
 export async function connectMcpDefinitions(
   defs: McpServerDefinition[],
   registry: ToolRegistry,
-  opts: { onError?: (server: string, error: unknown) => void } = {},
+  opts: {
+    onError?: (server: string, error: unknown) => void;
+    getAuthProvider?: (serverName: string) => OAuthClientProvider | undefined;
+  } = {},
 ): Promise<McpConnection[]> {
   const connections: McpConnection[] = [];
   for (const def of defs) {
     if (!def.enabled) continue;
     try {
-      const { client, tools, close } = await connectMcpServer(def);
+      const { client, tools, close } = await connectMcpServer(def, {
+        authProvider: opts.getAuthProvider?.(def.name),
+      });
       const toolNames = registerServerTools(registry, def.name, client, tools);
       connections.push({ name: def.name, toolCount: tools.length, toolNames, close });
     } catch (err) {

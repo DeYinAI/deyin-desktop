@@ -8,4 +8,5 @@ export * from "./hooks.js";
 export * from "./mcp-config.js";
 export * from "./plugins.js";
 export * from "./plugin-install.js";
+export * from "./bundled-plugins.js";
 export * from "./registry.js";

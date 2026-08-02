@@ -93,7 +93,7 @@ async function loadPluginMcpServers(plugins: InstalledPlugin[], cwd: string | nu
         mcpServers?: Record<string, { type?: string; command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }>;
       };
       for (const [name, raw] of Object.entries(parsed.mcpServers ?? {})) {
-        const ctx = { workspaceFolder: cwd };
+        const ctx = { workspaceFolder: cwd, pluginDir: plugin.dir };
         const apply = (v: string) => interpolate(v, ctx);
         const applyRecord = (record?: Record<string, string>) =>
           record ? Object.fromEntries(Object.entries(record).map(([k, v]) => [k, apply(v)])) : undefined;

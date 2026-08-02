@@ -9,6 +9,19 @@ import { join } from "node:path";
  * plus a root SKILL.md as the single-skill fallback.
  */
 
+export type PluginCapability = "Interactive" | "Read" | "Write";
+
+export interface PluginInterface {
+  displayName: string;
+  shortDescription: string;
+  longDescription?: string;
+  category?: string;
+  capabilities?: PluginCapability[];
+  brandColor?: string;
+  defaultPrompt?: string[];
+  logo?: string;
+}
+
 export interface PluginManifest {
   name?: string;
   description?: string;
@@ -17,6 +30,16 @@ export interface PluginManifest {
   keywords?: string[];
   /** Secret variable names (array) or a JSON-schema-ish { properties } object. */
   variables?: string[] | { properties?: Record<string, unknown> };
+  /** Marketplace card metadata (Codex/Cursor-style). */
+  interface?: PluginInterface;
+  /** When true, shipped with the app and materialized to userData on startup. */
+  bundled?: boolean;
+  /** Host-process tool family this plugin registers (browser, chrome, computer-use, visualize). */
+  hostModule?: "browser" | "chrome" | "computer-use" | "visualize" | "security";
+  /** Relative path to MCP config (default: mcp.json or .mcp.json). */
+  mcpServersPath?: string;
+  /** Platform availability note, e.g. "windows". */
+  platform?: "windows" | "all";
 }
 
 export interface InstalledPlugin {
@@ -24,10 +47,14 @@ export interface InstalledPlugin {
   dir: string;
   description?: string;
   version?: string;
-  /** From .deyin-install.json, e.g. "github:owner/repo" or "local". */
+  /** From .deyin-install.json, e.g. "github:owner/repo", "bundled", or "local". */
   source: string;
   installedAt?: string;
   variables: string[];
+  interface?: PluginInterface;
+  hostModule?: PluginManifest["hostModule"];
+  platform?: PluginManifest["platform"];
+  bundled?: boolean;
   /** Component roots that exist on disk. */
   skillsDir?: string;
   commandsDir?: string;
@@ -64,6 +91,7 @@ export async function loadPlugin(dir: string, fallbackName: string): Promise<Ins
   if (!(await exists(dir))) return null;
   const manifest =
     (await readJson<PluginManifest>(join(dir, ".deyin-plugin", "plugin.json"))) ??
+    (await readJson<PluginManifest>(join(dir, ".codex-plugin", "plugin.json"))) ??
     (await readJson<PluginManifest>(join(dir, ".cursor-plugin", "plugin.json"))) ??
     (await readJson<PluginManifest>(join(dir, "plugin.json"))) ??
     {};
@@ -73,26 +101,39 @@ export async function loadPlugin(dir: string, fallbackName: string): Promise<Ins
     ? manifest.variables
     : Object.keys(manifest.variables?.properties ?? {});
 
+  const mcpRel = manifest.mcpServersPath ?? ".mcp.json";
+  const mcpCandidates = [mcpRel, "mcp.json", ".mcp.json"].map((p) => join(dir, p));
+
   const plugin: InstalledPlugin = {
     name: manifest.name ?? fallbackName,
     dir,
-    description: manifest.description,
+    description: manifest.description ?? manifest.interface?.shortDescription,
     version: manifest.version,
     source: meta.source ?? "local",
     installedAt: meta.installedAt,
     variables,
+    interface: manifest.interface,
+    hostModule: manifest.hostModule,
+    platform: manifest.platform,
+    bundled: manifest.bundled ?? meta.source === "bundled",
   };
   const skillsDir = join(dir, "skills");
   const commandsDir = join(dir, "commands");
   const agentsDir = join(dir, "agents");
   const hooksFile = join(dir, "hooks", "hooks.json");
-  const mcpFile = join(dir, "mcp.json");
+  let mcpFile: string | undefined;
+  for (const candidate of mcpCandidates) {
+    if (await exists(candidate)) {
+      mcpFile = candidate;
+      break;
+    }
+  }
   const rootSkill = join(dir, "SKILL.md");
   if (await exists(skillsDir)) plugin.skillsDir = skillsDir;
   if (await exists(commandsDir)) plugin.commandsDir = commandsDir;
   if (await exists(agentsDir)) plugin.agentsDir = agentsDir;
   if (await exists(hooksFile)) plugin.hooksFile = hooksFile;
-  if (await exists(mcpFile)) plugin.mcpFile = mcpFile;
+  if (mcpFile) plugin.mcpFile = mcpFile;
   if (!plugin.skillsDir && (await exists(rootSkill))) plugin.rootSkill = rootSkill;
   return plugin;
 }

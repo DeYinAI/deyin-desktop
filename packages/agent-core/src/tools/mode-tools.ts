@@ -69,7 +69,7 @@ export const switchModeTool: ToolDefinition = {
     properties: {
       target_mode_id: {
         type: "string",
-        enum: ["agent", "plan", "ask"],
+        enum: ["agent", "plan", "ask", "delivery"],
         description: "The mode to switch to.",
       },
       explanation: { type: "string", description: "Why you are switching modes." },
@@ -79,8 +79,8 @@ export const switchModeTool: ToolDefinition = {
   summarize: (args) => `switch to ${String(args.target_mode_id ?? "agent")}`,
   async execute(args, ctx): Promise<string> {
     const target = args.target_mode_id;
-    if (target !== "agent" && target !== "plan" && target !== "ask") {
-      return "ERROR: target_mode_id must be agent, plan, or ask.";
+    if (target !== "agent" && target !== "plan" && target !== "ask" && target !== "delivery") {
+      return "ERROR: target_mode_id must be agent, plan, ask, or delivery.";
     }
     const explanation = typeof args.explanation === "string" ? args.explanation : undefined;
     return changeMode(ctx, {

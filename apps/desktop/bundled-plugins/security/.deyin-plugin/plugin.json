@@ -1,0 +1,19 @@
+{
+  "name": "security",
+  "version": "1.0.0",
+  "description": "Security scan, diff review, and finding triage workflows.",
+  "bundled": true,
+  "hostModule": "security",
+  "platform": "all",
+  "mcpServersPath": ".mcp.json",
+  "interface": {
+    "displayName": "Security",
+    "shortDescription": "Scan repos and diffs for security issues.",
+    "longDescription": "Run local security scans, triage findings, and export SARIF — no cloud required.",
+    "category": "Security",
+    "capabilities": ["Read", "Write"],
+    "brandColor": "#EF4444",
+    "defaultPrompt": ["Run a security scan on this repo", "Review this diff for security issues"],
+    "logo": "logo.svg"
+  }
+}

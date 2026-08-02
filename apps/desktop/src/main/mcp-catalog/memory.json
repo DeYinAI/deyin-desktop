@@ -1,0 +1,15 @@
+{
+  "id": "memory",
+  "name": "Memory",
+  "description": "Persistent key-value memory across sessions.",
+  "category": "local",
+  "vendor": "Community",
+  "transport": "stdio",
+  "auth": "none",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-memory"
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers"
+}

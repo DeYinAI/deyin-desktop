@@ -1,0 +1,22 @@
+{
+  "id": "brave-search",
+  "name": "Brave Search",
+  "description": "Web search via Brave Search API.",
+  "category": "local",
+  "vendor": "Brave",
+  "transport": "stdio",
+  "auth": "token",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-brave-search"
+  ],
+  "secrets": [
+    {
+      "envKey": "BRAVE_API_KEY",
+      "label": "Brave Search API key",
+      "required": true
+    }
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers-archived"
+}
