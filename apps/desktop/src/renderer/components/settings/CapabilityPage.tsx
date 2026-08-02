@@ -1,6 +1,6 @@
 import { Icon } from "../Icon.js";
 import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
-import type { CapabilityItem, CapabilityKind } from "../../../shared/types.js";
+import type { CapabilityItem, CapabilityKind, ModelInfo, ProviderInfo } from "../../../shared/types.js";
 
 const COPY: Record<CapabilityKind, { title: string; description: string; empty: string }> = {
   plugin: {
@@ -17,7 +17,7 @@ const COPY: Record<CapabilityKind, { title: string; description: string; empty: 
   subagent: {
     title: "Subagents",
     description:
-      "Specialized helper agents the main agent delegates to via the task tool. Custom ones live in .deyin/agents/*.md (frontmatter: name, description, model, readonly, is_background).",
+      "Specialized helper agents the main agent delegates to via the task tool. Custom ones live in .deyin/agents/*.md (frontmatter: name, description, model, effort, max_steps, readonly, is_background, tools). Pick a model per subagent below; effort, step caps and tool allowlists come from the .md file.",
     empty: "No subagents configured.",
   },
   mcp: {
@@ -55,10 +55,32 @@ interface Props {
   kind: CapabilityKind;
   items: CapabilityItem[];
   onToggle: (id: string, enabled: boolean) => void;
+  /** Subagent model picker support (enabled providers + live primary models). */
+  providers?: ProviderInfo[];
+  liveModels?: ModelInfo[];
+  /** Persist a per-subagent model override ("providerId::modelId", undefined = inherit). */
+  onSetSubagentModel?: (name: string, model: string | undefined) => void;
 }
 
-export function CapabilityPage({ kind, items, onToggle }: Props) {
+/** Flatten enabled providers' models into "providerId::modelId" options. */
+function modelOptions(providers: ProviderInfo[] | undefined, liveModels: ModelInfo[] | undefined): { value: string; label: string }[] {
+  const out: { value: string; label: string }[] = [];
+  if (!providers) return out;
+  for (const p of providers.filter((p) => p.enabled)) {
+    const list = p.kind === "primary" ? (liveModels ?? []) : p.models;
+    const disabled = new Set(p.disabledModels);
+    for (const m of list) {
+      if (disabled.has(m.id)) continue;
+      out.push({ value: `${p.id}::${m.id}`, label: `${p.name} · ${m.name}` });
+    }
+  }
+  return out;
+}
+
+export function CapabilityPage({ kind, items, onToggle, providers, liveModels, onSetSubagentModel }: Props) {
   const copy = COPY[kind];
+  const isSubagents = kind === "subagent";
+  const options = isSubagents ? modelOptions(providers, liveModels) : [];
 
   const groups = new Map<string, CapabilityItem[]>();
   for (const item of items) {
@@ -85,6 +107,29 @@ export function CapabilityPage({ kind, items, onToggle }: Props) {
               title={item.name + (item.version ? ` · v${item.version}` : "")}
               description={item.description + (item.path ? ` — ${item.path}` : "")}
             >
+              {isSubagents && onSetSubagentModel && (
+                <div className="field__row">
+                  <label className="field__label" htmlFor={`subagent-model-${item.id}`}>
+                    Model
+                  </label>
+                  <select
+                    id={`subagent-model-${item.id}`}
+                    className="select select--small"
+                    value={item.model ?? ""}
+                    onChange={(e) => onSetSubagentModel(item.name, e.target.value || undefined)}
+                  >
+                    <option value="">Inherit main model</option>
+                    {options.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {isSubagents && !item.model && item.effectiveModel && (
+                <div className="hint">Uses frontmatter model: {item.effectiveModel}</div>
+              )}
               <div className="field__row">
                 {item.path && (
                   <button

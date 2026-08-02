@@ -20,6 +20,24 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   assert.equal(migrated.terminalScrollback, DEFAULT_SETTINGS.terminalScrollback);
   assert.equal(migrated.revealTerminalOnAgentCommand, true);
   assert.deepEqual(migrated.onboard, { workspaceOpened: false, terminalUsed: false, taskRun: false });
+  // Subagent settings default.
+  assert.deepEqual(migrated.subagentModels, {});
+  assert.deepEqual(migrated.subagentEfforts, {});
+  assert.equal(migrated.subagentMaxSteps, DEFAULT_SETTINGS.subagentMaxSteps);
+  assert.equal(migrated.subagentConcurrency, DEFAULT_SETTINGS.subagentConcurrency);
+});
+
+test("migrateSettings sanitizes subagent model/effort maps and clamps run limits", () => {
+  const migrated = migrateSettings({
+    subagentModels: { explorer: "openference::glm-5.2", reviewer: "", broken: 42, empty: "  " },
+    subagentEfforts: { reviewer: "high", explorer: "turbo", broken: true },
+    subagentMaxSteps: 9999,
+    subagentConcurrency: 0,
+  });
+  assert.deepEqual(migrated.subagentModels, { explorer: "openference::glm-5.2" });
+  assert.deepEqual(migrated.subagentEfforts, { reviewer: "high" });
+  assert.equal(migrated.subagentMaxSteps, 200);
+  assert.equal(migrated.subagentConcurrency, 1);
 });
 
 test("migrateSettings clamps out-of-range values and repairs invalid enums", () => {

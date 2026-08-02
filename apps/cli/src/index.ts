@@ -2,10 +2,18 @@
 import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, memoryCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import {
+  subagentsCreateCommand,
+  subagentsDeleteCommand,
+  subagentsEditCommand,
+  subagentsListCommand,
+  subagentsRunCommand,
+  subagentsTryCommand,
+} from "./commands/subagents.js";
 import { createContext } from "./context.js";
 import { EXIT_ERROR, EXIT_INTERRUPT, runHeadless } from "./headless.js";
-import { errorLine } from "./output.js";
+import { errorLine, dim, red } from "./output.js";
 import { upgradeCommand } from "./upgrade.js";
 import { VERSION } from "./version.js";
 
@@ -120,7 +128,11 @@ const SUBCOMMAND_NAMES = new Set([
   "usage",
   "sessions",
   "upgrade",
+  "subagent",
+  "memory",
 ]);
+
+const SUBAGENT_SUBCOMMANDS = new Set(["list", "create", "edit", "delete", "run", "try"]);
 
 const main = defineCommand({
   meta: {
@@ -152,6 +164,115 @@ const main = defineCommand({
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
     sessions: simple("sessions", "List saved sessions", sessionsCommand),
+    memory: defineCommand({
+      meta: { name: "memory", description: "List or search saved background memories" },
+      args: {
+        cwd: sharedArgs.cwd,
+        query: { type: "positional", required: false, description: "Optional search query" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await memoryCommand(ctx, typeof args.query === "string" ? args.query : undefined);
+      },
+    }),
+    subagent: defineCommand({
+      meta: { name: "subagent", description: "List, create, edit, delete and run subagents (shared with the desktop app)" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        list: simple("list", "List subagents", subagentsListCommand),
+        create: defineCommand({
+          meta: { name: "create", description: "Create a subagent definition (.deyin/agents/<name>.md)" },
+          args: {
+            ...sharedArgs,
+            name: { type: "positional", required: true, description: "Subagent name (kebab-case)" },
+            description: { type: "string", required: true, description: "Delegation description (the model picks subagents by it)" },
+            prompt: { type: "string", description: "System prompt body" },
+            "prompt-file": { type: "string", description: "Read the prompt body from a file (- for stdin)" },
+            model: { type: "string", description: "Model id, or omit to inherit the caller's" },
+            effort: { type: "string", description: "Reasoning effort: low | medium | high" },
+            "max-steps": { type: "string", description: "Step cap for subagent runs" },
+            readonly: { type: "boolean", description: "Deny write/edit and gate bash behind approval" },
+            background: { type: "boolean", description: "Return immediately from the task tool; surface when done" },
+            tools: { type: "string", description: "Comma-separated tool allowlist (e.g. read,grep,glob,ls)" },
+            scope: { type: "string", description: "project (default, cwd/.deyin/agents) or global (~/.deyin/agents)" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await subagentsCreateCommand(ctx, args as never);
+          },
+        }),
+        edit: defineCommand({
+          meta: { name: "edit", description: "Edit a custom subagent's fields (built-ins are read-only)" },
+          args: {
+            ...sharedArgs,
+            name: { type: "positional", required: true, description: "Subagent name" },
+            description: { type: "string", description: "New delegation description" },
+            prompt: { type: "string", description: "New prompt body" },
+            "prompt-file": { type: "string", description: "Read the new prompt body from a file" },
+            model: { type: "string", description: "Model id (empty clears)" },
+            effort: { type: "string", description: "Reasoning effort (empty clears)" },
+            "max-steps": { type: "string", description: "Step cap (empty clears)" },
+            readonly: { type: "boolean", description: "Deny write/edit and gate bash" },
+            background: { type: "boolean", description: "Run in the background" },
+            tools: { type: "string", description: "Tool allowlist (empty clears)" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await subagentsEditCommand(ctx, args as never);
+          },
+        }),
+        delete: defineCommand({
+          meta: { name: "delete", description: "Delete a custom subagent definition" },
+          args: {
+            ...sharedArgs,
+            name: { type: "positional", required: true, description: "Subagent name" },
+            yes: { type: "boolean", description: "Confirm deletion" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await subagentsDeleteCommand(ctx, args as never);
+          },
+        }),
+        run: defineCommand({
+          meta: { name: "run", description: "Run a subagent headlessly with the normal permission policy" },
+          args: {
+            ...sharedArgs,
+            name: { type: "positional", required: true, description: "Subagent name" },
+            task: { type: "positional", required: true, description: "The task to delegate" },
+            model: { type: "string", description: "Model override (\"providerId::modelId\" or bare id)" },
+            "max-steps": { type: "string", description: "Cap this run's steps" },
+            yes: { type: "boolean", alias: "y", description: "Skip permission prompts" },
+            dir: { type: "string", description: "Run in this directory (defaults to cwd)" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await subagentsRunCommand(ctx, args as never);
+          },
+        }),
+        try: defineCommand({
+          meta: { name: "try", description: "Preview a subagent in read-only mode (writes denied, bash asks)" },
+          args: {
+            ...sharedArgs,
+            name: { type: "positional", required: true, description: "Subagent name" },
+            task: { type: "positional", required: true, description: "The task to delegate" },
+            model: { type: "string", description: "Model override" },
+            "max-steps": { type: "string", description: "Cap this run's steps" },
+            dir: { type: "string", description: "Run in this directory (defaults to cwd)" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await subagentsTryCommand(ctx, args as never);
+          },
+        }),
+      },
+      async run({ rawArgs }) {
+        const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
+        if (firstPositional && SUBAGENT_SUBCOMMANDS.has(firstPositional)) return;
+        console.error(`${red("usage:")} deyin subagent <list|create|edit|delete|run|try> ...`);
+        console.error(dim("Run \`deyin subagent create --help\` for the create options."));
+        process.exitCode = 1;
+      },
+    }),
     upgrade: defineCommand({
       meta: { name: "upgrade", description: "Update deyin to the latest release" },
       async run() {
