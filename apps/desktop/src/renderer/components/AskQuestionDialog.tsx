@@ -68,9 +68,9 @@ export function AskQuestionDialog({ title, questions, onSubmit, onCancel }: Prop
   };
 
   return (
-    <div className="approval ask-question" role="dialog" aria-modal="true">
-      <div className="approval__box ask-question__box">
-        <div className="approval__title">
+    <div className="ask-question-inline">
+      <div className="ask-question-inline__box">
+        <div className="ask-question-inline__title">
           <Icon name="hand" size={15} />
           {title?.trim() || "Choose an option"}
         </div>
@@ -140,7 +140,7 @@ export function AskQuestionDialog({ title, questions, onSubmit, onCancel }: Prop
             </fieldset>
           ))}
         </div>
-        <div className="approval__actions">
+        <div className="ask-question-inline__actions">
           <button type="button" className="btn btn--outline" onClick={onCancel}>
             Cancel
           </button>

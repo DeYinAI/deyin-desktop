@@ -1453,6 +1453,32 @@ export function App() {
               )}
 
               <div className="chat-column__composer">
+                {approval && (
+                  <ApprovalDialog
+                    toolName={approval.toolName}
+                    summary={approval.summary}
+                    onDecision={(decision) => {
+                      window.deyin.agent?.approve(approval.requestId, decision);
+                      setApproval(null);
+                    }}
+                  />
+                )}
+                {question && (
+                  <AskQuestionDialog
+                    title={question.title}
+                    questions={question.questions}
+                    onSubmit={(answers) => {
+                      window.deyin.agent?.answerQuestion(question.requestId, answers);
+                      setQuestion(null);
+                    }}
+                    onCancel={() => {
+                      window.deyin.agent?.answerQuestion(question.requestId, {
+                        __cancelled: "AskQuestion was cancelled before answers were returned.",
+                      });
+                      setQuestion(null);
+                    }}
+                  />
+                )}
                 <Composer
                   value={input}
                   models={models}
@@ -1560,34 +1586,6 @@ export function App() {
           )}
         </div>
       </div>
-
-      {approval && (
-        <ApprovalDialog
-          toolName={approval.toolName}
-          summary={approval.summary}
-          onDecision={(decision) => {
-            window.deyin.agent?.approve(approval.requestId, decision);
-            setApproval(null);
-          }}
-        />
-      )}
-
-      {question && (
-        <AskQuestionDialog
-          title={question.title}
-          questions={question.questions}
-          onSubmit={(answers) => {
-            window.deyin.agent?.answerQuestion(question.requestId, answers);
-            setQuestion(null);
-          }}
-          onCancel={() => {
-            window.deyin.agent?.answerQuestion(question.requestId, {
-              __cancelled: "AskQuestion was cancelled before answers were returned.",
-            });
-            setQuestion(null);
-          }}
-        />
-      )}
 
       {threadMenu && (
         <ThreadMenu
