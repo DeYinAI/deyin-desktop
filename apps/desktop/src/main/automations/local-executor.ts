@@ -12,6 +12,7 @@ import {
   closeMcp,
   type AgentRunContextDeps,
 } from "./agent-run-context.js";
+import { requiresExtraConfirmation } from "../permission-policy.js";
 
 export interface LocalRunOptions {
   automation: Automation;
@@ -51,8 +52,13 @@ export async function runLocalAutomation(
       contextLength: deps.getContextLength(automation.providerId, automation.model),
       messages,
       tools: env.registry,
-      permissions: automationPermissions(),
-      resolvePermission: async () => "allow",
+      permissions: automationPermissions(env.hostRules),
+      resolvePermission: async (req) => {
+        if (req.toolName === "chrome_navigate") return "deny";
+        if (requiresExtraConfirmation(req.toolName, req.args)) return "deny";
+        return "allow";
+      },
+      forcePermissionPrompt: (req) => requiresExtraConfirmation(req.toolName, req.args),
       cwd,
       thinking: deps.settings.get().thinking,
       signal,

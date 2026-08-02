@@ -20,6 +20,14 @@ extraResources:
     filter:
       - "**/*"
       - "!.gitkeep"
+  - from: bundled-plugins
+    to: bundled-plugins
+    filter:
+      - "**/*"
+  - from: ../../packages/computer-use-host/native/bin/Release/net8.0-windows/win-x64/publish
+    to: computer-use-host
+    filter:
+      - "**/*"
 # node-pty ships a native .node binary; it must stay outside the asar archive
 # so it can be dlopen'd at runtime. The terminal degrades gracefully if absent.
 asarUnpack:

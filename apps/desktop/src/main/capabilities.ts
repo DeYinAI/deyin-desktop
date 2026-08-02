@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentsStore } from "@deyin/host-core";
@@ -10,8 +10,11 @@ import {
   userDeyinDir,
   type CapabilitySnapshot,
   type McpServerDefinition,
+  type OAuthClientProvider,
 } from "@deyin/agent-core";
 import type { CapabilityItem, CapabilityKind, McpServerEntry, McpServerInput, McpTestResult } from "../shared/types.js";
+import type { McpModuleService } from "./mcp-modules.js";
+import type { McpOAuthService } from "./mcp-oauth.js";
 
 const SCAN_TTL_MS = 4_000;
 
@@ -27,6 +30,8 @@ export class CapabilityService {
   private cache: CapabilitySnapshot | null = null;
   private cacheKey = "";
   private cacheAt = 0;
+  private mcpModules: McpModuleService | null = null;
+  private mcpOAuth: McpOAuthService | null = null;
 
   constructor(
     private readonly agents: AgentsStore,
@@ -44,6 +49,27 @@ export class CapabilityService {
 
   invalidate(): void {
     this.cache = null;
+  }
+
+  setMcpModules(modules: McpModuleService): void {
+    this.mcpModules = modules;
+  }
+
+  setMcpOAuth(oauth: McpOAuthService): void {
+    this.mcpOAuth = oauth;
+  }
+
+  /** OAuth provider for a catalog module installed with native OAuth. */
+  getAuthProvider(serverName: string): OAuthClientProvider | undefined {
+    if (!this.mcpOAuth || !this.mcpModules) return undefined;
+    if (!this.moduleUsesNativeOAuth(serverName)) return undefined;
+    return this.mcpOAuth.getProvider(serverName);
+  }
+
+  moduleUsesNativeOAuth(serverName: string): boolean {
+    const manifest = this.mcpModules?.get(serverName);
+    if (!manifest) return false;
+    return manifest.authMode === "oauth" || Boolean(manifest.usesNativeOAuth);
   }
 
   async snapshot(): Promise<CapabilitySnapshot> {
@@ -226,37 +252,20 @@ export class CapabilityService {
     return join(userDeyinDir(homedir()), "mcp.json");
   }
 
-  /** Add (or replace) a server in the user-level ~/.deyin/mcp.json. */
+  /** Add a custom MCP server as an installable module under ~/.deyin/mcp-modules/<id>/. */
   addMcpServer(input: McpServerInput): void {
-    const file = this.userMcpFile();
-    let parsed: { mcpServers?: Record<string, unknown> } = {};
-    try {
-      parsed = JSON.parse(readFileSync(file, "utf8")) as typeof parsed;
-    } catch {
-      // new file
-    }
-    const name = input.name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
-    if (!name) throw new Error("Server name is required.");
-    const entry: Record<string, unknown> = {};
-    if (input.transport === "stdio") {
-      if (!input.command?.trim()) throw new Error("A command is required for stdio servers.");
-      entry.command = input.command.trim();
-      if (input.args?.length) entry.args = input.args;
-      if (input.env && Object.keys(input.env).length > 0) entry.env = input.env;
-    } else {
-      if (!input.url?.trim()) throw new Error("A URL is required for remote servers.");
-      entry.url = input.url.trim();
-      entry.type = input.transport;
-      if (input.headers && Object.keys(input.headers).length > 0) entry.headers = input.headers;
-    }
-    parsed.mcpServers = { ...(parsed.mcpServers ?? {}), [name]: entry };
-    mkdirSync(userDeyinDir(homedir()), { recursive: true, mode: 0o700 });
-    writeFileSync(file, JSON.stringify(parsed, null, 2), { encoding: "utf8", mode: 0o600 });
+    if (!this.mcpModules) throw new Error("MCP module service is not initialized.");
+    this.mcpModules.installCustom(input);
     this.invalidate();
   }
 
-  /** Remove a server from ~/.deyin/mcp.json (only user-level entries). */
+  /** Remove a user MCP module or legacy flat mcp.json entry. */
   removeMcpServer(name: string): void {
+    if (this.mcpModules?.has(name)) {
+      this.mcpModules.uninstall(name);
+      this.invalidate();
+      return;
+    }
     const file = this.userMcpFile();
     let parsed: { mcpServers?: Record<string, unknown> } = {};
     try {
@@ -278,9 +287,12 @@ export class CapabilityService {
     if (!def) return { ok: false, message: `Unknown server "${name}".` };
     if (def.name === BUILTIN_MCP_NAMES.browser) return { ok: true, toolCount: 8, message: "Built-in browser control (in-process)." };
     if (def.name === BUILTIN_MCP_NAMES.search) return { ok: true, toolCount: 1, message: "Built-in web search (in-process)." };
+    if (this.moduleUsesNativeOAuth(name) && !this.mcpOAuth?.isAuthenticated(name)) {
+      return { ok: false, message: "Not authenticated — click Authenticate in Settings." };
+    }
     try {
       const resolved = this.resolvePluginVariables(def);
-      const { tools, close } = await connectMcpServer(resolved);
+      const { tools, close } = await connectMcpServer(resolved, { authProvider: this.getAuthProvider(name) });
       await close();
       return { ok: true, toolCount: tools.length, tools: tools.map((t) => t.name).slice(0, 40) };
     } catch (err) {

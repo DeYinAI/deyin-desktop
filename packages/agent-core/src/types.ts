@@ -1,4 +1,6 @@
 /** One tool invocation requested by the model (arguments is the raw JSON string). */
+import type { FileMutationRequest } from "./tools/file-mutation.js";
+
 export interface AgentToolCall {
   id: string;
   name: string;
@@ -45,6 +47,11 @@ export interface TodoItem {
   id: string;
   content: string;
   status: "pending" | "in_progress" | "completed" | "cancelled";
+  /** Delivery mode: how to verify this step before complete_step sign-off. */
+  acceptanceCriteria?: string;
+  /** Set when complete_step records a sign-off for this id. */
+  signedOff?: boolean;
+  signOffNotes?: string;
 }
 
 /** A workspace file mutation reported by the write/edit tools (drives diff UIs). */
@@ -109,6 +116,53 @@ export interface ToolContext {
     taskId: string,
     promise: Promise<{ output: string; exitCode: number | null }>,
   ) => void;
+  /**
+   * When set, write/edit/delete route through review instead of applying immediately.
+   * Resolves when the user approves (file written + onFileChanged fired) or rejects.
+   */
+  applyFileChange?: (change: FileMutationRequest) => Promise<"applied" | "rejected">;
+  /** Goal mode: fired when the model calls report_goal_met. */
+  onGoalReport?: (report: { met: boolean; reason: string }) => void;
+  /** Active goal text when the thread is in goal mode. */
+  goalText?: string;
+  /** Delivery mode evidence ledger (session-scoped). */
+  evidenceLedger?: import("./evidence/ledger.js").EvidenceLedger;
+  /** Fired when complete_step records a sign-off. */
+  onEvidenceSignOff?: (receipt: {
+    stepId: string;
+    verificationCommand: string;
+    diffSummary: string;
+    reviewNotes?: string;
+  }) => void;
+  /** When true, mutation/finalization readiness gates are enforced. */
+  evidenceGatesEnabled?: boolean;
+  /** Session-scoped subagent scheduler for task/fleet coordination. */
+  scheduler?: import("./scheduler/subagent-scheduler.js").SubagentScheduler;
+  /** Session-scoped background job registry. */
+  jobsManager?: import("./jobs/manager.js").JobsManager;
+  /** Register a background job and return its id. */
+  registerBackgroundJob?: (job: {
+    kind: string;
+    label: string;
+    profile?: string;
+    prompt: string;
+    run: (signal?: AbortSignal) => Promise<string>;
+  }) => string;
+  /** Wait for background jobs to complete. */
+  waitForJobs?: (
+    jobIds: string[],
+    timeoutMs: number,
+  ) => Promise<
+    Array<{
+      id: string;
+      label: string;
+      status: string;
+      result?: string;
+      error?: string;
+    }>
+  >;
+  /** Reserve parent write paths during write/edit execution. */
+  reserveParentWrite?: (paths: string[]) => () => void;
 }
 
 /** Coarse capability class used for default permissions. */
@@ -131,8 +185,8 @@ export type InteractionRequest =
   | { type: "ask-question"; questions: AskQuestionItem[]; title?: string };
 
 export interface ModeChangeRequest {
-  target: "agent" | "plan" | "ask";
-  previous?: "agent" | "plan" | "ask";
+  target: "agent" | "plan" | "ask" | "delivery";
+  previous?: "agent" | "plan" | "ask" | "delivery";
   userApproved?: boolean;
   explanation?: string;
   event: "enter" | "exit" | "switch";

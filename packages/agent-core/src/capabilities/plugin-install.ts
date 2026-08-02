@@ -176,5 +176,12 @@ export async function uninstallPlugin(pluginsDir: string, name: string): Promise
   const dir = join(pluginsDir, name);
   const safe = normalize(dir);
   if (!safe.startsWith(normalize(pluginsDir + sep))) throw new Error("Invalid plugin name.");
+  if (name.startsWith("bundled-")) {
+    throw new Error("Cannot uninstall bundled plugins.");
+  }
+  const plugin = await loadPlugin(safe, name);
+  if (plugin?.bundled) {
+    throw new Error("Cannot uninstall bundled plugins.");
+  }
   await rm(safe, { recursive: true, force: true });
 }

@@ -1,0 +1,12 @@
+{
+  "id": "cloudflare-observability",
+  "name": "Cloudflare Observability",
+  "description": "Workers logs, analytics, and observability tools.",
+  "category": "cloud-infra",
+  "vendor": "Cloudflare",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://observability.mcp.cloudflare.com/mcp",
+  "docsUrl": "https://github.com/cloudflare/mcp-server-cloudflare",
+  "featured": true
+}

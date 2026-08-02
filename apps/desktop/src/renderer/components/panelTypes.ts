@@ -1,6 +1,6 @@
 /** Shared types for the right-hand workspace panel tabs. */
 
-export type PanelTab = "files" | "plan" | "diff" | "browser";
+export type PanelTab = "files" | "plan" | "diff" | "browser" | "git" | "security";
 
 export interface CodeDisplaySettings {
   showLineNumbers: boolean;

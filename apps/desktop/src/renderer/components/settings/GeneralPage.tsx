@@ -42,6 +42,19 @@ export function GeneralPage({ settings, version, onChange }: Props) {
       <SettingCard title={t("general.keepRunningInBackground")} description={t("general.keepRunningInBackgroundDesc")}>
         <Toggle checked={settings.keepRunningInBackground} onChange={(v) => onChange({ keepRunningInBackground: v })} />
       </SettingCard>
+      <SettingCard
+        title="Change review"
+        description="Queue file edits for review before applying to disk. Also enabled automatically in Ask before changes mode."
+      >
+        <select
+          className="select"
+          value={settings.reviewMode ?? "off"}
+          onChange={(e) => onChange({ reviewMode: e.target.value as "off" | "on" })}
+        >
+          <option value="off">Apply immediately</option>
+          <option value="on">Review before apply</option>
+        </select>
+      </SettingCard>
 
       <SectionTitle>{t("general.privacy")}</SectionTitle>
       <SettingCard title={t("general.telemetry")} description={t("general.telemetryDesc")}>

@@ -1,0 +1,18 @@
+{
+  "name": "browser",
+  "version": "1.0.0",
+  "description": "In-app browser automation for localhost and workspace pages.",
+  "bundled": true,
+  "hostModule": "browser",
+  "platform": "all",
+  "interface": {
+    "displayName": "Browser",
+    "shortDescription": "Automate the built-in workspace browser tab.",
+    "longDescription": "Navigate, click, type, and inspect pages in Deyin's embedded browser. Prefer for localhost, 127.0.0.1, and file:// URLs.",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read"],
+    "brandColor": "#3B82F6",
+    "defaultPrompt": ["Open localhost in the browser and check the page", "Take a browser snapshot of the current tab"],
+    "logo": "logo.svg"
+  }
+}

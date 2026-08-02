@@ -1,0 +1,23 @@
+{
+  "id": "postgres-pro",
+  "name": "PostgreSQL Pro",
+  "description": "Maintained Postgres MCP with schema introspection and EXPLAIN.",
+  "category": "database",
+  "vendor": "Crystal DBA",
+  "transport": "stdio",
+  "auth": "token",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@crystaldba/postgres-mcp",
+    "${env:POSTGRES_CONNECTION_STRING}"
+  ],
+  "secrets": [
+    {
+      "envKey": "POSTGRES_CONNECTION_STRING",
+      "label": "PostgreSQL connection URL",
+      "required": true
+    }
+  ],
+  "docsUrl": "https://github.com/crystaldba/postgres-mcp"
+}

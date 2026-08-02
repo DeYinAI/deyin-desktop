@@ -1,0 +1,18 @@
+{
+  "id": "neon",
+  "name": "Neon",
+  "description": "Serverless Postgres branches, schema, and queries.",
+  "category": "database",
+  "vendor": "Neon",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.neon.tech/mcp",
+  "secrets": [
+    {
+      "envKey": "NEON_API_KEY",
+      "label": "Neon API key",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://neon.com/docs/ai/neon-mcp-server"
+}

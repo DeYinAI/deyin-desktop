@@ -26,13 +26,30 @@ functional specification the apps are built against; it contains no third-party 
   panel's Plan tab; chat shows a compact plan-file card (Open / Build). **Build** switches
   the task to Agent mode and executes the plan.
 - Workspace panel (right): **Files** (tree + viewer/editor), **Plan**, **Diff** (latest
-  agent edit), and **Browser**. The panel starts collapsed and opens automatically when
+  agent edit), **Git** (status, stage, commit, branches), and **Browser**. The panel starts collapsed and opens automatically when
   there is content to show (plan, diff, browser, etc.).
 - Rich timeline: markdown output (GFM tables, task lists, themed code blocks),
   collapsible "Thought for Ns" reasoning cards, tool cards with expandable results,
   live todo checklists, and file-change cards with +/− counts that open the Diff tab.
 - Goal mode: set a verifiable objective; the agent iterates until it reports the goal met.
-- Change review: file edits are presented as a reviewable diff before they are applied.
+- Change review: file edits are presented as a reviewable diff before they are applied
+  (Settings → Change review, or automatically in Ask before changes mode).
+
+## LobeHub-inspired UX checklist (interaction polish)
+
+These patterns borrow interaction ideas from [LobeHub](https://github.com/lobehub/lobehub)
+without adopting its operator/lifestyle scope:
+
+- **Attachment chips** — `@` file/folder picks render as removable chips above the composer;
+  drag-drop and Add attachment use the same pipeline.
+- **Linked thread chips** — `#` picks other tasks in the project; summaries inject on send.
+- **Pending-change banner** — when review mode is on, a persistent Accept/Reject banner
+  appears above the composer (and per-file actions in the Diff tab).
+- **Goal card** — active thread goals show inline above the composer until met or cleared.
+- **Goal modal** — set or clear goals via an inline dialog (no browser `prompt()`).
+- **Context budget warning** — large `@` attachments show a warning before send.
+- **Chat history chips** — past user messages show attachment and linked-thread chips.
+- **Tray review badge** — system tray tooltip/menu reflects pending change-review count.
 
 ## Host capabilities
 - **Terminal**: full PTY via `node-pty`, streamed to the renderer. User tabs are
@@ -76,12 +93,28 @@ functional specification the apps are built against; it contains no third-party 
 
 ## Plugins
 - A plugin bundles skills, slash commands, subagents, MCP servers, and hooks.
-- Manifest at `.deyin-plugin/plugin.json` (Cursor `.cursor-plugin/plugin.json` accepted);
+- Manifest at `.deyin-plugin/plugin.json` (Codex `.codex-plugin/plugin.json` and Cursor `.cursor-plugin/plugin.json` accepted);
   components are auto-discovered from `skills/`, `commands/`, `agents/`, `hooks/hooks.json`,
-  `mcp.json`, or a root `SKILL.md` for single-skill plugins.
+  `mcp.json`, `.mcp.json`, or a root `SKILL.md` for single-skill plugins.
+- **Bundled first-party plugins** ship with the desktop app (browser, computer-use, chrome, visualize, security)
+  and materialize to `<userData>/plugins/bundled-*` on startup. Marketplace cards show `interface` metadata
+  (display name, category, default prompts, brand color).
 - Installed from GitHub (`owner/repo`, `owner/repo@ref`, URLs) into the user plugin library;
   the official catalog is the `DeYinAI/registry` repo. Secret `variables` are entered in
   settings and stored encrypted, substituted as `${VAR}` in plugin MCP configs.
+
+## Desktop automation (bundled plugins)
+- **Browser** (`browser_*` tools): in-app workspace webview — localhost, snapshots with element refs, tabs, fill/hover/drag.
+- **Computer use** (`computer_*` tools, Windows): Native C# host (`deyin-computer-use-host.exe`) over named pipe with UIA tree inspection, screenshots, and SendInput automation. Tools: `computer_launch_app`, `computer_list_windows`, `computer_click`, `computer_type`, `computer_set_value`. Default-deny app allowlist in Settings → Computer Use; Esc cancels in-flight actions; screenshot retention configurable. Linux and macOS hosts deferred.
+- **Chrome** (`chrome_*` tools, Windows): consent dialog + persisted consent; attach-or-launch with Default profile; origin approval on first navigation; expanded tool parity (fill, hover, scroll, tabs, screenshot).
+- **Visualize** (`visualize_write`): path-safe HTML fragments embedded in chat via `::deyin-inline-vis{}` with tightened CSP.
+- **Security**: workspace-bounded MCP scans (semgrep when available, regex fallback, npm audit); findings panel in workspace Security tab; diff scan from Git tab; triage/threat-model skills.
+
+## MCP OAuth (catalog servers)
+- Remote MCP catalog entries that require OAuth use native browser consent with PKCE.
+- A loopback HTTP listener captures the authorization callback; `state` is validated to prevent CSRF.
+- Tokens and client registration are stored encrypted per module under `<userData>/mcp-oauth/`.
+- Settings → MCP shows auth status (none / authenticated / expired) and supports revoke + re-auth.
 
 ## Automations
 - Scheduled or manual agent runs with saved prompts, model selection, and workspace targets.
@@ -95,10 +128,16 @@ functional specification the apps are built against; it contains no third-party 
 
 ## MCP
 - Connect Model Context Protocol servers; discover and call their tools from chat.
-- Config: `.deyin/mcp.json` (project) and `~/.deyin/mcp.json` (user).
-  Transports: stdio, SSE, Streamable HTTP.
-- `${env:NAME}`, `${workspaceFolder}` and `${userHome}` interpolate in commands/URLs.
+- Config: `.deyin/mcp.json` (workspace), legacy `~/.deyin/mcp.json` (migrated on upgrade),
+  and per-server modules at `~/.deyin/mcp-modules/<id>/` (each with `module.json` + `mcp.json`).
+- Transports: stdio, SSE, Streamable HTTP.
+- `${env:NAME}`, `${workspaceFolder}` and `${userHome}` interpolate in commands/URLs/headers.
 - Tools register as `mcp__<server>__<tool>` and go through the permission engine.
+- **Catalog** — Settings → MCP lists 26 curated servers (Stripe, Cloudflare, Vercel,
+  GitHub, Supabase, Linear, Sentry, etc.) with one-click install into isolated module dirs.
+  OAuth servers use native browser consent (PKCE); tokens are stored encrypted on device.
+  Token-only servers accept API keys during install.
+- Catalog source of truth: `docs/mcp-catalog.json` and `apps/desktop/src/main/mcp-catalog/*.json`.
 
 ## Indexing
 - Live local semantic index: chunked workspace files embedded on-device (hash n-gram
@@ -110,6 +149,11 @@ functional specification the apps are built against; it contains no third-party 
 ## Identity & billing
 - Sign in with Openference (OAuth 2.0 + PKCE). Profile menu shows name, email, avatar, plan.
 - The same access token authorizes model calls; no separate API key entry required.
+- **Plans & billing** (Settings → Plans or profile menu): browse the public catalog, switch tiers,
+  toggle monthly/annual billing, and complete checkout via Stripe. Downgrades to a lower tier or
+  Free are scheduled for the end of the current period; upgrades can apply immediately with proration.
+  Cross-currency plan changes prompt for confirmation and use a dedicated 3DS completion flow when required.
+  Checkout return URLs (`/pricing/success`, `/pricing/canceled`) are detected to refresh billing state.
 - **Identity & Access settings page**: live snapshot of the account and workstation —
   member profile, plan/role, workspace folder, device hostname, app version, tenant/org/
   policies (reported by the account API), and a stable workspace fingerprint

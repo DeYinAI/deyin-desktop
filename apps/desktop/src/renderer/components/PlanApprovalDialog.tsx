@@ -8,27 +8,29 @@ interface Props {
   onEdit?: () => void;
 }
 
-/** Modal gate shown when a plan artifact is ready for user approval. */
+/** Inline prompt shown when a plan artifact is ready for user approval. */
 export function PlanApprovalDialog({ title, overview, onApprove, onReject, onEdit }: Props) {
   return (
-    <div className="approval plan-approval" role="dialog" aria-modal="true">
-      <div className="approval__box plan-approval__box">
-        <div className="approval__title">
+    <div className="plan-approval-inline">
+      <div className="plan-approval-inline__box">
+        <div className="plan-approval-inline__title">
           <Icon name="file" size={15} />
           Plan ready: {title}
         </div>
-        {overview && <div className="approval__summary">{overview}</div>}
-        <div className="approval__actions">
-          <button type="button" className="btn btn--outline" onClick={onReject}>
-            Revise
-          </button>
-          {onEdit && (
-            <button type="button" className="btn btn--outline" onClick={onEdit}>
-              Edit
+        {overview && <div className="plan-approval-inline__summary">{overview}</div>}
+        <div className="plan-approval-inline__actions">
+          <div className="plan-approval-inline__actions-left">
+            <button type="button" className="btn btn--outline btn--small" onClick={onReject}>
+              Revise
             </button>
-          )}
-          <button type="button" className="btn" onClick={onApprove}>
-            <Icon name="play" size={11} />
+            {onEdit && (
+              <button type="button" className="btn btn--outline btn--small" onClick={onEdit}>
+                Edit
+              </button>
+            )}
+          </div>
+          <button type="button" className="btn btn--primary" onClick={onApprove}>
+            <Icon name="play" size={12} />
             Build
           </button>
         </div>

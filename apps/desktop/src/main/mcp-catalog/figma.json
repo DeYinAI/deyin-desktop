@@ -1,0 +1,11 @@
+{
+  "id": "figma",
+  "name": "Figma",
+  "description": "Design files, components, and comments.",
+  "category": "design",
+  "vendor": "Figma",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://mcp.figma.com/mcp",
+  "docsUrl": "https://developers.figma.com/docs/figma-mcp-server"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "filesystem",
+  "name": "Filesystem",
+  "description": "Read and write files in the workspace folder.",
+  "category": "local",
+  "vendor": "Community",
+  "transport": "stdio",
+  "auth": "none",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "${workspaceFolder}"
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers",
+  "featured": true
+}

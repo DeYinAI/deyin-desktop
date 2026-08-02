@@ -1,0 +1,12 @@
+{
+  "id": "linear",
+  "name": "Linear",
+  "description": "Issues, projects, cycles, and team workflows.",
+  "category": "project-mgmt",
+  "vendor": "Linear",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://mcp.linear.app/mcp",
+  "docsUrl": "https://linear.app/docs/mcp",
+  "featured": true
+}

@@ -1,0 +1,11 @@
+{
+  "id": "aws-knowledge",
+  "name": "AWS Knowledge",
+  "description": "Read-only AWS documentation search (no account required).",
+  "category": "cloud-infra",
+  "vendor": "AWS",
+  "transport": "http",
+  "auth": "none",
+  "url": "https://knowledge-mcp.global.api.aws",
+  "docsUrl": "https://aws.amazon.com/blogs/aws/aws-knowledge-mcp-server/"
+}

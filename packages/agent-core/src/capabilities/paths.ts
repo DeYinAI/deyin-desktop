@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -43,10 +44,29 @@ export function hooksFiles(cwd: string | null, userDir = homedir()): { path: str
   return files;
 }
 
+export function mcpModulesRoot(userDir = homedir()): string {
+  return join(userDir, ".deyin", "mcp-modules");
+}
+
+/** Each installed MCP module ships a Cursor-compatible mcp.json under ~/.deyin/mcp-modules/<id>/. */
+export function mcpModuleConfigFiles(userDir = homedir()): { path: string; source: string }[] {
+  const root = mcpModulesRoot(userDir);
+  if (!existsSync(root)) return [];
+  const files: { path: string; source: string }[] = [];
+  for (const id of readdirSync(root)) {
+    const mcpPath = join(root, id, "mcp.json");
+    if (existsSync(mcpPath)) files.push({ path: mcpPath, source: `module:${id}` });
+  }
+  return files;
+}
+
 export function mcpConfigFiles(cwd: string | null, userDir = homedir()): { path: string; source: string }[] {
   const files: { path: string; source: string }[] = [];
   if (cwd) files.push({ path: join(cwd, ".deyin", "mcp.json"), source: "workspace" });
   files.push({ path: join(userDir, ".deyin", "mcp.json"), source: "user" });
+  for (const mod of mcpModuleConfigFiles(userDir)) {
+    files.push(mod);
+  }
   return files;
 }
 

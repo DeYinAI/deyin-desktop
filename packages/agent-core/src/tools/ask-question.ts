@@ -28,7 +28,7 @@ function normalizeQuestions(raw: unknown): AskQuestionItem[] {
 export const askQuestionTool: ToolDefinition = {
   name: "ask_question",
   description:
-    "Present structured multiple-choice questions to the user. Use when you need a decision that changes what you do next. Never ask these questions in plain text — always use this tool. The turn pauses until the user answers.",
+    "REQUIRED for presenting questions to the user. Creates a native popup dialog with clickable options and a free-text 'Other' field. You MUST use this tool for ANY question that needs a user decision — writing questions as plain text in chat is not supported and will not be shown to the user. The turn pauses until the user answers. Each question needs a prompt and at least 2 options (max 2 questions per call).",
   tier: "interaction",
   parameters: {
     type: "object",

@@ -12,11 +12,17 @@ const TOOL_RESULT_TRUNCATE_CHARS = 600;
 const TOOL_ARGS_TRUNCATE_CHARS = 600;
 const IMPORTANCE_KEEP_THRESHOLD = 4;
 
+// Tiered compaction thresholds (as fractions of budget)
+const SOFT_WARNING_THRESHOLD = 0.5; // Notice only, no mutations
+const SNIP_THRESHOLD = 0.6; // Shorten stale tool results in place
+// 80% prune tier (placeholders + summary) is applied via hard compaction budget in compactMessages.
+
 export interface CompactionResult {
   truncatedToolResults: number;
   truncatedToolArgs: number;
   droppedMessages: number;
   summarizedMessages?: number;
+  softWarning?: boolean; // Set when approaching but not yet at compaction threshold
 }
 
 /**
@@ -42,14 +48,14 @@ export function scoreMessageImportance(msg: AgentMessage, index: number, total: 
 }
 
 /**
- * Deterministic in-place compaction, applied before each request when the estimated
- * token count exceeds the budget:
+ * Tiered in-place compaction inspired by DeepSeek-Reasonix cache-first design:
  *
- * 1. Truncate old tool results (everything except the trailing KEEP_RECENT_MESSAGES),
- *    preferring to keep high-importance (error) tool results longer.
- * 2. Still over budget: truncate old tool-call arguments the same way.
- * 3. Still over budget: drop whole user-turn groups from the oldest/lowest-importance
- *    side (never the system prompt or the most recent turns), replacing them with a marker.
+ * 50% (soft warning): Emit notice but don't rewrite prefix (preserves cache)
+ * 60% (snip): Shorten stale tool results in place
+ * 80% (prune): Replace with placeholders before LLM summarization
+ *
+ * User messages and recent tail are always preserved verbatim.
+ * This is the ONLY prefix mutation point in the system.
  */
 export function compactMessages(messages: AgentMessage[], budgetTokens: number): CompactionResult {
   const result: CompactionResult = {
@@ -57,7 +63,17 @@ export function compactMessages(messages: AgentMessage[], budgetTokens: number):
     truncatedToolArgs: 0,
     droppedMessages: 0,
   };
-  if (estimateTokens(messages) <= budgetTokens) return result;
+  
+  const currentTokens = estimateTokens(messages);
+  const usage = currentTokens / budgetTokens;
+  
+  // Soft warning: approaching limit but don't mutate (cache preservation)
+  if (usage >= SOFT_WARNING_THRESHOLD && usage < SNIP_THRESHOLD) {
+    result.softWarning = true;
+    return result;
+  }
+  
+  if (currentTokens <= budgetTokens) return result;
 
   const protectedFrom = Math.max(0, messages.length - KEEP_RECENT_MESSAGES);
   // Truncate low-importance tool results first.

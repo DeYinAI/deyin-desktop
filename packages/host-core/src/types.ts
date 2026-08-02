@@ -60,7 +60,7 @@ export interface ChatMessage {
  * profile via ProjectsStore (desktop: projects.json, web: localStorage). */
 
 /** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
-export type ChatMode = "agent" | "plan" | "ask";
+export type ChatMode = "agent" | "plan" | "ask" | "delivery";
 
 export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -70,6 +70,8 @@ export interface PlanStep {
   text: string;
   done: boolean;
   status?: AgentTodoStatus;
+  acceptanceCriteria?: string;
+  signedOff?: boolean;
 }
 
 /** One rendered line of a chat file-card diff snippet (persisted with the thread). */
@@ -80,8 +82,83 @@ export interface DiffSnippetLine {
   newNo: number | null;
 }
 
+export interface ContextAttachment {
+  kind: "file" | "folder";
+  path: string;
+  label?: string;
+}
+
+export interface ContextRef {
+  kind: "file" | "folder";
+  path: string;
+}
+
+export interface LinkedThreadRef {
+  threadId: string;
+  title: string;
+  preview?: string;
+}
+
+export type ThreadGoalStatus = "active" | "met" | "abandoned";
+
+export interface ThreadGoal {
+  text: string;
+  status: ThreadGoalStatus;
+}
+
+export type ReviewMode = "off" | "on";
+
+export interface PendingChange {
+  id: string;
+  threadId: string;
+  path: string;
+  before: string;
+  after: string;
+  tool: "write" | "edit" | "delete";
+  status: "pending" | "approved" | "rejected";
+  createdAt: number;
+}
+
+export interface GitFileStatus {
+  path: string;
+  index: string;
+  workTree: string;
+}
+
+export interface GitStatus {
+  branch: string;
+  ahead: number;
+  behind: number;
+  files: GitFileStatus[];
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+}
+
+export interface GitLogEntry {
+  hash: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
+export interface ContextSearchHit {
+  path: string;
+  kind: "file" | "folder";
+  label: string;
+}
+
+export interface ResolvedContextFile {
+  path: string;
+  kind: "file" | "folder";
+  content: string;
+  truncated?: boolean;
+}
+
 export type ThreadEvent =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; attachments?: ContextAttachment[]; linkedThreadIds?: string[] }
   | { kind: "assistant"; text: string }
   | { kind: "reasoning"; text: string; seconds?: number }
   | { kind: "plan"; steps: PlanStep[]; badge?: string }
@@ -115,8 +192,22 @@ export type ThreadEvent =
       responseCacheHits: number;
       responseCacheMisses: number;
       estimatedCostSavingsUsd: number;
+      sessionCacheHit?: number;
+      sessionCacheMiss?: number;
+      cacheHitRate?: number;
+      prefixChanged?: boolean;
+      changeReasons?: Array<"system" | "tools" | "log_rewrite">;
     }
-  | { kind: "error"; text: string };
+  | {
+      kind: "compaction-notice";
+      softWarning?: boolean;
+      truncatedToolResults: number;
+      truncatedToolArgs: number;
+      droppedMessages: number;
+    }
+  | { kind: "error"; text: string }
+  | { kind: "evidence-gate"; code: string; message: string }
+  | { kind: "evidence-sign-off"; stepId: string; verificationCommand: string; diffSummary: string; reviewNotes?: string };
 
 export interface Thread {
   id: string;
@@ -136,6 +227,8 @@ export interface Thread {
   planFilePath?: string;
   /** Latest agent todo list; feeds the pinned task list above the composer. */
   todos?: AgentTodoItem[];
+  /** Verifiable objective for goal mode. */
+  goal?: ThreadGoal;
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
@@ -204,6 +297,12 @@ export interface DeyinSettings {
   autoUpdate: boolean;
   telemetry: boolean;
   browserControlEnabled: boolean;
+  /** OS-level computer use (Windows). */
+  computerUseEnabled: boolean;
+  /** Days to retain local computer-use screenshots (default 7). */
+  computerUseScreenshotRetentionDays: number;
+  /** Attach to user's Chrome via CDP for logged-in sessions. */
+  chromeDebugEnabled: boolean;
   defaultModel: string | null;
   approvalMode: ApprovalMode;
   /** Reasoning ("thinking") requested from models that support it. */
@@ -244,6 +343,46 @@ export interface DeyinSettings {
   optimizationResponseCache: boolean;
   /** Cosine similarity threshold for semantic cache hits (0.80–0.98). */
   optimizationSimilarityThreshold: number;
+  /** Queue write/edit/delete for user review before applying to disk. */
+  reviewMode: ReviewMode;
+  /** Optional planner model for two-model coordination (must differ from executor). */
+  plannerModel: string | null;
+  /** Session-wide subagent concurrency limit (task/fleet). */
+  maxSubagentConcurrency: number;
+  /** Max concurrent writer subagents with non-overlapping write_paths. */
+  maxParallelWriters: number;
+
+  /* Reasonix integration (v10) -------------------------------------------- */
+
+  /** Feature flag: two-model planner/executor coordination. */
+  enableCoordinator: boolean;
+  /** Feature flag: fleet + parallel task orchestration tools. */
+  enableFleet: boolean;
+  /** Feature flag: delivery mode with evidence gates in the composer. */
+  enableDeliveryMode: boolean;
+  /** Feature flag: prefix-cache optimizations (stable when true). */
+  enableCacheOptimizations: boolean;
+
+  /** Session cache hit rate below this shows a warning in diagnostics (0–1). */
+  cacheHitRateWarningThreshold: number;
+  /** Target session cache hit rate for green indicators (0–1). */
+  cacheHitRateTarget: number;
+
+  /** How aggressively the coordinator routes to the planner. */
+  coordinatorRoutingPolicy: "balanced" | "conservative" | "aggressive";
+
+  /** Preflight overlapping write_paths before fleet/task writers start. */
+  schedulerWritePathValidation: boolean;
+
+  /** Require acceptanceCriteria on todos before mutations in delivery mode. */
+  evidenceRequireAcceptanceCriteria: boolean;
+  /** Block finalization until every todo is signed off via complete_step. */
+  evidenceStrictFinalization: boolean;
+
+  /** User completed Reasonix feature onboarding (coordinator/fleet). */
+  reasonixOnboardComplete: boolean;
+  /** App version for which the user dismissed What's New (null = not seen). */
+  whatsNewSeenVersion: string | null;
 }
 
 /* Automations ------------------------------------------------------------- */
@@ -397,17 +536,104 @@ export interface McpServerInput {
   headers?: Record<string, string>;
 }
 
+export type McpAuthMode = "none" | "token" | "oauth" | "token-or-oauth";
+
+export type McpCatalogCategory =
+  | "cloud-infra"
+  | "database"
+  | "payments"
+  | "devtools"
+  | "project-mgmt"
+  | "monitoring"
+  | "communication"
+  | "design"
+  | "local";
+
+export interface McpCatalogSecret {
+  envKey: string;
+  label: string;
+  required: boolean;
+  headerKey?: string;
+}
+
+export interface McpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: McpCatalogCategory;
+  vendor: string;
+  transport: McpTransport;
+  auth: McpAuthMode;
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  secrets?: McpCatalogSecret[];
+  docsUrl: string;
+  tags?: string[];
+  featured?: boolean;
+}
+
+export type McpAuthStatus = "authenticated" | "pending" | "expired" | "none";
+
+export interface McpAuthResult {
+  ok: boolean;
+  message?: string;
+  toolCount?: number;
+}
+
+export interface McpCatalogInstallInput {
+  entryId: string;
+  secrets?: Record<string, string>;
+  /** For token-or-oauth entries: install with native OAuth instead of API token. */
+  useOAuth?: boolean;
+}
+
+/** Installed MCP module under ~/.deyin/mcp-modules/<id>/ */
+export interface McpModuleManifest {
+  id: string;
+  name: string;
+  vendor?: string;
+  category?: McpCatalogCategory;
+  version: 1;
+  installedAt: string;
+  source: "catalog" | "custom";
+  catalogEntryId?: string;
+  authMode?: McpAuthMode;
+  /** True when installed for native OAuth (not API token). */
+  usesNativeOAuth?: boolean;
+  docsUrl?: string;
+}
+
 /* Plugins -------------------------------------------------------------------- */
+
+export type PluginCapability = "Interactive" | "Read" | "Write";
+
+export interface PluginInterface {
+  displayName: string;
+  shortDescription: string;
+  longDescription?: string;
+  category?: string;
+  capabilities?: PluginCapability[];
+  brandColor?: string;
+  defaultPrompt?: string[];
+  logo?: string;
+}
 
 /** An installed plugin (unpacked under <userData>/plugins/<name>). */
 export interface PluginInfo {
   name: string;
   description?: string;
   version?: string;
-  /** Install origin, e.g. "github:owner/repo" or "local". */
+  /** Install origin, e.g. "github:owner/repo", "bundled", or "local". */
   source: string;
   enabled: boolean;
   installedAt?: string;
+  /** Marketplace card metadata when present. */
+  interface?: PluginInterface;
+  bundled?: boolean;
+  hostModule?: string;
+  platform?: "windows" | "all";
   /** Count of each component kind the plugin contributes. */
   components: { skills: number; commands: number; subagents: number; mcpServers: number; hooks: number };
   /** Secret variable names the plugin declares (values stored encrypted). */
@@ -454,6 +680,11 @@ export interface AgentTodoItem {
   id: string;
   content: string;
   status: AgentTodoStatus;
+  /** Delivery mode: how to verify this step. */
+  acceptanceCriteria?: string;
+  /** True after complete_step sign-off. */
+  signedOff?: boolean;
+  signOffNotes?: string;
 }
 
 /** Context Usage category ids (mirrors agent-core context-usage). */
@@ -480,6 +711,14 @@ export interface ContextUsageSnapshot {
   categories: ContextUsageCategory[];
   wire?: { originalTokens: number; compressedTokens: number };
   cached?: boolean;
+  /** Prefix cache diagnostics from the latest agent step. */
+  cache?: {
+    hitRate: number;
+    sessionHit: number;
+    sessionMiss: number;
+    prefixChanged?: boolean;
+    changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+  };
 }
 
 /** Renderer-facing events streamed from the main-process agent runtime. */
@@ -490,10 +729,36 @@ export type AgentUiEvent =
  | { type: "tool-delta"; callId: string; delta: string }
  | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
  | { type: "file-change"; path: string; before: string; after: string }
+ | { type: "pending-change"; change: PendingChange }
+ | { type: "pending-change-resolved"; changeId: string; status: "approved" | "rejected" }
+ | { type: "goal-updated"; goal: ThreadGoal | null }
  | { type: "todos"; todos: AgentTodoItem[] }
  | { type: "usage"; totalTokens: number }
  | { type: "context-snapshot"; snapshot: ContextUsageSnapshot }
- | { type: "optimization"; originalInputTokens: number; compressedInputTokens: number; compressionRatio: number; cachedPromptTokens: number; toolCacheHits: number; toolCacheMisses: number; responseCacheHits: number; responseCacheMisses: number; estimatedCostSavingsUsd: number }
+ | {
+     type: "optimization";
+     originalInputTokens: number;
+     compressedInputTokens: number;
+     compressionRatio: number;
+     cachedPromptTokens: number;
+     toolCacheHits: number;
+     toolCacheMisses: number;
+     responseCacheHits: number;
+     responseCacheMisses: number;
+     estimatedCostSavingsUsd: number;
+     sessionCacheHit?: number;
+     sessionCacheMiss?: number;
+     cacheHitRate?: number;
+     prefixChanged?: boolean;
+     changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+   }
+ | {
+     type: "compaction";
+     softWarning?: boolean;
+     truncatedToolResults: number;
+     truncatedToolArgs: number;
+     droppedMessages: number;
+   }
  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
  | {
      type: "question-request";
@@ -516,6 +781,11 @@ export type AgentUiEvent =
  | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
  | { type: "subagent-start"; name: string; prompt: string }
  | { type: "subagent-end"; name: string; ok: boolean }
+ | { type: "phase"; text: string; detail?: string }
+ | { type: "coordinator-routing"; route: string; reason: string }
+ | { type: "background-job"; jobId: string; status: string; label?: string }
+ | { type: "evidence-gate"; code: string; message: string }
+ | { type: "evidence-sign-off"; stepId: string; verificationCommand: string; diffSummary: string; reviewNotes?: string }
  /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */
  | { type: "shell-session"; terminalId: string; label: string }
  | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
@@ -539,6 +809,14 @@ export interface AgentStartOptions {
   history: { role: "user" | "assistant"; content: string }[];
   /** Seed the agent loop's todo list (e.g. plan todos handed to Build). */
   initialTodos?: AgentTodoItem[];
+  /** @ file/folder attachments resolved at send time. */
+  attachments?: ContextAttachment[];
+  /** # linked thread ids (summaries injected into the user message). */
+  linkedThreadIds?: string[];
+  /** Pre-built linked-thread context block. */
+  linkedContext?: string;
+  /** Active goal text for goal mode. */
+  goalText?: string;
 }
 
 /* Model providers ---------------------------------------------------------- */
@@ -722,4 +1000,36 @@ export interface DiagnosticsResult {
   reportId?: string;
   sentAt?: string;
   message?: string;
+}
+
+/* Reasonix integration metrics & diagnostics -------------------------------- */
+
+export type { ReasonixMetricsSnapshot, ReasonixWeeklyReport } from "./reasonix-metrics.js";
+
+export interface ReasonixPrefixShapeView {
+  prefixHash: string;
+  systemHash: string;
+  toolsHash: string;
+  logRewriteVersion: number;
+  toolSchemaTokens: number;
+}
+
+export interface ReasonixDiagnostics {
+  cache: {
+    prefixShape: ReasonixPrefixShapeView | null;
+    invalidationHistory: Array<{
+      at: number;
+      threadId: string;
+      reasons: string[];
+      prefixHash?: string;
+      logRewriteVersion?: number;
+      hitRate?: number;
+    }>;
+    sessionHit: number;
+    sessionMiss: number;
+    hitRate: number;
+  };
+  coordinator: Array<{ at: number; threadId: string; route: string; reason: string }>;
+  fleet: Array<{ at: number; threadId: string; kind: string; detail: string; taskCount?: number }>;
+  evidence: Array<{ at: number; threadId: string; code: string; message: string }>;
 }

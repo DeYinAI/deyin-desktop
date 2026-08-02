@@ -3,6 +3,8 @@ import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
 import { AppearancePage } from "./settings/AppearancePage.js";
 import { BrowserPage } from "./settings/BrowserPage.js";
+import { ChromePage } from "./settings/ChromePage.js";
+import { ComputerUsePage } from "./settings/ComputerUsePage.js";
 import { CapabilityPage } from "./settings/CapabilityPage.js";
 import { GeneralPage } from "./settings/GeneralPage.js";
 import { IdentityPage } from "./settings/IdentityPage.js";
@@ -15,6 +17,10 @@ import { PluginsPage } from "./settings/PluginsPage.js";
 import { TerminalPage } from "./settings/TerminalPage.js";
 import { SshHostsPage } from "./settings/SshHostsPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
+import { CacheSettings } from "./settings/CacheSettings.js";
+import { CoordinatorSettings } from "./settings/CoordinatorSettings.js";
+import { SchedulerSettings } from "./settings/SchedulerSettings.js";
+import { EvidenceSettings } from "./settings/EvidenceSettings.js";
 import type { MessageKey } from "@deyin/host-core/shared";
 import type {
   AccountUsage,
@@ -31,6 +37,8 @@ export type SettingsPage =
   | "appearance"
   | "models"
   | "browser"
+  | "chrome"
+  | "computerUse"
   | "terminal"
   | "plugins"
   | "skills"
@@ -43,7 +51,11 @@ export type SettingsPage =
   | "optimization"
   | "identity"
   | "sshHosts"
-  | "onboard";
+  | "onboard"
+  | "cache"
+  | "coordinator"
+  | "scheduler"
+  | "evidence";
 
 /** Pages rendered by the generic CapabilityPage (file-backed registries). */
 const CAPABILITY_PAGES: Partial<Record<SettingsPage, CapabilityKind>> = {
@@ -67,6 +79,8 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
       { page: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
       { page: "models", labelKey: "settings.nav.models", icon: "cpu" },
       { page: "browser", labelKey: "settings.nav.browser", icon: "globe" },
+      { page: "chrome", labelKey: "settings.nav.chrome", icon: "globe" },
+      { page: "computerUse", labelKey: "settings.nav.computerUse", icon: "layout" },
       { page: "terminal", labelKey: "settings.nav.terminal", icon: "terminal" },
     ],
   },
@@ -91,6 +105,15 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     ],
   },
   {
+    sectionKey: "settings.section.reasonix",
+    entries: [
+      { page: "cache", labelKey: "settings.nav.cache", icon: "chart" },
+      { page: "coordinator", labelKey: "settings.nav.coordinator", icon: "cpu" },
+      { page: "scheduler", labelKey: "settings.nav.scheduler", icon: "grid" },
+      { page: "evidence", labelKey: "settings.nav.evidence", icon: "shield" },
+    ],
+  },
+  {
     sectionKey: "settings.section.deyin",
     entries: [{ page: "identity", labelKey: "settings.nav.identity", icon: "shield" }],
   },
@@ -103,6 +126,7 @@ interface SettingsViewProps {
   busy: boolean;
   version: string;
   workspaceRoot: string | null;
+  activeThreadId?: string | null;
   /** Live models for the primary provider, passed through to Model settings. */
   liveModels: import("../../shared/types.js").ModelInfo[];
   onChangeSettings: (patch: Partial<DeyinSettings>) => void;
@@ -199,6 +223,8 @@ export function SettingsView(props: SettingsViewProps) {
           />
         )}
         {page === "browser" && <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />}
+        {page === "chrome" && <ChromePage settings={props.settings} onChange={props.onChangeSettings} />}
+        {page === "computerUse" && <ComputerUsePage settings={props.settings} onChange={props.onChangeSettings} />}
         {page === "terminal" && <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />}
         {page === "sshHosts" && <SshHostsPage />}
         {page === "plugins" && <PluginsPage onToggle={toggleCap} />}
@@ -221,6 +247,29 @@ export function SettingsView(props: SettingsViewProps) {
         {page === "optimization" && (
           <OptimizationPage settings={props.settings} onChange={props.onChangeSettings} />
         )}
+        {page === "cache" && (
+          <CacheSettings
+            settings={props.settings}
+            activeThreadId={props.activeThreadId}
+            onChange={props.onChangeSettings}
+          />
+        )}
+        {page === "coordinator" && (
+          <CoordinatorSettings
+            settings={props.settings}
+            liveModels={props.liveModels}
+            activeThreadId={props.activeThreadId}
+            onChange={props.onChangeSettings}
+          />
+        )}
+        {page === "scheduler" && (
+          <SchedulerSettings
+            settings={props.settings}
+            activeThreadId={props.activeThreadId}
+            onChange={props.onChangeSettings}
+          />
+        )}
+        {page === "evidence" && <EvidenceSettings settings={props.settings} onChange={props.onChangeSettings} />}
         {page === "identity" && (
           <IdentityPage
             user={props.user}

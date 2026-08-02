@@ -202,6 +202,34 @@ test("mcp config: interpolation and workspace-over-user merge", async () => {
   }
 });
 
+test("mcp config: discovers per-module installs and interpolates module env in headers", async () => {
+  const dir = tempDir();
+  try {
+    const home = join(dir, "home");
+    const moduleDir = join(home, ".deyin", "mcp-modules", "stripe");
+    mkdirSync(moduleDir, { recursive: true });
+    writeFileSync(
+      join(moduleDir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          stripe: {
+            url: "https://mcp.stripe.com",
+            headers: { Authorization: "Bearer ${env:STRIPE_SECRET_KEY}" },
+            env: { STRIPE_SECRET_KEY: "rk_test_abc" },
+          },
+        },
+      }),
+    );
+
+    const servers = await loadMcpServers(null, {}, home);
+    const stripe = servers.find((s) => s.name === "stripe");
+    assert.equal(stripe?.source, "module:stripe");
+    assert.equal(stripe?.headers?.Authorization, "Bearer rk_test_abc");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("built-in skills materialize idempotently and clean up stale entries", async () => {
   const dir = tempDir();
   try {
