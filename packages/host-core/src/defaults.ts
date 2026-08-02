@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 5;
+export const SETTINGS_SCHEMA_VERSION = 9;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -12,6 +12,10 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   telemetry: false,
   browserControlEnabled: true,
   defaultModel: null,
+  subagentModels: {},
+  subagentEfforts: {},
+  subagentMaxSteps: 20,
+  subagentConcurrency: 6,
   approvalMode: "full-access",
   thinking: true,
   welcomeDismissed: false,
@@ -36,6 +40,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   optimizationToolCache: true,
   optimizationResponseCache: true,
   optimizationSimilarityThreshold: 0.93,
+  memoryEnabled: true,
 };
 
 /**
@@ -84,6 +89,31 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     DEFAULT_SETTINGS.optimizationSimilarityThreshold,
   );
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
+  // v6 -> v7: subagent run limits.
+  merged.subagentMaxSteps = clamp(merged.subagentMaxSteps, 1, 200, DEFAULT_SETTINGS.subagentMaxSteps);
+  merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
+  // v7 -> v8: subagentEfforts must be a record of valid effort levels.
+  if (typeof merged.subagentEfforts !== "object" || merged.subagentEfforts === null || Array.isArray(merged.subagentEfforts)) {
+    merged.subagentEfforts = {};
+  } else {
+    const clean: Record<string, string> = {};
+    for (const [name, effort] of Object.entries(merged.subagentEfforts)) {
+      if (effort === "low" || effort === "medium" || effort === "high") clean[name] = effort;
+    }
+    merged.subagentEfforts = clean;
+  }
+  // v8 -> v9: memoryEnabled boolean.
+  if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
+  // v5 -> v6: subagentModels must be a plain record of non-empty strings; drop anything else.
+  if (typeof merged.subagentModels !== "object" || merged.subagentModels === null || Array.isArray(merged.subagentModels)) {
+    merged.subagentModels = {};
+  } else {
+    const clean: Record<string, string> = {};
+    for (const [name, model] of Object.entries(merged.subagentModels)) {
+      if (typeof model === "string" && model.trim().length > 0) clean[name] = model.trim();
+    }
+    merged.subagentModels = clean;
+  }
   if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
   return merged;

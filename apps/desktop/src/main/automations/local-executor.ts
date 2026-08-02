@@ -56,6 +56,8 @@ export async function runLocalAutomation(
       cwd,
       thinking: deps.settings.get().thinking,
       signal,
+      memory: deps.settings.get().memoryEnabled ? deps.memory : undefined,
+      toolContext: { memory: deps.settings.get().memoryEnabled ? deps.memory : undefined },
       onMessage: (message) => store.append(meta.id, message),
       beforeTool: async (call, args, summary) => {
         const pre = await runHooks(env.hooks, "preToolUse", call.name, { tool: call.name, args, summary, cwd });

@@ -64,7 +64,6 @@ export function Composer(props: ComposerProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [plusOpen, setPlusOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
-  const [modeOpen, setModeOpen] = useState(false);
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -74,13 +73,13 @@ export function Composer(props: ComposerProps) {
     props.onSelectMode(next);
   };
 
-  // Ctrl/Cmd+. opens the mode menu from anywhere (Cursor's Mode Menu binding).
+  // Ctrl/Cmd+. cycles the composer mode (Cursor's Mode Menu binding, no popup).
   useEffect(() => {
     if (!props.mode) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === ".") {
         e.preventDefault();
-        setModeOpen((v) => !v);
+        cycleMode();
         ref.current?.focus();
       }
     };
@@ -120,7 +119,6 @@ export function Composer(props: ComposerProps) {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
         setPlusOpen(false);
         setAccessOpen(false);
-        setModeOpen(false);
       }
     };
     document.addEventListener("mousedown", close);
@@ -257,37 +255,24 @@ export function Composer(props: ComposerProps) {
         </div>
 
         {props.mode && props.onSelectMode && (
-          <div className="menu">
-            <button
-              className={`chip ${props.mode !== "agent" ? "chip--mode" : ""}`}
-              title={t("mode.switchHint")}
-              onClick={() => setModeOpen((v) => !v)}
-            >
-              <Icon name={MODE_META[props.mode].icon} size={13} />
-              <span>{t(MODE_META[props.mode].labelKey)}</span>
-              <Icon name="chevronDown" size={11} />
-            </button>
-            {modeOpen && (
-              <div className="menu__panel menu__panel--up">
-                {MODE_ORDER.map((mode) => (
-                  <button
-                    key={mode}
-                    className={`menu__item ${mode === props.mode ? "menu__item--active" : ""}`}
-                    onClick={() => {
-                      props.onSelectMode?.(mode);
-                      setModeOpen(false);
-                      ref.current?.focus();
-                    }}
-                  >
-                    <Icon name={MODE_META[mode].icon} size={14} />
-                    <span className="menu__item-body">
-                      {t(MODE_META[mode].labelKey)}
-                      <span className="menu__item-desc">{t(MODE_META[mode].descKey)}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="mode-seg" role="tablist" aria-label={t("mode.switchHint")}>
+            {MODE_ORDER.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                role="tab"
+                aria-selected={mode === props.mode}
+                title={t(MODE_META[mode].descKey)}
+                className={`mode-seg__item ${mode === props.mode ? "mode-seg__item--active" : ""}`}
+                onClick={() => {
+                  props.onSelectMode?.(mode);
+                  ref.current?.focus();
+                }}
+              >
+                <Icon name={MODE_META[mode].icon} size={12} />
+                <span>{t(MODE_META[mode].labelKey)}</span>
+              </button>
+            ))}
           </div>
         )}
 

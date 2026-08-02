@@ -205,6 +205,14 @@ export interface DeyinSettings {
   telemetry: boolean;
   browserControlEnabled: boolean;
   defaultModel: string | null;
+  /** Per-subagent model overrides: subagent name -> "providerId::modelId". */
+  subagentModels: Record<string, string>;
+  /** Per-subagent reasoning-effort overrides: name -> "low" | "medium" | "high". */
+  subagentEfforts: Record<string, string>;
+  /** Default step cap for subagent runs (frontmatter max_steps overrides). */
+  subagentMaxSteps: number;
+  /** Max subagent runs executing in parallel (1-32). */
+  subagentConcurrency: number;
   approvalMode: ApprovalMode;
   /** Reasoning ("thinking") requested from models that support it. */
   thinking: boolean;
@@ -244,6 +252,8 @@ export interface DeyinSettings {
   optimizationResponseCache: boolean;
   /** Cosine similarity threshold for semantic cache hits (0.80–0.98). */
   optimizationSimilarityThreshold: number;
+  /** Background memory (remember/forget + automatic recall). */
+  memoryEnabled: boolean;
 }
 
 /* Automations ------------------------------------------------------------- */
@@ -358,6 +368,10 @@ export interface CapabilityItem {
   path?: string;
   /** Extra transport/command detail (MCP servers, hook commands). */
   detail?: string;
+  /** Subagents: settings override "providerId::modelId" (undefined = inherit). */
+  model?: string;
+  /** Subagents: the model actually used (override ?? frontmatter ?? inherit). */
+  effectiveModel?: string;
 }
 
 /* MCP servers ---------------------------------------------------------------- */
@@ -549,7 +563,7 @@ export interface ProviderModel {
   contextLength?: number;
 }
 
-export type ProviderApiFormat = "chat-completions" | "responses";
+export type ProviderApiFormat = "chat-completions" | "responses" | "anthropic";
 
 export interface ProviderInfo {
   id: string;
@@ -559,6 +573,12 @@ export interface ProviderInfo {
   enabled: boolean;
   baseUrl?: string;
   apiFormat: ProviderApiFormat;
+  /**
+   * Anthropic-compatible gateways that authenticate with `Authorization: Bearer`
+   * instead of `x-api-key` (MiniMax Global, Vercel AI Gateway, ...). Ignored for
+   * non-anthropic formats.
+   */
+  authHeader?: boolean;
   /** True when an API key is stored for this provider (the key itself is never listed). */
   hasKey: boolean;
   connectionModes: string[];
@@ -575,6 +595,7 @@ export interface ProviderPatch {
   name?: string;
   baseUrl?: string;
   apiFormat?: ProviderApiFormat;
+  authHeader?: boolean;
   enabled?: boolean;
   activeMode?: string;
   models?: ProviderModel[];

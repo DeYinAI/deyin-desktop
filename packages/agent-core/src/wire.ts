@@ -26,6 +26,224 @@ export interface WireBuildResult {
 
 export type { CompressionResult };
 
+/** Leading system messages, split for the Anthropic top-level `system` field. */
+export interface AnthropicWireResult {
+  /** Top-level system blocks (Anthropic has no role:"system" messages). */
+  system: Record<string, unknown>[];
+  /** User/assistant/tool messages with strictly alternating roles. */
+  messages: Record<string, unknown>[];
+  compression?: {
+    originalTokens: number;
+    compressedTokens: number;
+    ratio: number;
+    results: CompressionResult[];
+  };
+}
+
+/**
+ * Serialize the transcript into the Anthropic Messages API wire shape:
+ * leading system messages become the top-level `system` blocks, tool results
+ * become `tool_result` blocks inside user messages, assistant tool calls become
+ * `tool_use` blocks, and consecutive same-role messages are coalesced (the API
+ * requires strictly alternating user/assistant).
+ *
+ * Reasoning is NOT replayed as `thinking` blocks: native Anthropic requires the
+ * signed block to continue extended thinking, and we never see signatures.
+ * Cache breakpoints (`cache_control: {type:"ephemeral"}`) are placed on the
+ * last system block and on the last block of the final message.
+ */
+export function toAnthropicMessages(messages: AgentMessage[], options: WireOptions = {}): AnthropicWireResult {
+  const enableCompression = options.enableCompression === true;
+  const mode = options.compressionMode ?? "balanced";
+  const enablePromptCaching = options.enablePromptCaching !== false;
+  const compressionResults: CompressionResult[] = [];
+  let originalTokens = 0;
+  let compressedTokens = 0;
+
+  const compress = (text: string, kind: "tool" | "message", toolName?: string): string => {
+    originalTokens += estimateTokens(text);
+    if (!enableCompression || !text) {
+      compressedTokens += estimateTokens(text);
+      return text;
+    }
+    const res =
+      kind === "tool"
+        ? compressor.compressToolOutput(text, toolName ?? "tool", { mode, preserveErrors: true })
+        : compressor.compressMessage(text, { mode });
+    compressionResults.push(res);
+    compressedTokens += estimateTokens(res.compressed);
+    return res.compressed;
+  };
+
+  // Top-level system: every leading system message, one text block each.
+  const system: Record<string, unknown>[] = [];
+  let i = 0;
+  for (; i < messages.length && messages[i]!.role === "system"; i++) {
+    const text = compress(messages[i]!.content, "message");
+    if (text.length > 0) system.push({ type: "text", text });
+  }
+  if (enablePromptCaching && system.length > 0) {
+    // Cache breakpoint on the last system block (stable prefix: tools + rules + skills).
+    system[system.length - 1] = { ...system[system.length - 1]!, cache_control: { type: "ephemeral" } };
+  }
+
+  // Conversation messages, coalescing consecutive same-role turns.
+  const merged: Array<{ role: "user" | "assistant"; blocks: Record<string, unknown>[] }> = [];
+  const push = (role: "user" | "assistant", block: Record<string, unknown>): void => {
+    const last = merged[merged.length - 1];
+    if (last && last.role === role) last.blocks.push(block);
+    else merged.push({ role, blocks: [block] });
+  };
+
+  for (; i < messages.length; i++) {
+    const m = messages[i]!;
+    switch (m.role) {
+      case "system": {
+        const text = compress(m.content, "message");
+        if (text.length > 0) push("user", { type: "text", text });
+        break;
+      }
+      case "user": {
+        const text = compress(m.content, "message");
+        push("user", { type: "text", text });
+        break;
+      }
+      case "assistant": {
+        if (m.content.length > 0) push("assistant", { type: "text", text: compress(m.content, "message") });
+        for (const call of m.toolCalls ?? []) {
+          let input: Record<string, unknown> = {};
+          try {
+            const parsed = call.arguments.trim() ? (JSON.parse(call.arguments) as unknown) : {};
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+          } catch {
+            // Unparseable args still round-trip as a raw string so the loop can recover.
+            input = { __raw_arguments: call.arguments };
+          }
+          push("assistant", { type: "tool_use", id: call.id, name: call.name, input });
+        }
+        break;
+      }
+      case "tool": {
+        const text = compress(m.content, "tool", m.toolName);
+        push("user", {
+          type: "tool_result",
+          tool_use_id: m.toolCallId,
+          content: text.length > 0 ? text : "(no output)",
+        });
+        break;
+      }
+    }
+  }
+
+  if (enablePromptCaching && merged.length > 0) {
+    // Second breakpoint on the last block of the final message (conversation prefix).
+    const last = merged[merged.length - 1]!;
+    last.blocks[last.blocks.length - 1] = { ...last.blocks[last.blocks.length - 1]!, cache_control: { type: "ephemeral" } };
+  }
+
+  return {
+    system,
+    messages: merged.map((g) => ({ role: g.role, content: g.blocks })),
+    compression: enableCompression
+      ? {
+          originalTokens,
+          compressedTokens,
+          ratio: originalTokens === 0 ? 1 : compressedTokens / originalTokens,
+          results: compressionResults,
+        }
+      : undefined,
+  };
+}
+
+/** OpenAI Responses API input items plus the extracted `instructions` string. */
+export interface ResponsesWireResult {
+  /** First system message, sent as the top-level `instructions` field. */
+  instructions?: string;
+  /** `input` items: role items, reasoning, function_call, function_call_output. */
+  input: Record<string, unknown>[];
+  compression?: {
+    originalTokens: number;
+    compressedTokens: number;
+    ratio: number;
+    results: CompressionResult[];
+  };
+}
+
+/**
+ * Serialize the transcript into the OpenAI Responses API `input` item shape:
+ * the first system message becomes `instructions`; assistant reasoning becomes
+ * a `reasoning` item; tool calls become `function_call` items and tool results
+ * `function_call_output` items keyed by `call_id`.
+ */
+export function toResponsesInput(messages: AgentMessage[], options: WireOptions = {}): ResponsesWireResult {
+  const enableCompression = options.enableCompression === true;
+  const mode = options.compressionMode ?? "balanced";
+  const compressionResults: CompressionResult[] = [];
+  let originalTokens = 0;
+  let compressedTokens = 0;
+
+  const compress = (text: string, kind: "tool" | "message", toolName?: string): string => {
+    originalTokens += estimateTokens(text);
+    if (!enableCompression || !text) {
+      compressedTokens += estimateTokens(text);
+      return text;
+    }
+    const res =
+      kind === "tool"
+        ? compressor.compressToolOutput(text, toolName ?? "tool", { mode, preserveErrors: true })
+        : compressor.compressMessage(text, { mode });
+    compressionResults.push(res);
+    compressedTokens += estimateTokens(res.compressed);
+    return res.compressed;
+  };
+
+  let instructions: string | undefined;
+  const input: Record<string, unknown>[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    switch (m.role) {
+      case "system": {
+        const text = compress(m.content, "message");
+        if (i === 0) instructions = text;
+        else if (text.length > 0) input.push({ role: "system", content: text });
+        break;
+      }
+      case "user":
+        input.push({ role: "user", content: compress(m.content, "message") });
+        break;
+      case "assistant": {
+        if (m.reasoning && m.reasoning.length > 0) {
+          input.push({ type: "reasoning", content: [{ type: "reasoning_text", text: m.reasoning }] });
+        }
+        const hasToolCalls = (m.toolCalls?.length ?? 0) > 0;
+        if (m.content.length > 0 || !hasToolCalls) {
+          input.push({ role: "assistant", content: m.content });
+        }
+        for (const call of m.toolCalls ?? []) {
+          input.push({ type: "function_call", call_id: call.id, name: call.name, arguments: call.arguments });
+        }
+        break;
+      }
+      case "tool":
+        input.push({ type: "function_call_output", call_id: m.toolCallId, output: compress(m.content, "tool", m.toolName) });
+        break;
+    }
+  }
+
+  return {
+    ...(instructions !== undefined ? { instructions } : {}),
+    input,
+    compression: enableCompression
+      ? {
+          originalTokens,
+          compressedTokens,
+          ratio: originalTokens === 0 ? 1 : compressedTokens / originalTokens,
+          results: compressionResults,
+        }
+      : undefined,
+  };
+}
+
 const compressor = new ContentCompressor();
 
 function estimateTokens(text: string): number {

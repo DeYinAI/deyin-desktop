@@ -100,15 +100,37 @@ test("subagents: frontmatter fields with built-in fallbacks", async () => {
     mkdirSync(agents, { recursive: true });
     writeFileSync(
       join(agents, "docs-writer.md"),
-      "---\nname: docs-writer\ndescription: Writes docs\nmodel: GLM-5.2\nreadonly: true\nis_background: true\n---\nYou write documentation.",
+      "---\nname: docs-writer\ndescription: Writes docs\nmodel: GLM-5.2\neffort: high\nmax_steps: 12\ntools: [read, write, edit]\nreadonly: true\nis_background: true\n---\nYou write documentation.",
     );
     const found = await discoverSubagents([{ dir: agents, source: "workspace" }]);
     const custom = found.find((s) => s.name === "docs-writer");
     assert.equal(custom?.readonly, true);
     assert.equal(custom?.isBackground, true);
     assert.equal(custom?.model, "GLM-5.2");
+    assert.equal(custom?.effort, "high");
+    assert.equal(custom?.maxSteps, 12);
+    assert.deepEqual(custom?.tools, ["read", "write", "edit"]);
     assert.equal(custom?.prompt, "You write documentation.");
     assert.ok(found.some((s) => s.name === "explorer" && s.source === "built-in"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("subagents: invalid effort and max_steps fall back to undefined", async () => {
+  const dir = tempDir();
+  try {
+    const agents = join(dir, ".deyin", "agents");
+    mkdirSync(agents, { recursive: true });
+    writeFileSync(
+      join(agents, "sloppy.md"),
+      "---\nname: sloppy\neffort: turbo\nmax_steps: -3\ntools: bad-value\n---\nPrompt body.",
+    );
+    const found = await discoverSubagents([{ dir: agents, source: "workspace" }]);
+    const sloppy = found.find((s) => s.name === "sloppy");
+    assert.equal(sloppy?.effort, undefined);
+    assert.equal(sloppy?.maxSteps, undefined);
+    assert.deepEqual(sloppy?.tools, ["bad-value"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
