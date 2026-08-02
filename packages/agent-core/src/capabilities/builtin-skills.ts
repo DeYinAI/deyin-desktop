@@ -229,12 +229,15 @@ Frontmatter fields:
 
 - \`name\` (kebab-case) and \`description\` (required) — the description drives delegation; include "use proactively" plus trigger terms when the main agent should reach for it on its own.
 - \`model\` — pin a model id, or omit to inherit the caller's.
+- \`effort\` — reasoning effort for models that support it: \`low\`, \`medium\`, or \`high\`. Omit to inherit the default.
+- \`max_steps\` — cap the subagent's tool-call steps (e.g. \`max_steps: 15\`); omit for the global default.
 - \`readonly: true\` — denies write/edit and gates bash behind approval; right for reviewers and explorers.
 - \`is_background: true\` — the task tool returns immediately and the result surfaces when done.
+- \`tools: [read, grep, glob, ls]\` — optional allowlist restricting the subagent to these tools (permission rules still apply).
 
 ## 3. Write a prompt that stands alone
 
-Subagents start with a clean context: the body must say what to do when invoked, the process to follow, and the exact report format. Remind read-only agents to never modify anything.
+Subagents start with a clean context: the body must say what to do when invoked, the process to follow, and the exact report format. Structure it as a task contract — Context, Request, Output format, Boundaries, Pause policy. Remind read-only agents to never modify anything.
 
 ## 4. Verify
 

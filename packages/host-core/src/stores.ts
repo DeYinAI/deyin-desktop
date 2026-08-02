@@ -50,6 +50,20 @@ interface StoredProvider extends StoredProviderBase {
   keyCipher?: string;
 }
 
+/**
+ * Custom-provider base URLs must be absolute http(s) URLs: the stored API key is
+ * sent to this origin, so a typo'd scheme (or worse, a non-TLS endpoint) would
+ * leak it. Returns false for anything without an explicit http/https scheme.
+ */
+export function isValidProviderBaseUrl(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 interface AgentsState {
   /** Legacy full capability records; migrated into disabledCaps on load. */
   caps?: CapabilityItem[];
@@ -89,7 +103,8 @@ export class AgentsStore {
     this.state.providers = this.state.providers.map((p) => ({
       ...p,
       enabled: p.enabled ?? true,
-      apiFormat: p.apiFormat ?? "chat-completions",
+      apiFormat: p.apiFormat === "responses" || p.apiFormat === "anthropic" ? p.apiFormat : "chat-completions",
+      authHeader: p.authHeader === true ? true : undefined,
       models: p.models ?? [],
       disabledModels: p.disabledModels ?? [],
       connectionModes: p.connectionModes ?? ["API key"],
@@ -170,6 +185,7 @@ export class AgentsStore {
   addProvider(input: { name: string; baseUrl: string }): void {
     const id = input.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     if (!id || this.state.providers.some((p) => p.id === id)) return;
+    if (!isValidProviderBaseUrl(input.baseUrl)) return;
     this.state.providers.push({
       id,
       name: input.name,
@@ -189,8 +205,11 @@ export class AgentsStore {
     const provider = this.state.providers.find((p) => p.id === id);
     if (!provider) return;
     if (patch.name !== undefined && provider.kind === "custom") provider.name = patch.name;
-    if (patch.baseUrl !== undefined && provider.kind === "custom") provider.baseUrl = patch.baseUrl;
+    if (patch.baseUrl !== undefined && provider.kind === "custom" && isValidProviderBaseUrl(patch.baseUrl)) {
+      provider.baseUrl = patch.baseUrl;
+    }
     if (patch.apiFormat !== undefined) provider.apiFormat = patch.apiFormat;
+    if (patch.authHeader !== undefined) provider.authHeader = patch.authHeader;
     if (patch.enabled !== undefined) provider.enabled = patch.enabled;
     if (patch.activeMode !== undefined) provider.activeMode = patch.activeMode;
     if (patch.models !== undefined) provider.models = patch.models;

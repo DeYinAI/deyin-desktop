@@ -38,6 +38,10 @@ interface ChatViewProps {
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
   onOpenPlan?: () => void;
+  /** Plan awaiting approval: shows Revise/Edit/Build inline on the plan card (Cursor-style, no modal). */
+  pendingPlan?: { title: string; overview?: string; filePath?: string } | null;
+  onRevisePlan?: () => void;
+  onEditPlan?: () => void;
   /** In-flight plan file card; full markdown streams only in the Plan tab. */
   planArtifact?: PlanArtifactLive | null;
   /** Active thread id — switching threads resets scroll to the bottom, pinned. */
@@ -138,6 +142,9 @@ export function ChatView(props: ChatViewProps) {
               onUndo={props.onUndo}
               onBuild={props.onBuild}
               onOpenPlan={props.onOpenPlan}
+              onRevisePlan={props.onRevisePlan}
+              onEditPlan={props.onEditPlan}
+              planPending={Boolean(props.pendingPlan) && isLastPlanReady(props.events, group.event)}
             />
           ),
         )}
@@ -227,6 +234,9 @@ function EventRow({
   onUndo,
   onBuild,
   onOpenPlan,
+  onRevisePlan,
+  onEditPlan,
+  planPending,
 }: {
   event: ThreadEvent;
   codeTheme: CodeTheme;
@@ -235,6 +245,10 @@ function EventRow({
   onUndo: () => void;
   onBuild?: () => void;
   onOpenPlan?: () => void;
+  onRevisePlan?: () => void;
+  onEditPlan?: () => void;
+  /** True when this card is the plan awaiting user approval. */
+  planPending?: boolean;
 }) {
   switch (event.kind) {
     case "user":
@@ -261,6 +275,9 @@ function EventRow({
           fileName={event.fileName}
           onBuild={onBuild}
           onOpenPlan={onOpenPlan}
+          pending={planPending}
+          onRevise={onRevisePlan}
+          onEdit={onEditPlan}
         />
       );
 
@@ -377,6 +394,15 @@ function OptimizationCard({ event }: { event: Extract<ThreadEvent, { kind: "opti
   );
 }
 
+/** True when `event` is the newest plan-ready card in the timeline. */
+function isLastPlanReady(events: ThreadEvent[], event: ThreadEvent): boolean {
+  if (event.kind !== "plan-ready") return false;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i]!.kind === "plan-ready") return events[i] === event;
+  }
+  return false;
+}
+
 /** Cursor-style plan artifact: file card in chat; full markdown only in the Plan tab. */
 function PlanFileCard({
   title,
@@ -384,12 +410,19 @@ function PlanFileCard({
   streaming,
   onBuild,
   onOpenPlan,
+  pending,
+  onRevise,
+  onEdit,
 }: {
   title?: string;
   fileName?: string;
   streaming?: boolean;
   onBuild?: () => void;
   onOpenPlan?: () => void;
+  /** Plan is awaiting approval — show Revise/Edit/Build inline instead of a modal. */
+  pending?: boolean;
+  onRevise?: () => void;
+  onEdit?: () => void;
 }) {
   const t = useT();
   const name = fileName?.trim() || "plan.md";
@@ -420,6 +453,29 @@ function PlanFileCard({
           )}
         </span>
       </div>
+      {pending && !streaming && (
+        <div className="plan-file-card__pending">
+          <span className="plan-file-card__hint">{t("chat.planReadyDesc")}</span>
+          <span className="file-card__actions">
+            {onRevise && (
+              <button type="button" className="chip chip--small" onClick={onRevise}>
+                {t("chat.revise")}
+              </button>
+            )}
+            {onEdit && (
+              <button type="button" className="chip chip--small" onClick={onEdit}>
+                {t("chat.editPlan")}
+              </button>
+            )}
+            {onBuild && (
+              <button type="button" className="chip chip--small chip--accent" onClick={onBuild}>
+                <Icon name="play" size={11} />
+                {t("chat.build")}
+              </button>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

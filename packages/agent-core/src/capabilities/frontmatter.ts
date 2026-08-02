@@ -68,3 +68,32 @@ export function fmBool(data: Frontmatter["data"], key: string): boolean | undefi
   if (value === "false") return false;
   return undefined;
 }
+
+/** Frontmatter field as a positive finite number, with a fallback. */
+export function fmNumber(data: Frontmatter["data"], key: string): number | undefined {
+  const value = data[key];
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/** Frontmatter field as a reasoning-effort level ("low" | "medium" | "high"). */
+export function fmEffort(data: Frontmatter["data"], key = "effort"): "low" | "medium" | "high" | undefined {
+  const value = fmString(data, key)?.toLowerCase();
+  if (value === "low" || value === "medium" || value === "high") return value;
+  return undefined;
+}
+
+/** Frontmatter field as a list of non-empty strings (`[a, b]` or comma-separated). */
+export function fmStringList(data: Frontmatter["data"], key: string): string[] | undefined {
+  const value = data[key];
+  const parts: string[] = [];
+  if (Array.isArray(value)) {
+    parts.push(...value.filter((v): v is string => typeof v === "string" && v.trim() !== ""));
+  } else if (typeof value === "string" && value.includes(",")) {
+    parts.push(...value.split(","));
+  } else if (typeof value === "string" && value.trim() !== "") {
+    parts.push(value);
+  }
+  const out = parts.map((p) => p.trim()).filter(Boolean);
+  return out.length > 0 ? out : undefined;
+}

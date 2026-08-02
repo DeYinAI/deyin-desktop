@@ -29,6 +29,12 @@ export interface DeyinCliConfigFile {
   thinking?: boolean;
   maxSteps?: number;
   permissions?: PermissionRule[];
+  /** Per-subagent model overrides: subagent name -> "providerId::modelId". */
+  subagentModels?: Record<string, string>;
+  /** Default step cap for subagent runs (frontmatter max_steps overrides). */
+  subagentMaxSteps?: number;
+  /** Background memory (remember/forget + automatic recall). */
+  memoryEnabled?: boolean;
   agents?: Record<string, CustomAgentConfig>;
   mcpServers?: Record<string, McpServerConfig>;
 }
@@ -42,6 +48,9 @@ export interface ResolvedCliConfig {
   thinking: boolean;
   maxSteps: number;
   permissions: PermissionRule[];
+  subagentModels: Record<string, string>;
+  subagentMaxSteps: number;
+  memoryEnabled: boolean;
   agents: Record<string, CustomAgentConfig>;
   mcpServers: Record<string, McpServerConfig>;
   /** Which files/layers contributed, for `deyin config` style debugging. */
@@ -86,6 +95,9 @@ function mergeLayer(base: ResolvedCliConfig, layer: DeyinCliConfigFile, source: 
   if (layer.thinking !== undefined) base.thinking = layer.thinking;
   if (layer.maxSteps !== undefined) base.maxSteps = layer.maxSteps;
   if (layer.permissions) base.permissions = [...base.permissions, ...layer.permissions];
+  if (layer.subagentModels) base.subagentModels = { ...base.subagentModels, ...layer.subagentModels };
+  if (layer.subagentMaxSteps !== undefined) base.subagentMaxSteps = layer.subagentMaxSteps;
+  if (layer.memoryEnabled !== undefined) base.memoryEnabled = layer.memoryEnabled;
   if (layer.agents) base.agents = { ...base.agents, ...layer.agents };
   if (layer.mcpServers) base.mcpServers = { ...base.mcpServers, ...layer.mcpServers };
   base.sources.push(source);
@@ -113,6 +125,9 @@ export function loadCliConfig(opts: {
     thinking: true,
     maxSteps: 40,
     permissions: [],
+    subagentModels: {},
+    subagentMaxSteps: 20,
+    memoryEnabled: true,
     agents: {},
     mcpServers: {},
     sources: ["defaults"],

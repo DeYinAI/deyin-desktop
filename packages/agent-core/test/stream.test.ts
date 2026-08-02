@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { StreamAccumulator, type StreamEvent } from "../src/stream.js";
+import { StreamAccumulator, streamChatEvents, type StreamEvent } from "../src/stream.js";
 
 function feed(lines: string[]): StreamEvent[] {
   const acc = new StreamAccumulator();
@@ -99,4 +99,25 @@ test("synthesizes unique ids for providers that omit them", () => {
   // Ids repeated across steps poison the transcript for providers that require
   // globally unique tool_call ids — each synthesis must produce a fresh one.
   assert.notEqual(first.toolCalls[0]!.id, second.toolCalls[0]!.id);
+});
+
+test("sends reasoning_effort only when effort is set", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    if (init && typeof init.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+    return new Response('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n', {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+  try {
+    const base = { apiBaseUrl: "http://host", token: "tok", model: "m", messages: [{ role: "user" as const, content: "hi" }] };
+    for await (const _ of streamChatEvents({ ...base, effort: "high" })) void _;
+    for await (const _ of streamChatEvents(base)) void _;
+    assert.equal(bodies[0]?.reasoning_effort, "high");
+    assert.equal(bodies[1]?.reasoning_effort, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
