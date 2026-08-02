@@ -417,12 +417,14 @@ export class DesktopAgentHost {
 
     // Two independent axes: the access level (approvalMode chip) provides the base
     // rules; the composer mode's own restrictions come last so plan/ask stay
-    // read-only even under "full access". skipAll only ever applies to agent mode.
+    // read-only even under "full access". autoAllow (full access) converts every
+    // "ask" into "allow" in any mode — no approval dialogs — while the mode
+    // agent's explicit denies still win. skipAll is reserved for CLI --yes / automations.
     const modeAgent = agentForMode(options.mode);
     const permissions = new PermissionEngine({
       agentRules: rulesForApprovalMode(options.approvalMode),
       configRules: modeAgent.permissions ?? [],
-      skipAll: options.approvalMode === "full-access" && options.mode === "agent",
+      autoAllow: options.approvalMode === "full-access",
     });
 
     // Persistent PTY shell for bash: created lazily on the first bash tool call
@@ -573,6 +575,7 @@ return;
               options.threadId,
               session,
               options,
+              permissions,
               change,
               cwd,
               registry,
@@ -763,11 +766,14 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
         };
       },
       // Subagents inherit the parent run's mode restrictions: a plan/ask session
-      // must stay read-only even inside a spawned task.
+      // must stay read-only even inside a spawned task. Mode rules come last so
+      // a restrictive parent (ask mode denies bash) still gates readonly
+      // subagents; full access auto-allows asks (no dialogs) while the
+      // write/edit denies keep applying.
       permissionEngine: new PermissionEngine({
         agentRules: rulesForApprovalMode(parent.approvalMode),
-        configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules(def)],
-        skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
+        configRules: [...subagentReadonlyRules(def), ...(agentForMode(parent.mode).permissions ?? [])],
+        autoAllow: parent.approvalMode === "full-access",
       }),
       resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
       extraTools: this.opts.settings.get().indexingEnabled
@@ -915,6 +921,7 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     threadId: string,
     session: ThreadSession,
     options: AgentStartOptions,
+    permissions: PermissionEngine,
     change: ModeChangeRequest,
     cwd: string,
     registry: ToolRegistry,
@@ -928,6 +935,10 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     const nextMode = change.target;
     session.mode = nextMode;
     options.mode = nextMode;
+    // The permission engine is built once per run; refresh its mode rules so
+    // plan/ask read-only restrictions follow the mode switch (and lift again
+    // when switching back to agent).
+    permissions.setConfigRules(agentForMode(nextMode).permissions ?? []);
 
     const reminder = modeReminder(change);
     if (reminder) {
