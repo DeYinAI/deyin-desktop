@@ -27,6 +27,7 @@ import { Box, Static, Text, useApp, useInput } from "ink";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CliContext } from "../context.js";
 import { tokenSource } from "../context.js";
+import { registerCliSubagentTool } from "../subagents.js";
 import { updateNotice } from "../version.js";
 import { Composer } from "./Composer.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
@@ -45,6 +46,8 @@ const SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "/sessions", description: "Browse and resume sessions" },
   { name: "/compact", description: "Summarize the conversation to free context" },
   { name: "/usage", description: "Show usage statistics" },
+  { name: "/memory", description: "List saved background memories" },
+  { name: "/remember", description: "Save a note as a project memory (/remember <note>)" },
   { name: "/login", description: "Sign in with Openference (device flow)" },
   { name: "/exit", description: "Quit deyin" },
 ];
@@ -116,6 +119,21 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     [pushItem],
   );
 
+  /** Route a permission request to the interactive prompt (shared by main + subagent runs). */
+  const requestPermission = useCallback(
+    (request: PermissionRequest) =>
+      new Promise<PermissionDecision>((resolve) => {
+        setPermission({
+          request,
+          resolve: (decision) => {
+            setPermission(null);
+            resolve(decision);
+          },
+        });
+      }),
+    [],
+  );
+
   const agentDef = useCallback(
     (name = agentName) => resolveAgent(ctx.config, name) ?? BUILD_AGENT,
     [ctx.config, agentName],
@@ -151,6 +169,12 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           !cancelled && notice(`mcp ${server}: failed to start (${err instanceof Error ? err.message : String(err)})`, "warn"),
       });
       mcpRef.current = connections;
+      await registerCliSubagentTool(toolsRef.current, {
+        ctx,
+        skipAll: false,
+        resolvePermission: requestPermission,
+        onBackgroundDone: (def) => notice(`Background subagent \u201c${def.name}\u201d finished`, "info"),
+      });
       if (!cancelled) {
         for (const c of connections) notice(`mcp ${c.name}: ${c.toolCount} tool(s) connected`);
       }
@@ -283,16 +307,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           messages: messagesRef.current,
           tools: toolsRef.current,
           permissions: permEngineRef.current,
-          resolvePermission: (request) =>
-            new Promise<PermissionDecision>((resolve) => {
-              setPermission({
-                request,
-                resolve: (decision) => {
-                  setPermission(null);
-                  resolve(decision);
-                },
-              });
-            }),
+          resolvePermission: requestPermission,
           toolContext: {
             resolveInteraction: (request) =>
               new Promise<string>((resolve) => {
@@ -308,7 +323,9 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
                   },
                 });
               }),
+            memory: ctx.config.memoryEnabled ? ctx.memory : undefined,
           },
+          memory: ctx.config.memoryEnabled ? ctx.memory : undefined,
           onEvent: handleEvent,
           onMessage: (message) => {
             if (sessionIdRef.current) ctx.sessions.append(sessionIdRef.current, message);
@@ -337,7 +354,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         abortRef.current = null;
       }
     },
-    [agentDef, ctx, handleEvent, model, modelList, notice, pushItem],
+    [agentDef, ctx, handleEvent, model, modelList, notice, pushItem, requestPermission],
   );
 
   const openPicker = useCallback(
@@ -500,6 +517,39 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         case "/login":
           void doLogin();
           break;
+        case "/memory": {
+          const facts = ctx.memory.list();
+          if (facts.length === 0) {
+            notice("No saved memories. Save one with /remember <note> (the agent can also use its remember tool).");
+            break;
+          }
+          notice(
+            facts
+              .slice(0, 20)
+              .map((f) => `\u2022 ${f.scope}/${f.name} (${f.type}) — ${f.description || f.title}`)
+              .join("\n") + (facts.length > 20 ? `\n… ${facts.length - 20} more` : ""),
+          );
+          break;
+        }
+        case "/remember": {
+          const note = text.slice("/remember".length).trim();
+          if (!note) {
+            notice("Usage: /remember <note> — e.g. /remember the release branch is main", "warn");
+            break;
+          }
+          try {
+            const fact = ctx.memory.create({
+              name: `note-${note.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40) || "note"}`,
+              title: note.slice(0, 80),
+              type: "project",
+              body: note,
+            });
+            notice(`Saved memory ${fact.scope}/${fact.name} (revision 1).`);
+          } catch (err) {
+            notice(`Could not save memory: ${err instanceof Error ? err.message : String(err)}`, "error");
+          }
+          break;
+        }
         default:
           notice(`Unknown command ${command}. Try /help.`, "warn");
       }

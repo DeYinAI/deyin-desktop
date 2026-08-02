@@ -34,7 +34,7 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
   return {
     name: "task",
     description:
-      "Delegate a self-contained task to a specialized subagent and get its report back. The subagent starts with a CLEAN context: include every needed detail (paths, requirements, expected output) in the prompt. " +
+      "Delegate a self-contained task to a specialized subagent and get its report back. The subagent starts with a CLEAN context: write the prompt as a task contract with (1) Context — the larger goal and any constraints; (2) Request — one clear action; (3) Output format — the exact shape of the report; (4) Boundaries — what NOT to do, and to mark missing info as uncertain; (5) Pause policy — only stop early for irreversible/external effects, scope changes, or information only the user can provide. " +
       TASK_SUBAGENT_CATALOG_MARKER +
       catalog,
     tier: "execute",

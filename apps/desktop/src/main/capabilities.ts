@@ -11,7 +11,7 @@ import {
   type CapabilitySnapshot,
   type McpServerDefinition,
 } from "@deyin/agent-core";
-import type { CapabilityItem, CapabilityKind, McpServerEntry, McpServerInput, McpTestResult } from "../shared/types.js";
+import type { CapabilityItem, CapabilityKind, DeyinSettings, McpServerEntry, McpServerInput, McpTestResult } from "../shared/types.js";
 
 const SCAN_TTL_MS = 4_000;
 
@@ -33,6 +33,7 @@ export class CapabilityService {
     private readonly getWorkspaceRoot: () => string | null,
     private readonly pluginsDir: string,
     private readonly builtinSkillsDir: string,
+    private readonly getSettings: () => DeyinSettings,
   ) {
     // Ship the default skills as real files so they read/override like any other.
     try {
@@ -122,6 +123,7 @@ export class CapabilityService {
       });
     }
     for (const subagent of snap.subagents) {
+      const override = this.getSettings().subagentModels[subagent.name];
       items.push({
         id: `subagent:${subagent.name}`,
         kind: "subagent",
@@ -130,6 +132,8 @@ export class CapabilityService {
         enabled: !disabled.has(`subagent:${subagent.name}`),
         source: subagent.source,
         path: subagent.path,
+        model: override,
+        effectiveModel: override ?? subagent.model,
       });
     }
     for (const server of snap.mcpServers) {
