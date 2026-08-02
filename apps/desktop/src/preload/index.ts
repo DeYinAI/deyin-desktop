@@ -81,6 +81,19 @@ const api: DeyinApi = {
     add: (input) => ipcRenderer.invoke(CH.mcpAdd, input),
     remove: (name) => ipcRenderer.invoke(CH.mcpRemove, name),
     test: (name) => ipcRenderer.invoke(CH.mcpTest, name),
+    catalog: {
+      list: () => ipcRenderer.invoke(CH.mcpCatalogList),
+      install: (input) => ipcRenderer.invoke(CH.mcpCatalogInstall, input),
+    },
+    modules: {
+      list: () => ipcRenderer.invoke(CH.mcpModulesList),
+      uninstall: (id) => ipcRenderer.invoke(CH.mcpModulesUninstall, id),
+    },
+    authenticate: (moduleId) => ipcRenderer.invoke(CH.mcpAuthenticate, moduleId),
+    auth: {
+      revoke: (moduleId) => ipcRenderer.invoke(CH.mcpAuthRevoke, moduleId),
+      status: () => ipcRenderer.invoke(CH.mcpAuthStatus),
+    },
   },
   plugins: {
     list: () => ipcRenderer.invoke(CH.pluginsList),
@@ -114,6 +127,8 @@ agent: {
  },
   browserControl: {
     register: (webContentsId) => ipcRenderer.send(CH.browserRegister, webContentsId),
+    syncTab: (webContentsId, url, title) => ipcRenderer.send(CH.browserTabSync, webContentsId, url, title),
+    removeTab: (webContentsId) => ipcRenderer.send(CH.browserTabRemove, webContentsId),
     getPartition: () => ipcRenderer.invoke(CH.browserGetPartition),
     clearProfile: () => ipcRenderer.invoke(CH.browserClearProfile),
     onEnsure: (cb) => {
@@ -121,6 +136,37 @@ agent: {
       ipcRenderer.on(CH.browserEnsure, listener);
       return () => ipcRenderer.removeListener(CH.browserEnsure, listener);
     },
+    onTabCommand: (cb) => {
+      const listener = (_e: unknown, cmd: import("../shared/ipc.js").BrowserTabCommand) => cb(cmd);
+      ipcRenderer.on(CH.browserTabCommand, listener);
+      return () => ipcRenderer.removeListener(CH.browserTabCommand, listener);
+    },
+    onActive: (cb) => {
+      const listener = (_e: unknown, active: boolean) => cb(active);
+      ipcRenderer.on(CH.browserActive, listener);
+      return () => ipcRenderer.removeListener(CH.browserActive, listener);
+    },
+  },
+  computerUse: {
+    getAllowlist: () => ipcRenderer.invoke(CH.computerUseGetAllowlist),
+    setAllowlist: (apps) => ipcRenderer.invoke(CH.computerUseSetAllowlist, apps),
+    listApps: () => ipcRenderer.invoke(CH.computerUseListApps),
+    onActive: (cb) => {
+      const listener = (_e: unknown, active: boolean) => cb(active);
+      ipcRenderer.on(CH.computerUseActive, listener);
+      return () => ipcRenderer.removeListener(CH.computerUseActive, listener);
+    },
+  },
+  chrome: {
+    onConsentRequest: (cb) => {
+      const listener = (_e: unknown, req: { message?: string }) => cb(req);
+      ipcRenderer.on(CH.chromeConsentRequest, listener);
+      return () => ipcRenderer.removeListener(CH.chromeConsentRequest, listener);
+    },
+    respondConsent: (granted) => ipcRenderer.send(CH.chromeConsentRespond, granted),
+  },
+  visualize: {
+    read: (threadId, fileName) => ipcRenderer.invoke(CH.visualizeRead, threadId, fileName),
   },
   telemetry: {
     record: (name, props) => ipcRenderer.send(CH.telemetryRecord, name, props),
@@ -142,6 +188,15 @@ agent: {
   },
   plans: {
     list: () => ipcRenderer.invoke(CH.plansList),
+  },
+  billing: {
+    overview: () => ipcRenderer.invoke(CH.billingOverview),
+    selectPlan: (planId, options) => ipcRenderer.invoke(CH.billingSelectPlan, planId, options),
+    publishableKey: () => ipcRenderer.invoke(CH.billingPublishableKey),
+    completeCrossCurrencyUpgrade: (newSubscriptionId) =>
+      ipcRenderer.invoke(CH.billingCompleteCrossCurrency, newSubscriptionId),
+    abortCrossCurrencyUpgrade: (newSubscriptionId) =>
+      ipcRenderer.invoke(CH.billingAbortCrossCurrency, newSubscriptionId),
   },
   win: {
     minimize: () => ipcRenderer.send(CH.winMinimize),
@@ -215,6 +270,45 @@ agent: {
     test: (hostId, acceptFingerprint) => ipcRenderer.invoke(CH.sshHostsTest, hostId, acceptFingerprint),
     pinFingerprint: (hostId, fingerprint) => ipcRenderer.invoke(CH.sshHostsPinFingerprint, hostId, fingerprint),
     importKey: () => ipcRenderer.invoke(CH.sshHostsImportKey),
+  },
+  context: {
+    search: (query) => ipcRenderer.invoke(CH.contextSearch, query),
+    resolve: (refs) => ipcRenderer.invoke(CH.contextResolve, refs),
+  },
+  review: {
+    list: (threadId) => ipcRenderer.invoke(CH.reviewList, threadId),
+    approve: (threadId, changeId) => ipcRenderer.invoke(CH.reviewApprove, threadId, changeId),
+    reject: (threadId, changeId) => ipcRenderer.invoke(CH.reviewReject, threadId, changeId),
+    approveAll: (threadId) => ipcRenderer.invoke(CH.reviewApproveAll, threadId),
+    rejectAll: (threadId) => ipcRenderer.invoke(CH.reviewRejectAll, threadId),
+  },
+  git: {
+    status: () => ipcRenderer.invoke(CH.gitStatus),
+    diff: (path, staged) => ipcRenderer.invoke(CH.gitDiff, path, staged),
+    stage: (paths, unstage) => ipcRenderer.invoke(CH.gitStage, paths, unstage),
+    commit: (message) => ipcRenderer.invoke(CH.gitCommit, message),
+    branches: () => ipcRenderer.invoke(CH.gitBranches),
+    checkout: (branch) => ipcRenderer.invoke(CH.gitCheckout, branch),
+    log: (limit) => ipcRenderer.invoke(CH.gitLog, limit),
+  },
+  security: {
+    listFindings: (threadId) => ipcRenderer.invoke(CH.securityListFindings, threadId),
+    clearFindings: (threadId) => ipcRenderer.invoke(CH.securityClearFindings, threadId),
+    scanDiff: (threadId, diff) => ipcRenderer.invoke(CH.securityScanDiff, threadId, diff),
+    onFindingsChanged: (cb) => {
+      const listener = (_e: unknown, threadId: string) => cb(threadId);
+      ipcRenderer.on(CH.securityFindingsChanged, listener);
+      return () => ipcRenderer.removeListener(CH.securityFindingsChanged, listener);
+    },
+  },
+  reasonix: {
+    metrics: () => ipcRenderer.invoke(CH.reasonixMetricsGet),
+    weeklyReport: () => ipcRenderer.invoke(CH.reasonixMetricsReport),
+    diagnostics: (threadId) => ipcRenderer.invoke(CH.reasonixDiagnosticsGet, threadId),
+    clearThreadCache: (threadId) => ipcRenderer.invoke(CH.reasonixCacheClear, threadId),
+  },
+  beta: {
+    submitFeedback: (payload) => ipcRenderer.invoke(CH.betaFeedbackSubmit, payload),
   },
 };
 

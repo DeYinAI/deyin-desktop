@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
+import { getDeepSeekBetaEndpoint, isDeepSeekEndpoint, shouldContinueResponse } from "./cache/deepseek.js";
 import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
 
 export interface StreamChatEventsOptions {
@@ -16,10 +17,12 @@ export interface StreamChatEventsOptions {
  wire?: WireOptions;
  /** OpenAI / Openference prompt cache routing key. */
  promptCacheKey?: string;
- promptCacheOptions?: {
- mode?: "implicit" | "explicit";
- ttl?: string;
- };
+  promptCacheOptions?: {
+    mode?: "implicit" | "explicit";
+    ttl?: string;
+  };
+  /** Max DeepSeek beta prefix continuations for truncated (length) responses. */
+  maxContinuations?: number;
 }
 
 export type StreamEvent =
@@ -30,9 +33,10 @@ export type StreamEvent =
  content: string;
  reasoning: string;
  toolCalls: AgentToolCall[];
- finishReason: string | null;
- usage: TokenUsage | null;
- compression?: {
+      finishReason: string | null;
+      usage: TokenUsage | null;
+      continuations?: number;
+      compression?: {
  originalTokens: number;
  compressedTokens: number;
  ratio: number;
@@ -60,68 +64,177 @@ interface WireChunk {
     total_tokens?: number;
     prompt_tokens_details?: { cached_tokens?: number };
     cache_read_input_tokens?: number;
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
   } | null;
+}
+
+const DEFAULT_MAX_CONTINUATIONS = 3;
+
+/** Fold usage from multiple requests (initial + beta continuations). */
+export function foldTokenUsage(a: TokenUsage | null, b: TokenUsage | null): TokenUsage | null {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cachedPromptTokens: (a.cachedPromptTokens ?? 0) + (b.cachedPromptTokens ?? 0),
+  };
+}
+
+function parseUsage(raw: WireChunk["usage"]): TokenUsage | null {
+  if (!raw) return null;
+  const cached =
+    raw.prompt_tokens_details?.cached_tokens ??
+    raw.cache_read_input_tokens ??
+    raw.prompt_cache_hit_tokens;
+  return {
+    promptTokens: raw.prompt_tokens ?? 0,
+    completionTokens: raw.completion_tokens ?? 0,
+    totalTokens: raw.total_tokens ?? (raw.prompt_tokens ?? 0) + (raw.completion_tokens ?? 0),
+    ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+  };
+}
+
+function canContinueTruncated(done: Extract<StreamEvent, { type: "done" }>): boolean {
+  return (
+    shouldContinueResponse(done.finishReason ?? undefined) &&
+    done.toolCalls.length === 0 &&
+    (done.content.length > 0 || done.reasoning.length > 0)
+  );
+}
+
+function mergeDoneEvents(
+  first: Extract<StreamEvent, { type: "done" }>,
+  second: Extract<StreamEvent, { type: "done" }>,
+  continuations: number,
+): Extract<StreamEvent, { type: "done" }> {
+  return {
+    type: "done",
+    content: first.content + second.content,
+    reasoning: first.reasoning + second.reasoning,
+    toolCalls: second.toolCalls.length > 0 ? second.toolCalls : first.toolCalls,
+    finishReason: second.finishReason,
+    usage: foldTokenUsage(first.usage, second.usage),
+    continuations,
+    ...(first.compression ? { compression: first.compression } : {}),
+  };
+}
+
+function buildPrefixAssistantMessage(done: Extract<StreamEvent, { type: "done" }>): Record<string, unknown> {
+  const msg: Record<string, unknown> = {
+    role: "assistant",
+    content: done.content,
+    prefix: true,
+  };
+  if (done.reasoning.length > 0) msg.reasoning_content = done.reasoning;
+  return msg;
 }
 
 /**
  * Stream a chat completion, accumulating fragmented `tool_calls` deltas (ids, names and
  * argument JSON arrive split across many SSE chunks) and the final `finish_reason`.
  * Yields text/reasoning deltas as they arrive and exactly one final "done" event.
+ *
+ * When DeepSeek returns finish_reason "length", automatically continues via the beta
+ * prefix endpoint and folds usage from both requests.
  */
 export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGenerator<StreamEvent> {
- const built = buildWireMessages(opts.messages, opts.wire ?? {});
- const body: Record<string, unknown> = {
- model: opts.model,
- messages: built.messages,
- stream: true,
- };
- if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
- if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
- if (opts.temperature !== undefined) body.temperature = opts.temperature;
- // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
- if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
- if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
+  const maxContinuations = opts.maxContinuations ?? DEFAULT_MAX_CONTINUATIONS;
+  let pending: Extract<StreamEvent, { type: "done" }> | null = null;
+  let continuations = 0;
 
- const res = await fetch(`${opts.apiBaseUrl}/chat/completions`, {
- method: "POST",
- headers: {
- "content-type": "application/json",
- authorization: `Bearer ${opts.token}`,
- },
- body: JSON.stringify(body),
- signal: opts.signal,
- });
+  while (true) {
+    const isContinuation = pending !== null;
+    const built = buildWireMessages(opts.messages, opts.wire ?? {});
+    const wireMessages = [...built.messages];
+    if (isContinuation && pending) {
+      wireMessages.push(buildPrefixAssistantMessage(pending));
+    }
 
- if (!res.ok || !res.body) {
- const detail = await res.text().catch(() => "");
- throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
- }
+    const chatUrl = `${opts.apiBaseUrl.replace(/\/$/, "")}/chat/completions`;
+    const requestUrl =
+      isContinuation && isDeepSeekEndpoint(opts.apiBaseUrl)
+        ? getDeepSeekBetaEndpoint(chatUrl) ?? chatUrl
+        : chatUrl;
 
- const parser = new StreamAccumulator(built.compression);
- const reader = res.body.getReader();
- const decoder = new TextDecoder();
- let buffer = "";
- let sawDone = false;
+    const body: Record<string, unknown> = {
+      model: opts.model,
+      messages: wireMessages,
+      stream: true,
+    };
+    if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
+    if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
+    if (opts.temperature !== undefined) body.temperature = opts.temperature;
+    if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
+    if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
 
- while (true) {
- const { done, value } = await reader.read();
- if (done) break;
- buffer += decoder.decode(value, { stream: true });
- const lines = buffer.split("\n");
- buffer = lines.pop() ?? "";
- for (const line of lines) {
- const event = parser.push(line);
- if (!event) continue;
- if (event.type === "done") {
- sawDone = true;
- yield event;
- return;
- }
- yield event;
- }
- }
+    const res = await fetch(requestUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${opts.token}`,
+      },
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
 
- if (!sawDone) yield parser.finish();
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
+    }
+
+    const parser = new StreamAccumulator(built.compression);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let sawDone = false;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const event = parser.push(line);
+        if (!event) continue;
+        if (event.type === "done") {
+          sawDone = true;
+          const doneEvent = event;
+          const merged: Extract<StreamEvent, { type: "done" }> = pending
+            ? mergeDoneEvents(pending, doneEvent, continuations)
+            : doneEvent;
+          const canContinue =
+            isDeepSeekEndpoint(opts.apiBaseUrl) &&
+            canContinueTruncated(merged) &&
+            continuations < maxContinuations &&
+            getDeepSeekBetaEndpoint(chatUrl) !== null;
+
+          if (canContinue) {
+            pending = merged;
+            continuations += 1;
+            break;
+          }
+
+          yield { ...merged, continuations: continuations > 0 ? continuations : undefined };
+          return;
+        }
+        yield event;
+      }
+      if (sawDone) break;
+    }
+
+    if (!sawDone) {
+      const finished: Extract<StreamEvent, { type: "done" }> = parser.finish();
+      const merged: Extract<StreamEvent, { type: "done" }> = pending
+        ? mergeDoneEvents(pending, finished, continuations)
+        : finished;
+      yield { ...merged, continuations: continuations > 0 ? continuations : undefined };
+      return;
+    }
+  }
 }
 
 /** Fallback tool-call ids must be unique across the whole transcript: some providers
@@ -159,16 +272,7 @@ export class StreamAccumulator {
       return null; // keep-alives / malformed lines
     }
 
-    if (chunk.usage) {
-      const cached =
-        chunk.usage.prompt_tokens_details?.cached_tokens ?? chunk.usage.cache_read_input_tokens;
-      this.usage = {
-        promptTokens: chunk.usage.prompt_tokens ?? 0,
-        completionTokens: chunk.usage.completion_tokens ?? 0,
-        totalTokens: chunk.usage.total_tokens ?? (chunk.usage.prompt_tokens ?? 0) + (chunk.usage.completion_tokens ?? 0),
-        ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
-      };
-    }
+    if (chunk.usage) this.usage = parseUsage(chunk.usage);
 
     const choice = chunk.choices?.[0];
     if (!choice) return null;
@@ -203,7 +307,7 @@ export class StreamAccumulator {
     return null;
   }
 
-finish(): StreamEvent {
+  finish(): Extract<StreamEvent, { type: "done" }> {
  const toolCalls: AgentToolCall[] = [...this.calls.entries()]
  .sort(([a], [b]) => a - b)
  .map(([i, c]) => ({

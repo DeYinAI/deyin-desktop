@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 
 /** Cap tool output so one command cannot blow the context window. */
 export const MAX_TOOL_OUTPUT = 30_000;
@@ -11,6 +11,17 @@ export function truncate(text: string, max = MAX_TOOL_OUTPUT): string {
 /** Resolve a tool path argument against the run's cwd. */
 export function resolvePath(cwd: string, path: string): string {
   return isAbsolute(path) ? path : resolve(cwd, path);
+}
+
+/** Resolve a path and reject escapes outside the workspace root (cwd). */
+export function resolvePathInWorkspace(cwd: string, path: string): string {
+  const resolved = resolvePath(cwd, path);
+  const root = resolve(cwd);
+  const rel = relative(root, resolved);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`Path escapes workspace: ${path}`);
+  }
+  return resolved;
 }
 
 export function asString(value: unknown, name: string): string {
@@ -30,6 +41,18 @@ export function asOptionalNumber(value: unknown): number | undefined {
 
 export function asOptionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+export function asStringArray(value: unknown, name: string): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`Missing required string array parameter "${name}".`);
+  }
+  return value.map((v, i) => {
+    if (typeof v !== "string" || v.length === 0) {
+      throw new Error(`Invalid string at "${name}[${i}]".`);
+    }
+    return v;
+  });
 }
 
 /** Directories never walked by grep/glob/ls fallbacks. */

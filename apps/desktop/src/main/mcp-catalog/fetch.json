@@ -1,0 +1,15 @@
+{
+  "id": "fetch",
+  "name": "Fetch",
+  "description": "Fetch and convert web pages to markdown.",
+  "category": "devtools",
+  "vendor": "Community",
+  "transport": "stdio",
+  "auth": "none",
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-fetch"
+  ],
+  "docsUrl": "https://github.com/modelcontextprotocol/servers"
+}

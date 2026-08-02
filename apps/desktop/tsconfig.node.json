@@ -12,6 +12,7 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "bundled-plugins/**/host/**/*.ts",
     "electron.vite.config.ts"
   ]
 }

@@ -23,7 +23,12 @@ import type { ApprovalMode, IndexSearchHit } from "../../shared/types.js";
 import type { DeyinConfig } from "../../shared/config.js";
 import type { AuthManager } from "../auth.js";
 import type { BrowserControlService } from "../browser.js";
+import type { ChromeDebugService } from "../chrome-debug.js";
+import type { ComputerUseService } from "../computer-use.js";
+import type { VisualizeService } from "../visualize.js";
 import type { CapabilityService } from "../capabilities.js";
+import { registerBundledHostTools } from "../plugin-host.js";
+import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "../permission-policy.js";
 
 const READONLY_RULES: PermissionRule[] = [
   { tool: "*", action: "deny" },
@@ -47,6 +52,9 @@ export interface AgentRunContextDeps {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
+  chrome: ChromeDebugService;
+  computerUse: ComputerUseService;
+  visualize: VisualizeService;
   getWorkspaceRoot: () => string | null;
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   getContextLength: (providerId: string, modelId: string) => number | undefined;
@@ -63,6 +71,7 @@ export interface BuiltRunEnvironment {
   mcpConnections: McpConnection[];
   hooks: LoadedHook[];
   provider: ProviderRouting;
+  hostRules: PermissionRule[];
 }
 
 export function resolveProviderRouting(
@@ -91,8 +100,14 @@ export async function buildRunEnvironment(
   if (settings.indexingEnabled) {
     registry.register(createCodebaseSearchTool((query, topK) => deps.searchIndex(query, topK)));
   }
-  if (opts?.includeBrowser !== false && settings.browserControlEnabled && caps.browserEnabled) {
-    for (const tool of deps.browser.tools()) registry.register(tool);
+  let hostRules: PermissionRule[] = [];
+  if (opts?.includeBrowser !== false) {
+    hostRules = await registerBundledHostTools(registry, deps.agents, deps.settings, {
+      browser: deps.browser,
+      chrome: deps.chrome,
+      computerUse: deps.computerUse,
+      visualize: deps.visualize,
+    });
   }
   if (opts?.includeSubagents) {
     const subagents = caps.subagents;
@@ -100,8 +115,9 @@ export async function buildRunEnvironment(
       registry.register(
         createTaskTool({
           subagents,
-          runSubagent: (def, subPrompt, subSignal) =>
-            runSubagentInline(deps, cwd, def, subPrompt, subSignal),
+          cwd,
+          runSubagent: (def, subPrompt, subOpts) =>
+            runSubagentInline(deps, cwd, def, subPrompt, subOpts?.signal),
           onBackgroundDone: () => undefined,
         }),
       );
@@ -111,7 +127,10 @@ export async function buildRunEnvironment(
   const mcpConnections = await connectMcpDefinitions(
     caps.mcpServers.map((def) => deps.capabilities.resolvePluginVariables(def)),
     registry,
-    { onError: () => undefined },
+    {
+      onError: () => undefined,
+      getAuthProvider: (name) => deps.capabilities.getAuthProvider(name),
+    },
   );
 
   return {
@@ -120,6 +139,7 @@ export async function buildRunEnvironment(
     mcpConnections,
     hooks: caps.hooks,
     provider: resolveProviderRouting(deps, "openference"),
+    hostRules,
   };
 }
 
@@ -135,14 +155,20 @@ export async function buildAutomationEnvironment(
   if (settings.indexingEnabled) {
     registry.register(createCodebaseSearchTool((query, topK) => deps.searchIndex(query, topK)));
   }
-  if (settings.browserControlEnabled && caps.browserEnabled) {
-    for (const tool of deps.browser.tools()) registry.register(tool);
-  }
+  const hostRules = await registerBundledHostTools(registry, deps.agents, deps.settings, {
+    browser: deps.browser,
+    chrome: deps.chrome,
+    computerUse: deps.computerUse,
+    visualize: deps.visualize,
+  });
 
   const mcpConnections = await connectMcpDefinitions(
     caps.mcpServers.map((def) => deps.capabilities.resolvePluginVariables(def)),
     registry,
-    { onError: () => undefined },
+    {
+      onError: () => undefined,
+      getAuthProvider: (name) => deps.capabilities.getAuthProvider(name),
+    },
   );
 
   return {
@@ -151,6 +177,7 @@ export async function buildAutomationEnvironment(
     mcpConnections,
     hooks: caps.hooks,
     provider: resolveProviderRouting(deps, providerId),
+    hostRules,
   };
 }
 
@@ -181,11 +208,13 @@ export async function buildAutomationSystemPrompt(
   return system;
 }
 
-export function automationPermissions(): PermissionEngine {
+export function automationPermissions(hostRules: PermissionRule[] = []): PermissionEngine {
   return new PermissionEngine({
     agentRules: [],
-    configRules: [],
+    configRules: hostRules,
     skipAll: true,
+    neverSkipTools: NEVER_SKIP_TOOLS,
+    neverSkipPrefixes: NEVER_SKIP_PREFIXES,
   });
 }
 
@@ -226,6 +255,8 @@ async function runSubagentInline(
     agentRules: [],
     configRules: readonlyRules,
     skipAll: !def.readonly,
+    neverSkipTools: NEVER_SKIP_TOOLS,
+    neverSkipPrefixes: NEVER_SKIP_PREFIXES,
   });
   const routing = resolveProviderRouting(deps, "openference");
   const messages: AgentMessage[] = [

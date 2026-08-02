@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 5;
+export const SETTINGS_SCHEMA_VERSION = 10;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -11,6 +11,9 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   autoUpdate: true,
   telemetry: false,
   browserControlEnabled: true,
+  computerUseEnabled: false,
+  computerUseScreenshotRetentionDays: 7,
+  chromeDebugEnabled: false,
   defaultModel: null,
   approvalMode: "full-access",
   thinking: true,
@@ -36,6 +39,22 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   optimizationToolCache: true,
   optimizationResponseCache: true,
   optimizationSimilarityThreshold: 0.93,
+  reviewMode: "off",
+  plannerModel: null,
+  maxSubagentConcurrency: 6,
+  maxParallelWriters: 3,
+  enableCoordinator: false,
+  enableFleet: false,
+  enableDeliveryMode: false,
+  enableCacheOptimizations: true,
+  cacheHitRateWarningThreshold: 0.5,
+  cacheHitRateTarget: 0.8,
+  coordinatorRoutingPolicy: "balanced",
+  schedulerWritePathValidation: true,
+  evidenceRequireAcceptanceCriteria: true,
+  evidenceStrictFinalization: true,
+  reasonixOnboardComplete: false,
+  whatsNewSeenVersion: null,
 };
 
 /**
@@ -83,9 +102,74 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     0.98,
     DEFAULT_SETTINGS.optimizationSimilarityThreshold,
   );
+  if (merged.reviewMode !== "on" && merged.reviewMode !== "off") {
+    merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
+  }
+  if (merged.plannerModel !== null && typeof merged.plannerModel !== "string") {
+    merged.plannerModel = DEFAULT_SETTINGS.plannerModel;
+  }
+  merged.maxSubagentConcurrency = clamp(
+    merged.maxSubagentConcurrency,
+    1,
+    32,
+    DEFAULT_SETTINGS.maxSubagentConcurrency,
+  );
+  merged.maxParallelWriters = clamp(
+    merged.maxParallelWriters,
+    1,
+    32,
+    DEFAULT_SETTINGS.maxParallelWriters,
+  );
+  if (merged.maxParallelWriters > merged.maxSubagentConcurrency) {
+    merged.maxParallelWriters = merged.maxSubagentConcurrency;
+  }
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
+  if (typeof merged.computerUseEnabled !== "boolean") merged.computerUseEnabled = DEFAULT_SETTINGS.computerUseEnabled;
+  merged.computerUseScreenshotRetentionDays = clamp(
+    merged.computerUseScreenshotRetentionDays,
+    1,
+    90,
+    DEFAULT_SETTINGS.computerUseScreenshotRetentionDays,
+  );
+  if (typeof merged.chromeDebugEnabled !== "boolean") merged.chromeDebugEnabled = DEFAULT_SETTINGS.chromeDebugEnabled;
+  if (typeof merged.enableCoordinator !== "boolean") merged.enableCoordinator = DEFAULT_SETTINGS.enableCoordinator;
+  if (typeof merged.enableFleet !== "boolean") merged.enableFleet = DEFAULT_SETTINGS.enableFleet;
+  if (typeof merged.enableDeliveryMode !== "boolean") merged.enableDeliveryMode = DEFAULT_SETTINGS.enableDeliveryMode;
+  if (typeof merged.enableCacheOptimizations !== "boolean") {
+    merged.enableCacheOptimizations = DEFAULT_SETTINGS.enableCacheOptimizations;
+  }
+  merged.cacheHitRateWarningThreshold = clamp(
+    merged.cacheHitRateWarningThreshold,
+    0,
+    1,
+    DEFAULT_SETTINGS.cacheHitRateWarningThreshold,
+  );
+  merged.cacheHitRateTarget = clamp(
+    merged.cacheHitRateTarget,
+    0,
+    1,
+    DEFAULT_SETTINGS.cacheHitRateTarget,
+  );
+  if (!["balanced", "conservative", "aggressive"].includes(merged.coordinatorRoutingPolicy)) {
+    merged.coordinatorRoutingPolicy = DEFAULT_SETTINGS.coordinatorRoutingPolicy;
+  }
+  if (typeof merged.schedulerWritePathValidation !== "boolean") {
+    merged.schedulerWritePathValidation = DEFAULT_SETTINGS.schedulerWritePathValidation;
+  }
+  if (typeof merged.evidenceRequireAcceptanceCriteria !== "boolean") {
+    merged.evidenceRequireAcceptanceCriteria = DEFAULT_SETTINGS.evidenceRequireAcceptanceCriteria;
+  }
+  if (typeof merged.evidenceStrictFinalization !== "boolean") {
+    merged.evidenceStrictFinalization = DEFAULT_SETTINGS.evidenceStrictFinalization;
+  }
+  if (typeof merged.reasonixOnboardComplete !== "boolean") {
+    merged.reasonixOnboardComplete = DEFAULT_SETTINGS.reasonixOnboardComplete;
+  }
+  if (merged.whatsNewSeenVersion !== null && typeof merged.whatsNewSeenVersion !== "string") {
+    merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
+  }
   return merged;
 }
 

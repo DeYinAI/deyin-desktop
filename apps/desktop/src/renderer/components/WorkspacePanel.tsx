@@ -3,11 +3,13 @@ import { themeByName } from "../code.js";
 import { computeLineDiff, type FileDiff } from "../diff.js";
 import { useT } from "../i18n.js";
 import { FilesTab } from "./FilesTab.js";
+import { GitTab } from "./GitTab.js";
+import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
 import { Icon } from "./Icon.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
 import type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
-import type { AgentTodoItem } from "../../shared/types.js";
+import type { AgentTodoItem, PendingChange } from "../../shared/types.js";
 
 export type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
 
@@ -37,6 +39,13 @@ interface WorkspacePanelProps {
   onBuildPlan?: () => void;
   /** Persist manual edits to the plan todo list (idle only). */
   onPlanTodosChange?: (todos: AgentTodoItem[]) => void;
+  /** Pending file changes awaiting review (Diff tab actions). */
+  pendingReview?: PendingChange[];
+  onApproveChange?: (changeId: string) => void;
+  onRejectChange?: (changeId: string) => void;
+  /** Active chat thread — drives Security tab findings storage. */
+  threadId?: string | null;
+  onOpenFile?: (path: string) => void;
 }
 
 /** Right-hand workspace panel: files, agent plan, latest diff, built-in browser. */
@@ -57,6 +66,8 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onClick={() => props.onSelectTab("diff")}
         />
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
+        <TabButton label="Git" active={props.activeTab === "git"} onClick={() => props.onSelectTab("git")} />
+        <TabButton label="Security" active={props.activeTab === "security"} onClick={() => props.onSelectTab("security")} />
       </div>
 
       {/* Keep tab bodies mounted so FilesTab (and others) retain editor/view state across switches. */}
@@ -82,7 +93,14 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "diff"}>
-        <DiffTab projectName={props.projectName} diff={props.diff} display={props.codeDisplay} />
+        <DiffTab
+          projectName={props.projectName}
+          diff={props.diff}
+          display={props.codeDisplay}
+          pendingReview={props.pendingReview}
+          onApproveChange={props.onApproveChange}
+          onRejectChange={props.onRejectChange}
+        />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "browser"}>
         <BrowserTab
@@ -92,6 +110,23 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           controlEnabled={props.browserControlEnabled}
           onNavigate={props.onNavigate}
           onOpenBrowserSettings={props.onOpenBrowserSettings}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "git"}>
+        <GitTab
+          active={props.activeTab === "git"}
+          workspaceRoot={props.workspaceRoot}
+          codeDisplay={props.codeDisplay}
+          threadId={props.threadId}
+          onScanComplete={() => props.onSelectTab("security")}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "security"}>
+        <SecurityFindingsPanel
+          active={props.activeTab === "security"}
+          threadId={props.threadId ?? null}
+          workspaceRoot={props.workspaceRoot}
+          onOpenFile={props.onOpenFile}
         />
       </div>
     </section>
@@ -293,13 +328,26 @@ function DiffTab({
   projectName,
   diff,
   display,
+  pendingReview,
+  onApproveChange,
+  onRejectChange,
 }: {
   projectName: string;
   diff: FileDiff | null;
   display: CodeDisplaySettings;
+  pendingReview?: PendingChange[];
+  onApproveChange?: (changeId: string) => void;
+  onRejectChange?: (changeId: string) => void;
 }) {
   const [sourcePreview, setSourcePreview] = useState(false);
   const lines = useMemo(() => (diff ? computeLineDiff(diff.before, diff.after) : []), [diff]);
+  const pendingForFile = useMemo(
+    () =>
+      diff && pendingReview
+        ? pendingReview.find((c) => c.status === "pending" && c.path === diff.fileName)
+        : undefined,
+    [diff, pendingReview],
+  );
 
   if (!diff) {
     return <div className="wspanel__body wspanel__empty">No changes yet. Edits made by the agent show up here.</div>;
@@ -319,6 +367,16 @@ function DiffTab({
           {diff.fileName}
         </span>
         <div className="wspanel__subbar-spacer" />
+        {pendingForFile && onApproveChange && onRejectChange ? (
+          <div className="diff-review-actions">
+            <button type="button" className="btn btn--primary btn--sm" onClick={() => onApproveChange(pendingForFile.id)}>
+              Accept
+            </button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => onRejectChange(pendingForFile.id)}>
+              Reject
+            </button>
+          </div>
+        ) : null}
         <button
           className={`chip chip--small ${sourcePreview ? "chip--active" : ""}`}
           onClick={() => setSourcePreview((v) => !v)}
@@ -350,6 +408,19 @@ function DiffTab({
 
 /* Browser tab ---------------------------------------------------------------- */
 
+const MAX_BROWSER_TABS = 8;
+
+interface BrowserTabState {
+  key: string;
+  url: string;
+  title: string;
+  wcId: number | null;
+}
+
+function newBrowserTab(url = "about:blank"): BrowserTabState {
+  return { key: `tab-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, url, title: "New Tab", wcId: null };
+}
+
 function BrowserTab({
   platform,
   url,
@@ -365,17 +436,164 @@ function BrowserTab({
   onNavigate: (url: string) => void;
   onOpenBrowserSettings?: () => void;
 }) {
-  const [input, setInput] = useState(url);
-  useEffect(() => setInput(url), [url]);
+  const [tabs, setTabs] = useState<BrowserTabState[]>(() => [newBrowserTab(url || "about:blank")]);
+  const [activeKey, setActiveKey] = useState(() => tabs[0]?.key ?? "");
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const activeTab = tabs.find((t) => t.key === activeKey) ?? tabs[0];
+
+  const [input, setInput] = useState(activeTab?.url ?? url);
+  useEffect(() => {
+    if (!url) return;
+    setTabs((prev) => {
+      const idx = prev.findIndex((t) => t.key === activeKey);
+      if (idx < 0) return prev;
+      const current = prev[idx];
+      if (!current) return prev;
+      const next = [...prev];
+      next[idx] = { ...current, url };
+      return next;
+    });
+  }, [url, activeKey]);
+
+  useEffect(() => setInput(activeTab?.url ?? ""), [activeTab?.url]);
+
+  const activateTab = (key: string) => {
+    setActiveKey(key);
+    const tab = tabs.find((t) => t.key === key);
+    if (tab?.wcId != null) window.deyin.browserControl?.register(tab.wcId);
+  };
+
+  const openTab = (targetUrl: string) => {
+    if (tabs.length >= MAX_BROWSER_TABS) return;
+    const tab = newBrowserTab(targetUrl);
+    setTabs((prev) => [...prev, tab]);
+    setActiveKey(tab.key);
+    onNavigate(targetUrl);
+  };
+
+  const closeTab = (key: string) => {
+    setTabs((prev) => {
+      if (prev.length <= 1) {
+        const blank = newBrowserTab("about:blank");
+        setActiveKey(blank.key);
+        onNavigate("about:blank");
+        return [blank];
+      }
+      const idx = prev.findIndex((t) => t.key === key);
+      if (idx < 0) return prev;
+      const closing = prev[idx];
+      if (!closing) return prev;
+      if (closing.wcId != null) window.deyin.browserControl?.removeTab(closing.wcId);
+      const next = prev.filter((t) => t.key !== key);
+      if (key === activeKey) {
+        const fallback = next[Math.min(idx, next.length - 1)] ?? next[0];
+        if (fallback) {
+          setActiveKey(fallback.key);
+          if (fallback.wcId != null) window.deyin.browserControl?.register(fallback.wcId);
+          onNavigate(fallback.url);
+        }
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (!window.deyin.browserControl?.onTabCommand) return;
+    return window.deyin.browserControl.onTabCommand((cmd) => {
+      if (cmd.action === "open") {
+        if (tabsRef.current.length >= MAX_BROWSER_TABS) return;
+        const tab = newBrowserTab(cmd.url);
+        setTabs((prev) => [...prev, tab]);
+        setActiveKey(tab.key);
+        onNavigate(cmd.url);
+        return;
+      }
+      if (cmd.action === "switch") {
+        const match = tabsRef.current.find((t) => t.wcId === cmd.tabId);
+        if (match) {
+          setActiveKey(match.key);
+          window.deyin.browserControl?.register(cmd.tabId);
+        }
+        return;
+      }
+      if (cmd.action === "close") {
+        const match = tabsRef.current.find((t) => t.wcId === cmd.tabId);
+        if (!match) return;
+        setTabs((prev) => {
+          if (prev.length <= 1) {
+            const blank = newBrowserTab("about:blank");
+            setActiveKey(blank.key);
+            onNavigate("about:blank");
+            return [blank];
+          }
+          const idx = prev.findIndex((t) => t.key === match.key);
+          const next = prev.filter((t) => t.key !== match.key);
+          window.deyin.browserControl?.removeTab(cmd.tabId);
+          if (match.key === activeKey) {
+            const fallback = next[Math.min(idx, next.length - 1)] ?? next[0];
+            if (fallback) {
+              setActiveKey(fallback.key);
+              if (fallback.wcId != null) window.deyin.browserControl?.register(fallback.wcId);
+              onNavigate(fallback.url);
+            }
+          }
+          return next;
+        });
+      }
+    });
+  }, [activeKey, onNavigate]);
 
   const go = () => {
     let target = input.trim();
     if (target && !/^https?:\/\//.test(target)) target = `https://${target}`;
-    if (target) onNavigate(target);
+    if (!target) return;
+    onNavigate(target);
+    setTabs((prev) =>
+      prev.map((t) => (t.key === activeKey ? { ...t, url: target } : t)),
+    );
+  };
+
+  const updateTabMeta = (key: string, wcId: number, tabUrl: string, title: string) => {
+    setTabs((prev) =>
+      prev.map((t) => (t.key === key ? { ...t, wcId, url: tabUrl || t.url, title: title || t.title } : t)),
+    );
+    window.deyin.browserControl?.syncTab(wcId, tabUrl, title);
+    if (key === activeKey) window.deyin.browserControl?.register(wcId);
   };
 
   return (
     <>
+      <div className="browser-tabstrip">
+        {tabs.map((tab) => (
+          <div
+            key={tab.key}
+            className={`browser-tabstrip__tab ${tab.key === activeKey ? "browser-tabstrip__tab--active" : ""}`}
+            onClick={() => activateTab(tab.key)}
+            title={tab.url}
+          >
+            <span className="browser-tabstrip__title">{tab.title || tab.url || "New Tab"}</span>
+            {tabs.length > 1 && (
+              <button
+                type="button"
+                className="browser-tabstrip__close"
+                aria-label="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  closeTab(tab.key);
+                }}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ))}
+        {tabs.length < MAX_BROWSER_TABS && (
+          <button type="button" className="browser-tabstrip__new" title="New tab" onClick={() => openTab("about:blank")}>
+            +
+          </button>
+        )}
+      </div>
       <div className="wspanel__subbar">
         <Icon name="globe" size={13} />
         <input
@@ -399,20 +617,26 @@ function BrowserTab({
         </button>
       </div>
       <div className="wspanel__body wspanel__browser">
-        {url ? (
+        {tabs.some((t) => t.url) ? (
           platform === "desktop" ? (
-            // Electron's webview tag is absent from DOM typings; create it untyped.
-            // key remounts the view when the partition changes (Electron forbids
-            // changing the partition of a live webview).
-            createElement("webview", {
-              key: partition ?? "default",
-              src: url,
-              style: { width: "100%", height: "100%" },
-              ...(partition ? { partition } : {}),
-              ref: registerControlledWebview,
-            })
+            tabs.map((tab) => (
+              createElement("webview", {
+                key: `${tab.key}:${partition ?? "default"}`,
+                src: tab.url,
+                style: {
+                  width: "100%",
+                  height: "100%",
+                  flex: 1,
+                  display: tab.key === activeKey ? "flex" : "none",
+                },
+                ...(partition ? { partition } : {}),
+                ref: (el: unknown) => registerControlledWebview(el, tab.key, activeKey, updateTabMeta),
+              })
+            ))
           ) : (
-            <iframe src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms" />
+            activeTab?.url ? (
+              <iframe src={activeTab.url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms" />
+            ) : null
           )
         ) : (
           <div className="wspanel__empty">Built-in browser. Agent sessions can open and control pages here.</div>
@@ -428,28 +652,48 @@ function BrowserTab({
 
 interface ControlledWebview extends HTMLElement {
   getWebContentsId?(): number;
+  getURL?(): string;
+  getTitle?(): string;
 }
 
-let registeredWebview: ControlledWebview | null = null;
+const registeredWebviews = new Map<string, ControlledWebview>();
 
-function registerControlledWebview(el: unknown): void {
+function registerControlledWebview(
+  el: unknown,
+  tabKey: string,
+  activeKey: string,
+  onMeta: (tabKey: string, wcId: number, url: string, title: string) => void,
+): void {
   const view = (el as ControlledWebview) ?? null;
   if (!view) {
-    // Unmounting: tell main the target is gone.
-    registeredWebview = null;
-    window.deyin.browserControl?.register(null);
+    const prev = registeredWebviews.get(tabKey);
+    if (prev) {
+      try {
+        const id = prev.getWebContentsId?.();
+        if (typeof id === "number") window.deyin.browserControl?.removeTab(id);
+      } catch {
+        // Webview already torn down.
+      }
+    }
+    registeredWebviews.delete(tabKey);
     return;
   }
-  if (view === registeredWebview) return;
-  registeredWebview = view;
+  if (registeredWebviews.get(tabKey) === view) return;
+  registeredWebviews.set(tabKey, view);
+
   const announce = () => {
     try {
       const id = view.getWebContentsId?.();
-      if (typeof id === "number") window.deyin.browserControl?.register(id);
+      if (typeof id !== "number") return;
+      const tabUrl = view.getURL?.() ?? "";
+      const title = view.getTitle?.() ?? "New Tab";
+      onMeta(tabKey, id, tabUrl, title);
+      if (tabKey === activeKey) window.deyin.browserControl?.register(id);
     } catch {
       // Webview not attached yet; the dom-ready listener retries.
     }
   };
   view.addEventListener("dom-ready", announce);
+  view.addEventListener("page-title-updated", announce);
   announce();
 }

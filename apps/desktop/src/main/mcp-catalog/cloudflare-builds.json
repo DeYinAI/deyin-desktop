@@ -1,0 +1,11 @@
+{
+  "id": "cloudflare-builds",
+  "name": "Cloudflare Builds",
+  "description": "Workers builds and deployment status.",
+  "category": "cloud-infra",
+  "vendor": "Cloudflare",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://builds.mcp.cloudflare.com/mcp",
+  "docsUrl": "https://github.com/cloudflare/mcp-server-cloudflare"
+}

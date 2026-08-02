@@ -3,6 +3,8 @@
  * Semantic cache stats live in @deyin/optimization-plugin when installed.
  */
 
+import type { CacheDiagnostics, PrefixShape } from "./cache/prefix-tracker.js";
+
 export interface OptimizationMetrics {
   originalInputTokens: number;
   compressedInputTokens: number;
@@ -13,6 +15,13 @@ export interface OptimizationMetrics {
   responseCacheHits: number;
   responseCacheMisses: number;
   estimatedCostSavingsUsd: number;
+  /** Session aggregate cache hit/miss */
+  sessionCacheHit: number;
+  sessionCacheMiss: number;
+  /** Latest prefix shape (for diagnostics) */
+  prefixShape?: PrefixShape;
+  /** Latest cache diagnostics (per-turn) */
+  cacheDiagnostics?: CacheDiagnostics;
 }
 
 export function emptyOptimizationMetrics(): OptimizationMetrics {
@@ -26,6 +35,8 @@ export function emptyOptimizationMetrics(): OptimizationMetrics {
     responseCacheHits: 0,
     responseCacheMisses: 0,
     estimatedCostSavingsUsd: 0,
+    sessionCacheHit: 0,
+    sessionCacheMiss: 0,
   };
 }
 
@@ -34,6 +45,7 @@ const DEFAULT_INPUT_COST_PER_MTOK = 3;
 
 export class OptimizationTracker {
   private metrics = emptyOptimizationMetrics();
+  private previousPrefixShape?: PrefixShape;
 
   get(): OptimizationMetrics {
     const m = { ...this.metrics };
@@ -71,7 +83,27 @@ export class OptimizationTracker {
     else this.metrics.responseCacheMisses += 1;
   }
 
+  /**
+   * Record prefix shape and cache diagnostics for this turn.
+   * Session aggregate hit/miss accumulates across all requests.
+   */
+  recordPrefixShape(
+    prefixShape: PrefixShape,
+    cacheDiagnostics: CacheDiagnostics
+  ): void {
+    this.metrics.prefixShape = prefixShape;
+    this.metrics.cacheDiagnostics = cacheDiagnostics;
+    this.metrics.sessionCacheHit += cacheDiagnostics.hit;
+    this.metrics.sessionCacheMiss += cacheDiagnostics.miss;
+    this.previousPrefixShape = prefixShape;
+  }
+
+  getPreviousPrefixShape(): PrefixShape | undefined {
+    return this.previousPrefixShape;
+  }
+
   reset(): void {
     this.metrics = emptyOptimizationMetrics();
+    this.previousPrefixShape = undefined;
   }
 }

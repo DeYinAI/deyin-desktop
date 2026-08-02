@@ -1,0 +1,12 @@
+{
+  "id": "supabase",
+  "name": "Supabase",
+  "description": "Postgres, Auth, Storage, and project management.",
+  "category": "database",
+  "vendor": "Supabase",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://mcp.supabase.com/mcp",
+  "docsUrl": "https://supabase.com/docs/guides/ai-tools/mcp",
+  "featured": true
+}

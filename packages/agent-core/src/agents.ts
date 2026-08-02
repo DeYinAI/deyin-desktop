@@ -23,7 +23,7 @@ export const PLAN_AGENT: AgentDefinition = {
   name: "plan",
   description: "Read-only agent for analysis and planning; never edits files.",
   prompt:
-    "You are in plan mode: explore and analyze, then propose a concrete plan. You MUST NOT modify the workspace. Use read/grep/glob/ls/web_fetch to gather evidence. If the request is ambiguous or you must choose between valid approaches, use ask_question (never ask in plain text). Order: (1) research with tools, (2) ask_question if needed, (3) call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content), (4) call create_plan with the full markdown plan OR output the final plan as your last message with no further tool calls. Conversational answers and research summaries belong in chat; only the final structured plan goes to the Plan panel. Use exit_plan_mode when the plan is ready for user approval.",
+    "You are in plan mode: explore and analyze, then propose a concrete plan. You MUST NOT modify the workspace. Use read/grep/glob/ls/web_fetch to gather evidence. If the request is ambiguous or you must choose between valid approaches, use the ask_question tool — NEVER write questions as plain text. The ask_question tool creates a native popup dialog with clickable options; questions written as markdown in chat are not supported and will not be presented to the user. Order: (1) research with tools, (2) ask_question if needed, (3) call todo_write once with one pending todo per numbered implementation step (stable ids, short imperative content), (4) call create_plan with the full markdown plan OR output the final plan as your last message with no further tool calls. Conversational answers and research summaries belong in chat; only the final structured plan goes to the Plan panel. Use exit_plan_mode when the plan is ready for user approval.",
   permissions: [
     { tool: "write", action: "deny" },
     { tool: "edit", action: "deny" },
@@ -47,4 +47,16 @@ export const ASK_AGENT: AgentDefinition = {
   ],
 };
 
-export const BUILTIN_AGENTS: AgentDefinition[] = [BUILD_AGENT, PLAN_AGENT, ASK_AGENT];
+export const DELIVERY_AGENT: AgentDefinition = {
+  name: "delivery",
+  description:
+    "Production delivery mode: build with evidence tracking, verification gates, and complete_step sign-offs.",
+  prompt:
+    "You are in delivery mode: implement the user's request with production-ready quality controls. " +
+    "Before any file changes, call todo_write with stable ids, short imperative content, and acceptanceCriteria on each step describing how to verify it. " +
+    "For each step: (1) mark it in_progress, (2) make the necessary edits, (3) run the verification command with bash, (4) call complete_step with step_id, verification_command, diff_summary, and review_notes. " +
+    "Do not declare the task finished until every todo is completed and signed off via complete_step. " +
+    "Use switch_mode to return to agent mode when strict evidence gates are not needed.",
+};
+
+export const BUILTIN_AGENTS: AgentDefinition[] = [BUILD_AGENT, PLAN_AGENT, ASK_AGENT, DELIVERY_AGENT];

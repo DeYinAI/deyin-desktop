@@ -1,0 +1,11 @@
+{
+  "id": "slack",
+  "name": "Slack",
+  "description": "Search messages, channels, and post updates.",
+  "category": "communication",
+  "vendor": "Slack",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://mcp.slack.com/mcp",
+  "docsUrl": "https://docs.slack.dev/ai/slack-mcp-server"
+}

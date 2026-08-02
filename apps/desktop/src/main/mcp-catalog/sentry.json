@@ -1,0 +1,22 @@
+{
+  "id": "sentry",
+  "name": "Sentry",
+  "description": "Error tracking, releases, and performance monitoring.",
+  "category": "monitoring",
+  "vendor": "Sentry",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.sentry.dev/mcp",
+  "headers": {
+    "Authorization": "Sentry-Bearer ${env:SENTRY_ACCESS_TOKEN}"
+  },
+  "secrets": [
+    {
+      "envKey": "SENTRY_ACCESS_TOKEN",
+      "label": "Sentry access token",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://mcp.sentry.dev",
+  "featured": true
+}

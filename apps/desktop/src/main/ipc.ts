@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { BrowserWindow, app, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import {
@@ -17,8 +18,18 @@ import {
   readTree,
   writeTextFile,
   webSearch,
+  searchContextPaths,
+  resolveContextRefs,
+  gitStatus,
+  gitDiff,
+  gitStage,
+  gitCommit,
+  gitBranches,
+  gitCheckout,
+  gitLog,
+  isGitRepo,
 } from "@deyin/host-core";
-import { fetchPublicPlans } from "@deyin/host-core/shared";
+import { fetchPublicPlans, selectPlan, fetchBillingOverview, fetchBillingPublishableKey, completeCrossCurrencyUpgrade, abortCrossCurrencyUpgrade, ReasonixMetricsStore, emptyReasonixMetrics, type ReasonixMetricsSnapshot } from "@deyin/host-core/shared";
 import type { PermissionDecision } from "@deyin/agent-core";
 import { CH } from "../shared/ipc.js";
 import type {
@@ -27,6 +38,7 @@ import type {
   CapabilityKind,
   DeyinSettings,
   McpServerInput,
+  McpCatalogInstallInput,
   ProjectsState,
   ProviderPatch,
   TerminalCreateOptions,
@@ -34,18 +46,28 @@ import type {
 } from "../shared/types.js";
 import type { DeyinConfig } from "../shared/config.js";
 import { DesktopAgentHost } from "./agent.js";
+import { setTrayPendingReviewCount } from "./tray.js";
 import type { AuthManager } from "./auth.js";
 import { BrowserControlService, workspacePartition } from "./browser.js";
+import { ChromeDebugService } from "./chrome-debug.js";
+import { ComputerUseService } from "./computer-use.js";
+import { VisualizeService } from "./visualize.js";
+import { SecurityService } from "./security.js";
+import { scanDiffViaMcp } from "./security-scan.js";
 import { CapabilityService } from "./capabilities.js";
+import { McpCatalogService } from "./mcp-catalog.js";
+import { McpModuleService } from "./mcp-modules.js";
+import { McpOAuthService } from "./mcp-oauth.js";
 import { DiagnosticsService } from "./diagnostics.js";
 import { IdentityService } from "./identity.js";
 import { logLine } from "./logger.js";
-import { PluginService } from "./plugins.js";
+import { PluginService, resolveBundledPluginsDir } from "./plugins.js";
 import { createDesktopStorage } from "./storage.js";
 import { createUpdateController } from "./updater.js";
 import { AutomationService } from "./automations/service.js";
 import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, appendFileSync } from "node:fs";
+import { reasonixObservability } from "./reasonix-observability.js";
 
 interface RegisterOptions {
   config: DeyinConfig;
@@ -125,6 +147,18 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   telemetry.start();
   telemetry.record("app-start");
 
+  const reasonixMetrics = new ReasonixMetricsStore((data: ReasonixMetricsSnapshot) => {
+    storage.writeJson("reasonix-metrics.json", data);
+  }, storage.readJson<ReasonixMetricsSnapshot>("reasonix-metrics.json", emptyReasonixMetrics()));
+
+  /* Weekly metrics report (best effort; logged locally). */
+  const metricsReportTimer = setInterval(() => {
+    const report = reasonixMetrics.generateWeeklyReport();
+    logLine("info", `[reasonix-metrics] weekly ${report.weekBucket}: cache=${(report.snapshot.cache.hitRate * 100).toFixed(1)}% coordinator=${report.snapshot.coordinator.runs} fleet=${report.snapshot.fleet.runs}`);
+    storage.writeJson(`reasonix-weekly-${report.weekBucket}.json`, report);
+  }, 7 * 24 * 60 * 60 * 1000);
+  (metricsReportTimer as { unref?: () => void }).unref?.();
+
   /* Updates. */
   const updates = createUpdateController({
     isAutoUpdateEnabled: () => settings.get().autoUpdate,
@@ -140,9 +174,42 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
   const builtinSkillsDir = join(app.getPath("userData"), "builtin-skills");
+  const bundledPluginsDir = resolveBundledPluginsDir(app.getAppPath(), app.isPackaged, process.resourcesPath);
   const capabilities = new CapabilityService(agents, opts.getWorkspaceRoot, pluginsDir, builtinSkillsDir);
-  const plugins = new PluginService(pluginsDir, storage, agents, capabilities);
+  const mcpModules = new McpModuleService(homedir(), () => capabilities.invalidate());
+  const mcpOAuth = new McpOAuthService();
+  capabilities.setMcpModules(mcpModules);
+  capabilities.setMcpOAuth(mcpOAuth);
+  const migrated = mcpModules.migrateFlatMcp();
+  if (migrated > 0) logLine("info", `Migrated ${migrated} MCP server(s) to ~/.deyin/mcp-modules/`);
+  const mcpCatalog = new McpCatalogService(mcpModules);
+  const plugins = new PluginService(pluginsDir, storage, agents, capabilities, bundledPluginsDir);
+  let chromeConsentResolver: ((granted: boolean) => void) | null = null;
   const browser = new BrowserControlService(opts.getWorkspaceRoot, () => settings.get().browserControlEnabled);
+  const chrome = new ChromeDebugService(
+    () => settings.get().chromeDebugEnabled,
+    () => process.platform === "win32",
+    () =>
+      new Promise<boolean>((resolve) => {
+        broadcast(CH.chromeConsentRequest, {
+          message: "Deyin will control your Chrome browser including logged-in sites. Allow this session?",
+        });
+        chromeConsentResolver = resolve;
+      }),
+    app.getPath("userData"),
+  );
+  ipcMain.on(CH.chromeConsentRespond, (_e, granted: boolean) => {
+    chromeConsentResolver?.(Boolean(granted));
+    chromeConsentResolver = null;
+  });
+  const computerUse = new ComputerUseService(
+    () => settings.get().computerUseEnabled,
+    () => process.platform === "win32",
+    () => settings.get().computerUseScreenshotRetentionDays,
+  );
+  computerUse.registerShortcuts();
+  const visualize = new VisualizeService();
+  const security = new SecurityService();
 
   const index = new IndexManager({
     indexRoot: join(app.getPath("userData"), "index"),
@@ -165,6 +232,10 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    chrome,
+    computerUse,
+    visualize,
+    security,
     terminals,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
@@ -175,6 +246,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       // Primary Openference catalog lives in ModelsCache (provider.models is often empty).
       return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
     },
+    onPendingReviewChanged: (count) => setTrayPendingReviewCount(count),
+    reasonixMetrics,
   });
 
   const agentDeps: AgentRunContextDeps = {
@@ -184,6 +257,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    chrome,
+    computerUse,
+    visualize,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
@@ -308,6 +384,37 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     return capabilities.listMcpServers();
   });
   ipcMain.handle(CH.mcpTest, (_e, name: string) => capabilities.testMcpServer(name));
+  ipcMain.handle(CH.mcpCatalogList, () => mcpCatalog.list());
+  ipcMain.handle(CH.mcpCatalogInstall, async (_e, input: McpCatalogInstallInput) => {
+    mcpCatalog.install(input);
+    return capabilities.listMcpServers();
+  });
+  ipcMain.handle(CH.mcpModulesList, () => mcpModules.list());
+  ipcMain.handle(CH.mcpModulesUninstall, async (_e, id: string) => {
+    mcpModules.uninstall(id);
+    mcpOAuth.revoke(id);
+    return capabilities.listMcpServers();
+  });
+  ipcMain.handle(CH.mcpAuthenticate, async (_e, moduleId: string) => {
+    const manifest = mcpModules.get(moduleId);
+    if (!manifest) throw new Error(`Unknown MCP module "${moduleId}".`);
+    const mcpFile = join(mcpModules.moduleDir(moduleId), "mcp.json");
+    let url: string | undefined;
+    try {
+      const parsed = JSON.parse(readFileSync(mcpFile, "utf8")) as {
+        mcpServers?: Record<string, { url?: string }>;
+      };
+      url = parsed.mcpServers?.[moduleId]?.url;
+    } catch {
+      // fall through
+    }
+    if (!url?.trim()) throw new Error(`Module "${moduleId}" has no remote MCP URL.`);
+    return mcpOAuth.authenticate(moduleId, url);
+  });
+  ipcMain.handle(CH.mcpAuthRevoke, (_e, moduleId: string) => {
+    mcpOAuth.revoke(moduleId);
+  });
+  ipcMain.handle(CH.mcpAuthStatus, () => mcpOAuth.statusForModules(mcpModules.list()));
 
   /* Plugins. */
   ipcMain.handle(CH.pluginsList, () => plugins.list());
@@ -329,9 +436,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.indexSearch, (_e, query: string, topK?: number) => index.search(query, Math.min(topK ?? 8, 20)));
 
   /* Agent runtime. */
-  ipcMain.handle(CH.agentStart, (_e, options: AgentStartOptions) => {
+  ipcMain.handle(CH.agentStart, (event, options: AgentStartOptions) => {
     telemetry.record("agent-run");
-    void agentHost.start(options);
+    void agentHost.start(options, event.sender.id);
   });
 ipcMain.on(CH.agentStop, (_e, threadId: string) => agentHost.stop(threadId));
 ipcMain.on(CH.agentApprove, (_e, requestId: string, decision: PermissionDecision) =>
@@ -342,10 +449,89 @@ ipcMain.on(CH.agentAnswerQuestion, (_e, requestId: string, answers: Record<strin
 );
 ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShell(threadId));
 
+  ipcMain.handle(CH.contextSearch, (_e, query: string) =>
+    searchContextPaths(opts.getWorkspaceRoot(), query),
+  );
+  ipcMain.handle(CH.contextResolve, (_e, refs: import("../shared/types.js").ContextRef[]) =>
+    resolveContextRefs(opts.getWorkspaceRoot(), refs),
+  );
+
+  ipcMain.handle(CH.reviewList, (_e, threadId?: string) => agentHost.listPendingChanges(threadId));
+  ipcMain.handle(CH.reviewApprove, (event, threadId: string, changeId: string) =>
+    agentHost.approvePendingChange(threadId, changeId, event.sender.id),
+  );
+  ipcMain.handle(CH.reviewReject, (event, threadId: string, changeId: string) =>
+    agentHost.rejectPendingChange(threadId, changeId, event.sender.id),
+  );
+  ipcMain.handle(CH.reviewApproveAll, (event, threadId: string) =>
+    agentHost.approveAllPendingChanges(threadId, event.sender.id),
+  );
+  ipcMain.handle(CH.reviewRejectAll, (event, threadId: string) =>
+    agentHost.rejectAllPendingChanges(threadId, event.sender.id),
+  );
+
+  ipcMain.handle(CH.gitStatus, async () => {
+    const root = opts.getWorkspaceRoot();
+    if (!root || !(await isGitRepo(root))) return null;
+    return gitStatus(root);
+  });
+  ipcMain.handle(CH.gitDiff, async (_e, path?: string, staged?: boolean) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) throw new Error("No workspace open");
+    return gitDiff(root, path, staged);
+  });
+  ipcMain.handle(CH.gitStage, async (_e, paths: string[], unstage?: boolean) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) throw new Error("No workspace open");
+    return gitStage(root, paths, unstage);
+  });
+  ipcMain.handle(CH.gitCommit, async (_e, message: string) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) throw new Error("No workspace open");
+    return gitCommit(root, message);
+  });
+  ipcMain.handle(CH.gitBranches, async () => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) return [];
+    return gitBranches(root);
+  });
+  ipcMain.handle(CH.gitCheckout, async (_e, branch: string) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) throw new Error("No workspace open");
+    return gitCheckout(root, branch);
+  });
+  ipcMain.handle(CH.gitLog, async (_e, limit?: number) => {
+    const root = opts.getWorkspaceRoot();
+    if (!root) return [];
+    return gitLog(root, limit);
+  });
+
   /* Browser control plumbing. */
   ipcMain.on(CH.browserRegister, (_e, webContentsId: number | null) => browser.register(webContentsId));
+  ipcMain.on(CH.browserTabSync, (_e, webContentsId: number, url: string, title: string) =>
+    browser.syncTab(webContentsId, url, title),
+  );
+  ipcMain.on(CH.browserTabRemove, (_e, webContentsId: number) => browser.removeTab(webContentsId));
   ipcMain.handle(CH.browserGetPartition, () => workspacePartition(opts.getWorkspaceRoot()));
   ipcMain.handle(CH.browserClearProfile, () => browser.clearProfile());
+  ipcMain.handle(CH.computerUseGetAllowlist, () => computerUse.getAllowlist());
+  ipcMain.handle(CH.computerUseSetAllowlist, (_e, apps: string[]) => {
+    computerUse.setAllowlist(apps);
+  });
+  ipcMain.handle(CH.computerUseListApps, () => computerUse.listAppsPreview());
+  ipcMain.handle(CH.visualizeRead, (_e, threadId: string, fileName: string) => visualize.readFragment(threadId, fileName));
+
+  ipcMain.handle(CH.securityListFindings, (_e, threadId: string) => security.listFindings(threadId));
+  ipcMain.handle(CH.securityClearFindings, (_e, threadId: string) => {
+    security.clearFindings(threadId);
+    broadcast(CH.securityFindingsChanged, threadId);
+  });
+  ipcMain.handle(CH.securityScanDiff, async (_e, threadId: string, diff: string) => {
+    const report = await scanDiffViaMcp(capabilities, opts.getWorkspaceRoot(), diff);
+    security.mergeReport(threadId, report);
+    broadcast(CH.securityFindingsChanged, threadId);
+    return report;
+  });
 
   const providersSnapshot = async () => agents.listProviders((await auth.getUser()) != null);
   ipcMain.handle(CH.providersList, providersSnapshot);
@@ -373,10 +559,52 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
   ipcMain.handle(CH.usageRecord, (_e, event: UsageEvent) => usage.record(event));
   ipcMain.handle(CH.usageAccount, (_e, force?: boolean) => accountCache.get(force ?? false));
   ipcMain.handle(CH.plansList, () => fetchPublicPlans({ oauthIssuer: config.oauthIssuer }));
+  ipcMain.handle(CH.billingSelectPlan, (_e, planId: number, options?) =>
+    selectPlan({ oauthIssuer: config.oauthIssuer }, () => auth.getAccessToken(), planId, options),
+  );
+  ipcMain.handle(CH.billingOverview, () =>
+    fetchBillingOverview({ oauthIssuer: config.oauthIssuer }, () => auth.getAccessToken()),
+  );
+  ipcMain.handle(CH.billingPublishableKey, () =>
+    fetchBillingPublishableKey({ oauthIssuer: config.oauthIssuer }, () => auth.getAccessToken()),
+  );
+  ipcMain.handle(CH.billingCompleteCrossCurrency, (_e, newSubscriptionId: string) =>
+    completeCrossCurrencyUpgrade({ oauthIssuer: config.oauthIssuer }, () => auth.getAccessToken(), newSubscriptionId),
+  );
+  ipcMain.handle(CH.billingAbortCrossCurrency, (_e, newSubscriptionId: string) =>
+    abortCrossCurrencyUpgrade({ oauthIssuer: config.oauthIssuer }, () => auth.getAccessToken(), newSubscriptionId),
+  );
 
   /* Telemetry (renderer-side feature events). */
-  ipcMain.on(CH.telemetryRecord, (_e, name: string, props?: Record<string, string | number | boolean>) =>
-    telemetry.record(name, props),
+  ipcMain.on(CH.telemetryRecord, (_e, name: string, props?: Record<string, string | number | boolean>) => {
+    telemetry.record(name, props);
+    if (name === "settings-opened") reasonixMetrics.recordSettingsOpen();
+  });
+
+  ipcMain.handle(CH.reasonixMetricsGet, () => reasonixMetrics.get());
+  ipcMain.handle(CH.reasonixMetricsReport, () => reasonixMetrics.generateWeeklyReport());
+  ipcMain.handle(CH.reasonixDiagnosticsGet, (_e, threadId?: string) =>
+    reasonixObservability.getDiagnostics(typeof threadId === "string" ? threadId : undefined),
+  );
+  ipcMain.handle(CH.reasonixCacheClear, (_e, threadId: string) => {
+    if (typeof threadId === "string" && threadId.length > 0) {
+      reasonixObservability.clearThreadCache(threadId);
+    }
+  });
+  ipcMain.handle(
+    CH.betaFeedbackSubmit,
+    (_e, payload: { category: string; message: string; rating?: number }) => {
+      const entry = {
+        at: new Date().toISOString(),
+        appVersion: app.getVersion(),
+        category: payload.category ?? "general",
+        message: String(payload.message ?? "").slice(0, 4000),
+        rating: payload.rating ?? null,
+      };
+      appendFileSync(join(app.getPath("userData"), "beta-feedback.jsonl"), `${JSON.stringify(entry)}\n`, "utf8");
+      telemetry.record("beta-feedback", { category: entry.category });
+      return { ok: true };
+    },
   );
 
   ipcMain.on(CH.winMinimize, (e) => windowOf(e)?.minimize());
@@ -473,7 +701,9 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       });
     },
     dispose: () => {
+      computerUse.unregisterShortcuts();
       agentHost.disposeAllShells();
+      void chrome.dispose();
       telemetry.stop();
       void telemetry.flush();
       index.dispose();

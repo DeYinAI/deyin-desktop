@@ -1,27 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_SETTINGS } from "@deyin/host-core/shared";
+import { DEFAULT_SETTINGS, buildLinkedThreadContext, dedupeContextRefs, formatUserMessageWithContext } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { I18nProvider } from "./i18n.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
 import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
+import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
+import { ChromeConsentDialog } from "./components/ChromeConsentDialog.js";
+import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
-import { PlansDialog } from "./components/PlansDialog.js";
+import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { TopBar } from "./components/TopBar.js";
+import { Icon } from "./components/Icon.js";
 import { UpdateBanner } from "./components/UpdateBanner.js";
+import { WhatsNewModal } from "./components/WhatsNewModal.js";
+import { ReasonixOnboardModal } from "./components/ReasonixOnboardModal.js";
+import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
+import { ReviewBanner } from "./components/ReviewBanner.js";
+import { highSeverityFindings } from "./components/SecurityFindingsPanel.js";
 import { computeLineDiff, diffSnippet, type FileDiff } from "./diff.js";
 import { TaskList } from "./components/TaskList.js";
 import { generateThreadTitle } from "./autotitle.js";
+import {
+  useAgentStateController,
+  useAgentRunState,
+  useSessionTokenStats,
+  agentStateStore,
+} from "./hooks/useAgentState.js";
 import {
   DEFAULT_THREAD_TITLE,
   deriveTitle,
@@ -45,12 +60,16 @@ import type {
  Bootstrap,
  ChatMode,
  ContextUsageSnapshot,
+ ContextAttachment,
+ LinkedThreadRef,
+ PendingChange,
  DeyinSettings,
  DiffSnippetLine,
  EnvInfo,
  ModelInfo,
  ProviderInfo,
  UserProfile,
+ SecurityFindingsReport,
 } from "../shared/types.js";
 import { TOOL_RESULT_UI_CAP, truncateToolResultUi } from "../shared/types.js";
 
@@ -86,7 +105,7 @@ function diffStats(before: string, after: string): { adds: number; dels: number;
 
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
-type View = "workspace" | "settings" | "automations";
+type View = "workspace" | "settings" | "automations" | "upgrade";
 
 interface PendingApproval {
   requestId: string;
@@ -126,33 +145,36 @@ export function App() {
   const [selectedModel, setSelectedModel] = useState<string>("GLM-5.2");
   const [composerMode, setComposerMode] = useState<ChatMode>("agent");
   const [input, setInput] = useState("");
+  const [composerAttachments, setComposerAttachments] = useState<ContextAttachment[]>([]);
+  const [composerLinked, setComposerLinked] = useState<LinkedThreadRef[]>([]);
+  const [pendingReview, setPendingReview] = useState<PendingChange[]>([]);
+  const [securityReport, setSecurityReport] = useState<SecurityFindingsReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const [showReasonixOnboard, setShowReasonixOnboard] = useState(false);
+  const [showBetaFeedback, setShowBetaFeedback] = useState(false);
 
-  // Agent run state: events of the in-flight run render after the persisted
-  // thread events and are folded into the thread when the run finishes.
   const [agentThreadId, setAgentThreadId] = useState<string | null>(null);
   const [runEvents, setRunEvents] = useState<ThreadEvent[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [question, setQuestion] = useState<PendingQuestion | null>(null);
   const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
   const [streamReasoning, setStreamReasoning] = useState<string | null>(null);
-  /** Plan-mode text streams into the Plan tab, not the chat; null when not planning. */
   const [planStream, setPlanStream] = useState<string | null>(null);
   const runToolIndex = useRef(new Map<string, number>());
   const runTextRef = useRef("");
-  /** Best plan markdown seen during the in-flight plan run (survives tool steps). */
   const planDocRef = useRef("");
-  /** True when create_plan already surfaced a plan-ready card this run. */
   const planArtifactRef = useRef(false);
   const runTokensRef = useRef(0);
-  /** Latest per-run optimization metrics (compression + cache savings). */
   const runOptimizationRef = useRef<Extract<ThreadEvent, { kind: "optimization" }> | null>(null);
   const runReasoningRef = useRef("");
   const reasoningStartRef = useRef(0);
-  /** Mode of the in-flight run (drives plan completion handling). */
   const runModeRef = useRef<ChatMode>("agent");
+  const sessionTokenStats = useSessionTokenStats();
+  const agentRunState = useAgentRunState(activeThreadId);
+  useAgentStateController();
   /** Volatile diff contents per file path; thread events only persist the counts. */
   const fileDiffsRef = useRef(new Map<string, FileDiff>());
   /** Follow-up queued while a run is active; drained when the run finishes. */
@@ -160,6 +182,21 @@ export function App() {
   const queuedPromptRef = useRef<string | null>(null);
   /** Latest Context Usage snapshot per thread (session-scoped). */
   const [contextByThread, setContextByThread] = useState<Record<string, ContextUsageSnapshot>>({});
+  /** Prefix cache session metrics per thread (from optimization events). */
+  const [cacheByThread, setCacheByThread] = useState<
+    Record<
+      string,
+      {
+        hitRate: number;
+        sessionHit: number;
+        sessionMiss: number;
+        prefixChanged?: boolean;
+        changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+      }
+    >
+  >({});
+  /** Soft compaction warning shown above the composer. */
+  const [compactionNoticeByThread, setCompactionNoticeByThread] = useState<Record<string, string | null>>({});
   /** Interrupt-and-send: start this prompt once the current run's `done` arrives. */
   const pendingSendNowRef = useRef<{ threadId: string; text: string; mode: ChatMode } | null>(null);
   /** After the 3s stop watchdog force-clears, ignore the late `done` event. */
@@ -185,14 +222,8 @@ export function App() {
  const [agentTerminals, setAgentTerminals] = useState<{ id: string; label: string; threadId: string }[]>([]);
 
  const [searchOpen, setSearchOpen] = useState(false);
-  const [plansOpen, setPlansOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
-
-  // PlansDialog only mounts in workspace view; clear stale open state on navigation.
-  useEffect(() => {
-    if (view !== "workspace") setPlansOpen(false);
-  }, [view]);
 
   // Bootstrap: config, profile, models, settings, environment, providers, projects.
   useEffect(() => {
@@ -210,6 +241,8 @@ export function App() {
       ]);
       setModels(list);
       setSettings(s);
+      if (s.whatsNewSeenVersion !== b.version) setShowWhatsNew(true);
+      if (!s.reasonixOnboardComplete) setShowReasonixOnboard(true);
       setEnv(e);
       setProviders(provs);
       setProjects(hydrateProjects(projState.projects));
@@ -252,6 +285,12 @@ export function App() {
     void window.deyin.projects.set({ projects, activeProjectId, activeThreadId });
   }, [projectsHydrated, projects, activeProjectId, activeThreadId]);
 
+  useEffect(() => {
+    if (settings && !settings.enableDeliveryMode && composerMode === "delivery") {
+      setComposerMode("agent");
+    }
+  }, [settings, composerMode]);
+
   // Forward uncaught renderer errors into deyin.log so diagnostics captures them.
   useEffect(() => {
     if (boot?.platform !== "desktop") return;
@@ -293,6 +332,9 @@ export function App() {
 
   const activeContextSnapshot =
     activeThreadId !== null ? (contextByThread[activeThreadId] ?? null) : null;
+  const activeCacheMetrics = activeThreadId !== null ? (cacheByThread[activeThreadId] ?? null) : null;
+  const activeCompactionNotice =
+    activeThreadId !== null ? (compactionNoticeByThread[activeThreadId] ?? null) : null;
 
   // Keep baked snapshot window in sync when the user switches models mid-thread.
   useEffect(() => {
@@ -567,10 +609,41 @@ export function App() {
             ...cur,
             { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels, ...snippet },
           ]);
+          setPendingReview((cur) => cur.filter((c) => c.path !== event.path || c.status !== "pending"));
+          break;
+        }
+        case "pending-change": {
+          setPendingReview((cur) => [...cur.filter((c) => c.id !== event.change.id), event.change]);
+          const fileDiff: FileDiff = { fileName: event.change.path, before: event.change.before, after: event.change.after };
+          fileDiffsRef.current.set(event.change.path, fileDiff);
+          setDiff(fileDiff);
+          setPanelOpen(true);
+          setPanelTab("diff");
+          break;
+        }
+        case "pending-change-resolved": {
+          setPendingReview((cur) => cur.filter((c) => c.id !== event.changeId));
+          break;
+        }
+        case "goal-updated": {
+          setProjects((cur) =>
+            cur.map((p) => ({
+              ...p,
+              threads: p.threads.map((th) =>
+                th.id === threadId ? { ...th, goal: event.goal ?? undefined } : th,
+              ),
+            })),
+          );
           break;
         }
         case "todos": {
-          const steps = event.todos.map((t) => ({ text: t.content, done: t.status === "completed", status: t.status }));
+          const steps = event.todos.map((t) => ({
+            text: t.content,
+            done: t.status === "completed",
+            status: t.status,
+            acceptanceCriteria: t.acceptanceCriteria,
+            signedOff: t.signedOff,
+          }));
           setRunEvents((cur) => {
             const index = cur.findIndex((e) => e.kind === "plan");
             if (index >= 0) {
@@ -590,10 +663,62 @@ export function App() {
           );
           break;
         }
+        case "evidence-gate":
+          setRunEvents((cur) => [...cur, { kind: "evidence-gate", code: event.code, message: event.message }]);
+          break;
+        case "evidence-sign-off": {
+          setRunEvents((cur) => [
+            ...cur,
+            {
+              kind: "evidence-sign-off",
+              stepId: event.stepId,
+              verificationCommand: event.verificationCommand,
+              diffSummary: event.diffSummary,
+              reviewNotes: event.reviewNotes,
+            },
+          ]);
+          setProjects((cur) =>
+            cur.map((project) => ({
+              ...project,
+              threads: project.threads.map((th) =>
+                th.id === threadId
+                  ? {
+                      ...th,
+                      todos: th.todos?.map((todo) =>
+                        todo.id === event.stepId ? { ...todo, signedOff: true, signOffNotes: event.reviewNotes } : todo,
+                      ),
+                    }
+                  : th,
+              ),
+            })),
+          );
+          break;
+        }
         case "usage":
           runTokensRef.current = event.totalTokens;
           break;
-        case "optimization":
+        case "optimization": {
+          const cacheHitRate = event.cacheHitRate;
+          const cachePatch =
+            cacheHitRate !== undefined &&
+            event.sessionCacheHit !== undefined &&
+            event.sessionCacheMiss !== undefined
+              ? {
+                  hitRate: cacheHitRate,
+                  sessionHit: event.sessionCacheHit,
+                  sessionMiss: event.sessionCacheMiss,
+                  prefixChanged: event.prefixChanged,
+                  changeReasons: event.changeReasons,
+                }
+              : null;
+          if (cachePatch) {
+            setCacheByThread((cur) => ({ ...cur, [threadId]: cachePatch }));
+            setContextByThread((cur) => {
+              const snap = cur[threadId];
+              if (!snap) return cur;
+              return { ...cur, [threadId]: { ...snap, cache: cachePatch } };
+            });
+          }
           runOptimizationRef.current = {
             kind: "optimization",
             originalInputTokens: event.originalInputTokens,
@@ -605,10 +730,51 @@ export function App() {
             responseCacheHits: event.responseCacheHits,
             responseCacheMisses: event.responseCacheMisses,
             estimatedCostSavingsUsd: event.estimatedCostSavingsUsd,
+            sessionCacheHit: event.sessionCacheHit,
+            sessionCacheMiss: event.sessionCacheMiss,
+            cacheHitRate: event.cacheHitRate,
+            prefixChanged: event.prefixChanged,
+            changeReasons: event.changeReasons,
           };
           break;
+        }
+        case "compaction": {
+          if (event.softWarning) {
+            setCompactionNoticeByThread((cur) => ({
+              ...cur,
+              [threadId]:
+                "Context is over 50% full. Compaction will run soon if usage keeps growing — earlier messages may be summarized.",
+            }));
+          } else if (event.droppedMessages > 0 || event.truncatedToolResults > 0 || event.truncatedToolArgs > 0) {
+            const parts: string[] = [];
+            if (event.droppedMessages > 0) parts.push(`${event.droppedMessages} messages summarized`);
+            if (event.truncatedToolResults > 0) parts.push(`${event.truncatedToolResults} tool results shortened`);
+            if (event.truncatedToolArgs > 0) parts.push(`${event.truncatedToolArgs} tool args trimmed`);
+            setCompactionNoticeByThread((cur) => ({
+              ...cur,
+              [threadId]: `Context compacted (${parts.join(", ")}). Prefix cache was refreshed.`,
+            }));
+            setRunEvents((cur) => [
+              ...cur,
+              {
+                kind: "compaction-notice",
+                softWarning: false,
+                truncatedToolResults: event.truncatedToolResults,
+                truncatedToolArgs: event.truncatedToolArgs,
+                droppedMessages: event.droppedMessages,
+              },
+            ]);
+          }
+          break;
+        }
         case "context-snapshot":
-          setContextByThread((cur) => ({ ...cur, [threadId]: event.snapshot }));
+          setContextByThread((cur) => {
+            const prevCache = cur[threadId]?.cache;
+            return {
+              ...cur,
+              [threadId]: prevCache ? { ...event.snapshot, cache: prevCache } : event.snapshot,
+            };
+          });
           break;
         case "permission-request":
           setApproval({ requestId: event.requestId, toolName: event.toolName, summary: event.summary });
@@ -664,6 +830,21 @@ export function App() {
         case "subagent-end":
           setRunEvents((cur) => [...cur, { kind: "thought", label: `Subagent ${event.name} ${event.ok ? "finished" : "failed"}` }]);
           break;
+        case "phase":
+          setRunEvents((cur) => [...cur, { kind: "thought", label: event.detail ? `${event.text}: ${event.detail}` : event.text }]);
+          break;
+        case "coordinator-routing":
+          setRunEvents((cur) => [
+            ...cur,
+            { kind: "thought", label: `Coordinator → ${event.route} (${event.reason})` },
+          ]);
+          break;
+        case "background-job":
+          setRunEvents((cur) => [
+            ...cur,
+            { kind: "thought", label: `Background job ${event.label ?? event.jobId}: ${event.status}` },
+          ]);
+          break;
         case "error":
           setRunEvents((cur) => [...cur, { kind: "error", text: event.message }]);
           break;
@@ -708,7 +889,14 @@ export function App() {
             if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
             // Optimization summary: surface when compression or caches saved anything.
             const opt = runOptimizationRef.current;
-            if (opt && (opt.originalInputTokens > opt.compressedInputTokens || opt.cachedPromptTokens > 0 || opt.toolCacheHits > 0 || opt.responseCacheHits > 0)) {
+            if (
+              opt &&
+              (opt.originalInputTokens > opt.compressedInputTokens ||
+                opt.cachedPromptTokens > 0 ||
+                opt.toolCacheHits > 0 ||
+                opt.responseCacheHits > 0 ||
+                (opt.cacheHitRate ?? 0) > 0)
+            ) {
               finished.push(opt);
             }
             runOptimizationRef.current = null;
@@ -732,6 +920,7 @@ export function App() {
           setStreamReasoning(null);
           setPlanStream(null);
           setAgentThreadId(null);
+          agentStateStore.clearRun(threadId);
           setApproval(null);
           setQuestion(null);
           markOnboard("taskRun");
@@ -910,13 +1099,32 @@ export function App() {
 
   /** Start (or continue) the tool-calling loop for a thread in the given mode. */
   const startAgentRun = useCallback(
-    (thread: Thread, text: string, mode: ChatMode) => {
+    async (
+      thread: Thread,
+      text: string,
+      mode: ChatMode,
+      meta?: { attachments?: ContextAttachment[]; linkedThreadIds?: string[] },
+    ) => {
+      const attachments = meta?.attachments ?? [];
+      const linkedThreadIds = meta?.linkedThreadIds ?? [];
+      let agentPrompt = text;
+      try {
+        const refs = dedupeContextRefs(attachments.map((a) => ({ kind: a.kind, path: a.path })));
+        const resolved = refs.length ? await window.deyin.context.resolve(refs) : [];
+        const allThreads = projectsRef.current.flatMap((p) => p.threads);
+        const linkedContext = buildLinkedThreadContext(allThreads, linkedThreadIds);
+        agentPrompt = formatUserMessageWithContext(text, resolved, linkedContext);
+      } catch {
+        agentPrompt = text;
+      }
+
       const isFirstMessage = toChatMessages(thread.events).length === 0;
-      appendEvents(thread.id, [{ kind: "user", text }]);
+      appendEvents(thread.id, [{ kind: "user", text, attachments, linkedThreadIds }]);
       setStreamText("");
       setStreamReasoning(null);
       setPlanStream(null);
       setAgentThreadId(thread.id);
+      agentStateStore.startRun(thread.id, mode);
       setRunEvents([]);
       runToolIndex.current.clear();
       runTextRef.current = "";
@@ -930,7 +1138,7 @@ export function App() {
       if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
       void window.deyin.agent.start({
         threadId: thread.id,
-        prompt: text,
+        prompt: agentPrompt,
         providerId: selectedProviderId,
         model: selectedModel,
         thinking: settings?.thinking ?? true,
@@ -938,11 +1146,58 @@ export function App() {
         mode,
         history: toChatMessages(thread.events),
         initialTodos: thread.todos,
+        goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
       });
     },
     [appendEvents, selectedModel, selectedProviderId, settings],
   );
   startAgentRunRef.current = startAgentRun;
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      setPendingReview([]);
+      setSecurityReport(null);
+      return;
+    }
+    setComposerAttachments([]);
+    setComposerLinked([]);
+    void window.deyin.review?.list(activeThreadId).then(setPendingReview);
+    void window.deyin.security.listFindings(activeThreadId).then(setSecurityReport);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    return window.deyin.security.onFindingsChanged((threadId) => {
+      if (threadId !== activeThreadId) return;
+      void window.deyin.security.listFindings(threadId).then(setSecurityReport);
+    });
+  }, [activeThreadId]);
+
+  const approveReview = useCallback(
+    (changeId: string) => {
+      if (!activeThreadId) return;
+      void window.deyin.review.approve(activeThreadId, changeId);
+    },
+    [activeThreadId],
+  );
+
+  const rejectReview = useCallback(
+    (changeId: string) => {
+      if (!activeThreadId) return;
+      void window.deyin.review.reject(activeThreadId, changeId);
+    },
+    [activeThreadId],
+  );
+
+  const approveAllReview = useCallback(() => {
+    if (!activeThreadId) return;
+    void window.deyin.review.approveAll(activeThreadId);
+  }, [activeThreadId]);
+
+  const rejectAllReview = useCallback(() => {
+    if (!activeThreadId) return;
+    void window.deyin.review.rejectAll(activeThreadId);
+  }, [activeThreadId]);
 
   /** Abort the in-flight agent (or plain-chat) run and unlock the composer. */
   const stopRun = useCallback(() => {
@@ -1145,7 +1400,13 @@ export function App() {
     // stream when switched off (or on the web, which has no agent host yet).
     if ((settings?.agentMode ?? "agent") === "agent" && boot.platform === "desktop" && window.deyin.agent) {
       setInput("");
-      startAgentRun(thread, text, composerMode);
+      const sendMeta = {
+        attachments: [...composerAttachments],
+        linkedThreadIds: composerLinked.map((l) => l.threadId),
+      };
+      setComposerAttachments([]);
+      setComposerLinked([]);
+      void startAgentRun(thread, text, composerMode, sendMeta);
       return;
     }
 
@@ -1200,7 +1461,7 @@ export function App() {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, agentThreadId, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, connect, appendEvents, startAgentRun, updateThread]);
+  }, [input, streamText, agentThreadId, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, composerAttachments, composerLinked, connect, appendEvents, startAgentRun, updateThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
@@ -1279,6 +1540,7 @@ export function App() {
             busy={busy}
             version={boot.version}
             workspaceRoot={workspaceRoot}
+            activeThreadId={activeThreadId}
             liveModels={models}
             onChangeSettings={patchSettings}
             onConnect={connect}
@@ -1297,6 +1559,23 @@ export function App() {
     );
   }
 
+  if (view === "upgrade" && boot) {
+    return (
+      <I18nProvider language={language}>
+        <PlansView
+          platform={boot.platform}
+          oauthIssuer={boot.config.oauthIssuer}
+          userPlan={user?.plan ?? null}
+          onBack={() => setView("workspace")}
+          onComplete={() => {
+            void window.deyin.usage.account(true);
+            setView("workspace");
+          }}
+        />
+      </I18nProvider>
+    );
+  }
+
   return (
     <I18nProvider language={language}>
     <div className="app">
@@ -1309,6 +1588,10 @@ export function App() {
         workspaceRoot={workspaceRoot}
         panelOpen={panelOpen}
         terminalOpen={terminalOpen}
+        cacheHitRate={activeCacheMetrics?.hitRate ?? null}
+        sessionCacheHit={activeCacheMetrics?.sessionHit}
+        sessionCacheMiss={activeCacheMetrics?.sessionMiss}
+        tokenStats={sessionTokenStats}
         onOpenFolder={() => void addProjectFolder()}
         onTogglePanel={() => {
           setPanelOpen((v) => !v);
@@ -1357,7 +1640,7 @@ export function App() {
             setSettingsPage("usage");
             setView("settings");
           }}
-          onOpenPlans={() => setPlansOpen(true)}
+          onOpenPlans={() => setView("upgrade")}
           onOpenSettings={() => {
             // The gear always lands on General; deep links (Manage models,
             // browser settings) set their page right before switching views.
@@ -1421,6 +1704,7 @@ export function App() {
                     ? () => setTerminalOpen(true)
                     : undefined
                 }
+                threadTitles={Object.fromEntries((activeProject?.threads ?? []).map((t) => [t.id, t.title]))}
               />
 
               {(activeThread?.todos?.length ?? 0) > 0 && (
@@ -1436,6 +1720,64 @@ export function App() {
               )}
 
               <div className="chat-column__composer">
+                {activeThread?.goal?.status === "active" && (
+                  <div className="goal-card">
+                    <Icon name="flag" size={14} />
+                    <span>{activeThread.goal.text}</span>
+                  </div>
+                )}
+                <ReviewBanner
+                  changes={pendingReview.filter((c) => c.status === "pending")}
+                  onApprove={approveReview}
+                  onReject={rejectReview}
+                  onApproveAll={approveAllReview}
+                  onRejectAll={rejectAllReview}
+                  securityFindings={
+                    settings?.reviewMode === "on" ? highSeverityFindings(securityReport) : undefined
+                  }
+                  onOpenSecurity={() => {
+                    setPanelOpen(true);
+                    setPanelTab("security");
+                  }}
+                />
+                {approval && (
+                  <ApprovalDialog
+                    toolName={approval.toolName}
+                    summary={approval.summary}
+                    onDecision={(decision) => {
+                      window.deyin.agent?.approve(approval.requestId, decision);
+                      setApproval(null);
+                    }}
+                  />
+                )}
+                {planApproval && (
+                  <PlanApprovalDialog
+                    title={planApproval.title}
+                    overview={planApproval.overview}
+                    onApprove={buildFromPlan}
+                    onReject={rejectPlan}
+                    onEdit={() => {
+                      if (planApproval.filePath) void window.deyin.shell.showItem(planApproval.filePath);
+                      setPlanApproval(null);
+                    }}
+                  />
+                )}
+                {question && (
+                  <AskQuestionDialog
+                    title={question.title}
+                    questions={question.questions}
+                    onSubmit={(answers) => {
+                      window.deyin.agent?.answerQuestion(question.requestId, answers);
+                      setQuestion(null);
+                    }}
+                    onCancel={() => {
+                      window.deyin.agent?.answerQuestion(question.requestId, {
+                        __cancelled: "AskQuestion was cancelled before answers were returned.",
+                      });
+                      setQuestion(null);
+                    }}
+                  />
+                )}
                 <Composer
                   value={input}
                   models={models}
@@ -1446,9 +1788,11 @@ export function App() {
                       ? composerMode
                       : undefined
                   }
+                  deliveryModeEnabled={settings?.enableDeliveryMode ?? false}
                   thinking={settings?.thinking ?? true}
                   canSend={input.trim().length > 0}
                   streaming={streamText !== null || agentThreadId !== null}
+                  runStatus={agentThreadId === activeThreadId ? agentRunState?.status ?? null : null}
                   queuedPrompt={queuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
@@ -1477,6 +1821,21 @@ export function App() {
                   contextSnapshot={activeContextSnapshot}
                   contextLength={selectedContextLength}
                   threadKey={activeThreadId}
+                  compactionNotice={activeCompactionNotice}
+                  attachments={composerAttachments}
+                  onAttachmentsChange={setComposerAttachments}
+                  linkedThreads={composerLinked}
+                  onLinkedThreadsChange={setComposerLinked}
+                  threadsForPicker={activeProject?.threads}
+                  activeThreadId={activeThreadId}
+                  workspaceRoot={workspaceRoot}
+                  goalText={activeThread?.goal?.status === "active" ? activeThread.goal.text : null}
+                  onSetGoal={(text) => {
+                    if (!activeThreadId) return;
+                    updateThread(activeThreadId, {
+                      goal: text ? { text, status: "active" } : undefined,
+                    });
+                  }}
                 />
               </div>
             </main>
@@ -1517,6 +1876,15 @@ export function App() {
                 }}
                 onBuildPlan={buildFromPlan}
                 onPlanTodosChange={updatePlanTodos}
+                pendingReview={pendingReview}
+                onApproveChange={approveReview}
+                onRejectChange={rejectReview}
+                threadId={activeThreadId}
+                onOpenFile={(path) => {
+                  void window.deyin.shell.showItem(path);
+                  setPanelOpen(true);
+                  setPanelTab("files");
+                }}
               />
             )}
           </div>
@@ -1538,47 +1906,6 @@ export function App() {
           )}
         </div>
       </div>
-
-      {approval && (
-        <ApprovalDialog
-          toolName={approval.toolName}
-          summary={approval.summary}
-          onDecision={(decision) => {
-            window.deyin.agent?.approve(approval.requestId, decision);
-            setApproval(null);
-          }}
-        />
-      )}
-
-      {question && (
-        <AskQuestionDialog
-          title={question.title}
-          questions={question.questions}
-          onSubmit={(answers) => {
-            window.deyin.agent?.answerQuestion(question.requestId, answers);
-            setQuestion(null);
-          }}
-          onCancel={() => {
-            window.deyin.agent?.answerQuestion(question.requestId, {
-              __cancelled: "AskQuestion was cancelled before answers were returned.",
-            });
-            setQuestion(null);
-          }}
-        />
-      )}
-
-      {planApproval && (
-        <PlanApprovalDialog
-          title={planApproval.title}
-          overview={planApproval.overview}
-          onApprove={buildFromPlan}
-          onReject={rejectPlan}
-          onEdit={() => {
-            if (planApproval.filePath) void window.deyin.shell.showItem(planApproval.filePath);
-            setPlanApproval(null);
-          }}
-        />
-      )}
 
       {threadMenu && (
         <ThreadMenu
@@ -1610,14 +1937,35 @@ export function App() {
         />
       )}
 
-      {plansOpen && boot && (
-        <PlansDialog
-          platform={boot.platform}
-          oauthIssuer={boot.config.oauthIssuer}
-          userPlan={user?.plan ?? null}
-          onClose={() => setPlansOpen(false)}
+      {showWhatsNew && boot && (
+        <WhatsNewModal
+          version={boot.version}
+          onDismiss={() => {
+            setShowWhatsNew(false);
+            patchSettings({ whatsNewSeenVersion: boot.version });
+          }}
         />
       )}
+      {showReasonixOnboard && settings && (
+        <ReasonixOnboardModal
+          settings={settings}
+          onSkip={() => {
+            setShowReasonixOnboard(false);
+            patchSettings({ reasonixOnboardComplete: true });
+          }}
+          onComplete={() => {
+            setShowReasonixOnboard(false);
+            patchSettings({ reasonixOnboardComplete: true });
+            setSettingsPage("cache");
+            setView("settings");
+          }}
+        />
+      )}
+      {showBetaFeedback && <BetaFeedbackForm onClose={() => setShowBetaFeedback(false)} />}
+
+      <ComputerUseOverlay />
+      <ChromeConsentDialog />
+      <BrowserOverlay />
     </div>
     </I18nProvider>
   );

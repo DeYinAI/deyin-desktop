@@ -2,29 +2,45 @@ import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BrowserWindow, app } from "electron";
-import { AgentShell, ShellUnavailableError, type AgentsStore, type SettingsStore, type TerminalManager } from "@deyin/host-core";
+import { AgentShell, ShellUnavailableError, formatUserMessageWithContext, type AgentsStore, type SettingsStore, type TerminalManager } from "@deyin/host-core";
 import {
   ASK_AGENT,
   BUILD_AGENT,
+  DELIVERY_AGENT,
   PLAN_AGENT,
+  Coordinator,
+  EvidenceLedger,
   PermissionEngine,
   SessionStore,
   ToolRegistry,
   appendHookContext,
+  buildRoutingContext,
   buildSystemPrompt,
   buildSystemPromptParts,
   connectMcpDefinitions,
   createBuiltinRegistry,
   createCodebaseSearchTool,
+  createFleetTool,
+  createParallelTasksTool,
+  createPlannerRegistry,
   createTaskTool,
+  createWaitJobsTool,
   estimateContextUsage,
   expandCommand,
+  getSessionJobsManager,
+  getSessionScheduler,
   loadContextFiles,
   matchCommand,
+  normalizeWritePaths,
+  plannerPromptWithContext,
   runAgent,
   runHooks,
+  type AcquireRequest,
   type AgentDefinition,
   type AgentMessage,
+  type AgentRunOptions,
+  type AgentRunResult,
+  type FileMutationRequest,
   type InteractionRequest,
   type LoadedHook,
   type ModeChangeRequest,
@@ -36,6 +52,7 @@ import {
   type SystemPromptSections,
   type ToolSessionMeta,
   type ToolShell,
+  type WritePathSet,
 } from "@deyin/agent-core";
 import {
   bindAgentCacheHooks,
@@ -48,7 +65,19 @@ import { CH } from "../shared/ipc.js";
 import type { DeyinConfig } from "../shared/config.js";
 import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
+import type { ChromeDebugService } from "./chrome-debug.js";
+import type { ComputerUseService } from "./computer-use.js";
+import type { VisualizeService } from "./visualize.js";
+import type { SecurityService } from "./security.js";
 import type { CapabilityService } from "./capabilities.js";
+import { registerBundledHostTools } from "./plugin-host.js";
+import { wrapSecurityMcpTools } from "./security-mcp-hook.js";
+import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS, requiresExtraConfirmation } from "./permission-policy.js";
+import { chromeOriginRequiresConsent, originOfUrl } from "./chrome-origins.js";
+import { PendingReviewQueue } from "./pending-review.js";
+import { logLine } from "./logger.js";
+import { reasonixObservability } from "./reasonix-observability.js";
+import type { ReasonixMetricsStore } from "@deyin/host-core/shared";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Files bigger than this ship to the renderer without diff content. */
@@ -75,6 +104,8 @@ const READONLY_RULES: PermissionRule[] = [
   { tool: "switch_mode", action: "allow" },
   { tool: "skill", action: "allow" },
   { tool: "read_session_context", action: "allow" },
+  { tool: "report_goal_met", action: "allow" },
+  { tool: "complete_step", action: "allow" },
   { tool: "send_message", action: "allow" },
   { tool: "codebase_search", action: "allow" },
   { tool: "browser_snapshot", action: "allow" },
@@ -102,6 +133,10 @@ interface ThreadSession {
   shellUnavailable?: boolean;
   /** True after the renderer has been told about shell.id. */
   shellAnnounced?: boolean;
+  /** Delivery mode evidence ledger (persists across turns for this thread). */
+  evidenceLedger?: EvidenceLedger;
+  /** Two-model coordinator (planner + executor isolated sessions). */
+  coordinator?: Coordinator;
 }
 
 interface ActiveRun {
@@ -117,11 +152,19 @@ export interface AgentHostOptions {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
+  chrome: ChromeDebugService;
+  computerUse: ComputerUseService;
+  visualize: VisualizeService;
+  security: SecurityService;
   terminals: TerminalManager;
   getWorkspaceRoot: () => string | null;
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   /** Context window for the model, when known (drives compaction). */
   getContextLength: (providerId: string, modelId: string) => number | undefined;
+  /** Fired when the global pending-review queue size changes (tray badge). */
+  onPendingReviewChanged?: (count: number) => void;
+  /** Aggregated Reasonix metrics (optional; desktop host only). */
+  reasonixMetrics?: ReasonixMetricsStore;
 }
 
 /**
@@ -135,7 +178,13 @@ export class DesktopAgentHost {
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingPermissions = new Map<
     string,
-    { threadId: string; resolve: (decision: PermissionDecision) => void; timer: ReturnType<typeof setTimeout> }
+    {
+      threadId: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      resolve: (decision: PermissionDecision) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   private readonly pendingQuestions = new Map<
     string,
@@ -148,6 +197,9 @@ export class DesktopAgentHost {
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   private optimizationPluginLoadError: string | null = null;
   private optimizationPluginLoadErrorNotified = false;
+  private readonly pendingReview = new PendingReviewQueue();
+  /** threadId → webContents.id that started the run (review IPC scoping). */
+  private readonly threadWebContents = new Map<string, number>();
 
   constructor(private readonly opts: AgentHostOptions) {
     this.store = new SessionStore(join(app.getPath("userData"), "sessions"));
@@ -207,6 +259,12 @@ export class DesktopAgentHost {
     const envelope: AgentEventEnvelope = { threadId, event };
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(CH.agentEvent, envelope);
+    }
+  }
+
+  private broadcastSecurityFindingsChanged(threadId: string): void {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(CH.securityFindingsChanged, threadId);
     }
   }
 
@@ -327,6 +385,7 @@ export class DesktopAgentHost {
     }
 
     run.abort.abort();
+    this.pendingReview.clearThread(threadId);
     // Emit `done` immediately and free the slot so interrupt-and-send can start
     // a new run without waiting on a hung tool/stream.
     if (!run.doneEmitted) {
@@ -341,6 +400,14 @@ export class DesktopAgentHost {
     if (!pending) return;
     this.pendingPermissions.delete(requestId);
     clearTimeout(pending.timer);
+    if (
+      (decision === "allow" || decision === "allow-always") &&
+      pending.toolName === "chrome_navigate" &&
+      typeof pending.args.url === "string"
+    ) {
+      const origin = originOfUrl(pending.args.url);
+      if (origin) this.opts.chrome.approveOrigin(origin);
+    }
     pending.resolve(decision);
   }
 
@@ -352,10 +419,58 @@ export class DesktopAgentHost {
     pending.resolve(JSON.stringify(answers, null, 2));
   }
 
-  async start(options: AgentStartOptions): Promise<void> {
+  listPendingChanges(threadId?: string) {
+    return threadId ? this.pendingReview.list(threadId) : this.pendingReview.listAll();
+  }
+
+  approvePendingChange(threadId: string, changeId: string, webContentsId: number): boolean {
+    const ok = this.pendingReview.approve(threadId, changeId, webContentsId);
+    if (ok) {
+      this.send(threadId, { type: "pending-change-resolved", changeId, status: "approved" });
+      this.notifyPendingReviewChanged();
+    }
+    return ok;
+  }
+
+  rejectPendingChange(threadId: string, changeId: string, webContentsId: number): boolean {
+    const ok = this.pendingReview.reject(threadId, changeId, webContentsId);
+    if (ok) {
+      this.send(threadId, { type: "pending-change-resolved", changeId, status: "rejected" });
+      this.notifyPendingReviewChanged();
+    }
+    return ok;
+  }
+
+  async approveAllPendingChanges(threadId: string, webContentsId: number): Promise<number> {
+    const ids = await this.pendingReview.approveAll(threadId, webContentsId);
+    for (const changeId of ids) {
+      this.send(threadId, { type: "pending-change-resolved", changeId, status: "approved" });
+    }
+    if (ids.length > 0) this.notifyPendingReviewChanged();
+    return ids.length;
+  }
+
+  rejectAllPendingChanges(threadId: string, webContentsId: number): number {
+    const ids = this.pendingReview.rejectAll(threadId, webContentsId);
+    for (const changeId of ids) {
+      this.send(threadId, { type: "pending-change-resolved", changeId, status: "rejected" });
+    }
+    if (ids.length > 0) this.notifyPendingReviewChanged();
+    return ids.length;
+  }
+
+  private notifyPendingReviewChanged(): void {
+    const count = this.pendingReview.listAll().filter((c) => c.status === "pending").length;
+    this.opts.onPendingReviewChanged?.(count);
+  }
+
+  async start(options: AgentStartOptions, webContentsId?: number): Promise<void> {
     if (this.active.has(options.threadId)) {
       this.send(options.threadId, { type: "error", message: "A run is already in progress for this task." });
       return;
+    }
+    if (webContentsId !== undefined) {
+      this.threadWebContents.set(options.threadId, webContentsId);
     }
     const abort = new AbortController();
     const active: ActiveRun = { abort, doneEmitted: false };
@@ -370,6 +485,7 @@ export class DesktopAgentHost {
       }
     } finally {
       if (this.active.get(options.threadId) === active) this.active.delete(options.threadId);
+      this.threadWebContents.delete(options.threadId);
     }
   }
 
@@ -404,35 +520,131 @@ export class DesktopAgentHost {
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
-    if (settings.browserControlEnabled && caps.browserEnabled) {
-      for (const tool of this.opts.browser.tools()) registry.register(tool);
-    }
+    const hostRules = await registerBundledHostTools(registry, this.opts.agents, this.opts.settings, {
+      browser: this.opts.browser,
+      chrome: this.opts.chrome,
+      computerUse: this.opts.computerUse,
+      visualize: this.opts.visualize,
+    });
     const subagents = caps.subagents;
-    if (subagents.length > 0) {
-      registry.register(
-        createTaskTool({
-          subagents,
-          runSubagent: (def, subPrompt, subSignal) =>
-            this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subSignal),
-          onBackgroundDone: (def, result) => {
-            this.send(options.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
-          },
-        }),
-      );
-    }
     const mcpConnections: McpConnection[] = await connectMcpDefinitions(
       caps.mcpServers.map((def) => this.opts.capabilities.resolvePluginVariables(def)),
       registry,
-      { onError: () => undefined },
+      {
+        onError: (server, err) => {
+          console.warn(`[deyin] MCP server "${server}" error:`, err);
+          this.send(options.threadId, {
+            type: "error",
+            message: `MCP server "${server}" failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        },
+        getAuthProvider: (name) => this.opts.capabilities.getAuthProvider(name),
+      },
     );
+    wrapSecurityMcpTools(registry, options.threadId, this.opts.security, () => {
+      this.broadcastSecurityFindingsChanged(options.threadId);
+    });
 
     // Hooks (custom only, from hooks.json files).
     const hooks = caps.hooks;
 
     // Transcript: reuse the in-memory session, else restore/create a persisted one.
     const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
-    session.messages.push({ role: "user", content: prompt });
-    this.store.append(session.sessionId, { role: "user", content: prompt });
+    let userContent = options.prompt;
+    if (options.linkedContext) {
+      userContent = formatUserMessageWithContext(userContent, [], options.linkedContext);
+    }
+    if (options.goalText) {
+      userContent = `[Active goal: ${options.goalText} — call report_goal_met(met=true) only when this objective is verifiably complete]\n\n${userContent}`;
+    }
+    session.messages.push({ role: "user", content: userContent });
+    this.store.append(session.sessionId, { role: "user", content: userContent });
+
+    const scheduler = getSessionScheduler(session.sessionId, {
+      maxSubagentConcurrency: settings.maxSubagentConcurrency,
+      maxParallelWriters: settings.maxParallelWriters,
+    });
+    const jobsManager = getSessionJobsManager(session.sessionId, join(app.getPath("userData"), "sessions"));
+
+    const jobNotes = jobsManager.drainCompletionNotes();
+    if (jobNotes.length > 0) {
+      const noteBlock = jobNotes
+        .map((n) => `- [${n.status}] ${n.label} (${n.jobId}): ${n.summary}`)
+        .join("\n");
+      const notice: AgentMessage = {
+        role: "system",
+        content: `<system_reminder>\nBackground jobs completed since last turn:\n${noteBlock}\n</system_reminder>`,
+      };
+      session.messages.push(notice);
+      this.store.append(session.sessionId, notice);
+    }
+
+    const acquireSlot = (req: AcquireRequest, subSignal?: AbortSignal) => scheduler.acquire(req, subSignal);
+    const runSubagentBound = (
+      def: SubagentDefinition,
+      subPrompt: string,
+      subOpts?: { writePaths?: WritePathSet; signal?: AbortSignal; nested?: boolean },
+    ) => this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subOpts?.signal);
+
+    if (subagents.length > 0) {
+      registry.register(
+        createTaskTool({
+          subagents,
+          cwd,
+          acquireSlot,
+          runSubagent: runSubagentBound,
+          onBackgroundDone: (def, result, jobId) => {
+            this.send(options.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
+            if (jobId) {
+              this.send(options.threadId, {
+                type: "background-job",
+                jobId,
+                status: result.ok ? "completed" : "failed",
+                label: def.name,
+              });
+            }
+          },
+        }),
+      );
+      if (subagents.length >= 2 && settings.enableFleet) {
+        registry.register(
+          createFleetTool({
+            subagents,
+            cwd,
+            acquireSlot,
+            runSubagent: runSubagentBound,
+            validateWritePaths: settings.schedulerWritePathValidation,
+            onFleetEvent: (event) => {
+              logLine("info", `[fleet] ${event.kind}: ${event.detail} (${event.taskCount} tasks)`);
+              reasonixObservability.recordFleetEvent(
+                options.threadId,
+                event.kind === "conflict" ? "conflict" : event.kind,
+                event.detail,
+                event.taskCount,
+              );
+              if (event.kind === "complete") {
+                const completed = Number.parseInt(event.detail.split("/")[0] ?? "0", 10);
+                this.opts.reasonixMetrics?.recordFleetRun(event.taskCount, completed, false);
+              }
+              if (event.kind === "conflict") {
+                this.opts.reasonixMetrics?.recordFleetRun(event.taskCount, 0, true);
+              }
+            },
+          }),
+        );
+        registry.register(
+          createParallelTasksTool({
+            subagents,
+            acquireSlot: (subSignal) =>
+              acquireSlot({ writer: false, writePaths: { paths: [], wholeWorkspace: false, workspaceRoot: cwd }, nested: false }, subSignal),
+            runSubagent: (def, p, subSignal) => runSubagentBound(def, p, { signal: subSignal }),
+          }),
+        );
+      }
+    }
+    registry.register(createWaitJobsTool());
+
+    const reviewEnabled = settings.reviewMode === "on" || options.approvalMode === "ask-first";
 
     // Two independent axes: the access level (approvalMode chip) provides the base
     // rules; the composer mode's own restrictions come last so plan/ask stay
@@ -440,8 +652,10 @@ export class DesktopAgentHost {
     const modeAgent = agentForMode(options.mode);
     const permissions = new PermissionEngine({
       agentRules: rulesForMode(options.approvalMode),
-      configRules: modeAgent.permissions ?? [],
-      skipAll: options.approvalMode === "full-access" && options.mode === "agent",
+      configRules: [...(modeAgent.permissions ?? []), ...hostRules],
+      skipAll: options.approvalMode === "full-access" && (options.mode === "agent" || options.mode === "delivery"),
+      neverSkipTools: NEVER_SKIP_TOOLS,
+      neverSkipPrefixes: NEVER_SKIP_PREFIXES,
     });
 
     // Persistent PTY shell for bash: created lazily on the first bash tool call
@@ -563,64 +777,48 @@ return;
         cwd,
       };
 
-      const result = await runAgent({
+      const deliveryMode = settings.enableDeliveryMode && options.mode === "delivery";
+      if (deliveryMode && !session.evidenceLedger) {
+        session.evidenceLedger = new EvidenceLedger();
+      }
+
+      const plannerModel = settings.plannerModel;
+      const useCoordinator =
+        settings.enableCoordinator &&
+        Boolean(plannerModel && plannerModel !== options.model && options.mode === "agent");
+
+      const agentBase = {
         apiBaseUrl,
         getToken,
-        model: options.model,
         contextLength: this.opts.getContextLength(options.providerId, options.model),
-        messages: session.messages,
-        tools: registry,
         permissions,
-        resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
+        resolvePermission: (req: Parameters<AgentRunOptions["resolvePermission"]>[0]) =>
+          this.askPermission(options.threadId, req.toolName, req.summary, req.args),
+        forcePermissionPrompt: (req: Parameters<NonNullable<AgentRunOptions["forcePermissionPrompt"]>>[0]) => {
+          if (requiresExtraConfirmation(req.toolName, req.args)) return true;
+          if (req.toolName === "chrome_navigate" && typeof req.args.url === "string") {
+            return chromeOriginRequiresConsent(req.args.url, this.opts.chrome.approvedOrigins());
+          }
+          return false;
+        },
         cwd,
         thinking: options.thinking,
         signal,
         todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
+        goalText: options.goalText,
+        evidenceGatesEnabled: deliveryMode,
+        evidenceLedger: session.evidenceLedger,
         shell: shellBridge,
         systemSections: session.systemSections,
-        toolContext: {
-          skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
-          sessionMeta: liveMeta,
-          resolveInteraction: (request) => this.resolveInteraction(options.threadId, request),
-          onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
-          onModeChange: async (change) => {
-            const result = await this.handleModeChange(
-              options.threadId,
-              session,
-              options,
-              change,
-              cwd,
-              registry,
-              caps.skills,
-              hooks,
-            );
-            liveMeta.mode = session.mode;
-            return result;
-          },
-          sendMessage: async (to, content) => {
-            const key = `${options.threadId}:${to}`;
-            const list = this.agentInbox.get(key) ?? [];
-            list.push(content);
-            this.agentInbox.set(key, list);
-            return `Message delivered to ${to}.`;
-          },
-          pollBackgroundTask: (taskId, blockUntilMs) => this.pollBackgroundTask(taskId, blockUntilMs),
-          registerBackgroundTask: (taskId, promise) => {
-            this.backgroundTasks.set(taskId, promise);
-            void promise.finally(() => this.backgroundTasks.delete(taskId));
-          },
-        },
         wire: {
           enableCompression: settings.optimizationCompression,
           compressionMode: settings.optimizationCompressionMode,
-          enablePromptCaching: settings.optimizationPromptCaching,
-          provider: provider?.kind === "custom" ? "openai" : "openference",
+          enablePromptCaching: settings.enableCacheOptimizations && settings.optimizationPromptCaching,
+          provider: provider?.kind === "custom" ? ("openai" as const) : ("openference" as const),
         },
-        promptCacheKey: `deyin:${options.providerId}:${options.model}:${cwd}`,
         lookupToolCache: cacheHooks?.lookupToolCache,
         storeToolCache: cacheHooks?.storeToolCache,
-        onMessage: (message) => this.store.append(session.sessionId, message),
-        beforeTool: async (call, args, summary) => {
+        beforeTool: async (call: Parameters<NonNullable<AgentRunOptions["beforeTool"]>>[0], args: Record<string, unknown>, summary: string) => {
           const pre = await runHooks(hooks, "preToolUse", call.name, { tool: call.name, args, summary, cwd });
           if (pre.blocked) return { block: pre.reason ?? "preToolUse hook" };
           if (call.name === "bash") {
@@ -630,7 +828,7 @@ return;
           }
           return undefined;
         },
-        afterTool: async (call, toolResult, ok) => {
+        afterTool: async (call: Parameters<NonNullable<AgentRunOptions["afterTool"]>>[0], toolResult: string, ok: boolean) => {
           await runHooks(hooks, "postToolUse", call.name, { tool: call.name, ok, resultChars: toolResult.length, cwd });
           if (call.name === "bash") {
             let args: Record<string, unknown> = {};
@@ -647,7 +845,7 @@ return;
             }
           }
         },
-        onEvent: (event) => {
+        onEvent: (event: Parameters<NonNullable<AgentRunOptions["onEvent"]>>[0]) => {
           switch (event.type) {
             case "text-delta":
               this.send(options.threadId, { type: "text-delta", delta: event.delta });
@@ -673,8 +871,6 @@ return;
               });
               break;
             case "file-change": {
-              // Feeds the renderer's diff view; huge files ship without content
-              // (the card still shows, the diff falls back to empty).
               const oversized =
                 event.change.before.length > FILE_DIFF_CAP || event.change.after.length > FILE_DIFF_CAP;
               this.send(options.threadId, {
@@ -688,29 +884,307 @@ return;
             case "todos":
               this.send(options.threadId, { type: "todos", todos: event.todos });
               break;
-case "usage":
- this.send(options.threadId, { type: "usage", totalTokens: event.usage.totalTokens });
- break;
- case "context-snapshot":
- this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
- break;
- case "optimization":
- this.send(options.threadId, {
- type: "optimization",
- originalInputTokens: event.metrics.originalInputTokens,
- compressedInputTokens: event.metrics.compressedInputTokens,
- compressionRatio: event.metrics.compressionRatio,
- cachedPromptTokens: event.metrics.cachedPromptTokens,
- toolCacheHits: event.metrics.toolCacheHits,
- toolCacheMisses: event.metrics.toolCacheMisses,
- responseCacheHits: event.metrics.responseCacheHits,
- responseCacheMisses: event.metrics.responseCacheMisses,
- estimatedCostSavingsUsd: event.metrics.estimatedCostSavingsUsd,
- });
- break;
+            case "evidence-gate":
+              logLine("warn", `[evidence-gate] ${event.code}: ${event.message}`);
+              reasonixObservability.recordEvidenceRejection(options.threadId, event.code, event.message);
+              this.opts.reasonixMetrics?.recordEvidenceGate(event.code);
+              this.send(options.threadId, { type: "evidence-gate", code: event.code, message: event.message });
+              break;
+            case "usage":
+              this.send(options.threadId, { type: "usage", totalTokens: event.usage.totalTokens });
+              break;
+            case "context-snapshot":
+              this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
+              break;
+            case "optimization":
+              if (event.metrics.prefixShape) {
+                const diag = event.metrics.cacheDiagnostics;
+                if (diag?.prefixChanged && diag.changeReasons.length > 0) {
+                  logLine(
+                    "info",
+                    `[cache] prefix changed thread=${options.threadId} reasons=${diag.changeReasons.join(",")} hash=${event.metrics.prefixShape.prefixHash}`,
+                  );
+                }
+                reasonixObservability.recordPrefixShape(
+                  options.threadId,
+                  event.metrics.prefixShape,
+                  diag?.changeReasons ?? [],
+                  diag?.hit ?? 0,
+                  diag?.miss ?? 0,
+                );
+                this.opts.reasonixMetrics?.recordCacheTurn(
+                  diag?.hit ?? 0,
+                  diag?.miss ?? 0,
+                  Boolean(diag?.prefixChanged),
+                  false,
+                  event.metrics.estimatedCostSavingsUsd,
+                );
+              }
+              this.send(options.threadId, {
+                type: "optimization",
+                originalInputTokens: event.metrics.originalInputTokens,
+                compressedInputTokens: event.metrics.compressedInputTokens,
+                compressionRatio: event.metrics.compressionRatio,
+                cachedPromptTokens: event.metrics.cachedPromptTokens,
+                toolCacheHits: event.metrics.toolCacheHits,
+                toolCacheMisses: event.metrics.toolCacheMisses,
+                responseCacheHits: event.metrics.responseCacheHits,
+                responseCacheMisses: event.metrics.responseCacheMisses,
+                estimatedCostSavingsUsd: event.metrics.estimatedCostSavingsUsd,
+                sessionCacheHit: event.metrics.sessionCacheHit,
+                sessionCacheMiss: event.metrics.sessionCacheMiss,
+                cacheHitRate:
+                  event.metrics.sessionCacheHit + event.metrics.sessionCacheMiss === 0
+                    ? undefined
+                    : event.metrics.sessionCacheHit /
+                      (event.metrics.sessionCacheHit + event.metrics.sessionCacheMiss),
+                prefixChanged: event.metrics.cacheDiagnostics?.prefixChanged,
+                changeReasons: event.metrics.cacheDiagnostics?.changeReasons,
+              });
+              break;
+            case "compaction":
+              logLine("info", `[cache] compaction thread=${options.threadId} soft=${event.softWarning ?? false}`);
+              this.opts.reasonixMetrics?.recordCacheTurn(0, 0, true, !event.softWarning);
+              this.send(options.threadId, {
+                type: "compaction",
+                softWarning: event.softWarning,
+                truncatedToolResults: event.truncatedToolResults,
+                truncatedToolArgs: event.truncatedToolArgs,
+                droppedMessages: event.droppedMessages,
+              });
+              break;
           }
         },
+      };
+
+      const sharedToolContext = {
+        skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
+        sessionMeta: liveMeta,
+        resolveInteraction: (request: InteractionRequest) => this.resolveInteraction(options.threadId, request),
+        onPlanCreated: (plan: PlanArtifact) => this.onPlanCreated(options.threadId, plan),
+        onModeChange: async (change: ModeChangeRequest) => {
+          const modeResult = await this.handleModeChange(
+            options.threadId,
+            session,
+            options,
+            change,
+            cwd,
+            registry,
+            caps.skills,
+            hooks,
+            permissions,
+            hostRules,
+          );
+          liveMeta.mode = session.mode;
+          return modeResult;
+        },
+        sendMessage: async (to: string, content: string) => {
+          const key = `${options.threadId}:${to}`;
+          const list = this.agentInbox.get(key) ?? [];
+          list.push(content);
+          this.agentInbox.set(key, list);
+          return `Message delivered to ${to}.`;
+        },
+        pollBackgroundTask: (taskId: string, blockUntilMs: number) => this.pollBackgroundTask(taskId, blockUntilMs),
+        registerBackgroundTask: (taskId: string, promise: Promise<{ output: string; exitCode: number | null }>) => {
+          this.backgroundTasks.set(taskId, promise);
+          void promise.finally(() => this.backgroundTasks.delete(taskId));
+        },
+        applyFileChange: (change: FileMutationRequest) =>
+          this.pendingReview.request(
+            options.threadId,
+            change,
+            reviewEnabled,
+            this.threadWebContents.get(options.threadId) ?? -1,
+            (pending) => {
+              this.send(options.threadId, { type: "pending-change", change: pending });
+              this.notifyPendingReviewChanged();
+            },
+            (applied) => {
+              const oversized =
+                applied.before.length > FILE_DIFF_CAP || applied.after.length > FILE_DIFF_CAP;
+              this.send(options.threadId, {
+                type: "file-change",
+                path: applied.path,
+                before: oversized ? "" : applied.before,
+                after: oversized ? "" : applied.after,
+              });
+            },
+          ),
+        onGoalReport: (report: { met: boolean; reason: string }) => {
+          if (!options.goalText) return;
+          this.send(options.threadId, {
+            type: "goal-updated",
+            goal: report.met
+              ? { text: options.goalText, status: "met" }
+              : { text: options.goalText, status: "active" },
+          });
+        },
+        onEvidenceSignOff: (receipt: {
+          stepId: string;
+          verificationCommand: string;
+          diffSummary: string;
+          reviewNotes?: string;
+        }) => {
+          this.opts.reasonixMetrics?.recordEvidenceSignOff();
+          this.send(options.threadId, {
+            type: "evidence-sign-off",
+            stepId: receipt.stepId,
+            verificationCommand: receipt.verificationCommand,
+            diffSummary: receipt.diffSummary,
+            reviewNotes: receipt.reviewNotes,
+          });
+        },
+        scheduler,
+        jobsManager,
+        registerBackgroundJob: (job: {
+          kind: string;
+          label: string;
+          profile?: string;
+          prompt: string;
+          run: (signal?: AbortSignal) => Promise<string>;
+        }) => {
+          const bg = jobsManager.register({
+            kind: job.kind,
+            label: job.label,
+            profile: job.profile,
+            prompt: job.prompt,
+          });
+          void job
+            .run(signal)
+            .then((runResult) => {
+              jobsManager.updateStatus(bg.id, "completed", runResult);
+              this.send(options.threadId, {
+                type: "background-job",
+                jobId: bg.id,
+                status: "completed",
+                label: job.label,
+              });
+              logLine("info", `[fleet] background-job completed id=${bg.id} label=${job.label}`);
+              reasonixObservability.recordFleetEvent(options.threadId, "background-job", `completed: ${job.label}`);
+              this.opts.reasonixMetrics?.recordBackgroundJobCompleted();
+            })
+            .catch((err) => {
+              jobsManager.updateStatus(bg.id, "failed", undefined, err instanceof Error ? err.message : String(err));
+              this.send(options.threadId, {
+                type: "background-job",
+                jobId: bg.id,
+                status: "failed",
+                label: job.label,
+              });
+            });
+          return bg.id;
+        },
+        waitForJobs: (jobIds: string[], timeoutMs: number) =>
+          jobsManager.waitFor(jobIds, timeoutMs).then((jobs) =>
+            jobs.map((j) => ({
+              id: j.id,
+              label: j.label,
+              status: j.status,
+              result: j.result,
+              error: j.error,
+            })),
+          ),
+        reserveParentWrite: (paths: string[]) => {
+          const claim = normalizeWritePaths(cwd, paths);
+          return scheduler.reserveParentWrite(claim);
+        },
+      };
+
+      let result: AgentRunResult;
+
+      if (useCoordinator && plannerModel) {
+        if (!session.coordinator) {
+          const ctxFiles = await loadContextFiles(cwd);
+          const plannerContext = ctxFiles.map((f) => f.content).join("\n\n");
+          session.coordinator = new Coordinator(plannerPromptWithContext(plannerContext), session.messages);
+        }
+        const plannerRegistry = createPlannerRegistry({
+          source: registry,
+          invokeMcp: async (server, tool, mcpArgs) => {
+            const qualified = `mcp__${server}__${tool}`;
+            const mcpTool = registry.get(qualified);
+            if (!mcpTool) throw new Error(`MCP tool not found: ${qualified}`);
+            return mcpTool.execute(mcpArgs, { cwd, todos: [], signal });
+          },
+        });
+        const routingContext = buildRoutingContext(userContent, {
+          mode: "agent",
+          isSlashCommand: Boolean(invocation),
+          hasActiveGoal: Boolean(options.goalText),
+        });
+        const coordResult = await session.coordinator.run(
+          {
+            userMessage: userContent,
+            routingContext,
+            routingPolicy: settings.coordinatorRoutingPolicy,
+          },
+          {
+            executorTools: registry.toWire(),
+            onPhase: (e) => this.send(options.threadId, { type: "phase", text: e.phase, detail: e.detail }),
+            onDecision: (d) => {
+              logLine("info", `[coordinator] route=${d.route} reason=${d.reason} thread=${options.threadId}`);
+              reasonixObservability.recordCoordinatorDecision(options.threadId, d.route, d.reason);
+              this.send(options.threadId, { type: "coordinator-routing", route: d.route, reason: d.reason });
+            },
+            onMessage: (which, msg) => {
+              if (which === "executor") this.store.append(session.sessionId, msg);
+            },
+            runPlanner: async ({ plannerMessages, maxSteps }) => {
+              try {
+                const plannerRun = await runAgent({
+                  ...agentBase,
+                  model: plannerModel,
+                  messages: plannerMessages,
+                  tools: plannerRegistry,
+                  maxSteps,
+                  promptCacheKey: `deyin:${options.providerId}:${plannerModel}:${cwd}:planner`,
+                  toolContext: { ...sharedToolContext, todos: [] },
+                  onMessage: undefined,
+                });
+                return { ok: true, plan: plannerRun.finalText };
+              } catch (err) {
+                return {
+                  ok: false,
+                  plan: "",
+                  error: err instanceof Error ? err.message : String(err),
+                };
+              }
+            },
+            runExecutor: async ({ executorMessages }) =>
+              runAgent({
+                ...agentBase,
+                model: options.model,
+                messages: executorMessages,
+                tools: registry,
+                promptCacheKey: `deyin:${options.providerId}:${options.model}:${cwd}`,
+                toolContext: sharedToolContext,
+                onMessage: (message) => this.store.append(session.sessionId, message),
+              }),
+          },
+        );
+        this.opts.reasonixMetrics?.recordCoordinatorRun(
+          coordResult.decision.route,
+          coordResult.plannerUsed,
+          coordResult.executorOnly && coordResult.plannerUsed === false && coordResult.decision.route !== "executor_only",
+        );
+        result = {
+          reason: coordResult.reason,
+          finalText: coordResult.finalText,
+          usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+          steps: 0,
+        };
+      } else {
+        result = await runAgent({
+        ...agentBase,
+        model: options.model,
+        messages: session.messages,
+        tools: registry,
+        promptCacheKey: `deyin:${options.providerId}:${options.model}:${cwd}`,
+        toolContext: sharedToolContext,
+        onMessage: (message) => this.store.append(session.sessionId, message),
       });
+      }
 
 if (optPlugin && settings.optimizationResponseCache && result.finalText) {
  await optPlugin.afterAgentRun(optPlugin.runtime, prompt, result.finalText, responseCacheWorkspace, responseCacheContext).catch(() => undefined);
@@ -755,6 +1229,8 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
       agentRules: rulesForMode(parent.approvalMode),
       configRules: [...(agentForMode(parent.mode).permissions ?? []), ...readonlyRules],
       skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
+      neverSkipTools: NEVER_SKIP_TOOLS,
+      neverSkipPrefixes: NEVER_SKIP_PREFIXES,
     });
     const messages: AgentMessage[] = [
       {
@@ -775,7 +1251,8 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
         messages,
         tools: registry,
         permissions,
-        resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
+        resolvePermission: (req) =>
+          this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary, req.args),
         cwd,
         thinking: parent.thinking,
         signal,
@@ -876,14 +1353,19 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     return parts;
   }
 
-  private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
+  private askPermission(
+    threadId: string,
+    toolName: string,
+    summary: string,
+    args: Record<string, unknown> = {},
+  ): Promise<PermissionDecision> {
     return new Promise<PermissionDecision>((resolve) => {
       const requestId = randomUUID();
       const timer = setTimeout(() => {
         this.pendingPermissions.delete(requestId);
         resolve("deny");
       }, PERMISSION_TIMEOUT_MS);
-      this.pendingPermissions.set(requestId, { threadId, resolve, timer });
+      this.pendingPermissions.set(requestId, { threadId, toolName, args, resolve, timer });
       this.send(threadId, { type: "permission-request", requestId, toolName, summary });
     });
   }
@@ -929,6 +1411,8 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     registry: ToolRegistry,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
+    permissions: PermissionEngine,
+    hostRules: PermissionRule[],
   ): Promise<string> {
     const previous = session.mode;
     if (change.event === "enter" && change.target === "plan") {
@@ -937,6 +1421,14 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     const nextMode = change.target;
     session.mode = nextMode;
     options.mode = nextMode;
+
+    permissions.reconfigure({
+      agentRules: rulesForMode(options.approvalMode),
+      configRules: [...(agentForMode(nextMode).permissions ?? []), ...hostRules],
+      skipAll: options.approvalMode === "full-access" && (nextMode === "agent" || nextMode === "delivery"),
+      neverSkipTools: NEVER_SKIP_TOOLS,
+      neverSkipPrefixes: NEVER_SKIP_PREFIXES,
+    });
 
     const reminder = modeReminder(change);
     if (reminder) {
@@ -980,11 +1472,16 @@ function modeReminder(change: ModeChangeRequest): string {
   if (change.event === "enter") {
     switch (change.target) {
       case "plan":
-        return "You have entered plan mode. You MUST NOT modify the workspace. Use read/grep/glob/ls to gather evidence. If the request is ambiguous, use ask_question to clarify. Then call todo_write with implementation steps and create_plan or output your final plan as markdown.";
+        return "You have entered plan mode. You MUST NOT modify the workspace. Use read/grep/glob/ls to gather evidence. If the request is ambiguous or you must choose between valid approaches, use the ask_question tool to clarify — NEVER write questions as plain text, as plain-text questions are not presented to the user. Then call todo_write with implementation steps and create_plan or output your final plan as markdown.";
       case "ask":
         return "You are in ask mode. Answer questions and explore the codebase. You MUST NOT modify the workspace or run commands.";
       case "agent":
         return "You are in agent mode. Implement the user's request end to end using all available tools.";
+      case "delivery":
+        return (
+          "You are in delivery mode with evidence gates enabled. Before editing files, call todo_write with acceptanceCriteria on each step. " +
+          "After verifying each step with bash, call complete_step before marking todos completed. Do not declare the task finished until all steps are signed off."
+        );
     }
   }
   if (change.event === "exit" && change.previous === "plan") {
@@ -1015,6 +1512,8 @@ function agentForMode(mode: ChatMode): AgentDefinition {
       return PLAN_AGENT;
     case "ask":
       return ASK_AGENT;
+    case "delivery":
+      return DELIVERY_AGENT;
     default:
       return BUILD_AGENT;
   }

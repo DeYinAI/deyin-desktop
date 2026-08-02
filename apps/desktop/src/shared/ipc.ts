@@ -16,6 +16,11 @@ import type {
   McpServerEntry,
   McpServerInput,
   McpTestResult,
+  McpCatalogEntry,
+  McpCatalogInstallInput,
+  McpModuleManifest,
+  McpAuthResult,
+  McpAuthStatus,
   ModelInfo,
   PluginCatalogEntry,
   PluginInfo,
@@ -32,6 +37,9 @@ import type {
   UsageStats,
   UserProfile,
   PublicPlan,
+  SelectPlanOptions,
+  SelectPlanResponse,
+  BillingOverview,
   Automation,
   AutomationInfo,
   AutomationRun,
@@ -40,6 +48,17 @@ import type {
   SshHostInput,
   SshHostCredentials,
   SshTestResult,
+  ContextSearchHit,
+  ContextRef,
+  ResolvedContextFile,
+  PendingChange,
+  GitStatus,
+  GitBranch,
+  GitLogEntry,
+  SecurityFindingsReport,
+  ReasonixMetricsSnapshot,
+  ReasonixWeeklyReport,
+  ReasonixDiagnostics,
 } from "./types.js";
 
 /** Result of create/update — includes the mutated automation so UI can select by id. */
@@ -50,6 +69,12 @@ export interface AutomationMutationResult {
 
 /** Decision for an agent permission request (mirrors agent-core). */
 export type AgentPermissionDecision = "allow" | "allow-always" | "deny";
+
+/** Main → renderer command for multi-tab browser control. */
+export type BrowserTabCommand =
+  | { action: "open"; url: string }
+  | { action: "switch"; tabId: number }
+  | { action: "close"; tabId: number };
 
 /** IPC channel identifiers, shared by main and preload so they never drift. */
 export const CH = {
@@ -86,6 +111,13 @@ export const CH = {
   mcpAdd: "deyin:mcp:add",
   mcpRemove: "deyin:mcp:remove",
   mcpTest: "deyin:mcp:test",
+  mcpCatalogList: "deyin:mcp:catalog:list",
+  mcpCatalogInstall: "deyin:mcp:catalog:install",
+  mcpModulesList: "deyin:mcp:modules:list",
+  mcpModulesUninstall: "deyin:mcp:modules:uninstall",
+  mcpAuthenticate: "deyin:mcp:authenticate",
+  mcpAuthRevoke: "deyin:mcp:auth:revoke",
+  mcpAuthStatus: "deyin:mcp:auth:status",
   pluginsList: "deyin:plugins:list",
   pluginsCatalog: "deyin:plugins:catalog",
   pluginsInstall: "deyin:plugins:install",
@@ -103,9 +135,20 @@ export const CH = {
   agentDisposeShell: "deyin:agent:disposeShell",
   agentEvent: "deyin:agent:event",
   browserRegister: "deyin:browser:register",
+  browserTabSync: "deyin:browser:tabSync",
+  browserTabRemove: "deyin:browser:tabRemove",
   browserGetPartition: "deyin:browser:getPartition",
   browserClearProfile: "deyin:browser:clearProfile",
   browserEnsure: "deyin:browser:ensure",
+  browserTabCommand: "deyin:browser:tabCommand",
+  browserActive: "deyin:browser:active",
+  computerUseActive: "deyin:computerUse:active",
+  computerUseGetAllowlist: "deyin:computerUse:getAllowlist",
+  computerUseSetAllowlist: "deyin:computerUse:setAllowlist",
+  computerUseListApps: "deyin:computerUse:listApps",
+  chromeConsentRequest: "deyin:chrome:consent-request",
+  chromeConsentRespond: "deyin:chrome:consent-respond",
+  visualizeRead: "deyin:visualize:read",
   telemetryRecord: "deyin:telemetry:record",
   providersList: "deyin:providers:list",
   providersAdd: "deyin:providers:add",
@@ -119,6 +162,11 @@ export const CH = {
   usageRecord: "deyin:usage:record",
   usageAccount: "deyin:usage:account",
   plansList: "deyin:plans:list",
+  billingSelectPlan: "deyin:billing:selectPlan",
+  billingOverview: "deyin:billing:overview",
+  billingPublishableKey: "deyin:billing:publishableKey",
+  billingCompleteCrossCurrency: "deyin:billing:completeCrossCurrency",
+  billingAbortCrossCurrency: "deyin:billing:abortCrossCurrency",
   winMinimize: "deyin:win:minimize",
   winToggleMaximize: "deyin:win:toggleMaximize",
   winClose: "deyin:win:close",
@@ -155,6 +203,29 @@ export const CH = {
   sshHostsTest: "deyin:ssh:test",
   sshHostsPinFingerprint: "deyin:ssh:pinFingerprint",
   sshHostsImportKey: "deyin:ssh:importKey",
+  contextSearch: "deyin:context:search",
+  contextResolve: "deyin:context:resolve",
+  reviewList: "deyin:review:list",
+  reviewApprove: "deyin:review:approve",
+  reviewReject: "deyin:review:reject",
+  reviewApproveAll: "deyin:review:approveAll",
+  reviewRejectAll: "deyin:review:rejectAll",
+  gitStatus: "deyin:git:status",
+  gitDiff: "deyin:git:diff",
+  gitStage: "deyin:git:stage",
+  gitCommit: "deyin:git:commit",
+  gitBranches: "deyin:git:branches",
+  gitCheckout: "deyin:git:checkout",
+  gitLog: "deyin:git:log",
+  securityListFindings: "deyin:security:listFindings",
+  securityClearFindings: "deyin:security:clearFindings",
+  securityScanDiff: "deyin:security:scanDiff",
+  securityFindingsChanged: "deyin:security:findingsChanged",
+  reasonixMetricsGet: "deyin:reasonix:metrics:get",
+  reasonixMetricsReport: "deyin:reasonix:metrics:report",
+  reasonixDiagnosticsGet: "deyin:reasonix:diagnostics:get",
+  reasonixCacheClear: "deyin:reasonix:cache:clear",
+  betaFeedbackSubmit: "deyin:beta:feedback",
 } as const;
 
 /** The API the preload script exposes on `window.deyin`. */
@@ -226,6 +297,19 @@ export interface DeyinApi {
     remove(name: string): Promise<McpServerEntry[]>;
     /** Connect, list tools, disconnect. */
     test(name: string): Promise<McpTestResult>;
+    catalog: {
+      list(): Promise<McpCatalogEntry[]>;
+      install(input: McpCatalogInstallInput): Promise<McpServerEntry[]>;
+    };
+    modules: {
+      list(): Promise<McpModuleManifest[]>;
+      uninstall(id: string): Promise<McpServerEntry[]>;
+    };
+    authenticate(moduleId: string): Promise<McpAuthResult>;
+    auth: {
+      revoke(moduleId: string): Promise<void>;
+      status(): Promise<Record<string, McpAuthStatus>>;
+    };
   };
   plugins: {
     list(): Promise<PluginInfo[]>;
@@ -253,13 +337,34 @@ export interface DeyinApi {
     onEvent(cb: (envelope: AgentEventEnvelope) => void): () => void;
   };
   browserControl: {
-    /** Register the workspace <webview> as the controlled browser tab. */
+    /** Register the active workspace <webview> as the controlled browser tab. */
     register(webContentsId: number | null): void;
+    /** Sync tab metadata (url/title) for multi-tab registry. */
+    syncTab(webContentsId: number, url: string, title: string): void;
+    /** Remove a tab from the main-process registry when its webview closes. */
+    removeTab(webContentsId: number): void;
     /** Per-workspace persistent session partition for the webview. */
     getPartition(): Promise<string>;
     clearProfile(): Promise<void>;
     /** Main asks the renderer to open the Browser tab so tools have a target. */
     onEnsure(cb: () => void): () => void;
+    /** Main asks the renderer to open/switch/close browser tabs. */
+    onTabCommand(cb: (cmd: BrowserTabCommand) => void): () => void;
+    /** True while browser_* agent tools are in flight. */
+    onActive(cb: (active: boolean) => void): () => void;
+  };
+  computerUse: {
+    getAllowlist(): Promise<string[]>;
+    setAllowlist(apps: string[]): Promise<void>;
+    listApps(): Promise<unknown>;
+    onActive(cb: (active: boolean) => void): () => void;
+  };
+  chrome: {
+    onConsentRequest(cb: (req: { message?: string }) => void): () => void;
+    respondConsent(granted: boolean): void;
+  };
+  visualize: {
+    read(threadId: string, fileName: string): Promise<string>;
   };
   telemetry: {
     /** Anonymous feature-usage event; dropped unless telemetry is enabled. */
@@ -285,6 +390,15 @@ export interface DeyinApi {
   plans: {
     /** Public Openference plan catalog (edge-cached on the server). */
     list(): Promise<PublicPlan[] | null>;
+  };
+  billing: {
+    /** Subscription and billing overview for plan changes. */
+    overview(): Promise<BillingOverview | null>;
+    /** Start plan selection / Stripe checkout for the signed-in user. */
+    selectPlan(planId: number, options?: SelectPlanOptions): Promise<SelectPlanResponse>;
+    publishableKey(): Promise<string | null>;
+    completeCrossCurrencyUpgrade(newSubscriptionId: string): Promise<{ success?: boolean; redirect?: string; error?: string }>;
+    abortCrossCurrencyUpgrade(newSubscriptionId: string): Promise<void>;
   };
   win: {
     minimize(): void;
@@ -352,6 +466,41 @@ export interface DeyinApi {
     test(hostId: string, acceptFingerprint?: string): Promise<SshTestResult>;
     pinFingerprint(hostId: string, fingerprint: string): Promise<SshHostInfo[]>;
     importKey(): Promise<string | null>;
+  };
+  context: {
+    search(query: string): Promise<ContextSearchHit[]>;
+    resolve(refs: ContextRef[]): Promise<ResolvedContextFile[]>;
+  };
+  review: {
+    list(threadId?: string): Promise<PendingChange[]>;
+    approve(threadId: string, changeId: string): Promise<boolean>;
+    reject(threadId: string, changeId: string): Promise<boolean>;
+    approveAll(threadId: string): Promise<number>;
+    rejectAll(threadId: string): Promise<number>;
+  };
+  git: {
+    status(): Promise<GitStatus | null>;
+    diff(path?: string, staged?: boolean): Promise<string>;
+    stage(paths: string[], unstage?: boolean): Promise<void>;
+    commit(message: string): Promise<string>;
+    branches(): Promise<GitBranch[]>;
+    checkout(branch: string): Promise<void>;
+    log(limit?: number): Promise<GitLogEntry[]>;
+  };
+  security: {
+    listFindings(threadId: string): Promise<SecurityFindingsReport | null>;
+    clearFindings(threadId: string): Promise<void>;
+    scanDiff(threadId: string, diff: string): Promise<SecurityFindingsReport>;
+    onFindingsChanged(cb: (threadId: string) => void): () => void;
+  };
+  reasonix: {
+    metrics(): Promise<ReasonixMetricsSnapshot>;
+    weeklyReport(): Promise<ReasonixWeeklyReport>;
+    diagnostics(threadId?: string): Promise<ReasonixDiagnostics>;
+    clearThreadCache(threadId: string): Promise<void>;
+  };
+  beta: {
+    submitFeedback(payload: { category: string; message: string; rating?: number }): Promise<{ ok: boolean }>;
   };
 }
 

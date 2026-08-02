@@ -20,6 +20,8 @@ import { todoTool } from "./todo.js";
 import { webFetchTool } from "./web-fetch.js";
 import { websearchTool } from "./websearch.js";
 import { writeTool } from "./write.js";
+import { reportGoalMetTool } from "./report-goal-met.js";
+import { completeStepTool } from "./complete-step.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 
 export { ToolRegistry } from "./registry.js";
@@ -51,7 +53,19 @@ export {
   type TaskToolOptions,
   type TaskRunResult,
 } from "./task.js";
+export { createFleetTool, type FleetToolOptions } from "./fleet.js";
+export { createParallelTasksTool, type ParallelTasksToolOptions } from "./parallel-tasks.js";
+export { createWaitJobsTool } from "./wait-jobs.js";
+export { createUseCapabilityTool, type UseCapabilityOptions } from "./use-capability.js";
 export { createCodebaseSearchTool, type CodebaseSearchHit } from "./codebase-search.js";
+export { reportGoalMetTool } from "./report-goal-met.js";
+export { completeStepTool } from "./complete-step.js";
+export {
+  commitFileMutation,
+  applyFileMutationDirect,
+  readFileForMutation,
+} from "./file-mutation.js";
+export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
 
 export const BUILTIN_TOOLS: ToolDefinition[] = [
   bashTool,
@@ -78,6 +92,8 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   enterWorktreeTool,
   exitWorktreeTool,
   notebookEditTool,
+  reportGoalMetTool,
+  completeStepTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

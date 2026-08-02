@@ -166,6 +166,12 @@ const PATHS: Record<string, JSX.Element> = {
   ),
   rocket: <path d="M8 1.5l1.5 3 3 1.5-3 1.5L8 11l-1.5-3-3-1.5 3-1.5zM5.5 10.5L4 13M10.5 10.5L12 13" />,
   logout: <path d="M6 8H2.5M5 5L2.5 8l2.5 3M9 2.5h2.5A1.5 1.5 0 0113 4v8a1.5 1.5 0 01-1.5 1.5H9" />,
+  list: (
+    <>
+      <path d="M3 4.5h10M3 8h10M3 11.5h10" />
+    </>
+  ),
+  star: <path d="M8 2.2l1.6 3.2 3.5.5-2.5 2.5.6 3.5L8 10.2l-3.2 1.7.6-3.5-2.5-2.5 3.5-.5z" />,
 };
 
 export type IconName = keyof typeof PATHS & string;

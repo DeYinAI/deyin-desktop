@@ -21,14 +21,14 @@ export function ApprovalDialog({ toolName, summary, onDecision }: Props) {
   }, [onDecision]);
 
   return (
-    <div className="approval" role="dialog" aria-modal="true">
-      <div className="approval__box">
-        <div className="approval__title">
+    <div className="approval-inline">
+      <div className="approval-inline__box">
+        <div className="approval-inline__title">
           <Icon name="hand" size={15} />
           Allow <code>{toolName}</code>?
         </div>
-        <div className="approval__summary">{summary}</div>
-        <div className="approval__actions">
+        <div className="approval-inline__summary">{summary}</div>
+        <div className="approval-inline__actions">
           <button className="btn btn--outline" onClick={() => onDecision("deny")}>
             Deny
           </button>
