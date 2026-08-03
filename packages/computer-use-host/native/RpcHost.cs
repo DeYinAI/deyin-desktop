@@ -56,7 +56,8 @@ public sealed class RpcHost
   {
     _operationCts?.Cancel();
     _operationCts = null;
-    return JsonSerializer.SerializeToNode(new { cancelled = true });
+    return JsonSerializer.SerializeToNode(new { cancelled = true })
+      ?? throw new InvalidOperationException("Failed to serialize cancel response");
   }
 
   private JsonNode GetWindowState(JsonObject parameters)
