@@ -62,8 +62,6 @@ import type {
   ContextRef,
   ResolvedContextFile,
   PendingChange,
-  GitStatus,
-  GitBranch,
   GitLogEntry,
   SecurityFindingsReport,
   Advanced agentMetricsSnapshot,
@@ -244,13 +242,6 @@ export const CH = {
   reviewReject: "deyin:review:reject",
   reviewApproveAll: "deyin:review:approveAll",
   reviewRejectAll: "deyin:review:rejectAll",
-  gitStatus: "deyin:git:status",
-  gitDiff: "deyin:git:diff",
-  gitStage: "deyin:git:stage",
-  gitCommit: "deyin:git:commit",
-  gitBranches: "deyin:git:branches",
-  gitCheckout: "deyin:git:checkout",
-  gitLog: "deyin:git:log",
   securityListFindings: "deyin:security:listFindings",
   securityClearFindings: "deyin:security:clearFindings",
   securityScanDiff: "deyin:security:scanDiff",
@@ -550,15 +541,6 @@ export interface DeyinApi {
     reject(threadId: string, changeId: string): Promise<boolean>;
     approveAll(threadId: string): Promise<number>;
     rejectAll(threadId: string): Promise<number>;
-  };
-  git: {
-    status(): Promise<GitStatus | null>;
-    diff(path?: string, staged?: boolean): Promise<string>;
-    stage(paths: string[], unstage?: boolean): Promise<void>;
-    commit(message: string): Promise<string>;
-    branches(): Promise<GitBranch[]>;
-    checkout(branch: string): Promise<void>;
-    log(limit?: number): Promise<GitLogEntry[]>;
   };
   security: {
     listFindings(threadId: string): Promise<SecurityFindingsReport | null>;
