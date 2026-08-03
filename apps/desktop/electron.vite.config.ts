@@ -40,6 +40,26 @@ function copyBundledPluginsPlugin(): Plugin {
   };
 }
 
+/**
+ * Remove `crossorigin` attributes from built HTML to prevent CORS failures
+ * when loading assets over file:// protocol in Electron on Windows.
+ * 
+ * Vite adds crossorigin="anonymous" to <script> and <link> tags in production.
+ * Chromium treats file:// URLs with crossorigin as CORS requests, which fail
+ * silently (no CORS headers available), causing a blank screen on Windows.
+ */
+function removeCrossOriginPlugin(): Plugin {
+  return {
+    name: "remove-crossorigin",
+    enforce: "post",
+    transformIndexHtml(html) {
+      return html
+        .replace(/\s+crossorigin/g, "")
+        .replace(/crossorigin\s+/g, "");
+    },
+  };
+}
+
 // Bundle workspace packages into the main output; keep native/third-party deps external.
 const externalize = externalizeDepsPlugin({
  exclude: ["@deyin/oauth-client", "@deyin/branding", "@deyin/host-core", "@deyin/agent-core", "@deyin/computer-use-host", "@deyin/optimization-plugin"],
@@ -76,7 +96,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(root, "src/renderer"),
-    plugins: [react()],
+    plugins: [react(), removeCrossOriginPlugin()],
     build: {
       outDir: "out/renderer",
       rollupOptions: { input: resolve(root, "src/renderer/index.html") },
