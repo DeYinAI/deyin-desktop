@@ -26,6 +26,7 @@ export type StreamEvent =
         ratio: number;
         results: CompressionResult[];
       };
+      continuations?: number;
     };
 
 export interface TransportOptions {
