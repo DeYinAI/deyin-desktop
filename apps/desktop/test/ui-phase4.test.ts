@@ -18,6 +18,25 @@ import {
 import { groupIntoTurns, partitionTurnZones, searchTurns } from "../src/renderer/hooks/turnGrouping.ts";
 import { isQuietTool, countRenderedToolNodes } from "../src/renderer/components/toolCallUtils.ts";
 
+test("useAgentState: getSessionStats returns stable reference between reads", () => {
+  __testResetAgentStore();
+  const a = agentStateStore.getSessionStats();
+  const b = agentStateStore.getSessionStats();
+  assert.equal(a, b, "session stats snapshot must be referentially stable for useSyncExternalStore");
+});
+
+test("useAgentState: getSnapshot returns stable reference until store notifies", () => {
+  __testResetAgentStore();
+  const threadId = "stable-thread";
+  agentStateStore.startRun(threadId, "agent");
+  const a = __testGetThreadState(threadId);
+  const b = __testGetThreadState(threadId);
+  assert.equal(a, b, "thread snapshot must be referentially stable for useSyncExternalStore");
+  __testDispatch({ threadId, event: { type: "tool-start", callId: "c1", name: "read", summary: "file.ts" } });
+  const c = __testGetThreadState(threadId);
+  assert.notEqual(a, c, "snapshot must change after a structural notify");
+});
+
 test("useAgentState: tab switching preserves background thread stream state", async () => {
   __testResetAgentStore();
   const threadA = "thread-a";
