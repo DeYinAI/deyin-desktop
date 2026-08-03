@@ -847,3 +847,22 @@ export interface GitResultLite {
   ok: boolean;
   message: string;
 }
+
+/** Context attachment types for @ mentions */
+export interface ContextRef {
+  path: string;
+  kind: "file" | "folder";
+}
+
+export interface ContextSearchHit {
+  path: string;
+  kind: "file" | "folder";
+  label: string;
+}
+
+export interface ResolvedContextFile {
+  path: string;
+  kind: "file" | "folder";
+  content: string;
+  truncated?: boolean;
+}
