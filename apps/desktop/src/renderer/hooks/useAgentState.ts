@@ -175,6 +175,10 @@ class AgentStateStore {
     cacheHitTokens: 0,
     cacheMissTokens: 0,
   };
+  /** Cached snapshot for useSyncExternalStore — must keep referential equality between notifies. */
+  private sessionStatsSnapshot: SessionTokenStats = { ...this.sessionStats };
+  private threadSnapshots = new Map<string, ThreadRunSnapshot>();
+  private streamSnapshots = new Map<string, { streamText: string; streamReasoning: string; seq: number }>();
   private ignoreNextDone = new Set<string>();
   private sideEffects: ((effect: AgentSideEffect) => void)[] = [];
 
@@ -216,18 +220,34 @@ class AgentStateStore {
     };
   };
 
+  private invalidateThreadSnapshot(threadId: string) {
+    this.threadSnapshots.delete(threadId);
+    this.streamSnapshots.delete(threadId);
+  }
+
+  private invalidateAllThreadSnapshots() {
+    this.threadSnapshots.clear();
+    this.streamSnapshots.clear();
+  }
+
+  private refreshSessionStatsSnapshot() {
+    this.sessionStatsSnapshot = { ...this.sessionStats };
+  }
+
   private notifyStructural() {
+    this.invalidateAllThreadSnapshots();
     for (const l of this.listeners) l();
   }
 
   private notifyStream(threadId: string) {
+    this.invalidateThreadSnapshot(threadId);
     const set = this.streamListeners.get(threadId);
     if (set) for (const l of set) l();
   }
 
-  getSnapshot(threadId: string): ThreadRunSnapshot {
+  private buildThreadSnapshot(threadId: string): ThreadRunSnapshot {
     const t = this.thread(threadId);
-    return {
+    const snap: ThreadRunSnapshot = {
       threadId,
       running: t.running,
       turnActive: t.turnActive,
@@ -239,15 +259,25 @@ class AgentStateStore {
       tokens: t.tokens,
       contextSnapshot: t.contextSnapshot,
     };
+    this.threadSnapshots.set(threadId, snap);
+    return snap;
+  }
+
+  getSnapshot(threadId: string): ThreadRunSnapshot {
+    return this.threadSnapshots.get(threadId) ?? this.buildThreadSnapshot(threadId);
   }
 
   getStreamSnapshot(threadId: string): { streamText: string; streamReasoning: string; seq: number } {
+    const cached = this.streamSnapshots.get(threadId);
+    if (cached) return cached;
     const t = this.thread(threadId);
-    return { streamText: t.streamText, streamReasoning: t.streamReasoning, seq: t.seq };
+    const snap = { streamText: t.streamText, streamReasoning: t.streamReasoning, seq: t.seq };
+    this.streamSnapshots.set(threadId, snap);
+    return snap;
   }
 
   getSessionStats(): SessionTokenStats {
-    return { ...this.sessionStats };
+    return this.sessionStatsSnapshot;
   }
 
   startRun(threadId: string, mode: ChatMode) {
@@ -409,6 +439,7 @@ class AgentStateStore {
         t.tokens = event.totalTokens;
         this.sessionStats.output = event.totalTokens;
         this.sessionStats.sessionTotal += event.totalTokens;
+        this.refreshSessionStatsSnapshot();
         this.notifyStructural();
         break;
       case "optimization": {
@@ -428,6 +459,7 @@ class AgentStateStore {
         this.sessionStats.inputUncached += Math.max(0, event.compressedInputTokens - event.cachedPromptTokens);
         this.sessionStats.cacheHitTokens += event.cachedPromptTokens;
         this.sessionStats.cacheMissTokens += Math.max(0, event.originalInputTokens - event.cachedPromptTokens);
+        this.refreshSessionStatsSnapshot();
         this.notifyStructural();
         break;
       }
@@ -696,6 +728,9 @@ export function __testResetAgentStore() {
     cacheHitTokens: 0,
     cacheMissTokens: 0,
   };
+  agentStateStore["sessionStatsSnapshot"] = { ...agentStateStore["sessionStats"] };
+  agentStateStore["threadSnapshots"] = new Map();
+  agentStateStore["streamSnapshots"] = new Map();
 }
 
 export function __testDispatch(envelope: AgentEventEnvelope) {
