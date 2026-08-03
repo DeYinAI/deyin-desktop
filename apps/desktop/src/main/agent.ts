@@ -284,6 +284,19 @@ export class DesktopAgentHost {
     for (const threadId of this.sessions.keys()) this.disposeShell(threadId);
   }
 
+  /** Stop in-flight runs and tear down persistent shells (app quit). */
+  shutdown(): void {
+    for (const threadId of [...this.active.keys()]) this.stop(threadId);
+    this.disposeAllShells();
+    if (this.optimizationPlugin) {
+      this.optimizationPlugin.dispose();
+      this.optimizationPlugin = null;
+    }
+    this.optimizationPluginLoading = null;
+    this.optimizationPluginLoadError = null;
+    this.optimizationPluginLoadErrorNotified = false;
+  }
+
   isRunning(threadId: string): boolean {
     return this.active.has(threadId);
   }
