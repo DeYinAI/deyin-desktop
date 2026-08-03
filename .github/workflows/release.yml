@@ -94,6 +94,7 @@ jobs:
         if: matrix.name == 'windows'
         with:
           dotnet-version: "8.0.x"
+          install-dir: ${{ runner.temp }}/dotnet
 
       - name: Publish computer-use native host
         if: matrix.name == 'windows'
