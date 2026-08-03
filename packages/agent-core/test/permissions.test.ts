@@ -65,3 +65,36 @@ test("skipAll allows tools without explicit deny rules", () => {
   assert.equal(engine.actionFor(bash), "allow");
   assert.equal(engine.actionFor(edit), "allow");
 });
+
+test("autoAllow (full access) allows asks without prompting", () => {
+  const engine = new PermissionEngine({ autoAllow: true });
+  assert.equal(engine.actionFor(bash), "allow");
+  assert.equal(engine.actionFor(edit), "allow");
+  assert.equal(engine.actionFor(read), "allow");
+});
+
+test("autoAllow never overrides explicit denies", () => {
+  const engine = new PermissionEngine({
+    autoAllow: true,
+    agentRules: [
+      { tool: "write", action: "deny" },
+      { tool: "edit", action: "deny" },
+      { tool: "delete", action: "deny" },
+      { tool: "notebook_edit", action: "deny" },
+    ],
+  });
+  // Plan-mode read-only rules stay enforced under full access.
+  assert.equal(engine.actionFor(edit), "deny");
+  assert.equal(engine.actionFor({ name: "write", tier: "write" }), "deny");
+  // …while bash is auto-allowed instead of prompting.
+  assert.equal(engine.actionFor(bash), "allow");
+});
+
+test("setConfigRules swaps rules live (mid-run mode switch)", () => {
+  const engine = new PermissionEngine({ autoAllow: true, configRules: [] });
+  assert.equal(engine.actionFor(edit), "allow");
+  engine.setConfigRules([{ tool: "edit", action: "deny" }]);
+  assert.equal(engine.actionFor(edit), "deny");
+  engine.setConfigRules([]);
+  assert.equal(engine.actionFor(edit), "allow");
+});
