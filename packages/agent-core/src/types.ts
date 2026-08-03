@@ -1,3 +1,5 @@
+import type { EvidenceLedger } from "./evidence/ledger.js";
+
 /** One tool invocation requested by the model (arguments is the raw JSON string). */
 export interface AgentToolCall {
   id: string;
@@ -45,6 +47,9 @@ export interface TodoItem {
   id: string;
   content: string;
   status: "pending" | "in_progress" | "completed" | "cancelled";
+  acceptanceCriteria?: string;
+  signedOff?: boolean;
+  signOffNotes?: string;
 }
 
 /** A workspace file mutation reported by the write/edit tools (drives diff UIs). */
@@ -94,6 +99,18 @@ export interface ToolContext {
   onPlanCreated?: (plan: PlanArtifact) => void;
   /** Host bridge for EnterPlanMode / ExitPlanMode / SwitchMode. */
   onModeChange?: (change: ModeChangeRequest) => Promise<string>;
+  /** Evidence ledger for delivery mode verification tracking. */
+  evidenceLedger?: EvidenceLedger;
+  /** Callback fired when agent signs off on a completed step in delivery mode. */
+  onEvidenceSignOff?: (evidence: { stepId: string; verificationCommand?: string; diffSummary?: string; reviewNotes?: string }) => void;
+  /** Apply file mutation through review queue (desktop review mode). */
+  applyFileChange?: (request: { path: string; operation: string; before: string; after: string }) => Promise<"applied" | "rejected">;
+  /** Active goal text for report-goal-met tool. */
+  goalText?: string;
+  /** Callback when agent reports goal met/unmet in delivery mode. */
+  onGoalReport?: (report: { met: boolean; reason: string }) => void;
+  /** Wait for background jobs to complete. */
+  waitForJobs?: (jobIds: string[], timeoutMs: number) => Promise<Array<{ id: string; label: string; status: string; result?: string; error?: string; output?: string }>>;
   /** Skills discovered for this run (Skill tool). */
   skills?: DiscoveredSkill[];
   /** Session metadata for read_session_context. */
@@ -149,8 +166,8 @@ export type InteractionRequest =
   | { type: "ask-question"; questions: AskQuestionItem[]; title?: string };
 
 export interface ModeChangeRequest {
-  target: "agent" | "plan" | "ask";
-  previous?: "agent" | "plan" | "ask";
+  target: "agent" | "plan" | "ask" | "delivery";
+  previous?: "agent" | "plan" | "ask" | "delivery";
   userApproved?: boolean;
   explanation?: string;
   event: "enter" | "exit" | "switch";

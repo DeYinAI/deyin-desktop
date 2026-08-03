@@ -312,15 +312,6 @@ agent: {
     approveAll: (threadId) => ipcRenderer.invoke(CH.reviewApproveAll, threadId),
     rejectAll: (threadId) => ipcRenderer.invoke(CH.reviewRejectAll, threadId),
   },
-  git: {
-    status: () => ipcRenderer.invoke(CH.gitStatus),
-    diff: (path, staged) => ipcRenderer.invoke(CH.gitDiff, path, staged),
-    stage: (paths, unstage) => ipcRenderer.invoke(CH.gitStage, paths, unstage),
-    commit: (message) => ipcRenderer.invoke(CH.gitCommit, message),
-    branches: () => ipcRenderer.invoke(CH.gitBranches),
-    checkout: (branch) => ipcRenderer.invoke(CH.gitCheckout, branch),
-    log: (limit) => ipcRenderer.invoke(CH.gitLog, limit),
-  },
   security: {
     listFindings: (threadId) => ipcRenderer.invoke(CH.securityListFindings, threadId),
     clearFindings: (threadId) => ipcRenderer.invoke(CH.securityClearFindings, threadId),
