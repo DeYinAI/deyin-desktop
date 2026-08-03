@@ -10,6 +10,16 @@ import {
 
 export type { ProviderApiFormat, StreamEvent };
 
+/** Sum token usage across multiple requests (used for DeepSeek continuations). */
+export function foldTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cachedPromptTokens: (a.cachedPromptTokens ?? 0) + (b.cachedPromptTokens ?? 0),
+  };
+}
+
 export interface StreamChatEventsOptions {
  apiBaseUrl: string;
  token: string;
@@ -39,10 +49,12 @@ export interface StreamChatEventsOptions {
   * "anthropic" speaks the Anthropic Messages API (x-api-key, /v1/messages).
   */
  apiFormat?: ProviderApiFormat;
- /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
- authHeader?: boolean;
- /** Anthropic API version header; default "2023-06-01". */
- anthropicVersion?: string;
+  /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
+  authHeader?: boolean;
+  /** Anthropic API version header; default "2023-06-01". */
+  anthropicVersion?: string;
+  /** Max continuation attempts for DeepSeek prefix-based cache. */
+  maxContinuations?: number;
 }
 
 interface WireDelta {
