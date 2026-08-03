@@ -1,6 +1,6 @@
 {
   "name": "@deyin/desktop",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Deyin desktop app (Electron). Agentic development environment with native computer use, billing, MCP servers, and plugin system.",
   "license": "MIT",
   "author": "Deyin <hello@deyin.dev>",
