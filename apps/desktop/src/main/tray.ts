@@ -1,5 +1,6 @@
 import { Menu, Tray, app, nativeImage } from "electron";
 import { join } from "node:path";
+import { requestQuit } from "./shutdown.js";
 
 let tray: Tray | null = null;
 let pendingReviewCount = 0;
@@ -16,7 +17,7 @@ function buildTrayMenu(): Menu {
   }
   items.push({ label: "Show Deyin", click: () => onShowHandler?.() });
   items.push({ type: "separator" });
-  items.push({ label: "Quit", click: () => app.quit() });
+  items.push({ label: "Quit", click: () => requestQuit("tray-quit") });
   return Menu.buildFromTemplate(items);
 }
 

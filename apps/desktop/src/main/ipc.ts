@@ -68,7 +68,8 @@ export interface IpcServices {
   shouldKeepRunningInBackground: () => boolean;
   /** Call when the auth session changes (login/logout) to drop server caches. */
   notifyAuthChanged: () => void;
-  dispose: () => void;
+  /** Async teardown for app quit (agent runs, telemetry, automations, …). */
+  shutdown: () => Promise<void>;
 }
 
 function windowOf(event: IpcMainEvent | IpcMainInvokeEvent): BrowserWindow | null {
@@ -547,10 +548,13 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
         if (user) void identity.sync();
       });
     },
-    dispose: () => {
-      agentHost.disposeAllShells();
+    shutdown: async () => {
+      agentHost.shutdown();
       telemetry.stop();
-      void telemetry.flush();
+      await Promise.race([
+        telemetry.flush(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
       index.dispose();
       automations.dispose();
       gitWatcher.stop();

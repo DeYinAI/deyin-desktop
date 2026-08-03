@@ -1,6 +1,34 @@
 import { join } from "node:path";
-import { BrowserWindow, shell } from "electron";
+import { BrowserWindow, shell, webContents } from "electron";
 import { colors } from "@deyin/branding";
+import { isAppQuitting, logShutdown } from "./shutdown.js";
+
+let mainWindow: BrowserWindow | null = null;
+
+/** The primary application window, if one exists. */
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow;
+}
+
+/** Tear down embedded webviews and stop navigation before the window is destroyed. */
+function prepareWindowForClose(window: BrowserWindow): void {
+  try {
+    window.webContents.stop();
+  } catch {
+    // window may already be destroyed
+  }
+
+  // Guest webviews can keep renderer/GPU processes alive on Windows after close.
+  for (const guest of webContents.getAllWebContents()) {
+    if (guest.hostWebContents?.id === window.webContents.id) {
+      try {
+        guest.close();
+      } catch {
+        // ignore per-guest teardown errors
+      }
+    }
+  }
+}
 
 /** Create the main application window: frameless with a custom title bar. */
 export function createMainWindow(): BrowserWindow {
@@ -25,7 +53,19 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
+  mainWindow = window;
+
   window.once("ready-to-show", () => window.show());
+
+  window.on("close", () => {
+    logShutdown("window-close", { quitting: isAppQuitting() });
+    prepareWindowForClose(window);
+  });
+
+  window.on("closed", () => {
+    logShutdown("window-closed");
+    if (mainWindow === window) mainWindow = null;
+  });
 
   // Open external links in the system browser, never in-app.
   window.webContents.setWindowOpenHandler(({ url }) => {

@@ -6,7 +6,8 @@ import { resolveDeyinConfig } from "../shared/config.js";
 import { DEEP_LINK_SCHEME } from "../shared/config.js";
 import { initLogger } from "./logger.js";
 import { createMainWindow } from "./window.js";
-import { disposeTray, ensureTray } from "./tray.js";
+import { ensureTray } from "./tray.js";
+import { logShutdown, registerAppShutdownHandlers, requestQuit } from "./shutdown.js";
 
 let services: IpcServices | undefined;
 let workspaceRoot: string | null = null;
@@ -88,9 +89,12 @@ async function bootstrap(): Promise<void> {
   });
 }
 
+registerAppShutdownHandlers(() => services);
+
 // Single-instance: a second launch (e.g. the OS opening the deyin:// link)
 // forwards its argv to the running instance instead of starting a new one.
 if (!app.requestSingleInstanceLock()) {
+  logShutdown("second-instance-blocked");
   app.quit();
 } else {
   app.on("second-instance", (_event, argv) => {
@@ -102,7 +106,13 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on("window-all-closed", () => {
-  services?.terminals.disposeAll();
+  logShutdown("window-all-closed", {
+    platform: process.platform,
+    keepInBackground: services?.shouldKeepRunningInBackground() ?? false,
+  });
+
+  // macOS keeps the app alive until explicit quit; Windows/Linux should exit
+  // when all windows are closed unless the user opted into background mode.
   if (process.platform !== "darwin") {
     if (services?.shouldKeepRunningInBackground()) {
       ensureTray(() => {
@@ -111,12 +121,6 @@ app.on("window-all-closed", () => {
       });
       return;
     }
-    app.quit();
+    requestQuit("window-all-closed");
   }
-});
-
-app.on("before-quit", () => {
-  disposeTray();
-  services?.terminals.disposeAll();
-  services?.dispose();
 });
