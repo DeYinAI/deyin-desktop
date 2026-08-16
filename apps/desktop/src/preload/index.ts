@@ -177,24 +177,6 @@ agent: {
       return () => ipcRenderer.removeListener(CH.browserActive, listener);
     },
   },
-  computerUse: {
-    getAllowlist: () => ipcRenderer.invoke(CH.computerUseGetAllowlist),
-    setAllowlist: (apps) => ipcRenderer.invoke(CH.computerUseSetAllowlist, apps),
-    listApps: () => ipcRenderer.invoke(CH.computerUseListApps),
-    onActive: (cb) => {
-      const listener = (_e: unknown, active: boolean) => cb(active);
-      ipcRenderer.on(CH.computerUseActive, listener);
-      return () => ipcRenderer.removeListener(CH.computerUseActive, listener);
-    },
-  },
-  chrome: {
-    onConsentRequest: (cb) => {
-      const listener = (_e: unknown, req: { message?: string }) => cb(req);
-      ipcRenderer.on(CH.chromeConsentRequest, listener);
-      return () => ipcRenderer.removeListener(CH.chromeConsentRequest, listener);
-    },
-    respondConsent: (granted) => ipcRenderer.send(CH.chromeConsentRespond, granted),
-  },
   visualize: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.visualizeRead, threadId, fileName),
   },
@@ -268,39 +250,6 @@ agent: {
       return () => ipcRenderer.removeListener(CH.updatesState, listener);
     },
   },
-  automations: {
-    list: () => ipcRenderer.invoke(CH.automationsList),
-    create: (input) => ipcRenderer.invoke(CH.automationsCreate, input),
-    update: (id, patch) => ipcRenderer.invoke(CH.automationsUpdate, id, patch),
-    remove: (id) => ipcRenderer.invoke(CH.automationsDelete, id),
-    toggle: (id, enabled) => ipcRenderer.invoke(CH.automationsToggle, id, enabled),
-    run: (id) => ipcRenderer.invoke(CH.automationsRun, id),
-    stop: (runId) => ipcRenderer.send(CH.automationsStop, runId),
-    runs: (automationId) => ipcRenderer.invoke(CH.automationsRuns, automationId),
-    onEvent: (cb) => {
-      const listener = (
-        _e: unknown,
-        payload: { runId: string; automationId: string; event: import("../shared/types.js").AgentUiEvent },
-      ) => cb(payload);
-      ipcRenderer.on(CH.automationEvent, listener);
-      return () => ipcRenderer.removeListener(CH.automationEvent, listener);
-    },
-    onRunFinished: (cb) => {
-      const listener = (_e: unknown, payload: { run: import("../shared/types.js").AutomationRun }) => cb(payload);
-      ipcRenderer.on(CH.automationRunFinished, listener);
-      return () => ipcRenderer.removeListener(CH.automationRunFinished, listener);
-    },
-  },
-  sshHosts: {
-    list: () => ipcRenderer.invoke(CH.sshHostsList),
-    add: (input) => ipcRenderer.invoke(CH.sshHostsAdd, input),
-    update: (id, patch) => ipcRenderer.invoke(CH.sshHostsUpdate, id, patch),
-    remove: (id) => ipcRenderer.invoke(CH.sshHostsRemove, id),
-    setCredentials: (id, creds) => ipcRenderer.invoke(CH.sshHostsSetCredentials, id, creds),
-    test: (hostId, acceptFingerprint) => ipcRenderer.invoke(CH.sshHostsTest, hostId, acceptFingerprint),
-    pinFingerprint: (hostId, fingerprint) => ipcRenderer.invoke(CH.sshHostsPinFingerprint, hostId, fingerprint),
-    importKey: () => ipcRenderer.invoke(CH.sshHostsImportKey),
-  },
   context: {
     search: (query) => ipcRenderer.invoke(CH.contextSearch, query),
     resolve: (refs) => ipcRenderer.invoke(CH.contextResolve, refs),
@@ -321,12 +270,6 @@ agent: {
       ipcRenderer.on(CH.securityFindingsChanged, listener);
       return () => ipcRenderer.removeListener(CH.securityFindingsChanged, listener);
     },
-  },
-  agent: {
-    metrics: () => ipcRenderer.invoke(CH.agentMetricsGet),
-    weeklyReport: () => ipcRenderer.invoke(CH.agentMetricsReport),
-    diagnostics: (threadId) => ipcRenderer.invoke(CH.agentDiagnosticsGet, threadId),
-    clearThreadCache: (threadId) => ipcRenderer.invoke(CH.agentCacheClear, threadId),
   },
   beta: {
     submitFeedback: (payload) => ipcRenderer.invoke(CH.betaFeedbackSubmit, payload),

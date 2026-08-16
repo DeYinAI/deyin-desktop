@@ -425,64 +425,16 @@ export interface DeyinSettings {
   /** Live local semantic indexing of the workspace. */
   indexingEnabled: boolean;
   onboard: OnboardProgress;
-  /** Run missed cron automations once on app startup. */
-  automationsCatchUp: boolean;
   /** Keep scheduler alive in the tray when all windows are closed. */
   keepRunningInBackground: boolean;
-  /** Tier-1: compress tool/user payloads before sending to the LLM. */
-  optimizationCompression: boolean;
-  /** Tier-1 compression aggressiveness. */
-  optimizationCompressionMode: "aggressive" | "balanced" | "conservative";
-  /** Tier-1: send provider prompt-cache keys / markers. */
-  optimizationPromptCaching: boolean;
   /** Tier-2: load semantic optimization plugin. */
   optimizationPluginEnabled: boolean;
-  /** Tier-2: semantic tool-result cache. */
-  optimizationToolCache: boolean;
-  /** Tier-2: semantic response cache. */
-  optimizationResponseCache: boolean;
-  /** Cosine similarity threshold for semantic cache hits (0.80–0.98). */
-  optimizationSimilarityThreshold: number;
   /** Background memory (remember/forget + automatic recall). */
   memoryEnabled: boolean;
   /** Route write/edit/delete through the user review queue. */
   reviewMode: "off" | "on";
-  /** Show the Delivery composer mode (evidence gates + complete_step sign-offs). */
-  enableDeliveryMode: boolean;
   /** Last version whose What's New modal was shown. */
   whatsNewSeenVersion: string | null;
-  /** Advanced agent onboarding modal dismissed. */
-  agentOnboardComplete: boolean;
-  /** Cache optimization target prefix-cache hit rate (0–0.95). */
-  cacheHitRateTarget: number;
-  /** Warn below this prefix-cache hit rate. */
-  cacheHitRateWarningThreshold: number;
-  /** Master switch for cache optimization settings. */
-  enableCacheOptimizations: boolean;
-  /** Route non-trivial edits through the planner coordinator. */
-  enableCoordinator: boolean;
-  /** Planner model ("providerId::modelId"); null disables. */
-  plannerModel: string | null;
-  /** Coordinator routing aggressiveness. */
-  coordinatorRoutingPolicy: "balanced" | "conservative" | "aggressive";
-  /** Fleet orchestration (multi-agent background jobs). */
-  enableFleet: boolean;
-  /** Chrome CDP attach for logged-in browser sessions (Windows). */
-  chromeDebugEnabled: boolean;
-  /** OS-level computer use via the native host (Windows). */
-  computerUseEnabled: boolean;
-  /** Days to keep computer-use screenshots. */
-  computerUseScreenshotRetentionDays: number;
-  /** Prompt before computer-use actions even under full access. */
-  computerUseConfirmationRequired: boolean;
-  /** Delivery mode: todo_write must set acceptanceCriteria before mutations. */
-  evidenceRequireAcceptanceCriteria: boolean;
-  /** Delivery mode: block final answers until every step is signed off. */
-  evidenceStrictFinalization: boolean;
-  /** Scheduler: parallel writer claims allowed per session (1-8). */
-  maxParallelWriters: number;
-  /** Scheduler: validate write paths against the workspace root. */
-  schedulerWritePathValidation: boolean;
 }
 
 /* Automations ------------------------------------------------------------- */
