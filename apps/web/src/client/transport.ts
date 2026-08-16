@@ -20,6 +20,7 @@ import {
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import type { DeyinApi } from "@contract/ipc.js";
+import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
 import type {
   Bootstrap,
   CapabilityItem,
@@ -94,6 +95,7 @@ class HostSocket {
   private dataHandlers = new Set<(e: { id: string; data: string }) => void>();
   private exitHandlers = new Set<(e: { id: string; exitCode: number }) => void>();
   private rootHandlers = new Set<(root: string | null) => void>();
+  private agentEventHandlers = new Set<(envelope: AgentEventEnvelope) => void>();
   /** Sandbox root assigned by the host after auth; kept across transient disconnects. */
   workspaceRoot: string | null = null;
 
@@ -220,6 +222,9 @@ class HostSocket {
       case "term.exit":
         this.exitHandlers.forEach((h) => h({ id: msg.termId, exitCode: msg.exitCode }));
         break;
+      case "agent.event":
+        this.agentEventHandlers.forEach((h) => h(msg.envelope));
+        break;
     }
   }
 
@@ -249,6 +254,10 @@ class HostSocket {
   onExit(cb: (e: { id: string; exitCode: number }) => void): () => void {
     this.exitHandlers.add(cb);
     return () => this.exitHandlers.delete(cb);
+  }
+  onAgentEvent(cb: (envelope: AgentEventEnvelope) => void): () => void {
+    this.agentEventHandlers.add(cb);
+    return () => this.agentEventHandlers.delete(cb);
   }
 }
 
@@ -565,13 +574,44 @@ export function createBrowserTransport(): DeyinApi {
       onStatus: () => () => undefined,
     },
     agent: {
-      // The renderer only uses the agent runtime on the desktop platform.
-      start: async () => undefined,
-      stop: () => undefined,
-      approve: () => undefined,
-      answerQuestion: () => undefined,
+      // Full agent runtime: runs agent-core inside the session sandbox on the
+      // host-server; events stream back over the same WebSocket. Provider keys
+      // are read from this browser's storage and sent per run, never persisted.
+      start: async (options: AgentStartOptions) => {
+        const provider = readProviders().find((p) => p.id === options.providerId);
+        const keys = readKeys();
+        const primary = !provider || provider.kind === "primary";
+        const token = primary
+          ? ((await oauth.getAccessToken().catch(() => null)) ?? "")
+          : (keys[provider.id] ?? (provider.local ? "" : ""));
+        if (!token && !primary && !provider?.local) {
+          throw new Error(`No API key stored for ${provider?.name ?? options.providerId}.`);
+        }
+        await host.invoke((id: number) => ({
+          type: "agent.start",
+          id,
+          threadId: options.threadId,
+          prompt: options.prompt,
+          model: options.model,
+          thinking: options.thinking,
+          approvalMode: options.approvalMode,
+          mode: options.mode,
+          history: options.history,
+          provider: {
+            baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
+            token,
+            apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
+            authHeader: provider?.authHeader,
+          },
+        }));
+      },
+      stop: (threadId) => host.fireAndForget({ type: "agent.stop", threadId }),
+      approve: (requestId, decision) =>
+        host.fireAndForget({ type: "agent.approve", requestId, decision }),
+      answerQuestion: (requestId, answers) =>
+        host.fireAndForget({ type: "agent.answer", requestId, answers }),
       disposeShell: () => undefined,
-      onEvent: () => () => undefined,
+      onEvent: (cb: (envelope: AgentEventEnvelope) => void) => host.onAgentEvent(cb),
     },
     context: {
       search: async () => [],

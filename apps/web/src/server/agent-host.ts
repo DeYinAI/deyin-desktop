@@ -1,0 +1,345 @@
+import { randomUUID } from "node:crypto";
+import { AgentShell, TerminalManager } from "@deyin/host-core";
+import type { AgentEventEnvelope, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
+import {
+  BUILTIN_SUBAGENTS,
+  PermissionEngine,
+  agentForMode,
+  buildSystemPrompt,
+  createBuiltinRegistry,
+  createTaskTool,
+  rulesForApprovalMode,
+  runAgent,
+  runSubagent,
+  subagentReadonlyRules,
+  type AgentEvent,
+  type PermissionDecision,
+  type SubagentDefinition,
+  type ToolRegistry,
+} from "@deyin/agent-core";
+import type { WebAgentProviderRouting } from "../shared/protocol.js";
+
+/** Mirrors the desktop's prompt bridge timeout: unanswered prompts deny after 5 minutes. */
+const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+
+export interface WebAgentStartOptions {
+  threadId: string;
+  prompt: string;
+  model: string;
+  thinking: boolean;
+  approvalMode: "full-access" | "ask-first" | "read-only";
+  mode: ChatMode;
+  history: { role: "user" | "assistant"; content: string }[];
+  provider: WebAgentProviderRouting;
+}
+
+interface ActiveRun {
+  abort: AbortController;
+  doneEmitted: boolean;
+}
+
+interface PendingPrompt<T> {
+  threadId: string;
+  resolve: (value: T) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Runs the agent-core loop inside one web session's sandbox root. Provider
+ * credentials arrive per run (from the browser's stored keys) and are never
+ * persisted; tool + terminal activity stays confined to the sandbox.
+ */
+export class WebAgentHost {
+  private active = new Map<string, ActiveRun>();
+  private shells = new Map<string, AgentShell>();
+  private pendingPermissions = new Map<string, PendingPrompt<PermissionDecision>>();
+  private pendingQuestions = new Map<string, PendingPrompt<Record<string, string | string[]>>>();
+
+  constructor(
+    private readonly root: string,
+    private readonly terminals: TerminalManager,
+    private readonly send: (envelope: AgentEventEnvelope) => void,
+    private readonly emitTerminal: (msg: { type: "term.data"; termId: string; data: string } | { type: "term.exit"; termId: string; exitCode: number }) => void,
+  ) {}
+
+  start(options: WebAgentStartOptions): void {
+    void this.startRun(options).catch((err) => {
+      this.emit(options.threadId, { type: "error", message: err instanceof Error ? err.message : String(err) });
+      this.finish(options.threadId, "aborted", "");
+    });
+  }
+
+  stop(threadId: string): void {
+    const run = this.active.get(threadId);
+    if (run) run.abort.abort();
+    this.denyPending(threadId);
+  }
+
+  approve(requestId: string, decision: PermissionDecision): void {
+    const pending = this.pendingPermissions.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingPermissions.delete(requestId);
+    pending.resolve(decision);
+  }
+
+  answerQuestion(requestId: string, answers: Record<string, string | string[]>): void {
+    const pending = this.pendingQuestions.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingQuestions.delete(requestId);
+    pending.resolve(answers);
+  }
+
+  dispose(): void {
+    for (const threadId of [...this.active.keys()]) this.stop(threadId);
+    for (const shell of this.shells.values()) {
+      this.terminals.unregister(shell.id);
+      shell.dispose();
+    }
+    this.shells.clear();
+  }
+
+  private emit(threadId: string, event: AgentUiEvent): void {
+    this.send({ threadId, event });
+  }
+
+  private finish(threadId: string, reason: "completed" | "max-steps" | "aborted", finalText: string): void {
+    const run = this.active.get(threadId);
+    if (!run || run.doneEmitted) return;
+    run.doneEmitted = true;
+    this.emit(threadId, { type: "done", reason, finalText });
+  }
+
+  private denyPending(threadId: string): void {
+    for (const [requestId, pending] of this.pendingPermissions) {
+      if (pending.threadId !== threadId) continue;
+      clearTimeout(pending.timer);
+      this.pendingPermissions.delete(requestId);
+      pending.resolve("deny");
+    }
+    for (const [requestId, pending] of this.pendingQuestions) {
+      if (pending.threadId !== threadId) continue;
+      clearTimeout(pending.timer);
+      this.pendingQuestions.delete(requestId);
+      pending.resolve({ __cancelled: "Run stopped before answers were returned." });
+    }
+  }
+
+  private async startRun(options: WebAgentStartOptions): Promise<void> {
+    this.stop(options.threadId);
+    const state: ActiveRun = { abort: new AbortController(), doneEmitted: false };
+    this.active.set(options.threadId, state);
+
+    const agent = agentForMode(options.mode);
+    const registry = this.buildRegistry(options);
+    const systemPrompt = buildSystemPrompt({
+      cwd: this.root,
+      agent,
+      toolNames: registry.names(),
+    });
+
+    const result = await runAgent({
+      apiBaseUrl: options.provider.baseUrl,
+      getToken: async () => options.provider.token,
+      apiFormat: options.provider.apiFormat,
+      authHeader: options.provider.authHeader,
+      model: options.model,
+      thinking: options.thinking,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...options.history,
+        { role: "user", content: options.prompt },
+      ],
+      tools: registry,
+      permissions: new PermissionEngine({
+        agentRules: rulesForApprovalMode(options.approvalMode),
+        configRules: agent.permissions ?? [],
+        skipAll: options.approvalMode === "full-access" && options.mode === "agent",
+      }),
+      resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
+      cwd: this.root,
+      maxSteps: 40,
+      signal: state.abort.signal,
+      shell: await this.ensureShell(options.threadId),
+      onEvent: (event) => this.forwardEvent(options.threadId, event),
+      toolContext: {
+        resolveInteraction: (request) =>
+          request.type === "ask-question"
+            ? this.askQuestion(options.threadId, request)
+            : Promise.resolve("Unknown interaction request."),
+      },
+    });
+
+    if (!state.doneEmitted) {
+      state.doneEmitted = true;
+      this.emit(options.threadId, { type: "done", reason: result.reason, finalText: result.finalText });
+    }
+  }
+
+  /** Built-in toolset + the task tool over the built-in subagents. */
+  private buildRegistry(options: WebAgentStartOptions): ToolRegistry {
+    const registry = createBuiltinRegistry();
+    registry.register(
+      createTaskTool({
+        subagents: BUILTIN_SUBAGENTS,
+        runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) =>
+          this.runSubagentTask(options, def, prompt, signal),
+      }),
+    );
+    return registry;
+  }
+
+  private async runSubagentTask(
+    options: WebAgentStartOptions,
+    def: SubagentDefinition,
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; report: string }> {
+    const subagentId = randomUUID();
+    const startedAt = Date.now();
+    this.emit(options.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
+    const result = await runSubagent(def, prompt, {
+      cwd: this.root,
+      parent: { model: options.model, providerId: "web-session", thinking: options.thinking },
+      maxStepsDefault: 20,
+      parentRouting: {
+        apiBaseUrl: options.provider.baseUrl,
+        getToken: async () => options.provider.token,
+        apiFormat: options.provider.apiFormat,
+        authHeader: options.provider.authHeader,
+      },
+      permissionEngine: new PermissionEngine({ agentRules: subagentReadonlyRules(def) }),
+      resolvePermission: (req) => this.askPermission(options.threadId, `${def.name} → ${req.toolName}`, req.summary),
+      signal,
+      onEvent: (event: AgentEvent) => {
+        if (event.type === "tool-start") {
+          this.emit(options.threadId, {
+            type: "subagent-progress",
+            id: subagentId,
+            line: `${event.call.name} ${event.summary}`.trim(),
+          });
+        }
+      },
+    });
+    this.emit(options.threadId, {
+      type: "subagent-end",
+      id: subagentId,
+      name: def.name,
+      ok: result.ok,
+      ms: Date.now() - startedAt,
+      summary: result.report.slice(0, 200),
+    });
+    return result;
+  }
+
+  private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
+    return new Promise<PermissionDecision>((resolve) => {
+      const requestId = randomUUID();
+      const timer = setTimeout(() => {
+        this.pendingPermissions.delete(requestId);
+        resolve("deny");
+      }, PROMPT_TIMEOUT_MS);
+      this.pendingPermissions.set(requestId, { threadId, resolve, timer });
+      this.emit(threadId, { type: "permission-request", requestId, toolName, summary });
+    });
+  }
+
+  private askQuestion(
+    threadId: string,
+    request: { title?: string; questions: Array<{ id: string; prompt: string; allow_multiple?: boolean; options: Array<{ id: string; label: string }> }> },
+  ): Promise<string> {
+    return new Promise<string>((resolve) => {
+      const requestId = randomUUID();
+      const timer = setTimeout(() => {
+        this.pendingQuestions.delete(requestId);
+        resolve("AskQuestion timed out before answers were returned.");
+      }, PROMPT_TIMEOUT_MS);
+      this.pendingQuestions.set(requestId, {
+        threadId,
+        resolve: (answers) => resolve(JSON.stringify(answers)),
+        timer,
+      });
+      this.emit(threadId, { type: "question-request", requestId, title: request.title, questions: request.questions });
+    });
+  }
+
+  /** Persistent per-thread agent PTY; announced so the client terminal can attach. */
+  private async ensureShell(threadId: string): Promise<AgentShell | undefined> {
+    const existing = this.shells.get(threadId);
+    if (existing) return existing;
+    const shell = new AgentShell({
+      cwd: this.root,
+      events: {
+        onData: (id, data) => this.emitTerminal({ type: "term.data", termId: id, data }),
+        onExit: (id, exitCode) => this.emitTerminal({ type: "term.exit", termId: id, exitCode }),
+      },
+    });
+    try {
+      await shell.ensureStarted();
+    } catch {
+      shell.dispose();
+      return undefined; // bash falls back to spawn inside the sandbox
+    }
+    this.shells.set(threadId, shell);
+    this.terminals.register(shell.id, {
+      write: (data) => shell.write(data),
+      resize: (cols, rows) => shell.resize(cols, rows),
+      kill: () => undefined,
+      getScrollback: () => shell.getScrollback(),
+    });
+    this.emit(threadId, { type: "shell-session", terminalId: shell.id, label: "Agent" });
+    return shell;
+  }
+
+  /** agent-core loop events → the desktop-shaped UI events (same mapping as the desktop host). */
+  private forwardEvent(threadId: string, event: AgentEvent): void {
+    switch (event.type) {
+      case "text-delta":
+        this.emit(threadId, { type: "text-delta", delta: event.delta });
+        break;
+      case "reasoning-delta":
+        this.emit(threadId, { type: "reasoning-delta", delta: event.delta });
+        break;
+      case "tool-start":
+        this.emit(threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
+        break;
+      case "tool-delta":
+        this.emit(threadId, { type: "tool-delta", callId: event.call.id, delta: event.delta });
+        break;
+      case "tool-end":
+        this.emit(threadId, {
+          type: "tool-end",
+          callId: event.call.id,
+          name: event.call.name,
+          summary: "",
+          result: event.result,
+          ok: event.ok,
+          denied: event.denied,
+        });
+        break;
+      case "todos":
+        this.emit(threadId, { type: "todos", todos: event.todos });
+        break;
+      case "usage":
+        this.emit(threadId, { type: "usage", totalTokens: event.usage.totalTokens });
+        break;
+      case "context-snapshot":
+        this.emit(threadId, { type: "context-snapshot", snapshot: event.snapshot });
+        break;
+      case "compaction":
+        this.emit(threadId, {
+          type: "compaction",
+          truncatedToolResults: event.truncatedToolResults,
+          truncatedToolArgs: event.truncatedToolArgs,
+          droppedMessages: event.droppedMessages,
+        });
+        break;
+      case "evidence-gate":
+        this.emit(threadId, { type: "evidence-gate", code: event.code, message: event.message, toolName: event.toolName });
+        break;
+      default:
+        break;
+    }
+  }
+}
