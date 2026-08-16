@@ -3,69 +3,29 @@
  * Thread-scoped entries power the settings diagnostics panels.
  */
 
-export interface PrefixShapeView {
-  prefixHash: string;
-  systemHash: string;
-  toolsHash: string;
-  logRewriteVersion: number;
-  toolSchemaTokens: number;
-}
+import type {
+  Advanced agentDiagnostics,
+  Advanced agentCacheInvalidationEntry,
+  Advanced agentCoordinatorEntry,
+  Advanced agentEvidenceEntry,
+  Advanced agentFleetEntry,
+} from "@deyin/host-core";
 
-export interface CacheInvalidationEntry {
-  at: number;
-  threadId: string;
-  reasons: string[];
-  prefixHash?: string;
-  logRewriteVersion?: number;
-  hitRate?: number;
-}
+type PrefixShapeView = NonNullable<Advanced agentDiagnostics["cache"]["prefixShape"]>;
+type CacheInvalidationEntry = Advanced agentCacheInvalidationEntry;
+type CoordinatorDecisionEntry = Advanced agentCoordinatorEntry;
+type FleetTimelineEntry = Advanced agentFleetEntry;
+type EvidenceRejectionEntry = Advanced agentEvidenceEntry;
 
-export interface CoordinatorDecisionEntry {
-  at: number;
-  threadId: string;
-  route: string;
-  reason: string;
-}
-
-export interface FleetTimelineEntry {
-  at: number;
-  threadId: string;
-  kind: "preflight" | "start" | "complete" | "conflict" | "background-job";
-  detail: string;
-  taskCount?: number;
-}
-
-export interface EvidenceRejectionEntry {
-  at: number;
-  threadId: string;
-  code: string;
-  message: string;
-}
-
-export interface ThreadCacheState {
-  prefixShape: PrefixShapeView | null;
-  sessionHit: number;
-  sessionMiss: number;
-  hitRate: number;
-}
-
-export interface Advanced agentDiagnostics {
-  cache: {
-    prefixShape: PrefixShapeView | null;
-    invalidationHistory: CacheInvalidationEntry[];
-    sessionHit: number;
-    sessionMiss: number;
-    hitRate: number;
-  };
-  coordinator: CoordinatorDecisionEntry[];
-  fleet: FleetTimelineEntry[];
-  evidence: EvidenceRejectionEntry[];
-}
+export type { Advanced agentDiagnostics };
 
 const MAX_ENTRIES = 200;
 
 export class Advanced agentObservability {
-  private cacheByThread = new Map<string, ThreadCacheState>();
+  private cacheByThread = new Map<
+    string,
+    { prefixShape: PrefixShapeView | null; sessionHit: number; sessionMiss: number; hitRate: number }
+  >();
   private invalidations: CacheInvalidationEntry[] = [];
   private coordinatorLog: CoordinatorDecisionEntry[] = [];
   private fleetTimeline: FleetTimelineEntry[] = [];
@@ -148,4 +108,3 @@ export class Advanced agentObservability {
   }
 }
 
-export const agentObservability = new Advanced agentObservability();

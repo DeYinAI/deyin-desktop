@@ -28,6 +28,8 @@ interface SidebarProps {
   onOpenUsage: () => void;
   onOpenPlans: () => void;
   onOpenSettings: () => void;
+  /** Open the Automations view (scheduled agent runs). */
+  onOpenAutomations: () => void;
 }
 
 /** Ticking clock so the relative age labels keep up without a state change. */
@@ -78,6 +80,10 @@ export function Sidebar(props: SidebarProps) {
           <Icon name="search" size={13} />
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
+        </button>
+        <button className="nav-item" onClick={props.onOpenAutomations} title="Scheduled agent runs (cron or manual)">
+          <Icon name="clock" size={13} />
+          <span>Automations</span>
         </button>
       </nav>
 

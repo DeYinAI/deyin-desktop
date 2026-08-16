@@ -575,15 +575,6 @@ export function createBrowserTransport(): DeyinApi {
       approveAll: async () => 0,
       rejectAll: async () => 0,
     },
-    git: {
-      status: async () => null,
-      diff: async () => "",
-      stage: async () => undefined,
-      commit: async () => "",
-      branches: async () => [],
-      checkout: async () => undefined,
-      log: async () => [],
-    },
     security: {
       listFindings: async () => null,
       clearFindings: async () => undefined,

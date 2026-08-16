@@ -10,6 +10,7 @@ import { ChromeConsentDialog } from "./components/ChromeConsentDialog.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
+import { ComposerHeader } from "./components/ComposerHeader.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { GitBranchBadge } from "./components/GitBranchBadge.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
@@ -204,6 +205,7 @@ export function App() {
   const pendingSendNowRef = useRef<{ threadId: string; text: string; mode: ChatMode } | null>(null);
   /** After the 3s stop watchdog force-clears, ignore the late `done` event. */
   const ignoreNextDoneRef = useRef(false);
+  const foldResultRef = useRef<ThreadEvent[] | null>(null);
   const stopWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const plainChatAbortRef = useRef<AbortController | null>(null);
   const projectsRef = useRef(projects);
@@ -282,10 +284,14 @@ export function App() {
   }, []);
 
   // Persist the project tree + selection once hydrated (the host owns workspaceRoot,
-  // so it is intentionally not part of this patch).
+  // so it is intentionally not part of this patch). Debounced: agent runs fold
+  // events into `projects` continuously and a write per change would hammer disk.
   useEffect(() => {
     if (!projectsHydrated) return;
-    void window.deyin.projects.set({ projects, activeProjectId, activeThreadId });
+    const timer = setTimeout(() => {
+      void window.deyin.projects.set({ projects, activeProjectId, activeThreadId });
+    }, 400);
+    return () => clearTimeout(timer);
   }, [projectsHydrated, projects, activeProjectId, activeThreadId]);
 
   useEffect(() => {
@@ -493,6 +499,22 @@ export function App() {
       })),
     );
   }, []);
+
+  /** Restore the pre-change content of a file card (uses the tracked diff). */
+  const undoFileChange = useCallback(
+    (name: string) => {
+      setDiff((cur) => {
+        if (cur && cur.fileName === name) {
+          void window.deyin.files
+            .write(cur.fileName, cur.before)
+            .catch((err: unknown) => console.warn("undo failed", err));
+          return null;
+        }
+        return cur;
+      });
+    },
+    [],
+  );
 
   /* Agent runtime: subscribe to main-process events for the active run. */
   useEffect(() => {
@@ -834,21 +856,6 @@ export function App() {
         case "subagent-end":
           setRunEvents((cur) => [...cur, { kind: "thought", label: `Subagent ${event.name} ${event.ok ? "finished" : "failed"}` }]);
           break;
-        case "phase":
-          setRunEvents((cur) => [...cur, { kind: "thought", label: event.detail ? `${event.text}: ${event.detail}` : event.text }]);
-          break;
-        case "coordinator-routing":
-          setRunEvents((cur) => [
-            ...cur,
-            { kind: "thought", label: `Coordinator → ${event.route} (${event.reason})` },
-          ]);
-          break;
-        case "background-job":
-          setRunEvents((cur) => [
-            ...cur,
-            { kind: "thought", label: `Background job ${event.label ?? event.jobId}: ${event.status}` },
-          ]);
-          break;
         case "error":
           setRunEvents((cur) => [...cur, { kind: "error", text: event.message }]);
           break;
@@ -904,9 +911,15 @@ export function App() {
               finished.push(opt);
             }
             runOptimizationRef.current = null;
-            appendEvents(threadId, finished);
+            // Ref handoff: React StrictMode double-invokes updaters in dev, so
+            // persisting inside the updater would duplicate folded events. The
+            // computation is deterministic, so writing the ref twice is harmless
+            // and appendEvents below runs exactly once.
+            foldResultRef.current = finished;
             return [];
           });
+          if (foldResultRef.current) appendEvents(threadId, foldResultRef.current);
+          foldResultRef.current = null;
           if (planRun) {
             setProjects((cur) =>
               cur.map((project) => ({
@@ -1231,9 +1244,11 @@ export function App() {
       ignoreNextDoneRef.current = true;
       setRunEvents((cur) => {
         const finished = [...cur, { kind: "thought" as const, label: "Run stopped" }];
-        appendEvents(threadId, finished);
+        foldResultRef.current = finished;
         return [];
       });
+      if (foldResultRef.current) appendEvents(threadId, foldResultRef.current);
+      foldResultRef.current = null;
       runToolIndex.current.clear();
       runTextRef.current = "";
       runReasoningRef.current = "";
@@ -1654,6 +1669,7 @@ export function App() {
             setView("settings");
             window.deyin.telemetry?.record("settings-opened");
           }}
+          onOpenAutomations={() => setView("automations")}
         />
 
         <div className="app__center">
@@ -1705,7 +1721,7 @@ export function App() {
                   wrapLongLines: settings?.wrapLongLines ?? false,
                 }}
                 onOpenFile={openFileDiff}
-                onUndo={() => setDiff(null)}
+                onUndo={undoFileChange}
                 onBuild={buildFromPlan}
                 onRevisePlan={rejectPlan}
                 onEditPlan={() => {
@@ -1797,6 +1813,12 @@ export function App() {
                     }}
                   />
                 )}
+                <ComposerHeader
+                  platform={boot?.platform ?? "desktop"}
+                  projectName={projectName}
+                  workspaceRoot={workspaceRoot}
+                  onPickFolder={() => void addProjectFolder()}
+                />
                 <Composer
                   value={input}
                   models={models}

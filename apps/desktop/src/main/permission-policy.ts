@@ -7,7 +7,7 @@ export const NEVER_SKIP_TOOLS = new Set([
   "chrome_navigate",
 ]);
 
-export const NEVER_SKIP_PREFIXES = ["computer_"];
+export const NEVER_SKIP_PREFIXES = ["computer_", "mcp__"];
 
 export function requiresExtraConfirmation(toolName: string, args: Record<string, unknown>): boolean {
   if (toolName.startsWith("computer_")) {

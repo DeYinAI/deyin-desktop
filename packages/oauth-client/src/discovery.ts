@@ -38,7 +38,7 @@ export async function resolveEndpoints(config: OAuthClientConfig): Promise<Provi
   const url = `${issuer}/.well-known/openid-configuration`;
   let doc: DiscoveryDoc;
   try {
-    const res = await doFetch(url);
+    const res = await doFetch(url, { signal: AbortSignal.timeout(10_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     doc = (await res.json()) as DiscoveryDoc;
   } catch (cause) {

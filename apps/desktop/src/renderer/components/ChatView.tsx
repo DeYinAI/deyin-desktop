@@ -34,7 +34,7 @@ interface ChatViewProps {
   greetingName: string;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
-  onUndo: () => void;
+  onUndo: (name: string) => void;
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
   onOpenPlan?: () => void;
@@ -46,6 +46,8 @@ interface ChatViewProps {
   planArtifact?: PlanArtifactLive | null;
   /** Active thread id — switching threads resets scroll to the bottom, pinned. */
   threadKey?: string | null;
+  /** threadId -> title map for rendering #-linked thread chips in user bubbles. */
+  threadTitles?: Record<string, string>;
   /** Open the Agent terminal tab for the current thread (bash tool cards). */
   onOpenAgentTerminal?: () => void;
 }
@@ -145,6 +147,7 @@ export function ChatView(props: ChatViewProps) {
               onRevisePlan={props.onRevisePlan}
               onEditPlan={props.onEditPlan}
               planPending={Boolean(props.pendingPlan) && isLastPlanReady(props.events, group.event)}
+              threadTitles={props.threadTitles}
             />
           ),
         )}
@@ -237,26 +240,43 @@ function EventRow({
   onRevisePlan,
   onEditPlan,
   planPending,
+  threadTitles,
 }: {
   event: ThreadEvent;
   codeTheme: CodeTheme;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
-  onUndo: () => void;
+  onUndo: (name: string) => void;
   onBuild?: () => void;
   onOpenPlan?: () => void;
   onRevisePlan?: () => void;
   onEditPlan?: () => void;
   /** True when this card is the plan awaiting user approval. */
   planPending?: boolean;
+  /** threadId -> title map for #-linked thread chips in user bubbles. */
+  threadTitles?: Record<string, string>;
 }) {
   switch (event.kind) {
-    case "user":
+    case "user": {
+      const chips: string[] = (event.attachments ?? []).map((a) => `@${a.label ?? a.path}`);
+      for (const id of event.linkedThreadIds ?? []) {
+        chips.push(`# ${threadTitles?.[id] ?? "thread"}`);
+      }
       return (
         <div className="bubble-row">
-          <div className="bubble bubble--user">{event.text}</div>
+          <div className="bubble bubble--user">
+            {chips.length > 0 && (
+              <div className="bubble__chips">
+                {chips.map((chip, i) => (
+                  <span key={i} className="chip chip--small">{chip}</span>
+                ))}
+              </div>
+            )}
+            {event.text}
+          </div>
         </div>
       );
+    }
 
     case "assistant":
       return (
@@ -337,6 +357,35 @@ function EventRow({
 
     case "optimization":
       return <OptimizationCard event={event} />;
+
+    case "evidence-gate":
+      return (
+        <div className="activity-line activity-line--error">
+          <Icon name="shield" size={13} />
+          <span title={event.message}>Delivery gate ({event.code}) — step not verifiable yet</span>
+        </div>
+      );
+
+    case "evidence-sign-off":
+      return (
+        <div className="activity-line">
+          <Icon name="check" size={13} />
+          <span>
+            Step signed off (<code>{event.stepId}</code>) — verified with <code>{event.verificationCommand}</code>
+          </span>
+        </div>
+      );
+
+    case "compaction-notice":
+      return (
+        <div className="activity-line">
+          <Icon name="clock" size={13} />
+          <span>{event.softWarning ? "Context over 50% — compaction may run soon" : "Context compacted for this run"}</span>
+        </div>
+      );
+
+    default:
+      return null;
   }
 }
 
@@ -549,7 +598,7 @@ function FileCard({
   event: Extract<ThreadEvent, { kind: "file" }>;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
-  onUndo: () => void;
+  onUndo: (name: string) => void;
 }) {
   const [open, setOpen] = useState(true);
   const snippet = event.snippet ?? [];
@@ -571,7 +620,7 @@ function FileCard({
           </span>
         )}
         <span className="file-card__actions" onClick={(e) => e.stopPropagation()}>
-          <button className="chip chip--small" onClick={onUndo}>
+          <button className="chip chip--small" title="Restore the previous content of this file" onClick={() => onUndo(event.name)}>
             <Icon name="undo" size={11} />
             Undo
           </button>

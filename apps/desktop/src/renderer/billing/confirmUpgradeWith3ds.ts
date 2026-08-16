@@ -1,4 +1,6 @@
-import { loadStripe } from "@stripe/stripe-js";
+// /pure avoids @stripe/stripe-js's import-time preload of js.stripe.com (the
+// script only loads when an upgrade actually needs card authentication).
+import { loadStripe } from "@stripe/stripe-js/pure";
 import type { Upgrade3dsResult } from "../../shared/types.js";
 
 const FINALIZE_BACKOFF_MS = [1000, 2000, 3000];

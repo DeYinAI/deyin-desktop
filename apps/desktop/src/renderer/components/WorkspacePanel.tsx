@@ -4,6 +4,7 @@ import { computeLineDiff, type FileDiff } from "../diff.js";
 import { useT } from "../i18n.js";
 import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
+import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
 import { Icon } from "./Icon.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
@@ -17,6 +18,14 @@ interface WorkspacePanelProps {
   projectName: string;
   workspaceRoot: string | null;
   activeTab: PanelTab;
+  /** Active chat thread (drives the Security tab). */
+  threadId?: string | null;
+  /** Pending change-review queue for the active thread (Diff tab banner). */
+  pendingReview?: import("../../shared/types.js").PendingChange[];
+  onApproveChange?: (changeId: string) => void;
+  onRejectChange?: (changeId: string) => void;
+  /** Reveal a file in the Files tab (security findings jump-to-file). */
+  onOpenFile?: (path: string) => void;
   planMarkdown: string;
   /** Structured todos for the Plan tab footer (from thread.todos). */
   planTodos?: AgentTodoItem[];
@@ -61,6 +70,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         />
         <TabButton label="Source Control" active={props.activeTab === "git"} onClick={() => props.onSelectTab("git")} />
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
+        <TabButton label="Security" active={props.activeTab === "security"} onClick={() => props.onSelectTab("security")} />
       </div>
 
       {/* Keep tab bodies mounted so FilesTab (and others) retain editor/view state across switches. */}
@@ -103,6 +113,14 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           controlEnabled={props.browserControlEnabled}
           onNavigate={props.onNavigate}
           onOpenBrowserSettings={props.onOpenBrowserSettings}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "security"}>
+        <SecurityFindingsPanel
+          active={props.activeTab === "security"}
+          threadId={props.threadId ?? null}
+          workspaceRoot={props.workspaceRoot}
+          onOpenFile={props.onOpenFile ? (path: string) => props.onOpenFile?.(path) : undefined}
         />
       </div>
     </section>

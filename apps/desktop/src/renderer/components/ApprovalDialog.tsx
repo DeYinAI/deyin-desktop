@@ -13,6 +13,9 @@ interface Props {
 export function ApprovalDialog({ toolName, summary, onDecision }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Never hijack keys while the user is typing (composer / inputs).
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
       if (e.key === "Escape") onDecision("deny");
       if (e.key === "Enter") onDecision("allow");
     };

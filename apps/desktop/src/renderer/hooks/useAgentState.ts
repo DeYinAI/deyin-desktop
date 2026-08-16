@@ -217,37 +217,60 @@ class AgentStateStore {
   };
 
   private notifyStructural() {
+    // Snapshots must stay referentially stable between notifications:
+    // useSyncExternalStore compares by identity, so a fresh object per
+    // getSnapshot() call reads as "store changed" on every check and loops
+    // into React's max-update-depth crash. Drop caches whenever we notify.
+    this.snapshotCache.clear();
+    this.streamSnapCache.clear();
+    this.sessionStatsCache = null;
     for (const l of this.listeners) l();
   }
 
   private notifyStream(threadId: string) {
+    this.streamSnapCache.delete(threadId);
     const set = this.streamListeners.get(threadId);
     if (set) for (const l of set) l();
   }
 
+  private snapshotCache = new Map<string, ThreadRunSnapshot>();
+  private streamSnapCache = new Map<string, { streamText: string; streamReasoning: string; seq: number }>();
+  private sessionStatsCache: SessionTokenStats | null = null;
+
   getSnapshot(threadId: string): ThreadRunSnapshot {
+    const cached = this.snapshotCache.get(threadId);
+    if (cached) return cached;
     const t = this.thread(threadId);
-    return {
+    const snap: ThreadRunSnapshot = {
       threadId,
       running: t.running,
       turnActive: t.turnActive,
       runEvents: t.runEvents,
-      streamText: t.running && t.streamText.length > 0 ? t.streamText : t.running ? t.streamText : null,
-      streamReasoning: t.running && t.streamReasoning.length > 0 ? t.streamReasoning : t.running ? t.streamReasoning : null,
+      streamText: t.running ? t.streamText : null,
+      streamReasoning: t.running ? t.streamReasoning : null,
       planStream: t.planStream,
       status: { ...t.status, workDurationMs: t.status.startedAt ? Date.now() - t.status.startedAt : 0 },
       tokens: t.tokens,
       contextSnapshot: t.contextSnapshot,
     };
+    this.snapshotCache.set(threadId, snap);
+    return snap;
   }
 
   getStreamSnapshot(threadId: string): { streamText: string; streamReasoning: string; seq: number } {
+    const cached = this.streamSnapCache.get(threadId);
+    if (cached) return cached;
     const t = this.thread(threadId);
-    return { streamText: t.streamText, streamReasoning: t.streamReasoning, seq: t.seq };
+    const snap = { streamText: t.streamText, streamReasoning: t.streamReasoning, seq: t.seq };
+    this.streamSnapCache.set(threadId, snap);
+    return snap;
   }
 
   getSessionStats(): SessionTokenStats {
-    return { ...this.sessionStats };
+    if (this.sessionStatsCache) return this.sessionStatsCache;
+    const snap = { ...this.sessionStats };
+    this.sessionStatsCache = snap;
+    return snap;
   }
 
   startRun(threadId: string, mode: ChatMode) {

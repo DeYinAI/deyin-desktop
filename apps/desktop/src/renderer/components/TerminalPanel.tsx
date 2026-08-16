@@ -46,6 +46,7 @@ export function TerminalPanel({
 }: TerminalPanelProps) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const knownAttachIdsRef = useRef<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const addSession = (shellId?: string, label?: string) => {
@@ -87,24 +88,25 @@ export function TerminalPanel({
   // When a new agent shell is announced, add/activate an Agent tab.
   useEffect(() => {
     if (!attachSessions || attachSessions.length === 0) return;
-    setSessions((cur) => {
-      let next = cur;
-      let changed = false;
-      for (const attach of attachSessions) {
-        if (next.some((s) => s.attachId === attach.id)) continue;
-        sessionCounter += 1;
-        const session: TerminalSession = {
-          key: `term-${sessionCounter}`,
-          label: attach.label || "Agent",
-          attachId: attach.id,
-          agent: true,
-        };
-        next = changed ? [...next, session] : [...cur, session];
-        changed = true;
-        setActiveKey(session.key);
-      }
-      return changed ? next : cur;
-    });
+    // Track known attach ids in a ref so the effect body (not the state updater)
+    // decides what is new — keeps the updater pure under StrictMode double-invoke.
+    const known = new Set(knownAttachIdsRef.current);
+    const added: TerminalSession[] = [];
+    for (const attach of attachSessions) {
+      if (known.has(attach.id)) continue;
+      sessionCounter += 1;
+      added.push({
+        key: `term-${sessionCounter}`,
+        label: attach.label || "Agent",
+        attachId: attach.id,
+        agent: true,
+      });
+      known.add(attach.id);
+    }
+    knownAttachIdsRef.current = known;
+    if (added.length === 0) return;
+    setSessions((cur) => [...cur, ...added]);
+    setActiveKey(added[added.length - 1]!.key);
   }, [attachSessions]);
 
   const closeSession = (key: string) => {
