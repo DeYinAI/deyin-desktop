@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { themeByName, type CodeTheme } from "../code.js";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
@@ -130,9 +130,7 @@ export function ChatView(props: ChatViewProps) {
         {groupTimelineEvents(props.events).map((group, i) =>
           group.kind === "tools" ? (
             <div key={i} className="tool-stack">
-              {group.events.map((event, j) => (
-                <ToolCard key={j} event={event} onOpenAgentTerminal={props.onOpenAgentTerminal} />
-              ))}
+              {renderToolStack(group.events, props.onOpenAgentTerminal)}
             </div>
           ) : (
             <EventRow
@@ -215,14 +213,96 @@ function groupTimelineEvents(events: ThreadEvent[]): TimelineGroup[] {
   return groups;
 }
 
-/** Reasoning stream of the current step: expanded while it arrives. */
+/** Read-only research tools collapsed into an "N lookups" row once completed. */
+const QUIET_TOOL_NAMES = new Set([
+  "read",
+  "grep",
+  "glob",
+  "ls",
+  "websearch",
+  "web_search",
+  "web_fetch",
+  "codebase_search",
+  "file_tree",
+]);
+
+function isQuietTool(event: Extract<ThreadEvent, { kind: "tool" }>): boolean {
+  return event.ok === true && !event.denied && QUIET_TOOL_NAMES.has(event.name);
+}
+
+type StackItem =
+  | { kind: "tool"; event: Extract<ThreadEvent, { kind: "tool" }> }
+  | { kind: "quiet"; events: Extract<ThreadEvent, { kind: "tool" }>[] };
+
+/** Group consecutive completed read-tier tools; running/failed ones stay visible. */
+function partitionToolStack(events: Extract<ThreadEvent, { kind: "tool" }>[]): StackItem[] {
+  const items: StackItem[] = [];
+  for (const event of events) {
+    const last = items[items.length - 1];
+    if (isQuietTool(event)) {
+      if (last?.kind === "quiet") last.events.push(event);
+      else items.push({ kind: "quiet", events: [event] });
+    } else {
+      items.push({ kind: "tool", event });
+    }
+  }
+  return items;
+}
+
+function renderToolStack(
+  events: Extract<ThreadEvent, { kind: "tool" }>[],
+  onOpenAgentTerminal?: () => void,
+) {
+  return partitionToolStack(events).map((item, j) =>
+    item.kind === "tool" ? (
+      <ToolCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
+    ) : (
+      <QuietToolsRow key={j} events={item.events} />
+    ),
+  );
+}
+
+/** "N lookups" row expanding to the individual collapsed tool cards. */
+function QuietToolsRow({ events }: { events: Extract<ThreadEvent, { kind: "tool" }>[] }) {
+  const [open, setOpen] = useState(false);
+  const totalMs = events.reduce((sum, e) => sum + (e.durationMs ?? 0), 0);
+  return (
+    <div className="quiet-tools">
+      <button className="quiet-tools__row" onClick={() => setOpen((v) => !v)}>
+        <Icon name="search" size={12} />
+        <span className="quiet-tools__label">
+          {events.length} lookup{events.length === 1 ? "" : "s"}
+        </span>
+        {totalMs > 0 && <span className="tool-card__duration">{formatDuration(totalMs)}</span>}
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+      </button>
+      {open && (
+        <div className="quiet-tools__list">
+          {events.map((event, i) => (
+            <ToolCard key={i} event={event} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Reasoning stream of the current step: expanded while it arrives, with a live timer. */
 function LiveReasoning({ text }: { text: string }) {
   const t = useT();
+  const [elapsed, setElapsed] = useState(0);
+  const sinceRef = useRef(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - sinceRef.current) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
   return (
     <div className="thinking thinking--live">
       <div className="thinking__head">
         <Icon name="brain" size={13} />
-        <span>{t("chat.thinking")}</span>
+        <span>
+          {t("chat.thinking")} {elapsed > 0 && <span className="muted">{elapsed}s</span>}
+        </span>
       </div>
       <div className="thinking__body">{text}</div>
     </div>
@@ -330,6 +410,9 @@ function EventRow({
 
     case "tool":
       return <ToolCard event={event} />;
+
+    case "subagent":
+      return <SubagentCard event={event} />;
 
     case "error":
       return (
@@ -663,6 +746,31 @@ function stripAnsi(text: string): string {
     .replace(/\x1b[()][0-9A-Za-z]/g, "");
 }
 
+/** Live subagent run: spinner + current activity while running, summary when done. */
+function SubagentCard({ event }: { event: Extract<ThreadEvent, { kind: "subagent" }> }) {
+  const running = event.status === "running";
+  const failed = event.status === "failed";
+  return (
+    <div className={`subagent-card ${failed ? "subagent-card--failed" : ""} ${running ? "subagent-card--running" : ""}`}>
+      <div className="subagent-card__row">
+        <span className={`subagent-card__icon ${running ? "subagent-card__spinner" : ""}`}>
+          <Icon name={running ? "clock" : failed ? "close" : "check"} size={12} />
+        </span>
+        <code className="subagent-card__name">{event.name}</code>
+        {event.line && <span className="subagent-card__line">{event.line}</span>}
+        {event.ms !== undefined && <span className="tool-card__duration">{formatDuration(event.ms)}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** Human-friendly duration: ms under a second, one decimal in seconds after. */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+}
+
 /** One agent tool call: status line expanding to the (truncated) result. */
 function ToolCard({
   event,
@@ -696,6 +804,9 @@ function ToolCard({
         <code className="tool-card__name">{displayName}</code>
         <span className="tool-card__summary">{event.summary}</span>
         {event.denied && <span className="badge badge--muted">denied</span>}
+        {event.durationMs !== undefined && (
+          <span className="tool-card__duration">{formatDuration(event.durationMs)}</span>
+        )}
         {isShell && onOpenAgentTerminal && (
           <span
             className="tool-card__open-term"

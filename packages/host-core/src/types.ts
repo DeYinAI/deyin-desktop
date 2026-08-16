@@ -104,7 +104,20 @@ export type ThreadEvent =
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string }
   | { kind: "worked"; seconds: number }
-  | { kind: "tool"; name: string; summary: string; result?: string; ok?: boolean; denied?: boolean }
+  | {
+      kind: "tool";
+      name: string;
+      summary: string;
+      result?: string;
+      ok?: boolean;
+      denied?: boolean;
+      /** Epoch ms when the call started (set by tool-start). */
+      startedAt?: number;
+      /** Wall-clock duration (set by tool-end). */
+      durationMs?: number;
+    }
+  /** Live subagent (task tool) run: spawn → progress lines → done/failed. */
+  | { kind: "subagent"; id: string; name: string; status: "running" | "done" | "failed"; line?: string; ms?: number }
   /** Per-run token-optimization summary card (compression + cache savings). */
   | {
       kind: "optimization";
@@ -777,8 +790,9 @@ export type AgentUiEvent =
      filePath?: string;
    }
  | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
- | { type: "subagent-start"; name: string; prompt: string }
- | { type: "subagent-end"; name: string; ok: boolean }
+ | { type: "subagent-start"; id: string; name: string; prompt: string }
+ | { type: "subagent-progress"; id: string; line: string }
+ | { type: "subagent-end"; id: string; name: string; ok: boolean; ms?: number; summary?: string }
  /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */
  | { type: "shell-session"; terminalId: string; label: string }
  | { type: "pending-change"; change: PendingChange }
