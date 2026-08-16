@@ -125,12 +125,12 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
 
     const endpoint = isContinuation ? `${base}/beta/chat/completions` : `${base}/chat/completions`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    // Local providers (Ollama) run without a key: skip the auth header.
+    if (opts.token) headers.authorization = `Bearer ${opts.token}`;
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${opts.token}`,
-      },
+      headers,
       body: JSON.stringify(body),
       signal: opts.signal,
     });

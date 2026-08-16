@@ -4,6 +4,7 @@ import {
   DEFAULT_CAPABILITIES,
   DEFAULT_PROVIDERS,
   DEFAULT_SETTINGS,
+  mergePresetProviders,
   applyEvent,
   computeStats,
   fetchAccountUsage,
@@ -281,7 +282,16 @@ function writeLocal<T>(key: string, value: T): void {
 type StoredProvider = StoredProviderBase;
 
 function readProviders(): StoredProvider[] {
-  return readLocal<StoredProvider[]>("deyin.providers", DEFAULT_PROVIDERS).map((p) => ({
+  // Merge newly shipped presets once per seed version (same rule as desktop).
+  const merged = mergePresetProviders(
+    readLocal<StoredProvider[]>("deyin.providers", DEFAULT_PROVIDERS),
+    readLocal<number | undefined>("deyin.providerSeedVersion", undefined),
+  );
+  if (localStorage.getItem("deyin.providers")) {
+    writeLocal("deyin.providers", merged.providers);
+    writeLocal("deyin.providerSeedVersion", merged.seedVersion);
+  }
+  return merged.providers.map((p) => ({
     ...p,
     enabled: p.enabled ?? true,
     apiFormat: p.apiFormat ?? "chat-completions",

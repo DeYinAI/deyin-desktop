@@ -431,12 +431,13 @@ export class DesktopAgentHost {
     }
 
     // Provider routing: primary = Openference OAuth; custom = stored key.
+    // Local providers (Ollama) run without a key: pass an empty token through.
     const provider = this.opts.agents.listProviders(true).find((p) => p.id === options.providerId);
     let apiBaseUrl = this.opts.config.apiBaseUrl;
     let getToken: () => Promise<string | null> = () => this.opts.auth.getAccessToken();
     if (provider && provider.kind === "custom") {
       apiBaseUrl = provider.baseUrl ?? apiBaseUrl;
-      getToken = () => Promise.resolve(this.opts.agents.getKey(provider.id));
+      getToken = () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null));
     }
 
     // Command / skill expansion (/name args).
@@ -950,7 +951,7 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
         if (provider && provider.kind === "custom") {
           return {
             apiBaseUrl: provider.baseUrl ?? this.opts.config.apiBaseUrl,
-            getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id)),
+            getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null)),
             apiFormat: provider.apiFormat ?? "chat-completions",
             authHeader: provider.authHeader,
           };
