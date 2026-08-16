@@ -30,22 +30,22 @@ import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
 import { ReviewBanner } from "./components/ReviewBanner.js";
 import { highSeverityFindings } from "./components/SecurityFindingsPanel.js";
-import { computeLineDiff, diffSnippet, type FileDiff } from "./diff.js";
+import type { FileDiff } from "./diff.js";
 import { TaskList } from "./components/TaskList.js";
 import { generateThreadTitle } from "./autotitle.js";
 import {
   useAgentStateController,
   useAgentRunState,
+  useRunningThreadId,
   useSessionTokenStats,
   agentStateStore,
+  type AgentSideEffect,
 } from "./hooks/useAgentState.js";
 import {
   DEFAULT_THREAD_TITLE,
   deriveTitle,
   emptyThread,
   hydrateProjects,
-  isBetterPlanDoc,
-  looksLikePlan,
   newId,
   planFileNameFromTitle,
   planTitleFromMarkdown,
@@ -56,7 +56,6 @@ import {
 } from "./threads.js";
 import type { SettingsPage } from "./components/SettingsView.js";
 import type {
- AgentEventEnvelope,
  AgentTodoItem,
  ApprovalMode,
  Bootstrap,
@@ -66,44 +65,12 @@ import type {
  LinkedThreadRef,
  PendingChange,
  DeyinSettings,
- DiffSnippetLine,
  EnvInfo,
  ModelInfo,
  ProviderInfo,
  UserProfile,
  SecurityFindingsReport,
 } from "../shared/types.js";
-import { TOOL_RESULT_UI_CAP, truncateToolResultUi } from "../shared/types.js";
-
-/** Above this size we skip diff rendering (LCS is quadratic) but keep the card. */
-const DIFF_MAX_LINES = 2000;
-
-/** Adds/dels counts for a file card; falls back to a cheap estimate on big files. */
-function diffStats(before: string, after: string): { adds: number; dels: number; renderable: boolean } {
-  if (before === "" && after === "") return { adds: 0, dels: 0, renderable: false };
-  const a = before.split("\n");
-  const b = after.split("\n");
-  if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
-    const counts = new Map<string, number>();
-    for (const line of a) counts.set(line, (counts.get(line) ?? 0) + 1);
-    let common = 0;
-    for (const line of b) {
-      const left = counts.get(line) ?? 0;
-      if (left > 0) {
-        common += 1;
-        counts.set(line, left - 1);
-      }
-    }
-    return { adds: b.length - common, dels: a.length - common, renderable: false };
-  }
-  let adds = 0;
-  let dels = 0;
-  for (const line of computeLineDiff(before, after)) {
-    if (line.type === "add") adds += 1;
-    else if (line.type === "del") dels += 1;
-  }
-  return { adds, dels, renderable: true };
-}
 
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
@@ -160,25 +127,12 @@ export function App() {
   const [showReasonixOnboard, setShowReasonixOnboard] = useState(false);
   const [showBetaFeedback, setShowBetaFeedback] = useState(false);
 
-  const [agentThreadId, setAgentThreadId] = useState<string | null>(null);
-  const [runEvents, setRunEvents] = useState<ThreadEvent[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [question, setQuestion] = useState<PendingQuestion | null>(null);
   const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
-  const [streamReasoning, setStreamReasoning] = useState<string | null>(null);
-  const [planStream, setPlanStream] = useState<string | null>(null);
-  const runToolIndex = useRef(new Map<string, number>());
-  const runTextRef = useRef("");
-  const planDocRef = useRef("");
-  const planArtifactRef = useRef(false);
-  const runTokensRef = useRef(0);
-  const runOptimizationRef = useRef<Extract<ThreadEvent, { kind: "optimization" }> | null>(null);
-  const runReasoningRef = useRef("");
-  const reasoningStartRef = useRef(0);
-  const runModeRef = useRef<ChatMode>("agent");
   const sessionTokenStats = useSessionTokenStats();
   const agentRunState = useAgentRunState(activeThreadId);
-  useAgentStateController();
+  const runningThreadId = useRunningThreadId();
   /** Volatile diff contents per file path; thread events only persist the counts. */
   const fileDiffsRef = useRef(new Map<string, FileDiff>());
   /** Follow-up queued while a run is active; drained when the run finishes. */
@@ -204,8 +158,6 @@ export function App() {
   /** Interrupt-and-send: start this prompt once the current run's `done` arrives. */
   const pendingSendNowRef = useRef<{ threadId: string; text: string; mode: ChatMode } | null>(null);
   /** After the 3s stop watchdog force-clears, ignore the late `done` event. */
-  const ignoreNextDoneRef = useRef(false);
-  const foldResultRef = useRef<ThreadEvent[] | null>(null);
   const stopWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const plainChatAbortRef = useRef<AbortController | null>(null);
   const projectsRef = useRef(projects);
@@ -363,12 +315,13 @@ export function App() {
   }, [activeThreadId, selectedContextLength]);
 
   /** Live plan-file card while Plan mode streams markdown into the Plan tab. */
+  const livePlanStream = runningThreadId === activeThreadId ? (agentRunState?.planStream ?? null) : null;
   const planArtifact = useMemo(() => {
-    if (planStream === null || agentThreadId === null || agentThreadId !== activeThreadId) return null;
-    if (!planStream.trim()) return null;
-    const title = planTitleFromMarkdown(planStream);
+    if (livePlanStream === null) return null;
+    if (!livePlanStream.trim()) return null;
+    const title = planTitleFromMarkdown(livePlanStream);
     return { title, fileName: planFileNameFromTitle(title) };
-  }, [planStream, agentThreadId, activeThreadId]);
+  }, [livePlanStream]);
 
   // Restore the thread's composer mode when switching tasks.
   useEffect(() => {
@@ -516,103 +469,18 @@ export function App() {
     [],
   );
 
-  /* Agent runtime: subscribe to main-process events for the active run. */
-  useEffect(() => {
-    if (!window.deyin.agent) return;
-    const off = window.deyin.agent.onEvent((envelope: AgentEventEnvelope) => {
-      const { threadId, event } = envelope;
-      const flushReasoning = () => {
-        const text = runReasoningRef.current;
-        if (text.trim().length === 0) return;
-        const seconds = Math.max(1, Math.round((Date.now() - reasoningStartRef.current) / 1000));
-        runReasoningRef.current = "";
-        setStreamReasoning(null);
-        setRunEvents((cur) => [...cur, { kind: "reasoning", text, seconds }]);
-      };
-      const flushText = () => {
-        flushReasoning();
-        const text = runTextRef.current;
-        runTextRef.current = "";
-        setStreamText("");
-        if (runModeRef.current === "plan") {
-          // Only structured plan documents belong in the Plan tab.
-          if (looksLikePlan(text) && isBetterPlanDoc(text, planDocRef.current)) {
-            planDocRef.current = text;
-            setPlanStream(planDocRef.current || null);
-            return;
-          }
-          setPlanStream(planDocRef.current || null);
-          if (text.trim().length > 0) setRunEvents((cur) => [...cur, { kind: "assistant", text }]);
-          return;
-        }
-        setPlanStream(null);
-        if (text.trim().length > 0) setRunEvents((cur) => [...cur, { kind: "assistant", text }]);
-      };
-      switch (event.type) {
-        case "reasoning-delta":
-          if (runReasoningRef.current.length === 0) reasoningStartRef.current = Date.now();
-          runReasoningRef.current += event.delta;
-          setStreamReasoning(runReasoningRef.current);
-          break;
-        case "text-delta":
-          // The model moved from thinking to answering: fold the thought away.
-          flushReasoning();
-          runTextRef.current += event.delta;
-          if (runModeRef.current === "plan") {
-            const live = runTextRef.current;
-            if (looksLikePlan(live)) {
-              if (live === event.delta) {
-                setPanelOpen(true);
-                setPanelTab("plan");
-              }
-              if (isBetterPlanDoc(live, planDocRef.current)) {
-                planDocRef.current = live;
-              }
-              setPlanStream(planDocRef.current || null);
-            } else {
-              setStreamText(live);
-            }
-          } else {
-            setStreamText(runTextRef.current);
-          }
-          break;
-        case "tool-start": {
-          flushText();
-          setRunEvents((cur) => {
-            runToolIndex.current.set(event.callId, cur.length);
-            return [...cur, { kind: "tool", name: event.name, summary: event.summary }];
-          });
-          break;
-        }
-        case "tool-delta": {
-          setRunEvents((cur) => {
-            const index = runToolIndex.current.get(event.callId);
-            if (index === undefined || !cur[index] || cur[index]!.kind !== "tool") return cur;
-            const prev = cur[index] as Extract<ThreadEvent, { kind: "tool" }>;
-            let result = (prev.result ?? "") + event.delta;
-            if (result.length > TOOL_RESULT_UI_CAP) {
-              result = truncateToolResultUi(result);
-            }
-            const next = [...cur];
-            next[index] = { ...prev, result };
-            return next;
-          });
-          break;
-        }
-        case "tool-end": {
-          setRunEvents((cur) => {
-            const index = runToolIndex.current.get(event.callId);
-            if (index === undefined || !cur[index] || cur[index]!.kind !== "tool") return cur;
-            const next = [...cur];
-            next[index] = { ...(next[index] as Extract<ThreadEvent, { kind: "tool" }>), result: event.result, ok: event.ok, denied: event.denied };
-            return next;
-          });
-          break;
-        }
+  /**
+   * Single agent-event subscription: the useAgentState store owns the run
+   * timeline (streaming, tools, folding); app-level reactions — panels,
+   * approvals, persistence, queued-prompt restarts — hang off its side effects.
+   */
+  const handleAgentSideEffect = useCallback(
+    (effect: AgentSideEffect) => {
+      switch (effect.type) {
         case "shell-session": {
           setAgentTerminals((cur) => {
-            if (cur.some((t) => t.id === event.terminalId)) return cur;
-            return [...cur, { id: event.terminalId, label: event.label, threadId }];
+            if (cur.some((t) => t.id === effect.terminalId)) return cur;
+            return [...cur, { id: effect.terminalId, label: effect.label, threadId: effect.threadId }];
           });
           if (settingsRef.current?.revealTerminalOnAgentCommand !== false) {
             setTerminalOpen(true);
@@ -620,34 +488,25 @@ export function App() {
           break;
         }
         case "file-change": {
-          const stats = diffStats(event.before, event.after);
-          let snippet: { snippet?: DiffSnippetLine[]; snippetMore?: number } = {};
-          if (stats.renderable) {
-            const fileDiff: FileDiff = { fileName: event.path, before: event.before, after: event.after };
-            fileDiffsRef.current.set(event.path, fileDiff);
+          if (effect.renderable) {
+            const fileDiff: FileDiff = { fileName: effect.path, before: effect.before, after: effect.after };
+            fileDiffsRef.current.set(effect.path, fileDiff);
             setDiff(fileDiff); // Diff tab always shows the latest change.
-            const excerpt = diffSnippet(event.before, event.after);
-            if (excerpt.lines.length > 0) snippet = { snippet: excerpt.lines, snippetMore: excerpt.more };
           }
-          const name = event.path.split(/[\\/]/).pop() ?? event.path;
-          setRunEvents((cur) => [
-            ...cur,
-            { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels, ...snippet },
-          ]);
-          setPendingReview((cur) => cur.filter((c) => c.path !== event.path || c.status !== "pending"));
+          setPendingReview((cur) => cur.filter((c) => c.path !== effect.path || c.status !== "pending"));
           break;
         }
         case "pending-change": {
-          setPendingReview((cur) => [...cur.filter((c) => c.id !== event.change.id), event.change]);
-          const fileDiff: FileDiff = { fileName: event.change.path, before: event.change.before, after: event.change.after };
-          fileDiffsRef.current.set(event.change.path, fileDiff);
+          setPendingReview((cur) => [...cur.filter((c) => c.id !== effect.change.id), effect.change]);
+          const fileDiff: FileDiff = { fileName: effect.change.path, before: effect.change.before, after: effect.change.after };
+          fileDiffsRef.current.set(effect.change.path, fileDiff);
           setDiff(fileDiff);
           setPanelOpen(true);
           setPanelTab("diff");
           break;
         }
         case "pending-change-resolved": {
-          setPendingReview((cur) => cur.filter((c) => c.id !== event.changeId));
+          setPendingReview((cur) => cur.filter((c) => c.id !== effect.changeId));
           break;
         }
         case "goal-updated": {
@@ -655,62 +514,33 @@ export function App() {
             cur.map((p) => ({
               ...p,
               threads: p.threads.map((th) =>
-                th.id === threadId ? { ...th, goal: event.goal ?? undefined } : th,
+                th.id === effect.threadId ? { ...th, goal: effect.goal ?? undefined } : th,
               ),
             })),
           );
           break;
         }
         case "todos": {
-          const steps = event.todos.map((t) => ({
-            text: t.content,
-            done: t.status === "completed",
-            status: t.status,
-            acceptanceCriteria: t.acceptanceCriteria,
-            signedOff: t.signedOff,
-          }));
-          setRunEvents((cur) => {
-            const index = cur.findIndex((e) => e.kind === "plan");
-            if (index >= 0) {
-              const next = [...cur];
-              next[index] = { kind: "plan", steps };
-              return next;
-            }
-            return [...cur, { kind: "plan", steps }];
-          });
           // Persist on the thread: the pinned task list survives run folding
           // and app restarts.
           setProjects((cur) =>
             cur.map((project) => ({
               ...project,
-              threads: project.threads.map((th) => (th.id === threadId ? { ...th, todos: event.todos } : th)),
+              threads: project.threads.map((th) => (th.id === effect.threadId ? { ...th, todos: effect.todos } : th)),
             })),
           );
           break;
         }
-        case "evidence-gate":
-          setRunEvents((cur) => [...cur, { kind: "evidence-gate", code: event.code, message: event.message }]);
-          break;
         case "evidence-sign-off": {
-          setRunEvents((cur) => [
-            ...cur,
-            {
-              kind: "evidence-sign-off",
-              stepId: event.stepId,
-              verificationCommand: event.verificationCommand,
-              diffSummary: event.diffSummary,
-              reviewNotes: event.reviewNotes,
-            },
-          ]);
           setProjects((cur) =>
             cur.map((project) => ({
               ...project,
               threads: project.threads.map((th) =>
-                th.id === threadId
+                th.id === effect.threadId
                   ? {
                       ...th,
                       todos: th.todos?.map((todo) =>
-                        todo.id === event.stepId ? { ...todo, signedOff: true, signOffNotes: event.reviewNotes } : todo,
+                        todo.id === effect.stepId ? { ...todo, signedOff: true, signOffNotes: effect.reviewNotes } : todo,
                       ),
                     }
                   : th,
@@ -719,230 +549,93 @@ export function App() {
           );
           break;
         }
-        case "usage":
-          runTokensRef.current = event.totalTokens;
-          break;
-        case "optimization": {
-          const cacheHitRate = event.cacheHitRate;
-          const cachePatch =
-            cacheHitRate !== undefined &&
-            event.sessionCacheHit !== undefined &&
-            event.sessionCacheMiss !== undefined
-              ? {
-                  hitRate: cacheHitRate,
-                  sessionHit: event.sessionCacheHit,
-                  sessionMiss: event.sessionCacheMiss,
-                  prefixChanged: event.prefixChanged,
-                  changeReasons: event.changeReasons,
-                }
-              : null;
-          if (cachePatch) {
-            setCacheByThread((cur) => ({ ...cur, [threadId]: cachePatch }));
-            setContextByThread((cur) => {
-              const snap = cur[threadId];
-              if (!snap) return cur;
-              return { ...cur, [threadId]: { ...snap, cache: cachePatch } };
-            });
-          }
-          runOptimizationRef.current = {
-            kind: "optimization",
-            originalInputTokens: event.originalInputTokens,
-            compressedInputTokens: event.compressedInputTokens,
-            compressionRatio: event.compressionRatio,
-            cachedPromptTokens: event.cachedPromptTokens,
-            toolCacheHits: event.toolCacheHits,
-            toolCacheMisses: event.toolCacheMisses,
-            responseCacheHits: event.responseCacheHits,
-            responseCacheMisses: event.responseCacheMisses,
-            estimatedCostSavingsUsd: event.estimatedCostSavingsUsd,
-            sessionCacheHit: event.sessionCacheHit,
-            sessionCacheMiss: event.sessionCacheMiss,
-            cacheHitRate: event.cacheHitRate,
-            prefixChanged: event.prefixChanged,
-            changeReasons: event.changeReasons,
-          };
+        case "compaction-notice": {
+          setCompactionNoticeByThread((cur) => ({ ...cur, [effect.threadId]: effect.message }));
           break;
         }
-        case "compaction": {
-          if (event.softWarning) {
-            setCompactionNoticeByThread((cur) => ({
-              ...cur,
-              [threadId]:
-                "Context is over 50% full. Compaction will run soon if usage keeps growing — earlier messages may be summarized.",
-            }));
-          } else if (event.droppedMessages > 0 || event.truncatedToolResults > 0 || event.truncatedToolArgs > 0) {
-            const parts: string[] = [];
-            if (event.droppedMessages > 0) parts.push(`${event.droppedMessages} messages summarized`);
-            if (event.truncatedToolResults > 0) parts.push(`${event.truncatedToolResults} tool results shortened`);
-            if (event.truncatedToolArgs > 0) parts.push(`${event.truncatedToolArgs} tool args trimmed`);
-            setCompactionNoticeByThread((cur) => ({
-              ...cur,
-              [threadId]: `Context compacted (${parts.join(", ")}). Prefix cache was refreshed.`,
-            }));
-            setRunEvents((cur) => [
-              ...cur,
-              {
-                kind: "compaction-notice",
-                softWarning: false,
-                truncatedToolResults: event.truncatedToolResults,
-                truncatedToolArgs: event.truncatedToolArgs,
-                droppedMessages: event.droppedMessages,
-              },
-            ]);
-          }
-          break;
-        }
-        case "context-snapshot":
+        case "cache-stats": {
+          setCacheByThread((cur) => ({ ...cur, [effect.threadId]: effect.patch }));
           setContextByThread((cur) => {
-            const prevCache = cur[threadId]?.cache;
+            const snap = cur[effect.threadId];
+            if (!snap) return cur;
+            return { ...cur, [effect.threadId]: { ...snap, cache: effect.patch } };
+          });
+          break;
+        }
+        case "context-snapshot": {
+          setContextByThread((cur) => {
+            const prevCache = cur[effect.threadId]?.cache;
             return {
               ...cur,
-              [threadId]: prevCache ? { ...event.snapshot, cache: prevCache } : event.snapshot,
+              [effect.threadId]: prevCache ? { ...effect.snapshot, cache: prevCache } : effect.snapshot,
             };
           });
           break;
+        }
         case "permission-request":
-          setApproval({ requestId: event.requestId, toolName: event.toolName, summary: event.summary });
+          setApproval({ requestId: effect.requestId, toolName: effect.toolName, summary: effect.summary });
           break;
         case "question-request":
-          setQuestion({ requestId: event.requestId, title: event.title, questions: event.questions });
+          setQuestion({ requestId: effect.requestId, title: effect.title, questions: effect.questions });
           break;
         case "plan-created": {
-          const planTitle = planTitleFromMarkdown(event.plan);
-          planDocRef.current = event.plan;
-          planArtifactRef.current = true;
-          setPlanStream(event.plan);
+          const planTitle = effect.name || planTitleFromMarkdown(effect.plan);
           setPanelOpen(true);
           setPanelTab("plan");
           setPlanApproval({
-            threadId,
-            title: event.name || planTitle,
-            overview: event.overview,
-            plan: event.plan,
-            filePath: event.filePath,
+            threadId: effect.threadId,
+            title: planTitle,
+            overview: effect.overview,
+            plan: effect.plan,
+            filePath: effect.filePath,
           });
           setProjects((cur) =>
             cur.map((project) => ({
               ...project,
               threads: project.threads.map((th) =>
-                th.id === threadId
+                th.id === effect.threadId
                   ? {
                       ...th,
-                      planMarkdown: event.plan,
-                      planFilePath: event.filePath,
+                      planMarkdown: effect.plan,
+                      planFilePath: effect.filePath,
                       planApproved: false,
                     }
                   : th,
               ),
             })),
           );
-          setRunEvents((cur) => [
-            ...cur,
-            {
-              kind: "plan-ready",
-              title: event.name || planTitle,
-              fileName: planFileNameFromTitle(event.name || planTitle),
-            },
-          ]);
           break;
         }
+        case "plan-panel-open":
+          setPanelOpen(true);
+          setPanelTab("plan");
+          break;
         case "mode-changed":
-          if (event.mode) selectModeRef.current(event.mode);
+          if (effect.mode) selectModeRef.current(effect.mode);
           break;
-        case "subagent-start":
-          flushText();
-          setRunEvents((cur) => [...cur, { kind: "thought", label: `Subagent ${event.name} started` }]);
-          break;
-        case "subagent-end":
-          setRunEvents((cur) => [...cur, { kind: "thought", label: `Subagent ${event.name} ${event.ok ? "finished" : "failed"}` }]);
-          break;
-        case "error":
-          setRunEvents((cur) => [...cur, { kind: "error", text: event.message }]);
-          break;
-        case "done": {
-          if (ignoreNextDoneRef.current) {
-            ignoreNextDoneRef.current = false;
-            break;
-          }
-          // Fold the run into the persisted thread: run events + final text.
-          const text = runTextRef.current.trim().length > 0 ? runTextRef.current : event.finalText;
-          const reasoning = runReasoningRef.current;
-          const reasoningSeconds = Math.max(1, Math.round((Date.now() - reasoningStartRef.current) / 1000));
-          runTextRef.current = "";
-          runReasoningRef.current = "";
-          // Plan mode: keep the best plan document in the Plan tab; chat only
-          // gets a compact plan-file card. Aborted plans still land in the tab.
-          let planText = planDocRef.current;
-          if (runModeRef.current === "plan" && looksLikePlan(text) && isBetterPlanDoc(text, planText)) {
-            planText = text;
-          }
-          planDocRef.current = "";
-          const planRun =
-            runModeRef.current === "plan" && planText.trim().length > 0 && looksLikePlan(planText);
-          const planFinished = planRun && event.reason === "completed";
-          const planTitle = planRun ? planTitleFromMarkdown(planText) : undefined;
+        case "run-complete": {
+          const { fold } = effect;
           if (stopWatchdogRef.current) {
             clearTimeout(stopWatchdogRef.current);
             stopWatchdogRef.current = null;
           }
-          setRunEvents((cur) => {
-            const finished: ThreadEvent[] = [...cur];
-            if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
-            if (text.trim().length > 0 && !planRun) finished.push({ kind: "assistant", text });
-            if (planFinished && !planArtifactRef.current) {
-              finished.push({
-                kind: "plan-ready",
-                title: planTitle,
-                fileName: planFileNameFromTitle(planTitle ?? "plan"),
-              });
-            }
-            if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
-            if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
-            // Optimization summary: surface when compression or caches saved anything.
-            const opt = runOptimizationRef.current;
-            if (
-              opt &&
-              (opt.originalInputTokens > opt.compressedInputTokens ||
-                opt.cachedPromptTokens > 0 ||
-                opt.toolCacheHits > 0 ||
-                opt.responseCacheHits > 0 ||
-                (opt.cacheHitRate ?? 0) > 0)
-            ) {
-              finished.push(opt);
-            }
-            runOptimizationRef.current = null;
-            // Ref handoff: React StrictMode double-invokes updaters in dev, so
-            // persisting inside the updater would duplicate folded events. The
-            // computation is deterministic, so writing the ref twice is harmless
-            // and appendEvents below runs exactly once.
-            foldResultRef.current = finished;
-            return [];
-          });
-          if (foldResultRef.current) appendEvents(threadId, foldResultRef.current);
-          foldResultRef.current = null;
-          if (planRun) {
+          appendEvents(fold.threadId, fold.events);
+          if (fold.planMarkdown !== null) {
             setProjects((cur) =>
               cur.map((project) => ({
                 ...project,
-                threads: project.threads.map((th) => (th.id === threadId ? { ...th, planMarkdown: planText } : th)),
+                threads: project.threads.map((th) => (th.id === fold.threadId ? { ...th, planMarkdown: fold.planMarkdown! } : th)),
               })),
             );
-            if (planFinished) {
+            if (fold.planFinished) {
               setPanelOpen(true);
               setPanelTab("plan");
             }
           }
-          runToolIndex.current.clear();
-          setStreamText(null);
-          setStreamReasoning(null);
-          setPlanStream(null);
-          setAgentThreadId(null);
-          agentStateStore.clearRun(threadId);
           setApproval(null);
           setQuestion(null);
           markOnboard("taskRun");
-          void window.deyin.usage.record({ model: selectedModel, tokens: runTokensRef.current, newSession: false });
-          runTokensRef.current = 0;
+          void window.deyin.usage.record({ model: selectedModel, tokens: fold.tokens, newSession: false });
 
           // Interrupt-and-send takes priority over a queued follow-up.
           const sendNow = pendingSendNowRef.current;
@@ -962,7 +655,7 @@ export function App() {
           if (queued) {
             queuedPromptRef.current = null;
             setQueuedPrompt(null);
-            const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
+            const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
             if (thread) {
               const mode = composerModeRef.current;
               queueMicrotask(() => startAgentRunRef.current(thread, queued, mode));
@@ -970,10 +663,13 @@ export function App() {
           }
           break;
         }
+        default:
+          break;
       }
-    });
-    return off;
-  }, [appendEvents, markOnboard, selectedModel]);
+    },
+    [appendEvents, markOnboard, selectedModel],
+  );
+  useAgentStateController({ onSideEffect: handleAgentSideEffect });
 
   // Main asks us to surface the Browser tab when agent browser tools need a target.
   useEffect(() => {
@@ -1137,21 +833,7 @@ export function App() {
 
       const isFirstMessage = toChatMessages(thread.events).length === 0;
       appendEvents(thread.id, [{ kind: "user", text, attachments, linkedThreadIds }]);
-      setStreamText("");
-      setStreamReasoning(null);
-      setPlanStream(null);
-      setAgentThreadId(thread.id);
       agentStateStore.startRun(thread.id, mode);
-      setRunEvents([]);
-      runToolIndex.current.clear();
-      runTextRef.current = "";
-      planDocRef.current = "";
-      planArtifactRef.current = false;
-      runReasoningRef.current = "";
-      runTokensRef.current = 0;
-      runOptimizationRef.current = null;
-      runModeRef.current = mode;
-      ignoreNextDoneRef.current = false;
       if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
       void window.deyin.agent.start({
         threadId: thread.id,
@@ -1218,7 +900,7 @@ export function App() {
 
   /** Abort the in-flight agent (or plain-chat) run and unlock the composer. */
   const stopRun = useCallback(() => {
-    const threadId = agentThreadId;
+    const threadId = runningThreadId;
     if (plainChatAbortRef.current) {
       plainChatAbortRef.current.abort();
       plainChatAbortRef.current = null;
@@ -1227,7 +909,6 @@ export function App() {
     }
     if (!threadId) {
       setStreamText(null);
-      setStreamReasoning(null);
       return;
     }
 
@@ -1235,28 +916,15 @@ export function App() {
     setApproval(null);
     // Unlock the composer immediately; fold + clear still happen on `done`.
     setStreamText(null);
-    setStreamReasoning(null);
 
     if (stopWatchdogRef.current) clearTimeout(stopWatchdogRef.current);
     stopWatchdogRef.current = setTimeout(() => {
       stopWatchdogRef.current = null;
-      // Main never emitted `done` — force-clear so the UI cannot stay wedged.
-      ignoreNextDoneRef.current = true;
-      setRunEvents((cur) => {
-        const finished = [...cur, { kind: "thought" as const, label: "Run stopped" }];
-        foldResultRef.current = finished;
-        return [];
-      });
-      if (foldResultRef.current) appendEvents(threadId, foldResultRef.current);
-      foldResultRef.current = null;
-      runToolIndex.current.clear();
-      runTextRef.current = "";
-      runReasoningRef.current = "";
-      runOptimizationRef.current = null;
-      setStreamText(null);
-      setStreamReasoning(null);
-      setPlanStream(null);
-      setAgentThreadId(null);
+      // Main never emitted `done` — force-fold so the UI cannot stay wedged.
+      // A late `done` afterwards must not double-append.
+      agentStateStore.setIgnoreNextDone(threadId, true);
+      const finished = agentStateStore.forceStop(threadId);
+      appendEvents(threadId, finished);
       setApproval(null);
 
       const sendNow = pendingSendNowRef.current;
@@ -1276,7 +944,7 @@ export function App() {
         if (thread) startAgentRunRef.current(thread, queued, composerModeRef.current);
       }
     }, 3_000);
-  }, [agentThreadId, appendEvents]);
+  }, [runningThreadId, appendEvents]);
 
   /** Persist manual todo edits and keep the latest timeline todo card in sync. */
   const updatePlanTodos = useCallback(
@@ -1302,7 +970,7 @@ export function App() {
 
   /** Plan-ready card "Build": switch the thread to agent mode and execute the plan. */
   const buildFromPlan = useCallback(() => {
-    if (!activeThread || streamText !== null) return;
+    if (!activeThread || streamText !== null || runningThreadId !== null) return;
     selectMode("agent");
     const plan = activeThread.planMarkdown?.trim();
     const prompt = plan
@@ -1315,10 +983,10 @@ export function App() {
 
   const rejectPlan = useCallback(() => {
     setPlanApproval(null);
-    if (!activeThread || streamText !== null || agentThreadId !== null) return;
+    if (!activeThread || streamText !== null || runningThreadId !== null) return;
     selectMode("plan");
     startAgentRun(activeThread, "Please revise the plan based on my feedback.", "plan");
-  }, [activeThread, agentThreadId, streamText, selectMode, startAgentRun]);
+  }, [activeThread, runningThreadId, streamText, selectMode, startAgentRun]);
 
   /** File card "Open": show that change in the Diff tab (when we still hold it). */
   const openFileDiff = useCallback((path: string) => {
@@ -1333,7 +1001,7 @@ export function App() {
     if (!text || !boot) return;
 
     // While a run is active, Enter/Send queues the follow-up (Cursor-like).
-    const runActive = streamText !== null || agentThreadId !== null;
+    const runActive = streamText !== null || runningThreadId !== null;
     if (runActive) {
       queuedPromptRef.current = text;
       setQueuedPrompt(text);
@@ -1482,7 +1150,7 @@ export function App() {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, agentThreadId, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, composerAttachments, composerLinked, connect, appendEvents, startAgentRun, updateThread]);
+  }, [input, streamText, runningThreadId, activeThread, activeProjectId, boot, providers, selectedProviderId, selectedModel, settings, composerMode, composerAttachments, composerLinked, connect, appendEvents, startAgentRun, updateThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
@@ -1494,7 +1162,7 @@ export function App() {
     queuedPromptRef.current = null;
     setQueuedPrompt(null);
 
-    const runActive = streamText !== null || agentThreadId !== null || plainChatAbortRef.current !== null;
+    const runActive = streamText !== null || runningThreadId !== null || plainChatAbortRef.current !== null;
     if (!runActive) {
       if ((settings?.agentMode ?? "agent") === "agent" && boot?.platform === "desktop" && window.deyin.agent) {
         startAgentRun(activeThread, text, composerMode);
@@ -1504,7 +1172,7 @@ export function App() {
 
     pendingSendNowRef.current = { threadId: activeThread.id, text, mode: composerMode };
     stopRun();
-  }, [input, activeThread, streamText, agentThreadId, settings, boot, composerMode, startAgentRun, stopRun]);
+  }, [input, activeThread, streamText, runningThreadId, settings, boot, composerMode, startAgentRun, stopRun]);
 
   const clearQueue = useCallback(() => {
     queuedPromptRef.current = null;
@@ -1706,10 +1374,10 @@ export function App() {
               <ChatView
                 events={[
                   ...(activeThread?.events ?? []),
-                  ...(agentThreadId !== null && agentThreadId === activeThreadId ? runEvents : []),
+                  ...(agentRunState?.runEvents ?? []),
                 ]}
-                streamText={agentThreadId === null || agentThreadId === activeThreadId ? streamText : null}
-                streamReasoning={agentThreadId === null || agentThreadId === activeThreadId ? streamReasoning : null}
+                streamText={agentRunState?.streamText ?? streamText}
+                streamReasoning={agentRunState?.streamReasoning ?? null}
                 greetingName={greetingName}
                 threadKey={activeThreadId}
                 codeDisplay={{
@@ -1746,7 +1414,7 @@ export function App() {
                 <div className="chat-column__tasks">
                   <TaskList
                     todos={activeThread!.todos!}
-                    running={agentThreadId !== null && agentThreadId === activeThreadId}
+                    running={runningThreadId !== null && runningThreadId === activeThreadId}
                     title={
                       activeThread!.title !== DEFAULT_THREAD_TITLE ? activeThread!.title : undefined
                     }
@@ -1832,8 +1500,8 @@ export function App() {
                   deliveryModeEnabled={settings?.enableDeliveryMode ?? false}
                   thinking={settings?.thinking ?? true}
                   canSend={input.trim().length > 0}
-                  streaming={streamText !== null || agentThreadId !== null}
-                  runStatus={agentThreadId === activeThreadId ? agentRunState?.status ?? null : null}
+                  streaming={streamText !== null || runningThreadId !== null}
+                  runStatus={runningThreadId === activeThreadId ? agentRunState?.status ?? null : null}
                   queuedPrompt={queuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
@@ -1842,7 +1510,7 @@ export function App() {
                   onSend={() => void send()}
                   onSendNow={sendNow}
                   onClearQueue={clearQueue}
-                  onStop={streamText !== null || agentThreadId !== null ? stopRun : undefined}
+                  onStop={streamText !== null || runningThreadId !== null ? stopRun : undefined}
                   onSelectModel={(id) => {
                     setSelectedModel(id);
                     patchSettings({ defaultModel: `${selectedProviderId}::${id}` });
@@ -1888,13 +1556,11 @@ export function App() {
                 workspaceRoot={workspaceRoot}
                 activeTab={panelTab}
                 planMarkdown={
-                  planStream !== null && agentThreadId === activeThreadId
-                    ? planStream
-                    : (activeThread?.planMarkdown ?? "")
+                  livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")
                 }
                 planTodos={activeThread?.todos ?? []}
-                planTodosRunning={agentThreadId !== null && agentThreadId === activeThreadId}
-                canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && streamText === null}
+                planTodosRunning={runningThreadId !== null && runningThreadId === activeThreadId}
+                canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && streamText === null && runningThreadId !== activeThreadId}
                 diff={diff}
                 browserUrl={browserUrl}
                 browserPartition={browserPartition}
