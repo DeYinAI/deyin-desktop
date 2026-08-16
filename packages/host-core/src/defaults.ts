@@ -1,4 +1,4 @@
-import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
+import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
 export const SETTINGS_SCHEMA_VERSION = 10;
@@ -420,6 +420,36 @@ export const DEFAULT_CAPABILITIES: CapabilityItem[] = [
 /** Provider record as persisted, minus runtime-derived fields and secrets. */
 export type StoredProviderBase = Omit<ProviderInfo, "status" | "hasKey">;
 
+/**
+ * Bump when DEFAULT_PROVIDERS gains entries; existing agents.json / web
+ * localStorage records merge in preset providers they are missing, once.
+ */
+export const PROVIDER_SEED_VERSION = 2;
+
+function preset(
+  id: string,
+  name: string,
+  baseUrl: string,
+  apiFormat: ProviderApiFormat,
+  extra: Partial<StoredProviderBase> = {},
+): StoredProviderBase {
+  return {
+    id,
+    name,
+    kind: "custom",
+    preset: true,
+    enabled: true,
+    baseUrl,
+    apiFormat,
+    connectionModes: ["API key"],
+    activeMode: "API key",
+    models: [],
+    disabledModels: [],
+    ...extra,
+  };
+}
+
+/** Curated provider catalog shared by desktop, web and CLI (pi-ai-style presets). */
 export const DEFAULT_PROVIDERS: StoredProviderBase[] = [
   {
     id: "openference",
@@ -433,4 +463,32 @@ export const DEFAULT_PROVIDERS: StoredProviderBase[] = [
     models: [],
     disabledModels: [],
   },
+  preset("deepseek", "DeepSeek", "https://api.deepseek.com", "chat-completions"),
+  preset("openai", "OpenAI", "https://api.openai.com/v1", "chat-completions"),
+  preset("anthropic", "Anthropic", "https://api.anthropic.com", "anthropic"),
+  preset("google", "Google Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "chat-completions"),
+  preset("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "chat-completions"),
+  preset("groq", "Groq", "https://api.groq.com/openai/v1", "chat-completions"),
+  preset("xai", "xAI", "https://api.x.ai/v1", "chat-completions"),
+  preset("mistral", "Mistral", "https://api.mistral.ai/v1", "chat-completions"),
+  preset("ollama", "Ollama (local)", "http://localhost:11434/v1", "chat-completions", { local: true }),
 ];
+
+/** Merge preset providers missing from an existing persisted list (once per seed version). */
+export function mergePresetProviders(
+  existing: StoredProviderBase[],
+  seededVersion?: number,
+): { providers: StoredProviderBase[]; seedVersion: number } {
+  if (seededVersion !== undefined && seededVersion >= PROVIDER_SEED_VERSION) {
+    return { providers: existing, seedVersion: seededVersion };
+  }
+  const have = new Set(existing.map((p) => p.id));
+  const missing = DEFAULT_PROVIDERS.filter((p) => !have.has(p.id) && p.kind === "custom");
+  if (missing.length === 0) {
+    return { providers: existing, seedVersion: PROVIDER_SEED_VERSION };
+  }
+  return {
+    providers: [...existing, ...missing],
+    seedVersion: PROVIDER_SEED_VERSION,
+  };
+}

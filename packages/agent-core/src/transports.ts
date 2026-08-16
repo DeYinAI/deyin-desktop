@@ -346,8 +346,11 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
     accept: "text/event-stream",
     "anthropic-version": opts.anthropicVersion ?? "2023-06-01",
   };
-  if (opts.authHeader) headers.authorization = `Bearer ${opts.token}`;
-  else headers["x-api-key"] = opts.token;
+  // An empty token means a local provider (Ollama): send no credentials.
+  if (opts.token) {
+    if (opts.authHeader) headers.authorization = `Bearer ${opts.token}`;
+    else headers["x-api-key"] = opts.token;
+  }
 
   const res = await fetch(`${root}/v1/messages`, {
     method: "POST",
@@ -542,12 +545,11 @@ export async function* streamResponsesEvents(opts: TransportOptions): AsyncGener
   if (opts.effort) body.reasoning = { effort: opts.effort };
   if (opts.maxTokens !== undefined) body.max_output_tokens = opts.maxTokens;
 
+  const responsesHeaders: Record<string, string> = { "content-type": "application/json" };
+  if (opts.token) responsesHeaders.authorization = `Bearer ${opts.token}`;
   const res = await fetch(`${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${opts.token}`,
-    },
+    headers: responsesHeaders,
     body: JSON.stringify(body),
     signal: opts.signal,
   });
