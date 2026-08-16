@@ -45,9 +45,15 @@ interface McpFile {
 
 export interface InterpolationContext {
   workspaceFolder?: string | null;
-  env?: Record<string, string | undefined>;
+  env?: Record<string, string>;
   userHome?: string;
   pluginDir?: string;
+  /**
+   * The user explicitly trusted this workspace (VS Code-style). Untrusted
+   * workspace mcp.json files interpolate only allowlisted env vars, so a
+   * cloned repo cannot exfiltrate tokens via ${env:...} in commands/headers.
+   */
+  trustedWorkspace?: boolean;
 }
 
 export function interpolate(value: string, ctx: InterpolationContext): string {
@@ -63,17 +69,47 @@ export function interpolate(value: string, ctx: InterpolationContext): string {
     .replaceAll("${/}", process.platform === "win32" ? "\\" : "/");
 }
 
+/**
+ * Env vars a workspace (cloned-repo) mcp.json may interpolate. Anything else —
+ * tokens, cloud creds — stays invisible to untrusted config files; user-level
+ * and module configs keep full access.
+ */
+const WORKSPACE_ENV_ALLOWLIST =
+  /^(PATH|HOME|USER|USERNAME|USERPROFILE|SHELL|LANG|LC_[A-Z_]+|TMPDIR|TEMP|TMP|APPDATA|LOCALAPPDATA|ProgramFiles|ProgramFiles\(x86\)|ProgramData|SystemRoot|COMSPEC|PROCESSOR_ARCHITECTURE)$/;
+
+function interpolationEnv(source: string, ctx: InterpolationContext): Record<string, string> {
+  const explicit = ctx.env ?? {};
+  if (source !== "workspace" || ctx.trustedWorkspace === true) {
+    const full: Record<string, string> = {};
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) full[key] = value;
+    }
+    return { ...full, ...explicit };
+  }
+  const safe: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (WORKSPACE_ENV_ALLOWLIST.test(key) || key.startsWith("DEYIN_") || key.startsWith("MCP_")) {
+      safe[key] = value;
+    }
+  }
+  return { ...safe, ...explicit };
+}
+
 function normalizeServer(name: string, raw: RawServer, source: string, path: string, ctx: InterpolationContext): McpServerDefinition | null {
-  const apply = (v: string) => interpolate(v, ctx);
+  // Both branches interpolate with a source-scoped env (workspace configs see
+  // the allowlist only). Values the file itself declares in `env` are their own
+  // strings — they apply AFTER interpolation of their ${...} references.
+  const scoped: InterpolationContext = { ...ctx, env: interpolationEnv(source, ctx) };
+  const apply = (v: string) => interpolate(v, scoped);
+  // Remote configs may interpolate vars the file itself declares in `env`.
+  const remoteCtx: InterpolationContext = { ...scoped, env: { ...scoped.env, ...(raw.env ?? {}) } };
   const applyRecord = (record?: Record<string, string>) =>
     record ? Object.fromEntries(Object.entries(record).map(([k, v]) => [k, apply(v)])) : undefined;
 
   if (raw.url) {
     const transport = raw.type === "sse" || raw.url.endsWith("/sse") ? "sse" : "http";
-    const localCtx: InterpolationContext = {
-      ...ctx,
-      env: { ...process.env, ...(ctx.env ?? {}), ...(raw.env ?? {}) },
-    };
+    const localCtx: InterpolationContext = remoteCtx;
     const applyRemote = (v: string) => interpolate(v, localCtx);
     const applyRemoteRecord = (record?: Record<string, string>) =>
       record ? Object.fromEntries(Object.entries(record).map(([k, v]) => [k, applyRemote(v)])) : undefined;

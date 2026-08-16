@@ -55,10 +55,14 @@ interface HooksFile {
   hooks?: Partial<Record<string, HookDefinition[]>>;
 }
 
-/** Load hooks.json from workspace + user locations. All matching hooks run. */
-export async function loadHooks(cwd: string | null, userDir?: string): Promise<LoadedHook[]> {
+/** Load hooks.json from workspace + user locations (+ plugin-bundled files). All matching hooks run. */
+export async function loadHooks(
+  cwd: string | null,
+  userDir?: string,
+  extraFiles: { path: string; source: string }[] = [],
+): Promise<LoadedHook[]> {
   const loaded: LoadedHook[] = [];
-  for (const file of hooksFiles(cwd, userDir)) {
+  for (const file of [...hooksFiles(cwd, userDir), ...extraFiles]) {
     let raw: string;
     try {
       raw = await readFile(file.path, "utf8");

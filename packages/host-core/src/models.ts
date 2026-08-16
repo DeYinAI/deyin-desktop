@@ -20,6 +20,7 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
   try {
     const res = await fetch(`${opts.apiBaseUrl}/models`, {
       headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return DEFAULT_MODELS;
     const body = (await res.json()) as { data?: OpenAIModelListItem[] };

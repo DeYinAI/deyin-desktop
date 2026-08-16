@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import { AuthManager } from "./auth.js";
 import { registerIpc, type IpcServices } from "./ipc.js";
 import { CH } from "../shared/ipc.js";
@@ -63,14 +63,24 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  services = registerIpc({
-    config,
-    auth,
-    getWorkspaceRoot: () => workspaceRoot,
-    setWorkspaceRoot: (root) => {
-      workspaceRoot = root;
-    },
-  });
+  // A storage/config failure inside registerIpc must never leave the user with
+  // no window at all: still open one and surface the failure.
+  try {
+    services = registerIpc({
+      config,
+      auth,
+      getWorkspaceRoot: () => workspaceRoot,
+      setWorkspaceRoot: (root) => {
+        workspaceRoot = root;
+      },
+    });
+  } catch (err) {
+    console.error("[deyin] service registration failed:", err);
+    dialog.showErrorBox(
+      "Deyin failed to start services",
+      `Some services could not start; parts of the app may not work.\n\n${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   createMainWindow();
 

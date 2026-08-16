@@ -115,6 +115,7 @@ async function authFetch(
   if (!token) throw new SelectPlanError("Sign in to manage billing.");
   return fetch(`${oauthIssuer.replace(/\/$/, "")}${path}`, {
     ...init,
+    signal: AbortSignal.timeout(15_000),
     headers: {
       authorization: `Bearer ${token}`,
       ...(init?.headers ?? {}),

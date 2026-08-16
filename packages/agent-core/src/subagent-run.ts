@@ -1,5 +1,5 @@
 import type { ApprovalMode, ChatMode } from "@deyin/host-core";
-import { ASK_AGENT, BUILD_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
+import { ASK_AGENT, BUILD_AGENT, DELIVERY_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
 import { runAgent } from "./loop.js";
 import { PermissionEngine, type PermissionResolver, type PermissionRule } from "./permissions.js";
 import { buildSystemPrompt } from "./prompt.js";
@@ -56,6 +56,8 @@ export function agentForMode(mode: ChatMode): AgentDefinition {
       return PLAN_AGENT;
     case "ask":
       return ASK_AGENT;
+    case "delivery":
+      return DELIVERY_AGENT;
     default:
       return BUILD_AGENT;
   }

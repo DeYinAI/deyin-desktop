@@ -52,13 +52,14 @@ export async function runLocalAutomation(
       contextLength: deps.getContextLength(automation.providerId, automation.model),
       messages,
       tools: env.registry,
-      permissions: automationPermissions(env.hostRules),
-      resolvePermission: async (req) => {
+      permissions: automationPermissions(),
+      // Unattended: never interactive. neverSkip-routed tools (computer-use,
+      // chrome navigation) are denied here instead of prompting.
+      resolvePermission: async (req: { toolName: string; args: Record<string, unknown> }) => {
         if (req.toolName === "chrome_navigate") return "deny";
         if (requiresExtraConfirmation(req.toolName, req.args)) return "deny";
         return "allow";
       },
-      forcePermissionPrompt: (req) => requiresExtraConfirmation(req.toolName, req.args),
       cwd,
       thinking: deps.settings.get().thinking,
       signal,

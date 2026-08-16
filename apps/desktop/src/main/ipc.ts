@@ -23,6 +23,20 @@ import {
   webSearch,
 } from "@deyin/host-core";
 import { fetchPublicPlans } from "@deyin/host-core/shared";
+import {
+  abortCrossCurrencyUpgrade,
+  completeCrossCurrencyUpgrade,
+  fetchBillingOverview,
+  fetchBillingPublishableKey,
+  selectPlan,
+} from "@deyin/host-core/shared";
+import {
+  ReasonixMetricsStore,
+  emptyReasonixMetrics,
+  type ReasonixMetricsSnapshot,
+  type ReasonixWeeklyReport,
+} from "@deyin/host-core/shared";
+import { resolveContextRefs, searchContextPaths } from "@deyin/host-core";
 import type { PermissionDecision } from "@deyin/agent-core";
 import { CH } from "../shared/ipc.js";
 import type {
@@ -53,7 +67,20 @@ import { createDesktopStorage } from "./storage.js";
 import { createUpdateController } from "./updater.js";
 import { AutomationService } from "./automations/service.js";
 import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
-import { readFileSync } from "node:fs";
+import { McpCatalogService } from "./mcp-catalog.js";
+import { McpModuleService } from "./mcp-modules.js";
+import { McpOAuthService } from "./mcp-oauth.js";
+import { SecurityService } from "./security.js";
+import { scanDiffViaMcp } from "./security-scan.js";
+import { ReasonixObservability } from "./reasonix-observability.js";
+import { ComputerUseService } from "./computer-use.js";
+import { ChromeDebugService } from "./chrome-debug.js";
+import { VisualizeService } from "./visualize.js";
+import { PendingReviewQueue } from "./pending-review.js";
+import { WorkspaceTrustStore } from "./workspace-trust.js";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join as pathJoin } from "node:path";
 
 interface RegisterOptions {
   config: DeyinConfig;
@@ -112,6 +139,14 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     usage,
     getWorkspaceRoot: opts.getWorkspaceRoot,
   });
+  // Hold exit open just long enough for the final telemetry batch to upload.
+  app.on("will-quit", (event) => {
+    if (telemetryFlushed) return;
+    event.preventDefault();
+    telemetryFlushed = true;
+    void telemetry.flush().finally(() => app.exit(0));
+  });
+
   // Register this workstation on startup when a session exists; best effort.
   void auth.getUser().then((user) => {
     if (user) void identity.sync();
@@ -133,6 +168,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   telemetry.start();
   telemetry.record("app-start");
 
+  let telemetryFlushed = false;
+
   /* Updates. */
   const updates = createUpdateController({
     isAutoUpdateEnabled: () => settings.get().autoUpdate,
@@ -148,8 +185,24 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
   const builtinSkillsDir = join(app.getPath("userData"), "builtin-skills");
-  const capabilities = new CapabilityService(agents, opts.getWorkspaceRoot, pluginsDir, builtinSkillsDir, () => settings.get());
-  const plugins = new PluginService(pluginsDir, storage, agents, capabilities);
+  const trust = new WorkspaceTrustStore(
+    () => storage.readJson<string[]>("workspace-trust.json", []),
+    (roots) => storage.writeJson("workspace-trust.json", roots),
+  );
+  const capabilities = new CapabilityService(
+    agents,
+    opts.getWorkspaceRoot,
+    pluginsDir,
+    builtinSkillsDir,
+    () => settings.get(),
+    () => trust.isTrusted(opts.getWorkspaceRoot() ?? ""),
+  );
+  // Bundled first-party plugins materialize into userData/plugins on startup
+  // (source dir: repo checkout in dev, resources/ in packaged builds).
+  const bundledSrcDir = app.isPackaged
+    ? join(process.resourcesPath, "bundled-plugins")
+    : join(app.getAppPath(), "bundled-plugins");
+  const plugins = new PluginService(pluginsDir, storage, agents, capabilities, existsSync(bundledSrcDir) ? bundledSrcDir : undefined);
   const browser = new BrowserControlService(opts.getWorkspaceRoot, () => settings.get().browserControlEnabled);
 
   const index = new IndexManager({
@@ -159,14 +212,100 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     onStatus: (status) => broadcast(CH.indexStatusEvent, status),
   });
 
-  const sender = () =>
-    BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null;
+  // Terminal output follows the window that created/attached the terminal —
+  // a fallback lookup would silently drop data whenever no window is focused.
+  const termSenders = new Map<number, Electron.WebContents>();
+  const senderFor = (id: string) => {
+    const wc = termSenders.get(Number(id));
+    if (wc && !wc.isDestroyed()) return wc;
+    // Fallback for agent shells announced without a creator (e.g. restored runs).
+    const fallback = BrowserWindow.getFocusedWindow()?.webContents ?? BrowserWindow.getAllWindows()[0]?.webContents ?? null;
+    return fallback;
+  };
   const terminals = new TerminalManager({
-    onData: (id, data) => sender()?.send(CH.termData, { id, data }),
-    onExit: (id, exitCode) => sender()?.send(CH.termExit, { id, exitCode }),
+    onData: (id, data) => senderFor(id)?.send(CH.termData, { id, data }),
+    onExit: (id, exitCode) => {
+      termSenders.delete(Number(id));
+      senderFor(id)?.send(CH.termExit, { id, exitCode });
+    },
   });
 
   const memory = new MemoryStore(app.getPath("userData"));
+
+  /* Change review queue: shared between the agent runtime (write/edit/delete
+     gating) and the renderer's review list/approve/reject IPC. */
+  const review = new PendingReviewQueue();
+  const broadcastReviewResolved = (threadId: string, changeId: string, status: "approved" | "rejected") => {
+    broadcast("deyin:agent:event", {
+      threadId,
+      event: { type: "pending-change-resolved", changeId, threadId, status },
+    } satisfies { threadId: string; event: unknown });
+  };
+
+  /* Security findings + reasonix observability + host tool services. */
+  const security = new SecurityService();
+  const reasonixMetrics = new ReasonixMetricsStore(
+    (data) => storage.writeJson("reasonix-metrics.json", data),
+    storage.readJson<ReasonixMetricsSnapshot>("reasonix-metrics.json", emptyReasonixMetrics()),
+  );
+  const reasonix = new ReasonixObservability();
+  const computerUse = new ComputerUseService(
+    () => settings.get().computerUseEnabled,
+    () => process.platform === "win32",
+    () => settings.get().computerUseScreenshotRetentionDays,
+  );
+
+  /* Chrome CDP consent bridges main -> renderer dialog -> response. */
+  const chromeConsentPending = new Map<number, (granted: boolean) => void>();
+  const chrome = new ChromeDebugService(
+    () => settings.get().chromeDebugEnabled,
+    () => process.platform === "win32",
+    () =>
+      new Promise<boolean>((resolve) => {
+        const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+        if (!win) {
+          resolve(false);
+          return;
+        }
+        const wcId = win.webContents.id;
+        const timer = setTimeout(() => {
+          chromeConsentPending.delete(wcId);
+          resolve(false);
+        }, 10 * 60 * 1000);
+        chromeConsentPending.set(wcId, (granted) => {
+          clearTimeout(timer);
+          resolve(granted);
+        });
+        win.webContents.send(CH.chromeConsentRequest, {
+          message: "Allow Deyin to attach to your logged-in Chrome browser for automation?",
+        });
+      }),
+    join(app.getPath("userData"), "chrome-debug"),
+  );
+  ipcMain.on(CH.chromeConsentRespond, (e, granted: boolean) => {
+    const resolve = chromeConsentPending.get(e.sender.id);
+    if (!resolve) return;
+    chromeConsentPending.delete(e.sender.id);
+    resolve(Boolean(granted));
+  });
+
+  const visualize = new VisualizeService();
+
+  /* MCP modules / catalog / native OAuth. */
+  const mcpModules = new McpModuleService(homedir(), () => capabilities.invalidate());
+  void mcpModules.migrateFlatMcp();
+  const mcpCatalog = new McpCatalogService(mcpModules);
+  const mcpOAuth = new McpOAuthService();
+  const moduleMcpUrl = (moduleId: string): string => {
+    try {
+      const raw = JSON.parse(readFileSync(pathJoin(mcpModules.moduleDir(moduleId), "mcp.json"), "utf8")) as {
+        mcpServers?: Record<string, { url?: string }>;
+      };
+      return raw.mcpServers?.[moduleId]?.url ?? "";
+    } catch {
+      return "";
+    }
+  };
 
   const agentHost = new DesktopAgentHost({
     config,
@@ -175,8 +314,15 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    chrome,
+    computerUse,
+    visualize,
     terminals,
     memory,
+    review,
+    reasonix,
+    mcpAuth: { getProvider: (name) => mcpOAuth.getProvider(name) },
+    trust,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
@@ -196,6 +342,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     capabilities,
     browser,
     memory,
+    trust,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength: (providerId, modelId) => {
@@ -344,11 +491,16 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.projectsGet, () => projects.get());
   ipcMain.handle(CH.projectsSet, (_e, patch: Partial<ProjectsState>) => projects.set(patch));
 
-  ipcMain.handle(CH.termCreate, (_e, options: TerminalCreateOptions) => {
+  ipcMain.handle(CH.termCreate, (e, options: TerminalCreateOptions) => {
     const shellId = options.shell ?? settings.get().defaultShell ?? undefined;
-    return terminals.create({ ...options, shell: shellId });
+    const id = terminals.create({ ...options, shell: shellId });
+    termSenders.set(Number(id), e.sender);
+    return id;
   });
-  ipcMain.handle(CH.termAttach, (_e, id: string) => terminals.attach(id));
+  ipcMain.handle(CH.termAttach, (e, id: string) => {
+    termSenders.set(Number(id), e.sender);
+    return terminals.attach(id);
+  });
   ipcMain.on(CH.termWrite, (_e, id: string, data: string) => terminals.write(id, data));
   ipcMain.on(CH.termResize, (_e, id: string, cols: number, rows: number) => terminals.resize(id, cols, rows));
   ipcMain.on(CH.termKill, (_e, id: string) => terminals.kill(id));
@@ -384,6 +536,131 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   });
   ipcMain.handle(CH.mcpTest, (_e, name: string) => capabilities.testMcpServer(name));
 
+  /* MCP catalog / modules / native OAuth. */
+  ipcMain.handle(CH.mcpCatalogList, () => mcpCatalog.list());
+  ipcMain.handle(CH.mcpCatalogInstall, (_e, input: import("../shared/types.js").McpCatalogInstallInput) => {
+    mcpCatalog.install(input);
+    return capabilities.listMcpServers();
+  });
+  ipcMain.handle(CH.mcpModulesList, () => mcpModules.list());
+  ipcMain.handle(CH.mcpModulesUninstall, (_e, id: string) => {
+    mcpModules.uninstall(id);
+    return capabilities.listMcpServers();
+  });
+  ipcMain.handle(CH.mcpAuthenticate, (_e, moduleId: string) => mcpOAuth.authenticate(moduleId, moduleMcpUrl(moduleId)));
+  ipcMain.handle(CH.mcpAuthRevoke, (_e, moduleId: string) => {
+    mcpOAuth.revoke(moduleId);
+    return undefined;
+  });
+  ipcMain.handle(CH.mcpAuthStatus, () => mcpOAuth.statusForModules(mcpModules.list()));
+
+  /* @ context attachments. */
+  ipcMain.handle(CH.contextSearch, (_e, query: string) => searchContextPaths(opts.getWorkspaceRoot(), query));
+  ipcMain.handle(CH.contextResolve, (_e, refs: import("../shared/types.js").ContextRef[]) =>
+    resolveContextRefs(opts.getWorkspaceRoot(), Array.isArray(refs) ? refs : []),
+  );
+
+  /* Change review queue. */
+  ipcMain.handle(CH.reviewList, (_e, threadId?: string) => (threadId ? review.list(threadId) : review.listAll()));
+  ipcMain.handle(CH.reviewApprove, (e, threadId: string, changeId: string) => {
+    const ok = review.approve(threadId, changeId, e.sender.id);
+    if (ok) broadcastReviewResolved(threadId, changeId, "approved");
+    return ok;
+  });
+  ipcMain.handle(CH.reviewReject, (e, threadId: string, changeId: string) => {
+    const ok = review.reject(threadId, changeId, e.sender.id);
+    if (ok) broadcastReviewResolved(threadId, changeId, "rejected");
+    return ok;
+  });
+  ipcMain.handle(CH.reviewApproveAll, async (e, threadId: string) => {
+    const ids = await review.approveAll(threadId, e.sender.id);
+    for (const id of ids) broadcastReviewResolved(threadId, id, "approved");
+    return ids.length;
+  });
+  ipcMain.handle(CH.reviewRejectAll, (e, threadId: string) => {
+    const ids = review.rejectAll(threadId, e.sender.id);
+    for (const id of ids) broadcastReviewResolved(threadId, id, "rejected");
+    return ids.length;
+  });
+
+  /* Security findings. */
+  ipcMain.handle(CH.securityListFindings, (_e, threadId: string) => security.listFindings(threadId));
+  ipcMain.handle(CH.securityClearFindings, (_e, threadId: string) => security.clearFindings(threadId));
+  ipcMain.handle(CH.securityScanDiff, async (_e, threadId: string, diff: string) => {
+    const report = await scanDiffViaMcp(capabilities, opts.getWorkspaceRoot(), diff);
+    const merged = security.mergeReport(threadId, report);
+    broadcast(CH.securityFindingsChanged, threadId);
+    return merged;
+  });
+
+  /* Billing (Openference OAuth-backed). */
+  const billingOpts = { oauthIssuer: config.oauthIssuer };
+  ipcMain.handle(CH.billingOverview, () => fetchBillingOverview(billingOpts, () => auth.getAccessToken()));
+  ipcMain.handle(CH.billingSelectPlan, (_e, planId: number, options?: import("../shared/types.js").SelectPlanOptions) =>
+    selectPlan(billingOpts, () => auth.getAccessToken(), planId, options),
+  );
+  ipcMain.handle(CH.billingPublishableKey, () => fetchBillingPublishableKey(billingOpts, () => auth.getAccessToken()));
+  ipcMain.handle(CH.billingCompleteCrossCurrency, (_e, newSubscriptionId: string) =>
+    completeCrossCurrencyUpgrade(billingOpts, () => auth.getAccessToken(), newSubscriptionId),
+  );
+  ipcMain.handle(CH.billingAbortCrossCurrency, (_e, newSubscriptionId: string) =>
+    abortCrossCurrencyUpgrade(billingOpts, () => auth.getAccessToken(), newSubscriptionId),
+  );
+
+  /* Computer use allowlist. */
+  ipcMain.handle(CH.computerUseGetAllowlist, () => computerUse.getAllowlist());
+  ipcMain.handle(CH.computerUseSetAllowlist, (_e, apps: string[]) => computerUse.setAllowlist(Array.isArray(apps) ? apps : []));
+  ipcMain.handle(CH.computerUseListApps, () => computerUse.listAppsPreview());
+
+  /* Visualizations. */
+  ipcMain.handle(CH.visualizeRead, (_e, threadId: string, fileName: string) => visualize.readFragment(threadId, fileName));
+
+  /* Reasonix metrics + diagnostics. */
+  ipcMain.handle(CH.reasonixMetricsGet, () => reasonixMetrics.get());
+  ipcMain.handle(CH.reasonixMetricsReport, (): ReasonixWeeklyReport => {
+    const snapshot = reasonixMetrics.get();
+    const hitRate = snapshot.cache.hitRate;
+    const notes: string[] = [];
+    if (hitRate < settings.get().cacheHitRateWarningThreshold) {
+      notes.push(`Prefix-cache hit rate ${(hitRate * 100).toFixed(1)}% is below target — see cache optimization tips.`);
+    }
+    if (snapshot.coordinator.fallbacks > 0) {
+      notes.push(`${snapshot.coordinator.fallbacks} coordinator fallback(s) this week; consider a faster planner model.`);
+    }
+    return { generatedAt: new Date().toISOString(), weekBucket: snapshot.weekBucket, snapshot, notes };
+  });
+  ipcMain.handle(CH.reasonixDiagnosticsGet, (_e, threadId?: string) => reasonix.getDiagnostics(threadId));
+  ipcMain.handle(CH.reasonixCacheClear, (_e, threadId: string) => {
+    reasonix.clearThreadCache(threadId);
+    return undefined;
+  });
+
+  /* Beta feedback: best-effort upload to the Openference backend. */
+  ipcMain.handle(
+    CH.betaFeedbackSubmit,
+    async (_e, payload: { category: string; message: string; rating?: number }): Promise<{ ok: boolean }> => {
+      try {
+        const token = await auth.getAccessToken();
+        const res = await fetch(`${config.oauthIssuer.replace(/\/$/, "")}/api/beta/feedback`, {
+          method: "POST",
+          signal: AbortSignal.timeout(10_000),
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            category: String(payload.category).slice(0, 100),
+            message: String(payload.message).slice(0, 8000),
+            rating: typeof payload.rating === "number" ? payload.rating : undefined,
+          }),
+        });
+        return { ok: res.ok };
+      } catch {
+        return { ok: false };
+      }
+    },
+  );
+
   /* Plugins. */
   ipcMain.handle(CH.pluginsList, () => plugins.list());
   ipcMain.handle(CH.pluginsCatalog, (_e, force?: boolean) => plugins.catalog(force));
@@ -418,7 +695,11 @@ ipcMain.on(CH.agentAnswerQuestion, (_e, requestId: string, answers: Record<strin
 ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShell(threadId));
 
   /* Browser control plumbing. */
-  ipcMain.on(CH.browserRegister, (_e, webContentsId: number | null) => browser.register(webContentsId));
+  ipcMain.on(CH.browserRegister, (e, webContentsId: number | null) => browser.register(webContentsId ?? e.sender.id));
+  ipcMain.on(CH.browserTabSync, (_e, webContentsId: number, url: string, title: string) =>
+    browser.syncTab(webContentsId, url, title),
+  );
+  ipcMain.on(CH.browserTabRemove, (_e, webContentsId: number) => browser.removeTab(webContentsId));
   ipcMain.handle(CH.browserGetPartition, () => workspacePartition(opts.getWorkspaceRoot()));
   ipcMain.handle(CH.browserClearProfile, () => browser.clearProfile());
 
@@ -548,6 +829,8 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       });
     },
     dispose: () => {
+      // Abort in-flight agent runs first so MCP children observe the signal.
+      agentHost.stopAll();
       agentHost.disposeAllShells();
       telemetry.stop();
       void telemetry.flush();

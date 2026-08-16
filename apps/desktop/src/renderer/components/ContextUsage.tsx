@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.js";
-import type { ContextCategoryId, ContextUsageSnapshot } from "../../shared/types.js";
+import type { AccountUsage, ContextCategoryId, ContextUsageSnapshot } from "../../shared/types.js";
 
 const CATEGORY_COLORS: Record<ContextCategoryId, string> = {
   system: "#8b949e",
@@ -19,6 +19,14 @@ function formatTokens(n: number): string {
   return String(Math.round(n));
 }
 
+function formatWeeklyReset(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "resets soon";
+  const hours = Math.floor(ms / 3_600_000);
+  const days = Math.floor(hours / 24);
+  return days > 0 ? `resets in ${days}d ${hours % 24}h` : `resets in ${hours}h`;
+}
+
 export interface ContextUsageProps {
   snapshot: ContextUsageSnapshot | null;
   /** Live model context window — preferred over any baked snapshot.contextLength. */
@@ -32,6 +40,7 @@ export interface ContextUsageProps {
 /** Circular meter + Cursor-style Context Usage popover above the composer. */
 export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEstimateTokens = 0 }: ContextUsageProps) {
   const [open, setOpen] = useState(false);
+  const [account, setAccount] = useState<AccountUsage | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const measured = snapshot != null;
 
@@ -46,6 +55,22 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
   useEffect(() => {
     setOpen(false);
   }, [threadKey]);
+
+  // Pull the cached Openference account snapshot whenever the popover opens;
+  // the host layer serves it from disk within its TTL so this stays cheap.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    void window.deyin.usage
+      .account(false)
+      .then((a) => {
+        if (alive) setAccount(a);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -188,6 +213,37 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
             )}
           </ul>
 
+          {account && (
+            <div className="context-usage__plan">
+              <div className="context-usage__plan-head">
+                <span className="context-usage__plan-title">Openference</span>
+                {account.planName && <span className="context-usage__plan-badge">{account.planName}</span>}
+                <span className="context-usage__plan-spacer" />
+                <span className="context-usage__plan-today">
+                  {account.todayRequests.toLocaleString()} today
+                </span>
+              </div>
+              <PlanMeter
+                label="Requests this week"
+                used={account.weekRequests}
+                limit={account.requestsPerWeek}
+                formatValue={(n) => n.toLocaleString()}
+              />
+              <PlanMeter
+                label="Tokens this week"
+                used={account.weekTokens}
+                limit={account.tokensPerWeek}
+                formatValue={formatTokens}
+              />
+              {(account.weeklyResetAt || account.creditsUsd !== null) && (
+                <div className="context-usage__plan-foot">
+                  {account.weeklyResetAt && <span>{formatWeeklyReset(account.weeklyResetAt)}</span>}
+                  {account.creditsUsd !== null && <span>${account.creditsUsd.toFixed(2)} credits</span>}
+                </div>
+              )}
+            </div>
+          )}
+
           {(attachmentHeavy || snapshot?.cached || wireSaved > 0 || snapshot?.cache) && (
             <div className="context-usage__footer">
               {attachmentHeavy && <span>Large attachments may exceed the context budget</span>}
@@ -207,6 +263,37 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** One Openference weekly quota row: label, used/limit and a thin progress bar. */
+function PlanMeter({
+  label,
+  used,
+  limit,
+  formatValue,
+}: {
+  label: string;
+  used: number;
+  limit: number | null;
+  formatValue: (n: number) => string;
+}) {
+  const percent = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
+  const tone = percent === null ? "none" : percent >= 90 ? "critical" : percent >= 70 ? "warn" : "ok";
+  return (
+    <div className="context-usage__meter-row">
+      <div className="context-usage__meter-top">
+        <span className="context-usage__meter-label">{label}</span>
+        <span className="context-usage__meter-count">
+          {percent !== null ? `${formatValue(used)} / ${formatValue(limit!)} · ${percent}%` : formatValue(used)}
+        </span>
+      </div>
+      <div className="context-usage__meter-bar" aria-hidden>
+        {percent !== null && (
+          <div className={`context-usage__meter-fill context-usage__meter-fill--${tone}`} style={{ width: `${percent}%` }} />
+        )}
+      </div>
     </div>
   );
 }
