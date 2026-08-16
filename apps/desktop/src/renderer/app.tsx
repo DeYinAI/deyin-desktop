@@ -1046,9 +1046,10 @@ export function App() {
     } else {
       apiBaseUrl = provider.baseUrl ?? apiBaseUrl;
       token = await window.deyin.providers.getKey(provider.id);
-      if (!token) {
+      // Local providers (Ollama) need no key; others must have one stored.
+      if (!token && !provider.local) {
         appendEvents(thread.id, [
-          { kind: "assistant", text: `No API key stored for ${provider.name}. Add one in Settings → Model settings.` },
+          { kind: "assistant", text: `No API key stored for ${provider.name}. Add one in Settings → Models.` },
         ]);
         return;
       }
@@ -1064,7 +1065,7 @@ export function App() {
       // Skip the LLM call when the provisional title is already short enough.
       const needsLlmTitle = provisional.endsWith("…") || provisional.split(/\s+/).length > 6;
       if (needsLlmTitle) {
-        void generateThreadTitle({ apiBaseUrl, token, model: selectedModel, text })
+        void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: selectedModel, text })
           .then((generated) => {
             if (!generated) return;
             setProjects((cur) =>
@@ -1118,7 +1119,7 @@ export function App() {
     try {
       for await (const delta of streamChat({
         apiBaseUrl,
-        token,
+        token: token ?? "",
         model: selectedModel,
         messages: history,
         thinking: settings?.thinking,

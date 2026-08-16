@@ -193,7 +193,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     });
 
     const token = await opts.getToken();
-    if (!token) throw new AuthRequiredError();
+    // Empty string is valid: local providers (Ollama) need no key.
+    if (token === null || token === undefined) throw new AuthRequiredError();
 
     emit({ type: "step-start", step });
 
