@@ -127,6 +127,7 @@ interface ThreadRunMutable {
   streamReasoning: string;
   planStream: string | null;
   toolIndex: Map<string, number>;
+  subagentIndex: Map<string, number>;
   planDoc: string;
   planArtifactShown: boolean;
   textBuffer: string;
@@ -161,6 +162,7 @@ function freshThreadRun(mode: ChatMode = "agent"): ThreadRunMutable {
     streamReasoning: "",
     planStream: null,
     toolIndex: new Map(),
+    subagentIndex: new Map(),
     planDoc: "",
     planArtifactShown: false,
     textBuffer: "",
@@ -414,7 +416,10 @@ class AgentStateStore {
       case "tool-start": {
         this.flushText(t);
         t.toolIndex.set(event.callId, t.runEvents.length);
-        t.runEvents = [...t.runEvents, { kind: "tool", name: event.name, summary: event.summary }];
+        t.runEvents = [
+          ...t.runEvents,
+          { kind: "tool", name: event.name, summary: event.summary, startedAt: Date.now() },
+        ];
         t.status = { ...t.status, phase: "tool", label: `${event.name}…` };
         this.notifyStructural();
         break;
@@ -438,7 +443,13 @@ class AgentStateStore {
         const prev = t.runEvents[index];
         if (!prev || prev.kind !== "tool") break;
         const next = [...t.runEvents];
-        next[index] = { ...prev, result: event.result, ok: event.ok, denied: event.denied };
+        next[index] = {
+          ...prev,
+          result: event.result,
+          ok: event.ok,
+          denied: event.denied,
+          durationMs: prev.startedAt !== undefined ? Date.now() - prev.startedAt : undefined,
+        };
         t.runEvents = next;
         t.status = { ...t.status, phase: "waiting", label: "Processing…" };
         this.notifyStructural();
@@ -632,13 +643,44 @@ class AgentStateStore {
         break;
       case "subagent-start":
         this.flushText(t);
-        t.runEvents = [...t.runEvents, { kind: "thought", label: `Subagent ${event.name} started` }];
+        t.subagentIndex.set(event.id, t.runEvents.length);
+        t.runEvents = [...t.runEvents, { kind: "subagent", id: event.id, name: event.name, status: "running" }];
+        t.status = { ...t.status, phase: "tool", label: `${event.name} running…` };
         this.notifyStructural();
         break;
-      case "subagent-end":
-        t.runEvents = [...t.runEvents, { kind: "thought", label: `Subagent ${event.name} ${event.ok ? "finished" : "failed"}` }];
+      case "subagent-progress": {
+        const index = t.subagentIndex.get(event.id);
+        if (index === undefined) break;
+        const prev = t.runEvents[index];
+        if (!prev || prev.kind !== "subagent") break;
+        const next = [...t.runEvents];
+        next[index] = { ...prev, line: event.line };
+        t.runEvents = next;
         this.notifyStructural();
         break;
+      }
+      case "subagent-end": {
+        const index = t.subagentIndex.get(event.id);
+        if (index === undefined) {
+          // End without a matching start (e.g. very old events): keep as a line.
+          t.runEvents = [...t.runEvents, { kind: "thought", label: `Subagent ${event.name} ${event.ok ? "finished" : "failed"}` }];
+          this.notifyStructural();
+          break;
+        }
+        const prev = t.runEvents[index];
+        if (prev && prev.kind === "subagent") {
+          const next = [...t.runEvents];
+          next[index] = {
+            ...prev,
+            status: event.ok ? "done" : "failed",
+            ms: event.ms,
+            line: event.summary ?? prev.line,
+          };
+          t.runEvents = next;
+        }
+        this.notifyStructural();
+        break;
+      }
       case "shell-session":
         this.emit({ type: "shell-session", threadId, terminalId: event.terminalId, label: event.label });
         break;
@@ -705,6 +747,7 @@ class AgentStateStore {
         t.streamReasoning = "";
         t.planStream = null;
         t.toolIndex.clear();
+        t.subagentIndex.clear();
         t.planDoc = "";
         t.planArtifactShown = false;
         t.optimization = null;
@@ -730,6 +773,7 @@ class AgentStateStore {
     t.textBuffer = "";
     t.reasoningBuffer = "";
     t.toolIndex.clear();
+    t.subagentIndex.clear();
     t.optimization = null;
     t.status = emptyStatus();
     this.notifyStructural();
