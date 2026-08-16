@@ -10,7 +10,8 @@
     "build": "vite build && pnpm build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start:server": "node dist/server/index.js",
-    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@deyin/agent-core": "workspace:*",
