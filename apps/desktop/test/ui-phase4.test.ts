@@ -88,3 +88,41 @@ test("useAgentState: tool events preserve ordering", () => {
   }
 });
 
+
+test("useAgentState: tool events carry duration and subagent cards progress", async () => {
+  __testResetAgentStore();
+  const threadId = "subagent-thread";
+  agentStateStore.startRun(threadId, "agent");
+
+  __testDispatch({ threadId, event: { type: "tool-start", callId: "t1", name: "read", summary: "a.ts" } });
+  __testDispatch({
+    threadId,
+    event: { type: "tool-end", callId: "t1", name: "read", summary: "a.ts", result: "ok", ok: true },
+  });
+
+  __testDispatch({ threadId, event: { type: "subagent-start", id: "s1", name: "explorer", prompt: "find it" } });
+  __testDispatch({ threadId, event: { type: "subagent-progress", id: "s1", line: "grep pattern" } });
+  __testDispatch({
+    threadId,
+    event: { type: "subagent-end", id: "s1", name: "explorer", ok: true, ms: 1500, summary: "found 3 files" },
+  });
+
+  const events = __testGetThreadState(threadId).runEvents;
+  const tool = events.find((e) => e.kind === "tool");
+  assert.ok(tool && tool.kind === "tool" && tool.startedAt !== undefined);
+  assert.ok(tool && tool.kind === "tool" && tool.durationMs !== undefined);
+
+  const sub = events.find((e) => e.kind === "subagent");
+  assert.ok(sub && sub.kind === "subagent");
+  assert.equal(sub.status, "done");
+  assert.equal(sub.ms, 1500);
+  assert.equal(sub.line, "found 3 files");
+
+  // A failed subagent flips status without losing the last progress line.
+  __testDispatch({ threadId, event: { type: "subagent-start", id: "s2", name: "reviewer", prompt: "x" } });
+  __testDispatch({ threadId, event: { type: "subagent-progress", id: "s2", line: "read b.ts" } });
+  __testDispatch({ threadId, event: { type: "subagent-end", id: "s2", name: "reviewer", ok: false } });
+  const failed = __testGetThreadState(threadId).runEvents.find((e) => e.kind === "subagent" && e.id === "s2");
+  assert.ok(failed && failed.kind === "subagent" && failed.status === "failed");
+  assert.equal(failed.line, "read b.ts");
+});
