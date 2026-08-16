@@ -45,10 +45,9 @@ export function BetaFeedbackForm({ onClose }: Props) {
               Category
               <select className="select" value={category} onChange={(e) => setCategory(e.target.value)}>
                 <option value="general">General</option>
-                <option value="cache">Prefix cache</option>
-                <option value="coordinator">Coordinator</option>
-                <option value="fleet">Fleet</option>
-                <option value="delivery">Delivery mode</option>
+                <option value="chat">Chat and streaming</option>
+                <option value="tools">Tools and subagents</option>
+                <option value="models">Model providers</option>
                 <option value="bug">Bug report</option>
               </select>
             </label>

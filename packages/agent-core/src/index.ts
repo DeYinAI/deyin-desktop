@@ -20,7 +20,6 @@ export * from "./loop.js";
 export * from "./session.js";
 export * from "./config.js";
 export * from "./mcp.js";
-export * from "./computer-use-confirmations.js";
 export * from "./tools/index.js";
 export * from "./capabilities/index.js";
 export * from "./jobs/index.js";

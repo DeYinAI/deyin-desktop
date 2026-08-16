@@ -50,13 +50,10 @@ import type { DeyinConfig } from "../shared/config.js";
 import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
 import type { CapabilityService } from "./capabilities.js";
-import type { ChromeDebugService } from "./chrome-debug.js";
-import type { ComputerUseService } from "./computer-use.js";
 import type { VisualizeService } from "./visualize.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
-import type { ReasonixObservability } from "./reasonix-observability.js";
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
 import { dialog } from "electron";
 
@@ -112,16 +109,12 @@ export interface AgentHostOptions {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
-  chrome?: ChromeDebugService;
-  computerUse?: ComputerUseService;
   visualize?: VisualizeService;
   terminals: TerminalManager;
   /** Background memory store (remember/forget tools + recall). */
   memory: MemoryStore;
   /** Shared change-review queue (review mode) — also surfaced over IPC. */
   review: PendingReviewQueue;
-  /** Reasonix diagnostics collector (cache/coordinator/fleet/evidence). */
-  reasonix?: ReasonixObservability;
   /** Native OAuth provider store for MCP modules (token-backed connections). */
   mcpAuth?: { getProvider(serverName: string): OAuthClientProvider | undefined };
   /** Workspace trust decisions (gates hooks.json / mcp.json execution). */
@@ -174,9 +167,6 @@ export class DesktopAgentHost {
       return null;
     }
     if (this.optimizationPlugin) {
-      this.optimizationPlugin.runtime.config.enableToolCache = settings.optimizationToolCache;
-      this.optimizationPlugin.runtime.config.enableResponseCache = settings.optimizationResponseCache;
-      this.optimizationPlugin.setSimilarityThreshold(settings.optimizationSimilarityThreshold);
       return this.optimizationPlugin;
     }
     // After a failed load, do not re-init on every run (spam + cost). Clear by toggling the setting off/on.
@@ -191,9 +181,9 @@ export class DesktopAgentHost {
           const plugin = await createOptimizationPlugin({
             dataDir,
             packagedModelDir: existsSync(packagedModelDir) ? packagedModelDir : undefined,
-            enableToolCache: settings.optimizationToolCache,
-            enableResponseCache: settings.optimizationResponseCache,
-            similarityThreshold: settings.optimizationSimilarityThreshold,
+            enableToolCache: true,
+            enableResponseCache: true,
+            similarityThreshold: 0.93,
           });
           this.optimizationPlugin = plugin;
           this.optimizationPluginLoadError = null;
@@ -457,13 +447,11 @@ export class DesktopAgentHost {
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
-    // Bundled host modules (browser/chrome/computer-use/visualize) register their
+    // Bundled host modules (browser/visualize) register their
     // own tools behind their settings + capability toggles, and hand back the
     // extra ask-tier permission rules (e.g. computer-use confirmation).
     const hostRules = await registerBundledHostTools(registry, this.opts.agents, this.opts.settings, {
       browser: this.opts.browser,
-      chrome: this.opts.chrome,
-      computerUse: this.opts.computerUse,
       visualize: this.opts.visualize,
     }).catch((err) => {
       console.warn("[deyin] bundled host tools failed to register:", err);
@@ -590,7 +578,7 @@ const optPlugin = await this.ensureOptimizationPlugin();
  historyHash,
  };
  const responseCacheWorkspace = `${cwd}|${options.threadId}`;
- if (optPlugin && settings.optimizationResponseCache) {
+ if (optPlugin) {
  const cached = await optPlugin.beforeAgentRun(optPlugin.runtime, prompt, responseCacheWorkspace, responseCacheContext);
  if (cached.hit) {
  // Claim completion before side effects so stop() cannot interleave an aborted done
@@ -612,9 +600,9 @@ const optPlugin = await this.ensureOptimizationPlugin();
      systemSections: session.systemSections,
      tools: registry.toWire(),
         wire: {
-          enableCompression: settings.optimizationCompression,
-          compressionMode: settings.optimizationCompressionMode,
-          enablePromptCaching: settings.optimizationPromptCaching,
+          enableCompression: true,
+          compressionMode: "balanced",
+          enablePromptCaching: true,
           provider: provider?.kind === "custom" ? "openai" : "openference",
           model: options.model,
         },
@@ -753,9 +741,9 @@ return;
           },
         },
         wire: {
-          enableCompression: settings.optimizationCompression,
-          compressionMode: settings.optimizationCompressionMode,
-          enablePromptCaching: settings.optimizationPromptCaching,
+          enableCompression: true,
+          compressionMode: "balanced",
+          enablePromptCaching: true,
           provider: provider?.kind === "custom" ? "openai" : "openference",
           model: options.model,
         },
@@ -840,7 +828,6 @@ return;
               });
               break;
             case "evidence-gate":
-              this.opts.reasonix?.recordEvidenceRejection(options.threadId, event.code, event.message);
               this.send(options.threadId, {
                 type: "evidence-gate",
                 code: event.code,
@@ -884,21 +871,12 @@ case "usage":
  prefixChanged: event.metrics.cacheDiagnostics?.prefixChanged,
  changeReasons: event.metrics.cacheDiagnostics?.changeReasons,
  });
- if (event.metrics.prefixShape) {
-   this.opts.reasonix?.recordPrefixShape(
-     options.threadId,
-     event.metrics.prefixShape,
-     event.metrics.cacheDiagnostics?.changeReasons ?? [],
-     event.metrics.sessionCacheHit,
-     event.metrics.sessionCacheMiss,
-   );
- }
  break;
           }
         },
       });
 
-if (optPlugin && settings.optimizationResponseCache && result.finalText) {
+if (optPlugin && result.finalText) {
  await optPlugin.afterAgentRun(optPlugin.runtime, prompt, result.finalText, responseCacheWorkspace, responseCacheContext).catch(() => undefined);
  }
 

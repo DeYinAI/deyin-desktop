@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 10;
+export const SETTINGS_SCHEMA_VERSION = 11;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -31,35 +31,11 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   revealTerminalOnAgentCommand: true,
   indexingEnabled: true,
   onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
-  automationsCatchUp: true,
   keepRunningInBackground: false,
-  optimizationCompression: true,
-  optimizationCompressionMode: "balanced",
-  optimizationPromptCaching: true,
   optimizationPluginEnabled: false,
-  optimizationToolCache: true,
-  optimizationResponseCache: true,
-  optimizationSimilarityThreshold: 0.93,
   memoryEnabled: true,
   reviewMode: "off",
-  enableDeliveryMode: false,
   whatsNewSeenVersion: null,
-  reasonixOnboardComplete: false,
-  cacheHitRateTarget: 0.8,
-  cacheHitRateWarningThreshold: 0.6,
-  enableCacheOptimizations: true,
-  enableCoordinator: false,
-  plannerModel: null,
-  coordinatorRoutingPolicy: "balanced",
-  enableFleet: false,
-  chromeDebugEnabled: false,
-  computerUseEnabled: false,
-  computerUseScreenshotRetentionDays: 7,
-  computerUseConfirmationRequired: true,
-  evidenceRequireAcceptanceCriteria: true,
-  evidenceStrictFinalization: true,
-  maxParallelWriters: 2,
-  schedulerWritePathValidation: true,
 };
 
 /**
@@ -68,118 +44,57 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
  * so renamed/new fields never leave the app with an inconsistent state.
  */
 export function migrateSettings(raw: unknown): DeyinSettings {
-  const input = (raw && typeof raw === "object" ? raw : {}) as Partial<DeyinSettings> & Record<string, unknown>;
-  const merged: DeyinSettings = {
-    ...DEFAULT_SETTINGS,
-    ...input,
-    schemaVersion: SETTINGS_SCHEMA_VERSION,
-    onboard: { ...DEFAULT_SETTINGS.onboard, ...(typeof input.onboard === "object" && input.onboard ? input.onboard : {}) },
-  };
-  // v1 -> v2: clamp numeric ranges introduced with the terminal/appearance work.
+  const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  // Pick only known keys: fields removed in v11 (Reasonix knobs, computer-use,
+  // chrome, automations, per-knob optimization toggles) drop out here.
+  const merged: DeyinSettings = { ...DEFAULT_SETTINGS };
+  for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof DeyinSettings>) {
+    if (key === "schemaVersion") continue;
+    if (key in input) {
+      (merged as unknown as Record<string, unknown>)[key] = input[key];
+    }
+  }
+  merged.onboard = { ...DEFAULT_SETTINGS.onboard, ...(typeof input.onboard === "object" && input.onboard ? input.onboard : {}) };
+
+  // Numeric ranges and enum guards; every value coming from disk is untrusted.
   merged.fontSize = clamp(merged.fontSize, 12, 18, DEFAULT_SETTINGS.fontSize);
   merged.codeFontSize = clamp(merged.codeFontSize, 10, 20, DEFAULT_SETTINGS.codeFontSize);
   merged.terminalFontSize = clamp(merged.terminalFontSize, 10, 20, DEFAULT_SETTINGS.terminalFontSize);
   merged.terminalScrollback = clamp(merged.terminalScrollback, 200, 100_000, DEFAULT_SETTINGS.terminalScrollback);
+  merged.subagentMaxSteps = clamp(merged.subagentMaxSteps, 1, 200, DEFAULT_SETTINGS.subagentMaxSteps);
+  merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
+  merged.subagentModels = pickStringRecord(merged.subagentModels);
+  merged.subagentEfforts = pickStringRecord(
+    merged.subagentEfforts,
+    (v): v is string => v === "low" || v === "medium" || v === "high",
+  );
   if (typeof merged.revealTerminalOnAgentCommand !== "boolean") {
     merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
-  }
-  if (typeof merged.optimizationCompression !== "boolean") {
-    merged.optimizationCompression = DEFAULT_SETTINGS.optimizationCompression;
-  }
-  if (!["aggressive", "balanced", "conservative"].includes(merged.optimizationCompressionMode)) {
-    merged.optimizationCompressionMode = DEFAULT_SETTINGS.optimizationCompressionMode;
-  }
-  if (typeof merged.optimizationPromptCaching !== "boolean") {
-    merged.optimizationPromptCaching = DEFAULT_SETTINGS.optimizationPromptCaching;
   }
   if (typeof merged.optimizationPluginEnabled !== "boolean") {
     merged.optimizationPluginEnabled = DEFAULT_SETTINGS.optimizationPluginEnabled;
   }
-  if (typeof merged.optimizationToolCache !== "boolean") {
-    merged.optimizationToolCache = DEFAULT_SETTINGS.optimizationToolCache;
-  }
-  if (typeof merged.optimizationResponseCache !== "boolean") {
-    merged.optimizationResponseCache = DEFAULT_SETTINGS.optimizationResponseCache;
-  }
-  merged.optimizationSimilarityThreshold = clamp(
-    merged.optimizationSimilarityThreshold,
-    0.8,
-    0.98,
-    DEFAULT_SETTINGS.optimizationSimilarityThreshold,
-  );
-  if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
-  // v6 -> v7: subagent run limits.
-  merged.subagentMaxSteps = clamp(merged.subagentMaxSteps, 1, 200, DEFAULT_SETTINGS.subagentMaxSteps);
-  merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
-  // v7 -> v8: subagentEfforts must be a record of valid effort levels.
-  if (typeof merged.subagentEfforts !== "object" || merged.subagentEfforts === null || Array.isArray(merged.subagentEfforts)) {
-    merged.subagentEfforts = {};
-  } else {
-    const clean: Record<string, string> = {};
-    for (const [name, effort] of Object.entries(merged.subagentEfforts)) {
-      if (effort === "low" || effort === "medium" || effort === "high") clean[name] = effort;
-    }
-    merged.subagentEfforts = clean;
-  }
-  // v8 -> v9: memoryEnabled boolean.
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
-  // v9 -> v10: review/delivery/coordinator/computer-use/chrome settings.
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
-  if (typeof merged.enableDeliveryMode !== "boolean") merged.enableDeliveryMode = DEFAULT_SETTINGS.enableDeliveryMode;
+  if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
-  if (typeof merged.reasonixOnboardComplete !== "boolean") {
-    merged.reasonixOnboardComplete = DEFAULT_SETTINGS.reasonixOnboardComplete;
-  }
-  merged.cacheHitRateTarget = clamp(merged.cacheHitRateTarget, 0.5, 0.95, DEFAULT_SETTINGS.cacheHitRateTarget);
-  merged.cacheHitRateWarningThreshold = clamp(
-    merged.cacheHitRateWarningThreshold,
-    0.2,
-    0.95,
-    DEFAULT_SETTINGS.cacheHitRateWarningThreshold,
-  );
-  if (typeof merged.enableCacheOptimizations !== "boolean") {
-    merged.enableCacheOptimizations = DEFAULT_SETTINGS.enableCacheOptimizations;
-  }
-  if (typeof merged.enableCoordinator !== "boolean") merged.enableCoordinator = DEFAULT_SETTINGS.enableCoordinator;
-  if (typeof merged.plannerModel !== "string") merged.plannerModel = DEFAULT_SETTINGS.plannerModel;
-  if (!["balanced", "conservative", "aggressive"].includes(merged.coordinatorRoutingPolicy)) {
-    merged.coordinatorRoutingPolicy = DEFAULT_SETTINGS.coordinatorRoutingPolicy;
-  }
-  if (typeof merged.enableFleet !== "boolean") merged.enableFleet = DEFAULT_SETTINGS.enableFleet;
-  if (typeof merged.chromeDebugEnabled !== "boolean") merged.chromeDebugEnabled = DEFAULT_SETTINGS.chromeDebugEnabled;
-  if (typeof merged.computerUseEnabled !== "boolean") merged.computerUseEnabled = DEFAULT_SETTINGS.computerUseEnabled;
-  merged.computerUseScreenshotRetentionDays = clamp(
-    merged.computerUseScreenshotRetentionDays,
-    1,
-    90,
-    DEFAULT_SETTINGS.computerUseScreenshotRetentionDays,
-  );
-  if (typeof merged.computerUseConfirmationRequired !== "boolean") {
-    merged.computerUseConfirmationRequired = DEFAULT_SETTINGS.computerUseConfirmationRequired;
-  }
-  if (typeof merged.evidenceRequireAcceptanceCriteria !== "boolean") {
-    merged.evidenceRequireAcceptanceCriteria = DEFAULT_SETTINGS.evidenceRequireAcceptanceCriteria;
-  }
-  if (typeof merged.evidenceStrictFinalization !== "boolean") {
-    merged.evidenceStrictFinalization = DEFAULT_SETTINGS.evidenceStrictFinalization;
-  }
-  merged.maxParallelWriters = clamp(merged.maxParallelWriters, 1, 8, DEFAULT_SETTINGS.maxParallelWriters);
-  if (typeof merged.schedulerWritePathValidation !== "boolean") {
-    merged.schedulerWritePathValidation = DEFAULT_SETTINGS.schedulerWritePathValidation;
-  }
-  // v5 -> v6: subagentModels must be a plain record of non-empty strings; drop anything else.
-  if (typeof merged.subagentModels !== "object" || merged.subagentModels === null || Array.isArray(merged.subagentModels)) {
-    merged.subagentModels = {};
-  } else {
-    const clean: Record<string, string> = {};
-    for (const [name, model] of Object.entries(merged.subagentModels)) {
-      if (typeof model === "string" && model.trim().length > 0) clean[name] = model.trim();
-    }
-    merged.subagentModels = clean;
-  }
   if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
   return merged;
+}
+
+function pickStringRecord(
+  value: unknown,
+  valid?: (v: unknown) => boolean,
+): Record<string, string> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const clean: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry === "string" && entry.trim().length > 0 && (!valid || valid(entry))) {
+      clean[key] = entry.trim();
+    }
+  }
+  return clean;
 }
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {
