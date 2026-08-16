@@ -24,7 +24,7 @@ declared in the relevant `package.json`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Renderer (packages/renderer-core + apps/*/renderer)               │
+│ Renderer (apps/desktop/src/renderer, aliased into apps/web)       │
 │  - React SPA: task sidebar, chat, model picker, skills, settings  │
 │  - Talks to host via RpcTransport (IPC or WebSocket)              │
 │  - Talks to Openference via oauth-client (token) + model API      │
@@ -53,16 +53,14 @@ declared in the relevant `package.json`.
 | --- | --- |
 | `@deyin/oauth-provider` | Standalone OAuth 2.0 / OIDC server (authorize, token, userinfo, device, introspect, revoke, discovery). Deployable on Node or Cloudflare Workers. |
 | `@deyin/oauth-client` | Reusable PKCE client for desktop (loopback), CLI (device flow), and browser (redirect). Handles token storage and refresh. |
-| `@deyin/rpc` | Shared typed RPC contract + transports (Electron IPC, WebSocket) used by both renderer and host. |
 | `@deyin/host-core` | Runtime-agnostic host services (PTY, files, git, exec, skills). Consumed by the Electron main process and the web host-server. |
-| `@deyin/renderer-core` | Shared React UI (screens, panels, state) rendered by both desktop and web. |
 | `@deyin/branding` | Deyin logos, icons, and theme tokens. |
 
 ## Apps
 
 | App | Purpose |
 | --- | --- |
-| `apps/desktop` | Electron shell. Main process embeds `@deyin/host-core`; renderer loads `@deyin/renderer-core`. |
+| `apps/desktop` | Electron shell. Main process embeds `@deyin/host-core`; the renderer under `src/renderer` is also the web UI (Vite aliases). |
 | `apps/web` | Web deployment: static renderer + `host-server` (WebSocket, one sandboxed session per authenticated user). |
 
 ## Auth + model data flow

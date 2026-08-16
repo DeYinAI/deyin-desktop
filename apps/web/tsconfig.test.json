@@ -9,11 +9,10 @@
     "types": [
       "node"
     ],
-    "outDir": "dist",
-    "rootDir": "src",
-    "noEmit": false
+    "noEmit": true
   },
   "include": [
+    "test/**/*.ts",
     "src/server/**/*.ts",
     "src/shared/**/*.ts"
   ]
