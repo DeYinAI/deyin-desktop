@@ -45,6 +45,11 @@ export interface TodoItem {
   id: string;
   content: string;
   status: "pending" | "in_progress" | "completed" | "cancelled";
+  /** Delivery mode: how to verify this step (required before mutations). */
+  acceptanceCriteria?: string;
+  /** Delivery mode: set by complete_step after verified sign-off. */
+  signedOff?: boolean;
+  signOffNotes?: string;
 }
 
 /** A workspace file mutation reported by the write/edit tools (drives diff UIs). */
@@ -111,6 +116,35 @@ export interface ToolContext {
   ) => void;
   /** Background-memory bridge (remember / forget / memory tools). */
   memory?: MemoryBridge;
+  /**
+   * Desktop review mode: route file mutations through the pending-review queue
+   * instead of applying directly. Returns "rejected" when the user rejects.
+   */
+  applyFileChange?: (request: import("./tools/file-mutation.js").FileMutationRequest) => Promise<"applied" | "rejected">;
+  /** Active goal text for report_goal_met (goal mode). */
+  goalText?: string;
+  /** Fired when the model reports goal status. */
+  onGoalReport?: (report: { met: boolean; reason: string }) => void;
+  /** Delivery mode: evidence ledger tracking mutations and verifications. */
+  evidenceLedger?: import("./evidence/ledger.js").EvidenceLedger;
+  /** Delivery mode: fired on each complete_step sign-off. */
+  onEvidenceSignOff?: (signOff: {
+    stepId: string;
+    verificationCommand: string;
+    diffSummary: string;
+    reviewNotes?: string;
+  }) => void;
+  /** Collect background job results (task is_background / fleet). */
+  waitForJobs?: (jobIds: string[], blockUntilMs: number) => Promise<BackgroundJobResult[]>;
+}
+
+/** One collected background job result (wait tool). */
+export interface BackgroundJobResult {
+  id: string;
+  label: string;
+  status: string;
+  result?: string;
+  error?: string;
 }
 
 /** Host bridge over the durable memory store (remember/forget/memory tools). */
@@ -149,8 +183,8 @@ export type InteractionRequest =
   | { type: "ask-question"; questions: AskQuestionItem[]; title?: string };
 
 export interface ModeChangeRequest {
-  target: "agent" | "plan" | "ask";
-  previous?: "agent" | "plan" | "ask";
+  target: "agent" | "plan" | "ask" | "delivery";
+  previous?: "agent" | "plan" | "ask" | "delivery";
   userApproved?: boolean;
   explanation?: string;
   event: "enter" | "exit" | "switch";

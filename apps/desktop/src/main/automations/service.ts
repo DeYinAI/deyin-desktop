@@ -198,6 +198,7 @@ export class AutomationService {
   dispose(): void {
     this.scheduler.dispose();
     this.runner.dispose();
+    this.runs.flush();
   }
 
   refreshScheduler(): void {

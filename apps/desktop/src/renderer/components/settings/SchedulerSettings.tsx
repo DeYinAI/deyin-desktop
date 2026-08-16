@@ -34,7 +34,7 @@ export function SchedulerSettings({ settings, activeThreadId, onChange }: Props)
 
       <SectionTitle>Concurrency</SectionTitle>
       <SettingCard
-        title={`Max subagent concurrency (${settings.maxSubagentConcurrency})`}
+        title={`Max subagent concurrency (${settings.subagentConcurrency})`}
         description="Total parallel task/fleet slots per session."
       >
         <input
@@ -42,12 +42,12 @@ export function SchedulerSettings({ settings, activeThreadId, onChange }: Props)
           min={1}
           max={32}
           step={1}
-          value={settings.maxSubagentConcurrency}
+          value={settings.subagentConcurrency}
           onChange={(e) => {
-            const maxSubagentConcurrency = Number(e.target.value);
+            const subagentConcurrency = Number(e.target.value);
             onChange({
-              maxSubagentConcurrency,
-              maxParallelWriters: Math.min(settings.maxParallelWriters, maxSubagentConcurrency),
+              subagentConcurrency,
+              maxParallelWriters: Math.min(settings.maxParallelWriters, subagentConcurrency),
             });
           }}
         />
@@ -59,7 +59,7 @@ export function SchedulerSettings({ settings, activeThreadId, onChange }: Props)
         <input
           type="range"
           min={1}
-          max={settings.maxSubagentConcurrency}
+          max={settings.subagentConcurrency}
           step={1}
           value={settings.maxParallelWriters}
           onChange={(e) => onChange({ maxParallelWriters: Number(e.target.value) })}

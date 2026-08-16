@@ -12,9 +12,12 @@ import { enterPlanModeTool, exitPlanModeTool, switchModeTool } from "./mode-tool
 import { notebookEditTool } from "./notebook-edit.js";
 import { readTool } from "./read.js";
 import { readSessionContextTool } from "./read-session-context.js";
+import { reportGoalMetTool } from "./report-goal-met.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillTool } from "./skill.js";
 import { todoReadTool } from "./todo-read.js";
+import { completeStepTool } from "./complete-step.js";
+import { createWaitJobsTool } from "./wait-jobs.js";
 import { ToolRegistry } from "./registry.js";
 import { todoTool } from "./todo.js";
 import { webFetchTool } from "./web-fetch.js";
@@ -47,6 +50,9 @@ export { readSessionContextTool } from "./read-session-context.js";
 export { sendMessageTool } from "./send-message.js";
 export { deleteTool } from "./delete.js";
 export { awaitTaskTool } from "./await-task.js";
+export { reportGoalMetTool } from "./report-goal-met.js";
+export { completeStepTool } from "./complete-step.js";
+export { createWaitJobsTool } from "./wait-jobs.js";
 export { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 export {
   GIT_TOOLS,
@@ -68,6 +74,8 @@ export { envInfoTool } from "./env-info.js";
 export { diffTextTool, lcsDiff } from "./diff.js";
 export { processListTool, redactArgs } from "./process-list.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
+export { commitFileMutation, applyFileMutationDirect } from "./file-mutation.js";
+export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
 export {
   createTaskTool,
   TASK_SUBAGENT_CATALOG_MARKER,
@@ -110,6 +118,9 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   envInfoTool,
   diffTextTool,
   processListTool,
+  reportGoalMetTool,
+  completeStepTool,
+  createWaitJobsTool(),
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {
