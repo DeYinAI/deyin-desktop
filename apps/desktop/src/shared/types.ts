@@ -75,16 +75,6 @@ export type {
   Thread,
   Project,
   ProjectsState,
-  Automation,
-  AutomationInfo,
-  AutomationRun,
-  AutomationTarget,
-  AutomationTrigger,
-  SshHostInfo,
-  SshHostInput,
-  SshHostCredentials,
-  SshTestResult,
-  SshAuthMethod,
   ContextAttachment,
   LinkedThreadRef,
   ContextSearchHit,
@@ -102,9 +92,6 @@ export type {
   McpCatalogInstallInput,
   McpCatalogSecret,
   McpModuleManifest,
-  Advanced agentMetricsSnapshot,
-  Advanced agentWeeklyReport,
-  Advanced agentDiagnostics,
 } from "@deyin/host-core/shared";
 
 /** Desktop-only: lifecycle state of the in-app updater (main -> renderer). */

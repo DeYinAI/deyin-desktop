@@ -30,12 +30,6 @@ import {
   fetchBillingPublishableKey,
   selectPlan,
 } from "@deyin/host-core/shared";
-import {
-  Advanced agentMetricsStore,
-  emptyAdvanced agentMetrics,
-  type Advanced agentMetricsSnapshot,
-  type Advanced agentWeeklyReport,
-} from "@deyin/host-core/shared";
 import { resolveContextRefs, searchContextPaths } from "@deyin/host-core";
 import type { PermissionDecision } from "@deyin/agent-core";
 import { CH } from "../shared/ipc.js";
@@ -65,16 +59,11 @@ import { logLine } from "./logger.js";
 import { PluginService } from "./plugins.js";
 import { createDesktopStorage } from "./storage.js";
 import { createUpdateController } from "./updater.js";
-import { AutomationService } from "./automations/service.js";
-import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
 import { McpCatalogService } from "./mcp-catalog.js";
 import { McpModuleService } from "./mcp-modules.js";
 import { McpOAuthService } from "./mcp-oauth.js";
 import { SecurityService } from "./security.js";
 import { scanDiffViaMcp } from "./security-scan.js";
-import { Advanced agentObservability } from "./agent-observability.js";
-import { ComputerUseService } from "./computer-use.js";
-import { ChromeDebugService } from "./chrome-debug.js";
 import { VisualizeService } from "./visualize.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { WorkspaceTrustStore } from "./workspace-trust.js";
@@ -91,7 +80,6 @@ interface RegisterOptions {
 
 export interface IpcServices {
   terminals: TerminalManager;
-  automations: AutomationService;
   shouldKeepRunningInBackground: () => boolean;
   /** Call when the auth session changes (login/logout) to drop server caches. */
   notifyAuthChanged: () => void;
@@ -242,53 +230,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     } satisfies { threadId: string; event: unknown });
   };
 
-  /* Security findings + agent observability + host tool services. */
+  /* Security findings + host tool services. */
   const security = new SecurityService();
-  const agentMetrics = new Advanced agentMetricsStore(
-    (data) => storage.writeJson("agent-metrics.json", data),
-    storage.readJson<Advanced agentMetricsSnapshot>("agent-metrics.json", emptyAdvanced agentMetrics()),
-  );
-  const agent = new Advanced agentObservability();
-  const computerUse = new ComputerUseService(
-    () => settings.get().computerUseEnabled,
-    () => process.platform === "win32",
-    () => settings.get().computerUseScreenshotRetentionDays,
-  );
-
-  /* Chrome CDP consent bridges main -> renderer dialog -> response. */
-  const chromeConsentPending = new Map<number, (granted: boolean) => void>();
-  const chrome = new ChromeDebugService(
-    () => settings.get().chromeDebugEnabled,
-    () => process.platform === "win32",
-    () =>
-      new Promise<boolean>((resolve) => {
-        const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-        if (!win) {
-          resolve(false);
-          return;
-        }
-        const wcId = win.webContents.id;
-        const timer = setTimeout(() => {
-          chromeConsentPending.delete(wcId);
-          resolve(false);
-        }, 10 * 60 * 1000);
-        chromeConsentPending.set(wcId, (granted) => {
-          clearTimeout(timer);
-          resolve(granted);
-        });
-        win.webContents.send(CH.chromeConsentRequest, {
-          message: "Allow Deyin to attach to your logged-in Chrome browser for automation?",
-        });
-      }),
-    join(app.getPath("userData"), "chrome-debug"),
-  );
-  ipcMain.on(CH.chromeConsentRespond, (e, granted: boolean) => {
-    const resolve = chromeConsentPending.get(e.sender.id);
-    if (!resolve) return;
-    chromeConsentPending.delete(e.sender.id);
-    resolve(Boolean(granted));
-  });
-
   const visualize = new VisualizeService();
 
   /* MCP modules / catalog / native OAuth. */
@@ -314,13 +257,10 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
-    chrome,
-    computerUse,
     visualize,
     terminals,
     memory,
     review,
-    agent,
     mcpAuth: { getProvider: (name) => mcpOAuth.getProvider(name) },
     trust,
     getWorkspaceRoot: opts.getWorkspaceRoot,
@@ -332,32 +272,6 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       // Primary Openference catalog lives in ModelsCache (provider.models is often empty).
       return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
     },
-  });
-
-  const agentDeps: AgentRunContextDeps = {
-    config,
-    auth,
-    agents,
-    settings,
-    capabilities,
-    browser,
-    memory,
-    trust,
-    getWorkspaceRoot: opts.getWorkspaceRoot,
-    searchIndex: (query, topK) => index.search(query, topK),
-    getContextLength: (providerId, modelId) => {
-      const provider = agents.listProviders(true).find((p) => p.id === providerId);
-      const fromProvider = provider?.models.find((m) => m.id === modelId)?.contextLength;
-      if (fromProvider) return fromProvider;
-      return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
-    },
-  };
-
-  const automations = new AutomationService({
-    storage,
-    deps: agentDeps,
-    auth,
-    isCatchUpEnabled: () => settings.get().automationsCatchUp,
   });
 
   // Watches .git for external changes (terminal/agent) and pings the renderer.
@@ -511,9 +425,6 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.settingsSet, (_e, patch: Partial<DeyinSettings>) => {
     const next = settings.set(patch);
     if ("indexingEnabled" in patch) void index.refresh();
-    if ("automationsCatchUp" in patch || "keepRunningInBackground" in patch) {
-      automations.refreshScheduler();
-    }
     return next;
   });
 
@@ -607,33 +518,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     abortCrossCurrencyUpgrade(billingOpts, () => auth.getAccessToken(), newSubscriptionId),
   );
 
-  /* Computer use allowlist. */
-  ipcMain.handle(CH.computerUseGetAllowlist, () => computerUse.getAllowlist());
-  ipcMain.handle(CH.computerUseSetAllowlist, (_e, apps: string[]) => computerUse.setAllowlist(Array.isArray(apps) ? apps : []));
-  ipcMain.handle(CH.computerUseListApps, () => computerUse.listAppsPreview());
-
   /* Visualizations. */
   ipcMain.handle(CH.visualizeRead, (_e, threadId: string, fileName: string) => visualize.readFragment(threadId, fileName));
-
-  /* Advanced agent metrics + diagnostics. */
-  ipcMain.handle(CH.agentMetricsGet, () => agentMetrics.get());
-  ipcMain.handle(CH.agentMetricsReport, (): Advanced agentWeeklyReport => {
-    const snapshot = agentMetrics.get();
-    const hitRate = snapshot.cache.hitRate;
-    const notes: string[] = [];
-    if (hitRate < settings.get().cacheHitRateWarningThreshold) {
-      notes.push(`Prefix-cache hit rate ${(hitRate * 100).toFixed(1)}% is below target — see cache optimization tips.`);
-    }
-    if (snapshot.coordinator.fallbacks > 0) {
-      notes.push(`${snapshot.coordinator.fallbacks} coordinator fallback(s) this week; consider a faster planner model.`);
-    }
-    return { generatedAt: new Date().toISOString(), weekBucket: snapshot.weekBucket, snapshot, notes };
-  });
-  ipcMain.handle(CH.agentDiagnosticsGet, (_e, threadId?: string) => agent.getDiagnostics(threadId));
-  ipcMain.handle(CH.agentCacheClear, (_e, threadId: string) => {
-    agent.clearThreadCache(threadId);
-    return undefined;
-  });
 
   /* Beta feedback: best-effort upload to the Openference backend. */
   ipcMain.handle(
@@ -776,48 +662,8 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     if (typeof message === "string" && message.length > 0) logLine(level, `[renderer] ${message.slice(0, 4000)}`);
   });
 
-  /* Automations. */
-  ipcMain.handle(CH.automationsList, () => automations.list());
-  ipcMain.handle(CH.automationsCreate, (_e, input: Omit<import("../shared/types.js").Automation, "id" | "createdAt" | "updatedAt">) =>
-    automations.create(input),
-  );
-  ipcMain.handle(CH.automationsUpdate, (_e, id: string, patch: Partial<Omit<import("../shared/types.js").Automation, "id" | "createdAt">>) =>
-    automations.update(id, patch),
-  );
-  ipcMain.handle(CH.automationsDelete, (_e, id: string) => automations.remove(id));
-  ipcMain.handle(CH.automationsToggle, (_e, id: string, enabled: boolean) => automations.toggle(id, enabled));
-  ipcMain.handle(CH.automationsRun, (_e, id: string) => automations.run(id));
-  ipcMain.on(CH.automationsStop, (_e, runId: string) => automations.stopRun(runId));
-  ipcMain.handle(CH.automationsRuns, (_e, automationId?: string) => automations.listRuns(automationId));
-
-  /* SSH hosts. */
-  ipcMain.handle(CH.sshHostsList, () => automations.listSshHosts());
-  ipcMain.handle(CH.sshHostsAdd, (_e, input: import("../shared/types.js").SshHostInput) => automations.addSshHost(input));
-  ipcMain.handle(CH.sshHostsUpdate, (_e, id: string, patch: Partial<import("../shared/types.js").SshHostInput>) =>
-    automations.updateSshHost(id, patch),
-  );
-  ipcMain.handle(CH.sshHostsRemove, (_e, id: string) => automations.removeSshHost(id));
-  ipcMain.handle(CH.sshHostsSetCredentials, (_e, id: string, creds: import("../shared/types.js").SshHostCredentials) =>
-    automations.setSshCredentials(id, creds),
-  );
-  ipcMain.handle(CH.sshHostsTest, (_e, hostId: string, acceptFingerprint?: string) =>
-    automations.testSshHost(hostId, acceptFingerprint),
-  );
-  ipcMain.handle(CH.sshHostsPinFingerprint, (_e, hostId: string, fingerprint: string) =>
-    automations.pinSshFingerprint(hostId, fingerprint),
-  );
-  ipcMain.handle(CH.sshHostsImportKey, async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ["openFile"],
-      filters: [{ name: "Private key", extensions: ["pem", "key", ""] }],
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return readFileSync(result.filePaths[0]!, "utf8");
-  });
-
   return {
     terminals,
-    automations,
     shouldKeepRunningInBackground: () => settings.get().keepRunningInBackground,
     notifyAuthChanged: () => {
       accountCache.invalidate();
@@ -835,7 +681,6 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       telemetry.stop();
       void telemetry.flush();
       index.dispose();
-      automations.dispose();
       gitWatcher.stop();
     },
   };

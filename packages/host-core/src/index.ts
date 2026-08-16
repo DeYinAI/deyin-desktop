@@ -2,7 +2,6 @@ export * from "./shared.js";
 export * from "./storage.js";
 export * from "./stores.js";
 export * from "./memory.js";
-export * from "./automations.js";
 export * from "./host/files.js";
 export * from "./host/paths.js";
 export * from "./host/env.js";

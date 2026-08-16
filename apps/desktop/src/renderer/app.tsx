@@ -5,8 +5,6 @@ import { I18nProvider } from "./i18n.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
 import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
-import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
-import { ChromeConsentDialog } from "./components/ChromeConsentDialog.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer } from "./components/Composer.js";
@@ -16,7 +14,6 @@ import { GitBranchBadge } from "./components/GitBranchBadge.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
-import { AutomationsView } from "./components/AutomationsView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { TerminalPanel } from "./components/TerminalPanel.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
@@ -24,7 +21,6 @@ import { TopBar } from "./components/TopBar.js";
 import { Icon } from "./components/Icon.js";
 import { UpdateBanner } from "./components/UpdateBanner.js";
 import { WhatsNewModal } from "./components/WhatsNewModal.js";
-import { Advanced agentOnboardModal } from "./components/Advanced agentOnboardModal.js";
 import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
@@ -74,7 +70,7 @@ import type {
 
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
-type View = "workspace" | "settings" | "automations" | "upgrade";
+type View = "workspace" | "settings" | "upgrade";
 
 interface PendingApproval {
   requestId: string;
@@ -124,7 +120,6 @@ export function App() {
   const [streamText, setStreamText] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   const [showWhatsNew, setShowWhatsNew] = useState(false);
-  const [showAdvanced agentOnboard, setShowAdvanced agentOnboard] = useState(false);
   const [showBetaFeedback, setShowBetaFeedback] = useState(false);
 
   const [approval, setApproval] = useState<PendingApproval | null>(null);
@@ -199,7 +194,6 @@ export function App() {
       setModels(list);
       setSettings(s);
       if (s.whatsNewSeenVersion !== b.version) setShowWhatsNew(true);
-      if (!s.agentOnboardComplete) setShowAdvanced agentOnboard(true);
       setEnv(e);
       setProviders(provs);
       setProjects(hydrateProjects(projState.projects));
@@ -247,7 +241,7 @@ export function App() {
   }, [projectsHydrated, projects, activeProjectId, activeThreadId]);
 
   useEffect(() => {
-    if (settings && !settings.enableDeliveryMode && composerMode === "delivery") {
+    if (settings && composerMode === "delivery") {
       setComposerMode("agent");
     }
   }, [settings, composerMode]);
@@ -1223,6 +1217,7 @@ export function App() {
         <div className="app">
           {boot.platform === "desktop" ? <UpdateBanner /> : null}
           <SettingsView
+          platform={boot?.platform === "web" ? "web" : "desktop"}
             key={settingsPage}
             initialPage={settingsPage}
             settings={settings}
@@ -1327,7 +1322,7 @@ export function App() {
           onLogout={logout}
           onChangeSettings={patchSettings}
           onOpenUsage={() => {
-            setSettingsPage("usage");
+            setSettingsPage("data");
             setView("settings");
           }}
           onOpenPlans={() => setView("upgrade")}
@@ -1338,24 +1333,10 @@ export function App() {
             setView("settings");
             window.deyin.telemetry?.record("settings-opened");
           }}
-          onOpenAutomations={() => setView("automations")}
         />
 
         <div className="app__center">
-          {view === "automations" && settings && boot?.platform === "desktop" ? (
-            <AutomationsView
-              workspaceRoot={workspaceRoot}
-              providers={providers}
-              models={models}
-              selectedModel={selectedModel}
-              selectedProviderId={selectedProviderId}
-              onOpenSshSettings={() => {
-                setSettingsPage("sshHosts");
-                setView("settings");
-              }}
-            />
-          ) : (
-            <>
+          {<>
           <div className="app__columns">
             <main className="chat-column">
               <div className="chat-column__bar">
@@ -1498,7 +1479,7 @@ export function App() {
                       ? composerMode
                       : undefined
                   }
-                  deliveryModeEnabled={settings?.enableDeliveryMode ?? false}
+                  deliveryModeEnabled={false}
                   thinking={settings?.thinking ?? true}
                   canSend={input.trim().length > 0}
                   streaming={streamText !== null || runningThreadId !== null}
@@ -1584,7 +1565,7 @@ export function App() {
                 onCollapse={() => setPanelOpen(false)}
                 onOpenFolder={() => void addProjectFolder()}
                 onOpenBrowserSettings={() => {
-                  setSettingsPage("browser");
+                  setSettingsPage("workspace");
                   setView("settings");
                 }}
                 onBuildPlan={buildFromPlan}
@@ -1615,8 +1596,7 @@ export function App() {
               onClose={() => setTerminalOpen(false)}
             />
           )}
-            </>
-          )}
+          </>}
         </div>
       </div>
 
@@ -1659,25 +1639,8 @@ export function App() {
           }}
         />
       )}
-      {showAdvanced agentOnboard && settings && (
-        <Advanced agentOnboardModal
-          settings={settings}
-          onSkip={() => {
-            setShowAdvanced agentOnboard(false);
-            patchSettings({ agentOnboardComplete: true });
-          }}
-          onComplete={() => {
-            setShowAdvanced agentOnboard(false);
-            patchSettings({ agentOnboardComplete: true });
-            setSettingsPage("cache");
-            setView("settings");
-          }}
-        />
-      )}
       {showBetaFeedback && <BetaFeedbackForm onClose={() => setShowBetaFeedback(false)} />}
 
-      <ComputerUseOverlay />
-      <ChromeConsentDialog />
       <BrowserOverlay />
     </div>
     </I18nProvider>
