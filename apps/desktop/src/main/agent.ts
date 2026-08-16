@@ -464,9 +464,6 @@ export class DesktopAgentHost {
           subagents,
           runSubagent: (def, subPrompt, subSignal) =>
             this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subSignal),
-          onBackgroundDone: (def, result) => {
-            this.send(options.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
-          },
         }),
       );
     }
@@ -910,7 +907,9 @@ if (optPlugin && result.finalText) {
     getToken: () => Promise<string | null>,
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; report: string }> {
-    this.send(parent.threadId, { type: "subagent-start", name: def.name, prompt: prompt.slice(0, 200) });
+    const subagentId = randomUUID();
+    const startedAt = Date.now();
+    this.send(parent.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
     const cwd = this.opts.getWorkspaceRoot() ?? process.cwd();
     const parentProvider = this.opts.agents.listProviders(true).find((p) => p.id === parent.providerId);
     const parentProviderWire: { apiFormat: ProviderApiFormat; authHeader?: boolean } = {
@@ -924,6 +923,12 @@ if (optPlugin && result.finalText) {
       effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
       maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
       parentRouting: { apiBaseUrl, getToken, apiFormat: parentProviderWire.apiFormat, authHeader: parentProviderWire.authHeader },
+      // Surface the child's tool activity as one-line progress updates.
+      onEvent: (event) => {
+        if (event.type === "tool-start") {
+          this.send(parent.threadId, { type: "subagent-progress", id: subagentId, line: `${event.call.name} ${event.summary}`.trim() });
+        }
+      },
       resolveProvider: (providerId) => {
         const provider = this.opts.agents.listProviders(true).find((p) => p.id === providerId);
         if (provider && provider.kind === "custom") {
@@ -954,7 +959,14 @@ if (optPlugin && result.finalText) {
         : [],
       signal,
     });
-    this.send(parent.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
+    this.send(parent.threadId, {
+      type: "subagent-end",
+      id: subagentId,
+      name: def.name,
+      ok: result.ok,
+      ms: Date.now() - startedAt,
+      summary: result.report.slice(0, 200),
+    });
     return result;
   }
 

@@ -1,6 +1,6 @@
 import type { ApprovalMode, ChatMode } from "@deyin/host-core";
 import { ASK_AGENT, BUILD_AGENT, DELIVERY_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
-import { runAgent } from "./loop.js";
+import { runAgent, type AgentEvent } from "./loop.js";
 import { PermissionEngine, type PermissionResolver, type PermissionRule } from "./permissions.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { createBuiltinRegistry } from "./tools/index.js";
@@ -105,6 +105,8 @@ export interface SubagentRunRequest {
   /** Host tools (codebase search, browser, …) added before allowlist filtering. */
   extraTools?: ToolDefinition[];
   signal?: AbortSignal;
+  /** Live observation of the child run (used for subagent progress lines). */
+  onEvent?: (event: AgentEvent) => void;
 }
 
 export interface SubagentRunResult {
@@ -192,6 +194,7 @@ export async function runSubagent(
       cwd,
       thinking: req.parent.thinking,
       signal: req.signal,
+      onEvent: req.onEvent,
     });
     return { ok: true, report: result.finalText || "(subagent returned no text)" };
   } catch (err) {
