@@ -319,6 +319,9 @@ class AgentStateStore {
       t.streamText = t.textBuffer;
       t.streamReasoning = t.reasoningBuffer;
       t.seq += 1;
+      // Structural snapshots embed streamText/streamReasoning; drop the cached
+      // copy so a later getSnapshot() rebuilds instead of serving stale text.
+      this.snapshotCache.delete(threadId);
       this.notifyStream(threadId);
     });
   }

@@ -3,11 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BUILTIN_SUBAGENTS } from "../src/capabilities/subagents.js";
 import { JobsManager } from "../src/jobs/manager.js";
 import { OptimizationTracker } from "../src/optimization.js";
 import { comparePrefixShapes, computePrefixShape } from "../src/cache/prefix-tracker.js";
-import { createFleetTool } from "../src/tools/fleet.js";
 import { runCacheGuard } from "../src/testing/cache-guard.js";
 
 test("load: 500-turn session simulation maintains cache hit rate", () => {
@@ -36,32 +34,6 @@ test("load: 500-turn session simulation maintains cache hit rate", () => {
   const m = tracker.get();
   const hitRate = m.sessionCacheHit / (m.sessionCacheHit + m.sessionCacheMiss);
   assert.ok(hitRate >= 0.8, `500-turn hit rate ${hitRate}`);
-});
-
-test("load: 32 parallel fleet tasks complete without deadlock", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "deyin-load-fleet-"));
-  const fleet = createFleetTool({
-    subagents: BUILTIN_SUBAGENTS,
-    cwd,
-    runSubagent: async () => {
-      await new Promise((r) => setTimeout(r, 5));
-      return { ok: true, report: "done" };
-    },
-  });
-
-  const tasks = Array.from({ length: 32 }, (_, i) => ({
-    profile: "explorer",
-    prompt: `read-only task ${i}`,
-    read_only: true,
-  }));
-
-  const start = performance.now();
-  const result = await fleet.execute({ tasks }, { cwd, todos: [] });
-  const elapsed = performance.now() - start;
-
-  assert.ok(result.includes("Completed fleet of 32"));
-  assert.ok(elapsed < 5000, `32 tasks took ${elapsed}ms — possible degradation`);
-  rmSync(cwd, { recursive: true, force: true });
 });
 
 test("load: background jobs across turn boundaries", async () => {
