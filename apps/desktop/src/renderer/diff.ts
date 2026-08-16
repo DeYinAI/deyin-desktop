@@ -54,6 +54,36 @@ export interface FileDiff {
   after: string;
 }
 
+/** Above this size we skip diff rendering (LCS is quadratic) but keep the card. */
+const DIFF_MAX_LINES = 2000;
+
+/** Adds/dels counts for a file card; falls back to a cheap estimate on big files. */
+export function diffStats(before: string, after: string): { adds: number; dels: number; renderable: boolean } {
+  if (before === "" && after === "") return { adds: 0, dels: 0, renderable: false };
+  const a = before.split("\n");
+  const b = after.split("\n");
+  if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
+    const counts = new Map<string, number>();
+    for (const line of a) counts.set(line, (counts.get(line) ?? 0) + 1);
+    let common = 0;
+    for (const line of b) {
+      const left = counts.get(line) ?? 0;
+      if (left > 0) {
+        common += 1;
+        counts.set(line, left - 1);
+      }
+    }
+    return { adds: b.length - common, dels: a.length - common, renderable: false };
+  }
+  let adds = 0;
+  let dels = 0;
+  for (const line of computeLineDiff(before, after)) {
+    if (line.type === "add") adds += 1;
+    else if (line.type === "del") dels += 1;
+  }
+  return { adds, dels, renderable: true };
+}
+
 /** Context lines kept around each changed hunk in a chat-card snippet. */
 const SNIPPET_CONTEXT = 2;
 /** Total line cap for a chat-card snippet; the rest is summarized as "more". */
