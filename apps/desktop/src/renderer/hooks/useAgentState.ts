@@ -8,9 +8,10 @@
  */
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import type { AgentEventEnvelope, ChatMode, ContextUsageSnapshot, ThreadEvent } from "../../shared/types.js";
+import type { AgentEventEnvelope, ChatMode, ContextUsageSnapshot, DiffSnippetLine, ThreadEvent } from "../../shared/types.js";
 import { TOOL_RESULT_UI_CAP, truncateToolResultUi } from "../../shared/types.js";
-import { isBetterPlanDoc, looksLikePlan } from "../threads.js";
+import { isBetterPlanDoc, looksLikePlan, planFileNameFromTitle, planTitleFromMarkdown } from "../threads.js";
+import { diffSnippet, diffStats } from "../diff.js";
 
 /* -------------------------------------------------------------------------- */
 /* Discriminated message types for the run timeline                           */
@@ -68,11 +69,11 @@ export interface RunFoldResult {
 }
 
 export type AgentSideEffect =
-  | { type: "file-change"; path: string; before: string; after: string }
-  | { type: "pending-change"; change: import("../../shared/types.js").PendingChange }
+  | { type: "file-change"; threadId: string; path: string; before: string; after: string; renderable: boolean }
+  | { type: "pending-change"; threadId: string; change: import("../../shared/types.js").PendingChange }
   | { type: "pending-change-resolved"; changeId: string }
-  | { type: "goal-updated"; goal: import("../../shared/types.js").ThreadGoal | null }
-  | { type: "todos"; todos: import("../../shared/types.js").AgentTodoItem[] }
+  | { type: "goal-updated"; threadId: string; goal: import("../../shared/types.js").ThreadGoal | null }
+  | { type: "todos"; threadId: string; todos: import("../../shared/types.js").AgentTodoItem[] }
   | { type: "permission-request"; requestId: string; toolName: string; summary: string }
   | {
       type: "question-request";
@@ -85,9 +86,33 @@ export type AgentSideEffect =
         options: Array<{ id: string; label: string }>;
       }>;
     }
-  | { type: "plan-created"; name: string; overview?: string; plan: string; filePath?: string }
+  | { type: "plan-created"; threadId: string; name: string; overview?: string; plan: string; filePath?: string }
+  | { type: "plan-panel-open"; threadId: string }
   | { type: "mode-changed"; mode: ChatMode }
-  | { type: "shell-session"; terminalId: string; label: string }
+  | { type: "shell-session"; threadId: string; terminalId: string; label: string }
+  | {
+      type: "evidence-sign-off";
+      threadId: string;
+      stepId: string;
+      reviewNotes?: string;
+    }
+  | {
+      type: "compaction-notice";
+      threadId: string;
+      message: string;
+    }
+  | {
+      type: "cache-stats";
+      threadId: string;
+      patch: {
+        hitRate: number;
+        sessionHit: number;
+        sessionMiss: number;
+        prefixChanged?: boolean;
+        changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+      };
+    }
+  | { type: "context-snapshot"; threadId: string; snapshot: ContextUsageSnapshot }
   | { type: "run-complete"; fold: RunFoldResult }
   | { type: "usage-record"; tokens: number };
 
@@ -369,10 +394,13 @@ class AgentStateStore {
       }
       case "text-delta": {
         this.flushReasoning(t);
+        const firstChunk = t.textBuffer.length === 0;
         t.textBuffer += event.delta;
         if (t.mode === "plan") {
           const live = t.textBuffer;
           if (looksLikePlan(live)) {
+            // The model moved from prose to a plan document: reveal the Plan tab.
+            if (firstChunk) this.emit({ type: "plan-panel-open", threadId });
             if (isBetterPlanDoc(live, t.planDoc)) t.planDoc = live;
             t.planStream = t.planDoc || null;
           } else {
@@ -416,20 +444,75 @@ class AgentStateStore {
         this.notifyStructural();
         break;
       }
-      case "file-change":
-        this.emit({ type: "file-change", path: event.path, before: event.before, after: event.after });
+      case "file-change": {
+        const stats = diffStats(event.before, event.after);
+        let snippet: { snippet?: DiffSnippetLine[]; snippetMore?: number } = {};
+        if (stats.renderable) {
+          const excerpt = diffSnippet(event.before, event.after);
+          if (excerpt.lines.length > 0) snippet = { snippet: excerpt.lines, snippetMore: excerpt.more };
+        }
+        const name = event.path.split(/[\\/]/).pop() ?? event.path;
+        t.runEvents = [
+          ...t.runEvents,
+          { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels, ...snippet },
+        ];
+        this.notifyStructural();
+        this.emit({
+          type: "file-change",
+          threadId,
+          path: event.path,
+          before: event.before,
+          after: event.after,
+          renderable: stats.renderable,
+        });
         break;
+      }
       case "pending-change":
-        this.emit({ type: "pending-change", change: event.change });
+        this.emit({ type: "pending-change", threadId, change: event.change });
         break;
       case "pending-change-resolved":
         this.emit({ type: "pending-change-resolved", changeId: event.changeId });
         break;
       case "goal-updated":
-        this.emit({ type: "goal-updated", goal: event.goal });
+        this.emit({ type: "goal-updated", threadId, goal: event.goal });
         break;
-      case "todos":
-        this.emit({ type: "todos", todos: event.todos });
+      case "todos": {
+        const steps = event.todos.map((todo) => ({
+          text: todo.content,
+          done: todo.status === "completed",
+          status: todo.status,
+          acceptanceCriteria: todo.acceptanceCriteria,
+          signedOff: todo.signedOff,
+        }));
+        const index = t.runEvents.findIndex((e) => e.kind === "plan");
+        if (index >= 0) {
+          const next = [...t.runEvents];
+          next[index] = { kind: "plan", steps };
+          t.runEvents = next;
+        } else {
+          t.runEvents = [...t.runEvents, { kind: "plan", steps }];
+        }
+        this.notifyStructural();
+        this.emit({ type: "todos", threadId, todos: event.todos });
+        break;
+      }
+      case "evidence-gate":
+        t.runEvents = [...t.runEvents, { kind: "evidence-gate", code: event.code, message: event.message }];
+        this.notifyStructural();
+        break;
+      case "evidence-sign-off":
+        t.runEvents = [
+          ...t.runEvents,
+          {
+            kind: "evidence-sign-off",
+            stepId: event.stepId,
+            verificationCommand: event.verificationCommand,
+            diffSummary: event.diffSummary,
+            reviewNotes: event.reviewNotes,
+          },
+        ];
+        this.notifyStructural();
+        this.emit({ type: "evidence-sign-off", threadId, stepId: event.stepId, reviewNotes: event.reviewNotes });
         break;
       case "usage":
         t.tokens = event.totalTokens;
@@ -449,18 +532,73 @@ class AgentStateStore {
           responseCacheHits: event.responseCacheHits,
           responseCacheMisses: event.responseCacheMisses,
           estimatedCostSavingsUsd: event.estimatedCostSavingsUsd,
+          sessionCacheHit: event.sessionCacheHit,
+          sessionCacheMiss: event.sessionCacheMiss,
+          cacheHitRate: event.cacheHitRate,
+          prefixChanged: event.prefixChanged,
+          changeReasons: event.changeReasons,
         };
         this.sessionStats.inputCached += event.cachedPromptTokens;
         this.sessionStats.inputUncached += Math.max(0, event.compressedInputTokens - event.cachedPromptTokens);
         this.sessionStats.cacheHitTokens += event.cachedPromptTokens;
         this.sessionStats.cacheMissTokens += Math.max(0, event.originalInputTokens - event.cachedPromptTokens);
         this.notifyStructural();
+        if (
+          event.cacheHitRate !== undefined &&
+          event.sessionCacheHit !== undefined &&
+          event.sessionCacheMiss !== undefined
+        ) {
+          this.emit({
+            type: "cache-stats",
+            threadId,
+            patch: {
+              hitRate: event.cacheHitRate,
+              sessionHit: event.sessionCacheHit,
+              sessionMiss: event.sessionCacheMiss,
+              prefixChanged: event.prefixChanged,
+              changeReasons: event.changeReasons,
+            },
+          });
+        }
         break;
       }
       case "context-snapshot":
         t.contextSnapshot = event.snapshot;
         this.notifyStructural();
+        this.emit({ type: "context-snapshot", threadId, snapshot: event.snapshot });
         break;
+      case "compaction": {
+        if (event.softWarning) {
+          this.emit({
+            type: "compaction-notice",
+            threadId,
+            message:
+              "Context is over 50% full. Compaction will run soon if usage keeps growing — earlier messages may be summarized.",
+          });
+        } else if (event.droppedMessages > 0 || event.truncatedToolResults > 0 || event.truncatedToolArgs > 0) {
+          const parts: string[] = [];
+          if (event.droppedMessages > 0) parts.push(`${event.droppedMessages} messages summarized`);
+          if (event.truncatedToolResults > 0) parts.push(`${event.truncatedToolResults} tool results shortened`);
+          if (event.truncatedToolArgs > 0) parts.push(`${event.truncatedToolArgs} tool args trimmed`);
+          this.emit({
+            type: "compaction-notice",
+            threadId,
+            message: `Context compacted (${parts.join(", ")}). Prefix cache was refreshed.`,
+          });
+          t.runEvents = [
+            ...t.runEvents,
+            {
+              kind: "compaction-notice",
+              softWarning: false,
+              truncatedToolResults: event.truncatedToolResults,
+              truncatedToolArgs: event.truncatedToolArgs,
+              droppedMessages: event.droppedMessages,
+            },
+          ];
+          this.notifyStructural();
+        }
+        break;
+      }
       case "permission-request":
         this.emit({ type: "permission-request", requestId: event.requestId, toolName: event.toolName, summary: event.summary });
         break;
@@ -472,21 +610,23 @@ class AgentStateStore {
           questions: event.questions,
         });
         break;
-      case "plan-created":
+      case "plan-created": {
+        const planTitle = event.name || planTitleFromMarkdown(event.plan);
         t.planDoc = event.plan;
         t.planArtifactShown = true;
         t.planStream = event.plan;
-        this.emit({ type: "plan-created", name: event.name, overview: event.overview, plan: event.plan, filePath: event.filePath });
+        this.emit({ type: "plan-created", threadId, name: event.name, overview: event.overview, plan: event.plan, filePath: event.filePath });
         t.runEvents = [
           ...t.runEvents,
           {
             kind: "plan-ready",
-            title: event.name,
-            fileName: event.name ? `${event.name.replace(/\s+/g, "-").toLowerCase()}.md` : "plan.md",
+            title: planTitle,
+            fileName: planFileNameFromTitle(planTitle || "plan"),
           },
         ];
         this.notifyStructural();
         break;
+      }
       case "mode-changed":
         this.emit({ type: "mode-changed", mode: event.mode });
         break;
@@ -500,7 +640,7 @@ class AgentStateStore {
         this.notifyStructural();
         break;
       case "shell-session":
-        this.emit({ type: "shell-session", terminalId: event.terminalId, label: event.label });
+        this.emit({ type: "shell-session", threadId, terminalId: event.terminalId, label: event.label });
         break;
       case "error":
         t.runEvents = [...t.runEvents, { kind: "error", text: event.message }];
@@ -521,16 +661,28 @@ class AgentStateStore {
         if (t.mode === "plan" && looksLikePlan(text) && isBetterPlanDoc(text, planText)) planText = text;
         const planRun = t.mode === "plan" && planText.trim().length > 0 && looksLikePlan(planText);
         const planFinished = planRun && event.reason === "completed";
+        const planTitle = planRun ? planTitleFromMarkdown(planText) : undefined;
         const finished: ThreadEvent[] = [...t.runEvents];
         if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
         if (text.trim().length > 0 && !planRun) finished.push({ kind: "assistant", text });
         if (planFinished && !t.planArtifactShown) {
-          finished.push({ kind: "plan-ready", title: undefined, fileName: "plan.md" });
+          finished.push({
+            kind: "plan-ready",
+            title: planTitle,
+            fileName: planFileNameFromTitle(planTitle ?? "plan"),
+          });
         }
         if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
         if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
         const opt = t.optimization;
-        if (opt && (opt.originalInputTokens > opt.compressedInputTokens || opt.cachedPromptTokens > 0 || opt.toolCacheHits > 0 || opt.responseCacheHits > 0)) {
+        if (
+          opt &&
+          (opt.originalInputTokens > opt.compressedInputTokens ||
+            opt.cachedPromptTokens > 0 ||
+            opt.toolCacheHits > 0 ||
+            opt.responseCacheHits > 0 ||
+            (opt.cacheHitRate ?? 0) > 0)
+        ) {
           finished.push(opt);
         }
         const tokens = t.tokens;
