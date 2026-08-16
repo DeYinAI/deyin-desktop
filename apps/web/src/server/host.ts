@@ -11,6 +11,11 @@ import type { EnvInfo, FileNode, TerminalCreateOptions } from "../shared/protoco
 export class SessionHost {
   private readonly terminals: TerminalManager;
 
+  /** Shared PTY registry: the agent host registers its shells here for attach. */
+  get terminalManager(): TerminalManager {
+    return this.terminals;
+  }
+
   constructor(
     private readonly root: string,
     emit: (msg: { type: "term.data"; termId: string; data: string } | { type: "term.exit"; termId: string; exitCode: number }) => void,

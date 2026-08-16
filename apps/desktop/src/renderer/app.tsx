@@ -829,7 +829,7 @@ export function App() {
       appendEvents(thread.id, [{ kind: "user", text, attachments, linkedThreadIds }]);
       agentStateStore.startRun(thread.id, mode);
       if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
-      void window.deyin.agent.start({
+      window.deyin.agent.start({
         threadId: thread.id,
         prompt: agentPrompt,
         providerId: selectedProviderId,
@@ -840,6 +840,12 @@ export function App() {
         history: toChatMessages(thread.events),
         initialTodos: thread.todos,
         goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
+      }).catch((err: unknown) => {
+        // The host refused the run (e.g. web sandbox not connected): surface it
+        // and unlock the composer instead of wedging the thread.
+        const message = err instanceof Error ? err.message : String(err);
+        agentStateStore.dispatch({ threadId: thread.id, event: { type: "error", message } });
+        agentStateStore.dispatch({ threadId: thread.id, event: { type: "done", reason: "aborted", finalText: "" } });
       });
     },
     [appendEvents, selectedModel, selectedProviderId, settings],
@@ -1080,7 +1086,7 @@ export function App() {
     // Agent runtime (default on desktop): run the tool-calling loop in the main
     // process in the selected composer mode; falls back to the plain text
     // stream when switched off (or on the web, which has no agent host yet).
-    if ((settings?.agentMode ?? "agent") === "agent" && boot.platform === "desktop" && window.deyin.agent) {
+    if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
       setInput("");
       const sendMeta = {
         attachments: [...composerAttachments],
@@ -1159,7 +1165,7 @@ export function App() {
 
     const runActive = streamText !== null || runningThreadId !== null || plainChatAbortRef.current !== null;
     if (!runActive) {
-      if ((settings?.agentMode ?? "agent") === "agent" && boot?.platform === "desktop" && window.deyin.agent) {
+      if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
         startAgentRun(activeThread, text, composerMode);
       }
       return;
@@ -1474,11 +1480,7 @@ export function App() {
                   models={models}
                   selectedModel={selectedModel}
                   approvalMode={settings?.approvalMode ?? "full-access"}
-                  mode={
-                    boot?.platform === "desktop" && (settings?.agentMode ?? "agent") === "agent"
-                      ? composerMode
-                      : undefined
-                  }
+                  mode={(settings?.agentMode ?? "agent") === "agent" ? composerMode : undefined}
                   deliveryModeEnabled={false}
                   thinking={settings?.thinking ?? true}
                   canSend={input.trim().length > 0}

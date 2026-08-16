@@ -158,6 +158,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../packages/agent-core
       '@deyin/branding':
         specifier: workspace:*
         version: link:../../packages/branding
