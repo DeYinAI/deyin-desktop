@@ -30,6 +30,16 @@ export const PLAN_AGENT: AgentDefinition = {
     { tool: "delete", action: "deny" },
     { tool: "notebook_edit", action: "deny" },
     { tool: "bash", action: "deny" },
+    // Read-only must also cover workspace-mutating git / worktree / memory tools.
+    { tool: "git_add", action: "deny" },
+    { tool: "git_commit", action: "deny" },
+    { tool: "git_push", action: "deny" },
+    { tool: "git_pull", action: "deny" },
+    { tool: "git_stash", action: "deny" },
+    { tool: "enter_worktree", action: "deny" },
+    { tool: "exit_worktree", action: "deny" },
+    { tool: "remember", action: "deny" },
+    { tool: "forget", action: "deny" },
   ],
 };
 
@@ -44,6 +54,16 @@ export const ASK_AGENT: AgentDefinition = {
     { tool: "delete", action: "deny" },
     { tool: "notebook_edit", action: "deny" },
     { tool: "bash", action: "deny" },
+    // Read-only must also cover workspace-mutating git / worktree / memory tools.
+    { tool: "git_add", action: "deny" },
+    { tool: "git_commit", action: "deny" },
+    { tool: "git_push", action: "deny" },
+    { tool: "git_pull", action: "deny" },
+    { tool: "git_stash", action: "deny" },
+    { tool: "enter_worktree", action: "deny" },
+    { tool: "exit_worktree", action: "deny" },
+    { tool: "remember", action: "deny" },
+    { tool: "forget", action: "deny" },
   ],
 };
 

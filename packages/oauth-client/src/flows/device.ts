@@ -55,6 +55,7 @@ export async function loginWithDevice(
       client_id: client.config.clientId,
       scope: client.config.scopes.join(" "),
     }),
+    signal: AbortSignal.timeout(10_000),
   });
   if (!startRes.ok) {
     throw new OAuthClientError(`Device authorization failed: HTTP ${startRes.status}`, "device_start_failed");

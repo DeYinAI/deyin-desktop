@@ -133,6 +133,15 @@ export class AutomationRunsStore {
     }, EVENT_PERSIST_DEBOUNCE_MS);
   }
 
+  /** Flush a pending debounced persist (call on dispose so runs aren't lost). */
+  flush(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    if (this.dirty) this.persist();
+  }
+
   list(automationId?: string): AutomationRun[] {
     if (automationId) {
       // Use the index for the sorted-per-automation slice; copy so callers can't mutate.

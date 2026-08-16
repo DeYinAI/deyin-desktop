@@ -26,6 +26,8 @@ export type StreamEvent =
         ratio: number;
         results: CompressionResult[];
       };
+      /** Number of auto-continuations used (length-truncated responses). */
+      continuations?: number;
     };
 
 export interface TransportOptions {

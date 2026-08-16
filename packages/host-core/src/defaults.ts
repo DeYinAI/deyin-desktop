@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 9;
+export const SETTINGS_SCHEMA_VERSION = 10;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -41,6 +41,25 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   optimizationResponseCache: true,
   optimizationSimilarityThreshold: 0.93,
   memoryEnabled: true,
+  reviewMode: "off",
+  enableDeliveryMode: false,
+  whatsNewSeenVersion: null,
+  agentOnboardComplete: false,
+  cacheHitRateTarget: 0.8,
+  cacheHitRateWarningThreshold: 0.6,
+  enableCacheOptimizations: true,
+  enableCoordinator: false,
+  plannerModel: null,
+  coordinatorRoutingPolicy: "balanced",
+  enableFleet: false,
+  chromeDebugEnabled: false,
+  computerUseEnabled: false,
+  computerUseScreenshotRetentionDays: 7,
+  computerUseConfirmationRequired: true,
+  evidenceRequireAcceptanceCriteria: true,
+  evidenceStrictFinalization: true,
+  maxParallelWriters: 2,
+  schedulerWritePathValidation: true,
 };
 
 /**
@@ -104,6 +123,50 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   }
   // v8 -> v9: memoryEnabled boolean.
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
+  // v9 -> v10: review/delivery/coordinator/computer-use/chrome settings.
+  if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
+  if (typeof merged.enableDeliveryMode !== "boolean") merged.enableDeliveryMode = DEFAULT_SETTINGS.enableDeliveryMode;
+  if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
+  if (typeof merged.agentOnboardComplete !== "boolean") {
+    merged.agentOnboardComplete = DEFAULT_SETTINGS.agentOnboardComplete;
+  }
+  merged.cacheHitRateTarget = clamp(merged.cacheHitRateTarget, 0.5, 0.95, DEFAULT_SETTINGS.cacheHitRateTarget);
+  merged.cacheHitRateWarningThreshold = clamp(
+    merged.cacheHitRateWarningThreshold,
+    0.2,
+    0.95,
+    DEFAULT_SETTINGS.cacheHitRateWarningThreshold,
+  );
+  if (typeof merged.enableCacheOptimizations !== "boolean") {
+    merged.enableCacheOptimizations = DEFAULT_SETTINGS.enableCacheOptimizations;
+  }
+  if (typeof merged.enableCoordinator !== "boolean") merged.enableCoordinator = DEFAULT_SETTINGS.enableCoordinator;
+  if (typeof merged.plannerModel !== "string") merged.plannerModel = DEFAULT_SETTINGS.plannerModel;
+  if (!["balanced", "conservative", "aggressive"].includes(merged.coordinatorRoutingPolicy)) {
+    merged.coordinatorRoutingPolicy = DEFAULT_SETTINGS.coordinatorRoutingPolicy;
+  }
+  if (typeof merged.enableFleet !== "boolean") merged.enableFleet = DEFAULT_SETTINGS.enableFleet;
+  if (typeof merged.chromeDebugEnabled !== "boolean") merged.chromeDebugEnabled = DEFAULT_SETTINGS.chromeDebugEnabled;
+  if (typeof merged.computerUseEnabled !== "boolean") merged.computerUseEnabled = DEFAULT_SETTINGS.computerUseEnabled;
+  merged.computerUseScreenshotRetentionDays = clamp(
+    merged.computerUseScreenshotRetentionDays,
+    1,
+    90,
+    DEFAULT_SETTINGS.computerUseScreenshotRetentionDays,
+  );
+  if (typeof merged.computerUseConfirmationRequired !== "boolean") {
+    merged.computerUseConfirmationRequired = DEFAULT_SETTINGS.computerUseConfirmationRequired;
+  }
+  if (typeof merged.evidenceRequireAcceptanceCriteria !== "boolean") {
+    merged.evidenceRequireAcceptanceCriteria = DEFAULT_SETTINGS.evidenceRequireAcceptanceCriteria;
+  }
+  if (typeof merged.evidenceStrictFinalization !== "boolean") {
+    merged.evidenceStrictFinalization = DEFAULT_SETTINGS.evidenceStrictFinalization;
+  }
+  merged.maxParallelWriters = clamp(merged.maxParallelWriters, 1, 8, DEFAULT_SETTINGS.maxParallelWriters);
+  if (typeof merged.schedulerWritePathValidation !== "boolean") {
+    merged.schedulerWritePathValidation = DEFAULT_SETTINGS.schedulerWritePathValidation;
+  }
   // v5 -> v6: subagentModels must be a plain record of non-empty strings; drop anything else.
   if (typeof merged.subagentModels !== "object" || merged.subagentModels === null || Array.isArray(merged.subagentModels)) {
     merged.subagentModels = {};
