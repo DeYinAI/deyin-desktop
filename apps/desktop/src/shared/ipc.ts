@@ -50,29 +50,12 @@ import type {
   SelectPlanOptions,
   SelectPlanResponse,
   BillingOverview,
-  Automation,
-  AutomationInfo,
-  AutomationRun,
-  AgentUiEvent,
-  SshHostInfo,
-  SshHostInput,
-  SshHostCredentials,
-  SshTestResult,
   ContextSearchHit,
   ContextRef,
   ResolvedContextFile,
   PendingChange,
   SecurityFindingsReport,
-  ReasonixMetricsSnapshot,
-  ReasonixWeeklyReport,
-  ReasonixDiagnostics,
 } from "./types.js";
-
-/** Result of create/update — includes the mutated automation so UI can select by id. */
-export interface AutomationMutationResult {
-  automation: Automation;
-  list: AutomationInfo[];
-}
 
 /** Decision for an agent permission request (mirrors agent-core). */
 export type AgentPermissionDecision = "allow" | "allow-always" | "deny";
@@ -173,12 +156,6 @@ export const CH = {
   browserEnsure: "deyin:browser:ensure",
   browserTabCommand: "deyin:browser:tabCommand",
   browserActive: "deyin:browser:active",
-  computerUseActive: "deyin:computerUse:active",
-  computerUseGetAllowlist: "deyin:computerUse:getAllowlist",
-  computerUseSetAllowlist: "deyin:computerUse:setAllowlist",
-  computerUseListApps: "deyin:computerUse:listApps",
-  chromeConsentRequest: "deyin:chrome:consent-request",
-  chromeConsentRespond: "deyin:chrome:consent-respond",
   visualizeRead: "deyin:visualize:read",
   telemetryRecord: "deyin:telemetry:record",
   providersList: "deyin:providers:list",
@@ -216,24 +193,6 @@ export const CH = {
   identitySync: "deyin:identity:sync",
   diagnosticsSend: "deyin:diagnostics:send",
   logWrite: "deyin:log:write",
-  automationsList: "deyin:automations:list",
-  automationsCreate: "deyin:automations:create",
-  automationsUpdate: "deyin:automations:update",
-  automationsDelete: "deyin:automations:delete",
-  automationsToggle: "deyin:automations:toggle",
-  automationsRun: "deyin:automations:run",
-  automationsStop: "deyin:automations:stop",
-  automationsRuns: "deyin:automations:runs",
-  automationEvent: "deyin:automations:event",
-  automationRunFinished: "deyin:automations:runFinished",
-  sshHostsList: "deyin:ssh:list",
-  sshHostsAdd: "deyin:ssh:add",
-  sshHostsUpdate: "deyin:ssh:update",
-  sshHostsRemove: "deyin:ssh:remove",
-  sshHostsSetCredentials: "deyin:ssh:setCredentials",
-  sshHostsTest: "deyin:ssh:test",
-  sshHostsPinFingerprint: "deyin:ssh:pinFingerprint",
-  sshHostsImportKey: "deyin:ssh:importKey",
   contextSearch: "deyin:context:search",
   contextResolve: "deyin:context:resolve",
   reviewList: "deyin:review:list",
@@ -246,10 +205,6 @@ export const CH = {
   securityClearFindings: "deyin:security:clearFindings",
   securityScanDiff: "deyin:security:scanDiff",
   securityFindingsChanged: "deyin:security:findingsChanged",
-  reasonixMetricsGet: "deyin:reasonix:metrics:get",
-  reasonixMetricsReport: "deyin:reasonix:metrics:report",
-  reasonixDiagnosticsGet: "deyin:reasonix:diagnostics:get",
-  reasonixCacheClear: "deyin:reasonix:cache:clear",
   betaFeedbackSubmit: "deyin:beta:feedback",
 } as const;
 
@@ -417,16 +372,6 @@ export interface DeyinApi {
     /** True while browser_* agent tools are in flight. */
     onActive(cb: (active: boolean) => void): () => void;
   };
-  computerUse: {
-    getAllowlist(): Promise<string[]>;
-    setAllowlist(apps: string[]): Promise<void>;
-    listApps(): Promise<unknown>;
-    onActive(cb: (active: boolean) => void): () => void;
-  };
-  chrome: {
-    onConsentRequest(cb: (req: { message?: string }) => void): () => void;
-    respondConsent(granted: boolean): void;
-  };
   visualize: {
     read(threadId: string, fileName: string): Promise<string>;
   };
@@ -509,28 +454,6 @@ export interface DeyinApi {
     /** Append a renderer-side line to deyin.log (errors are forwarded by the app). */
     write(level: "info" | "warn" | "error", message: string): void;
   };
-  automations: {
-    list(): Promise<AutomationInfo[]>;
-    create(input: Omit<Automation, "id" | "createdAt" | "updatedAt">): Promise<AutomationMutationResult>;
-    update(id: string, patch: Partial<Omit<Automation, "id" | "createdAt">>): Promise<AutomationMutationResult>;
-    remove(id: string): Promise<AutomationInfo[]>;
-    toggle(id: string, enabled: boolean): Promise<AutomationInfo[]>;
-    run(id: string): Promise<AutomationRun>;
-    stop(runId: string): void;
-    runs(automationId?: string): Promise<AutomationRun[]>;
-    onEvent(cb: (payload: { runId: string; automationId: string; event: AgentUiEvent }) => void): () => void;
-    onRunFinished(cb: (payload: { run: AutomationRun }) => void): () => void;
-  };
-  sshHosts: {
-    list(): Promise<SshHostInfo[]>;
-    add(input: SshHostInput): Promise<SshHostInfo[]>;
-    update(id: string, patch: Partial<SshHostInput>): Promise<SshHostInfo[]>;
-    remove(id: string): Promise<SshHostInfo[]>;
-    setCredentials(id: string, creds: SshHostCredentials): Promise<SshHostInfo[]>;
-    test(hostId: string, acceptFingerprint?: string): Promise<SshTestResult>;
-    pinFingerprint(hostId: string, fingerprint: string): Promise<SshHostInfo[]>;
-    importKey(): Promise<string | null>;
-  };
   context: {
     search(query: string): Promise<ContextSearchHit[]>;
     resolve(refs: ContextRef[]): Promise<ResolvedContextFile[]>;
@@ -547,12 +470,6 @@ export interface DeyinApi {
     clearFindings(threadId: string): Promise<void>;
     scanDiff(threadId: string, diff: string): Promise<SecurityFindingsReport>;
     onFindingsChanged(cb: (threadId: string) => void): () => void;
-  };
-  reasonix: {
-    metrics(): Promise<ReasonixMetricsSnapshot>;
-    weeklyReport(): Promise<ReasonixWeeklyReport>;
-    diagnostics(threadId?: string): Promise<ReasonixDiagnostics>;
-    clearThreadCache(threadId: string): Promise<void>;
   };
   beta: {
     submitFeedback(payload: { category: string; message: string; rating?: number }): Promise<{ ok: boolean }>;

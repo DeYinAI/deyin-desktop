@@ -1,26 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
-import { AppearancePage } from "./settings/AppearancePage.js";
-import { BrowserPage } from "./settings/BrowserPage.js";
-import { ChromePage } from "./settings/ChromePage.js";
-import { ComputerUsePage } from "./settings/ComputerUsePage.js";
 import { CapabilityPage } from "./settings/CapabilityPage.js";
 import { GeneralPage } from "./settings/GeneralPage.js";
+import { AppearancePage } from "./settings/AppearancePage.js";
 import { IdentityPage } from "./settings/IdentityPage.js";
 import { IndexingPage } from "./settings/IndexingPage.js";
 import { McpPage } from "./settings/McpPage.js";
 import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
 import { OnboardPage } from "./settings/OnboardPage.js";
-import { OptimizationPage } from "./settings/OptimizationPage.js";
 import { PluginsPage } from "./settings/PluginsPage.js";
 import { TerminalPage } from "./settings/TerminalPage.js";
-import { SshHostsPage } from "./settings/SshHostsPage.js";
+import { BrowserPage } from "./settings/BrowserPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
-import { CacheSettings } from "./settings/CacheSettings.js";
-import { CoordinatorSettings } from "./settings/CoordinatorSettings.js";
-import { SchedulerSettings } from "./settings/SchedulerSettings.js";
-import { EvidenceSettings } from "./settings/EvidenceSettings.js";
+import { PageHeader, SectionTitle, SettingCard, Toggle } from "./settings/controls.js";
 import type { MessageKey } from "@deyin/host-core/shared";
 import type {
   AccountUsage,
@@ -34,36 +27,47 @@ import type {
 
 export type SettingsPage =
   | "general"
-  | "appearance"
   | "models"
-  | "browser"
-  | "chrome"
-  | "computerUse"
-  | "terminal"
-  | "plugins"
-  | "skills"
-  | "subagents"
-  | "mcp"
-  | "commands"
-  | "hooks"
-  | "indexing"
-  | "usage"
-  | "optimization"
-  | "identity"
-  | "sshHosts"
-  | "onboard"
-  | "cache"
-  | "coordinator"
-  | "scheduler"
-  | "evidence";
+  | "capabilities"
+  | "workspace"
+  | "data"
+  | "account";
 
-/** Pages rendered by the generic CapabilityPage (file-backed registries). */
-const CAPABILITY_PAGES: Partial<Record<SettingsPage, CapabilityKind>> = {
-  skills: "skill",
-  subagents: "subagent",
-  commands: "command",
-  hooks: "hook",
+/** Legacy page ids kept valid so stale deep-links (e.g. stored settings pages) route somewhere sane. */
+const LEGACY_PAGE_ROUTES: Partial<Record<string, SettingsPage>> = {
+  appearance: "general",
+  browser: "workspace",
+  terminal: "workspace",
+  chrome: "workspace",
+  computerUse: "workspace",
+  plugins: "capabilities",
+  skills: "capabilities",
+  subagents: "capabilities",
+  commands: "capabilities",
+  hooks: "capabilities",
+  mcp: "capabilities",
+  indexing: "data",
+  usage: "data",
+  optimization: "data",
+  sshHosts: "account",
+  identity: "account",
+  onboard: "account",
+  cache: "data",
+  coordinator: "data",
+  scheduler: "data",
+  evidence: "data",
 };
+
+type CapabilityTab = "mcp" | "plugins" | CapabilityKind;
+
+const CAPABILITY_TABS: { id: CapabilityTab; labelKey: MessageKey }[] = [
+  { id: "mcp", labelKey: "settings.nav.mcp" },
+  { id: "plugins", labelKey: "settings.nav.plugins" },
+  { id: "skill", labelKey: "settings.nav.skills" },
+  { id: "subagent", labelKey: "settings.nav.subagents" },
+  { id: "command", labelKey: "settings.nav.commands" },
+  { id: "hook", labelKey: "settings.nav.hooks" },
+];
 
 interface NavEntry {
   page: SettingsPage;
@@ -76,46 +80,23 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     sectionKey: "settings.section.basics",
     entries: [
       { page: "general", labelKey: "settings.nav.general", icon: "gear" },
-      { page: "appearance", labelKey: "settings.nav.appearance", icon: "palette" },
       { page: "models", labelKey: "settings.nav.models", icon: "cpu" },
-      { page: "browser", labelKey: "settings.nav.browser", icon: "globe" },
-      { page: "chrome", labelKey: "settings.nav.chrome", icon: "globe" },
-      { page: "computerUse", labelKey: "settings.nav.computerUse", icon: "layout" },
-      { page: "terminal", labelKey: "settings.nav.terminal", icon: "terminal" },
     ],
   },
   {
     sectionKey: "settings.section.capabilities",
-    entries: [
-      { page: "plugins", labelKey: "settings.nav.plugins", icon: "grid" },
-      { page: "skills", labelKey: "settings.nav.skills", icon: "sparkles" },
-      { page: "subagents", labelKey: "settings.nav.subagents", icon: "user" },
-      { page: "mcp", labelKey: "settings.nav.mcp", icon: "plug" },
-      { page: "commands", labelKey: "settings.nav.commands", icon: "terminal" },
-      { page: "hooks", labelKey: "settings.nav.hooks", icon: "anchor" },
-    ],
+    entries: [{ page: "capabilities", labelKey: "settings.section.capabilities", icon: "grid" }],
   },
   {
     sectionKey: "settings.section.data",
     entries: [
-      { page: "indexing", labelKey: "settings.nav.indexing", icon: "search" },
-      { page: "usage", labelKey: "settings.nav.usage", icon: "chart" },
-      { page: "optimization", labelKey: "settings.nav.optimization", icon: "sparkles" },
-      { page: "sshHosts", labelKey: "settings.nav.sshHosts", icon: "terminal" },
-    ],
-  },
-  {
-    sectionKey: "settings.section.reasonix",
-    entries: [
-      { page: "cache", labelKey: "settings.nav.cache", icon: "chart" },
-      { page: "coordinator", labelKey: "settings.nav.coordinator", icon: "cpu" },
-      { page: "scheduler", labelKey: "settings.nav.scheduler", icon: "grid" },
-      { page: "evidence", labelKey: "settings.nav.evidence", icon: "shield" },
+      { page: "workspace", labelKey: "settings.nav.workspace", icon: "terminal" },
+      { page: "data", labelKey: "settings.nav.agentData", icon: "chart" },
     ],
   },
   {
     sectionKey: "settings.section.deyin",
-    entries: [{ page: "identity", labelKey: "settings.nav.identity", icon: "shield" }],
+    entries: [{ page: "account", labelKey: "settings.nav.account", icon: "shield" }],
   },
 ];
 
@@ -127,6 +108,7 @@ interface SettingsViewProps {
   version: string;
   workspaceRoot: string | null;
   activeThreadId?: string | null;
+  platform?: "desktop" | "web";
   /** Live models for the primary provider, passed through to Model settings. */
   liveModels: import("../../shared/types.js").ModelInfo[];
   onChangeSettings: (patch: Partial<DeyinSettings>) => void;
@@ -140,7 +122,11 @@ interface SettingsViewProps {
 /** Full-screen settings: left nav + routed page content. */
 export function SettingsView(props: SettingsViewProps) {
   const t = useT();
-  const [page, setPage] = useState<SettingsPage>(props.initialPage);
+  const isWeb = props.platform === "web";
+  const [page, setPage] = useState<SettingsPage>(
+    LEGACY_PAGE_ROUTES[props.initialPage] ?? props.initialPage,
+  );
+  const [capsTab, setCapsTab] = useState<CapabilityTab>("mcp");
   const [caps, setCaps] = useState<CapabilityItem[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [usage, setUsage] = useState<UsageStats | null>(null);
@@ -153,7 +139,7 @@ export function SettingsView(props: SettingsViewProps) {
   }, []);
 
   useEffect(() => {
-    if (page === "usage") {
+    if (page === "data") {
       void window.deyin.usage.get().then(setUsage);
       void window.deyin.usage.account().then(setAccountUsage).catch(() => setAccountUsage(null));
     }
@@ -174,14 +160,20 @@ export function SettingsView(props: SettingsViewProps) {
     void window.deyin.caps.toggle(id, enabled).then(setCaps);
   };
 
-  const capKind = CAPABILITY_PAGES[page];
-
   const setSubagentModel = (name: string, model: string | undefined) => {
     const next = { ...(props.settings.subagentModels ?? {}) };
     if (model) next[name] = model;
     else delete next[name];
     props.onChangeSettings({ subagentModels: next });
   };
+
+  const visibleNav = NAV.filter((group) => {
+    if (isWeb) {
+      // Capabilities and Workspace manage desktop-local resources.
+      return !group.entries.some((e) => e.page === "capabilities" || e.page === "workspace");
+    }
+    return true;
+  });
 
   return (
     <div className="settings">
@@ -190,7 +182,7 @@ export function SettingsView(props: SettingsViewProps) {
           <Icon name="arrowLeft" size={13} />
           {t("nav.backToWorkspace")}
         </button>
-        {NAV.map((group, i) => (
+        {visibleNav.map((group, i) => (
           <div key={i} className="settings__nav-group">
             <div className="sidebar__section">{t(group.sectionKey)}</div>
             {group.entries.map((entry) => (
@@ -205,20 +197,15 @@ export function SettingsView(props: SettingsViewProps) {
             ))}
           </div>
         ))}
-        <button
-          className={`settings__onboard ${page === "onboard" ? "settings__onboard--active" : ""}`}
-          onClick={() => setPage("onboard")}
-        >
-          <Icon name="play" size={13} />
-          <span>{t("settings.nav.onboard")}</span>
-        </button>
       </aside>
 
       <div className="settings__content">
         {page === "general" && (
-          <GeneralPage settings={props.settings} version={props.version} onChange={props.onChangeSettings} />
+          <>
+            <GeneralPage settings={props.settings} version={props.version} onChange={props.onChangeSettings} />
+            <AppearancePage settings={props.settings} onChange={props.onChangeSettings} />
+          </>
         )}
-        {page === "appearance" && <AppearancePage settings={props.settings} onChange={props.onChangeSettings} />}
         {page === "models" && (
           <ModelSettingsPage
             providers={providers}
@@ -229,80 +216,91 @@ export function SettingsView(props: SettingsViewProps) {
             onRefreshLiveModels={props.onRefreshLiveModels ?? (() => Promise.resolve())}
           />
         )}
-        {page === "browser" && <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />}
-        {page === "chrome" && <ChromePage settings={props.settings} onChange={props.onChangeSettings} />}
-        {page === "computerUse" && <ComputerUsePage settings={props.settings} onChange={props.onChangeSettings} />}
-        {page === "terminal" && <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />}
-        {page === "sshHosts" && <SshHostsPage />}
-        {page === "plugins" && <PluginsPage onToggle={toggleCap} />}
-        {page === "mcp" && <McpPage onToggle={toggleCap} />}
-        {capKind && (
-          <CapabilityPage
-            kind={capKind}
-            items={caps.filter((c) => c.kind === capKind)}
-            onToggle={toggleCap}
-            providers={providers}
-            liveModels={props.liveModels}
-            onSetSubagentModel={capKind === "subagent" ? setSubagentModel : undefined}
-          />
+        {page === "capabilities" && (
+          <div className="settings-page">
+            <PageHeader title={t("settings.section.capabilities")} description={t("capabilities.desc")} />
+            <div className="field__row" style={{ flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+              {CAPABILITY_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`chip chip--small ${capsTab === tab.id ? "chip--active" : ""}`}
+                  onClick={() => setCapsTab(tab.id)}
+                >
+                  {t(tab.labelKey)}
+                </button>
+              ))}
+            </div>
+            {capsTab === "mcp" && <McpPage onToggle={toggleCap} />}
+            {capsTab === "plugins" && <PluginsPage onToggle={toggleCap} />}
+            {capsTab !== "mcp" && capsTab !== "plugins" && (
+              <CapabilityPage
+                kind={capsTab}
+                items={caps.filter((c) => c.kind === capsTab)}
+                onToggle={toggleCap}
+                providers={providers}
+                liveModels={props.liveModels}
+                onSetSubagentModel={capsTab === "subagent" ? setSubagentModel : undefined}
+              />
+            )}
+          </div>
         )}
-        {page === "indexing" && (
-          <IndexingPage workspaceRoot={props.workspaceRoot} settings={props.settings} onChange={props.onChangeSettings} />
+        {page === "workspace" && (
+          <>
+            <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />
+            <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />
+          </>
         )}
-        {page === "usage" && (
-          <UsageStatsPage
-            stats={usage}
-            account={accountUsage}
-            signedIn={props.user !== null}
-            onRefreshAccount={() => void refreshAccount()}
-            refreshing={accountRefreshing}
-          />
+        {page === "data" && (
+          <>
+            <UsageStatsPage
+              stats={usage}
+              account={accountUsage}
+              signedIn={props.user !== null}
+              onRefreshAccount={() => void refreshAccount()}
+              refreshing={accountRefreshing}
+            />
+            <IndexingPage workspaceRoot={props.workspaceRoot} settings={props.settings} onChange={props.onChangeSettings} />
+            <div className="settings-page">
+              <PageHeader title={t("settings.nav.agentData")} description={t("settings.nav.agentData")} />
+              <SectionTitle>Agent</SectionTitle>
+              <SettingCard title="Memory" description="Background memory (remember/forget + automatic recall).">
+                <Toggle
+                  checked={props.settings.memoryEnabled}
+                  onChange={(memoryEnabled) => props.onChangeSettings({ memoryEnabled })}
+                />
+              </SettingCard>
+              <SettingCard
+                title="Semantic caches"
+                description="Tool-result and response caches via the optimization plugin (embeddings-based)."
+              >
+                <Toggle
+                  checked={props.settings.optimizationPluginEnabled}
+                  onChange={(optimizationPluginEnabled) => props.onChangeSettings({ optimizationPluginEnabled })}
+                />
+              </SettingCard>
+            </div>
+          </>
         )}
-        {page === "optimization" && (
-          <OptimizationPage settings={props.settings} onChange={props.onChangeSettings} />
-        )}
-        {page === "cache" && (
-          <CacheSettings
-            settings={props.settings}
-            activeThreadId={props.activeThreadId}
-            onChange={props.onChangeSettings}
-          />
-        )}
-        {page === "coordinator" && (
-          <CoordinatorSettings
-            settings={props.settings}
-            liveModels={props.liveModels}
-            activeThreadId={props.activeThreadId}
-            onChange={props.onChangeSettings}
-          />
-        )}
-        {page === "scheduler" && (
-          <SchedulerSettings
-            settings={props.settings}
-            activeThreadId={props.activeThreadId}
-            onChange={props.onChangeSettings}
-          />
-        )}
-        {page === "evidence" && <EvidenceSettings settings={props.settings} onChange={props.onChangeSettings} />}
-        {page === "identity" && (
-          <IdentityPage
-            user={props.user}
-            onConnect={props.onConnect}
-            onOpenUsage={() => setPage("usage")}
-            onShowThreads={props.onBack}
-          />
-        )}
-        {page === "onboard" && (
-          <OnboardPage
-            user={props.user}
-            busy={props.busy}
-            settings={props.settings}
-            onConnect={props.onConnect}
-            onOpenFolder={props.onOpenFolder}
-            onOpenTerminal={props.onOpenTerminal}
-            onStartTask={props.onBack}
-            onChange={props.onChangeSettings}
-          />
+        {page === "account" && (
+          <>
+            <IdentityPage
+              user={props.user}
+              onConnect={props.onConnect}
+              onOpenUsage={() => setPage("data")}
+              onShowThreads={props.onBack}
+            />
+            <OnboardPage
+              user={props.user}
+              busy={props.busy}
+              settings={props.settings}
+              onConnect={props.onConnect}
+              onOpenFolder={props.onOpenFolder}
+              onOpenTerminal={props.onOpenTerminal}
+              onStartTask={props.onBack}
+              onChange={props.onChangeSettings}
+            />
+          </>
         )}
       </div>
     </div>

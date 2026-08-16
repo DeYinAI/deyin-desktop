@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "../types.js";
 import { askQuestionTool } from "./ask-question.js";
 import { awaitTaskTool } from "./await-task.js";
+import { reportGoalMetTool } from "./report-goal-met.js";
 import { bashTool } from "./bash.js";
 import { createPlanTool } from "./create-plan.js";
 import { deleteTool } from "./delete.js";
@@ -9,15 +10,11 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { lsTool } from "./ls.js";
 import { enterPlanModeTool, exitPlanModeTool, switchModeTool } from "./mode-tools.js";
-import { notebookEditTool } from "./notebook-edit.js";
 import { readTool } from "./read.js";
 import { readSessionContextTool } from "./read-session-context.js";
-import { reportGoalMetTool } from "./report-goal-met.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillTool } from "./skill.js";
 import { todoReadTool } from "./todo-read.js";
-import { completeStepTool } from "./complete-step.js";
-import { createWaitJobsTool } from "./wait-jobs.js";
 import { ToolRegistry } from "./registry.js";
 import { todoTool } from "./todo.js";
 import { webFetchTool } from "./web-fetch.js";
@@ -26,9 +23,6 @@ import { writeTool } from "./write.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 import { GIT_TOOLS } from "./git.js";
 import { fileTreeTool } from "./tree.js";
-import { envInfoTool } from "./env-info.js";
-import { diffTextTool } from "./diff.js";
-import { processListTool } from "./process-list.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell } from "./bash.js";
@@ -113,14 +107,8 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   enterWorktreeTool,
   exitWorktreeTool,
   ...GIT_TOOLS,
-  notebookEditTool,
   fileTreeTool,
-  envInfoTool,
-  diffTextTool,
-  processListTool,
   reportGoalMetTool,
-  completeStepTool,
-  createWaitJobsTool(),
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

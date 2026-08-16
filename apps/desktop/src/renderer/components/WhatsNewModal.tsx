@@ -15,16 +15,13 @@ export function WhatsNewModal({ version, onDismiss }: Props) {
         </p>
         <ul className="whats-new-modal__list">
           <li>
-            <strong>Prefix cache</strong> — ≥80% hit rate target with diagnostics in Settings → Prefix cache
+            <strong>Model providers</strong> — DeepSeek, OpenAI, Anthropic, Gemini, OpenRouter, Groq, xAI, Mistral and Ollama are pre-configured; just add a key.
           </li>
           <li>
-            <strong>Coordinator</strong> — Optional planner model for multi-file and high-risk tasks (feature flag)
+            <strong>Simpler settings</strong> — 23 pages collapsed into six: General, Models, Capabilities, Workspace, Data and Account.
           </li>
           <li>
-            <strong>Fleet</strong> — Parallel subagents with write-path preflight (feature flag)
-          </li>
-          <li>
-            <strong>Delivery mode</strong> — Evidence gates with complete_step sign-offs (feature flag)
+            <strong>Faster chat</strong> — one streaming pipeline for thinking, tool calls and subagents; runs keep streaming while you switch tasks.
           </li>
         </ul>
         <p className="hint">

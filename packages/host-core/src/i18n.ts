@@ -67,6 +67,7 @@ const en = {
   // Settings navigation
   "settings.section.basics": "Basics",
   "settings.section.capabilities": "Agent capabilities",
+  "capabilities.desc": "Model Context Protocol servers, plugins, skills, subagents, commands and hooks.",
   "settings.section.data": "Data and statistics",
   "settings.section.reasonix": "Reasonix integration",
   "settings.section.deyin": "Deyin",
@@ -93,6 +94,9 @@ const en = {
   "settings.nav.identity": "Identity & Access",
   "settings.nav.sshHosts": "SSH hosts",
   "settings.nav.onboard": "Onboard",
+  "settings.nav.workspace": "Workspace",
+  "settings.nav.account": "Account",
+  "settings.nav.agentData": "Agent data",
 
   // General page
   "general.title": "General",
@@ -382,6 +386,9 @@ const zh: Partial<Record<MessageKey, string>> = {
   "settings.nav.evidence": "交付与证据",
   "settings.nav.identity": "身份与访问",
   "settings.nav.onboard": "新手引导",
+  "settings.nav.workspace": "工作区",
+  "settings.nav.account": "账户",
+  "settings.nav.agentData": "智能体数据",
   "general.title": "通用",
   "general.desc": "应用行为与更新。",
   "general.application": "应用",
@@ -657,6 +664,9 @@ const de: Partial<Record<MessageKey, string>> = {
   "settings.nav.evidence": "Delivery & Evidence",
   "settings.nav.identity": "Identität & Zugriff",
   "settings.nav.onboard": "Einführung",
+  "settings.nav.workspace": "Arbeitsbereich",
+  "settings.nav.account": "Konto",
+  "settings.nav.agentData": "Agent-Daten",
   "general.title": "Allgemein",
   "general.desc": "App-Verhalten und Updates.",
   "general.application": "Anwendung",

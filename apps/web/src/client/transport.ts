@@ -17,7 +17,6 @@ import {
   redactObject,
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
-  emptyReasonixMetrics,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import type { DeyinApi } from "@contract/ipc.js";
@@ -601,16 +600,6 @@ export function createBrowserTransport(): DeyinApi {
       onTabCommand: () => () => undefined,
       onActive: () => () => undefined,
     },
-    computerUse: {
-      getAllowlist: async () => [],
-      setAllowlist: async () => undefined,
-      listApps: async () => [],
-      onActive: () => () => undefined,
-    },
-    chrome: {
-      onConsentRequest: () => () => undefined,
-      respondConsent: () => undefined,
-    },
     visualize: {
       read: async () => "",
     },
@@ -866,56 +855,6 @@ export function createBrowserTransport(): DeyinApi {
         else if (level === "warn") console.warn("[deyin]", message);
         else console.info("[deyin]", message);
       },
-    },
-    automations: {
-      list: async () => [],
-      create: async (): Promise<never> => {
-        throw new Error("Automations are not available in the web app.");
-      },
-      update: async (): Promise<never> => {
-        throw new Error("Automations are not available in the web app.");
-      },
-      remove: async () => [],
-      toggle: async () => [],
-      run: async (): Promise<never> => {
-        throw new Error("Automations are not available in the web app.");
-      },
-      stop: () => undefined,
-      runs: async () => [],
-      onEvent: () => () => undefined,
-      onRunFinished: () => () => undefined,
-    },
-    sshHosts: {
-      list: async () => [],
-      add: async () => [],
-      update: async () => [],
-      remove: async () => [],
-      setCredentials: async () => [],
-      test: async () => ({ ok: false, message: "SSH hosts are not available in the web app." }),
-      pinFingerprint: async () => [],
-      importKey: async () => null,
-    },
-    reasonix: {
-      metrics: async () => emptyReasonixMetrics(),
-      weeklyReport: async () => ({
-        generatedAt: new Date().toISOString(),
-        weekBucket: emptyReasonixMetrics().weekBucket,
-        snapshot: emptyReasonixMetrics(),
-        notes: ["Reasonix metrics are not available in the web app."],
-      }),
-      diagnostics: async () => ({
-        cache: {
-          prefixShape: null,
-          invalidationHistory: [],
-          sessionHit: 0,
-          sessionMiss: 0,
-          hitRate: 0,
-        },
-        coordinator: [],
-        fleet: [],
-        evidence: [],
-      }),
-      clearThreadCache: async () => undefined,
     },
     beta: {
       submitFeedback: async () => ({ ok: false }),
