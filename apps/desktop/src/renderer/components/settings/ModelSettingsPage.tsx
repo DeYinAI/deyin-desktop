@@ -107,6 +107,7 @@ function ProviderRow({ provider, active, onClick }: { provider: ProviderInfo; ac
   return (
     <button className={`provider-row ${active ? "provider-row--active" : ""}`} onClick={onClick}>
       <span className="provider-row__name">{provider.name}</span>
+      {provider.local && <span className="badge badge--muted">local</span>}
       <span className={`provider-row__status ${provider.status === "connected" ? "provider-row__status--on" : ""}`} />
     </button>
   );
@@ -114,14 +115,8 @@ function ProviderRow({ provider, active, onClick }: { provider: ProviderInfo; ac
 
 /* New provider draft (unsaved until Save) -------------------------------------- */
 
-/** One-click provider presets: name/baseUrl/format prefilled, key left to the user. */
-const PROVIDER_PRESETS = [
-  { label: "OpenAI", name: "OpenAI", baseUrl: "https://api.openai.com/v1", apiFormat: "chat-completions" as const },
-  { label: "Anthropic", name: "Anthropic", baseUrl: "https://api.anthropic.com", apiFormat: "anthropic" as const },
-  { label: "DeepSeek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", apiFormat: "chat-completions" as const },
-  { label: "Ollama (local)", name: "Ollama", baseUrl: "http://localhost:11434/v1", apiFormat: "chat-completions" as const },
-];
-
+/** Curated presets (DeepSeek, OpenAI, ...) live in DEFAULT_PROVIDERS and are
+ *  seeded into the store automatically — this draft is for custom endpoints. */
 function ProviderDraft({
   onCancel,
   onCreated,
@@ -136,12 +131,6 @@ function ProviderDraft({
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  const applyPreset = (preset: (typeof PROVIDER_PRESETS)[number]) => {
-    setName(preset.name);
-    setBaseUrl(preset.baseUrl);
-    setApiFormat(preset.apiFormat);
-  };
 
   const save = async () => {
     if (!name.trim() || !baseUrl.trim()) {
@@ -191,16 +180,6 @@ function ProviderDraft({
         <div className="providers__detail-spacer" />
       </div>
 
-      <div className="field">
-        <label className="field__label">Presets</label>
-        <div className="field__row" style={{ flexWrap: "wrap", gap: 6 }}>
-          {PROVIDER_PRESETS.map((preset) => (
-            <button key={preset.label} type="button" className="chip chip--small" onClick={() => applyPreset(preset)}>
-              {preset.label}
-            </button>
-          ))}
-        </div>
-      </div>
       <div className="field">
         <label className="field__label">Name</label>
         <input className="input" placeholder="My provider" value={name} autoFocus onChange={(e) => setName(e.target.value)} />

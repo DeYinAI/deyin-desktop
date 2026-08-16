@@ -125,7 +125,8 @@ async function* streamChatCompletions(opts: StreamChatOptions): AsyncGenerator<s
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${opts.token}`,
+        // Empty token = local provider (Ollama): no credentials sent.
+        ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
       },
       body: JSON.stringify({
         model: opts.model,
@@ -188,8 +189,10 @@ async function* streamAnthropicChat(opts: StreamChatOptions): AsyncGenerator<str
     accept: "text/event-stream",
     "anthropic-version": "2023-06-01",
   };
-  if (opts.authHeader) headers.authorization = `Bearer ${opts.token}`;
-  else headers["x-api-key"] = opts.token;
+  if (opts.token) {
+    if (opts.authHeader) headers.authorization = `Bearer ${opts.token}`;
+    else headers["x-api-key"] = opts.token;
+  }
 
   const res = await fetch(`${root}/v1/messages`, {
     method: "POST",
@@ -243,7 +246,7 @@ async function* streamResponsesChat(opts: StreamChatOptions): AsyncGenerator<str
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${opts.token}`,
+      ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
     },
     body: JSON.stringify({
       model: opts.model,

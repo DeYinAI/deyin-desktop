@@ -907,6 +907,10 @@ export interface ProviderInfo {
   disabledModels: string[];
   /** Epoch ms of the last successful /models fetch; drives the 1-week cache. */
   modelsFetchedAt?: number;
+  /** Curated built-in preset (DeepSeek, OpenAI, ...) rather than user-added. */
+  preset?: boolean;
+  /** Local inference endpoint (Ollama): works without an API key. */
+  local?: boolean;
 }
 
 export interface ProviderPatch {

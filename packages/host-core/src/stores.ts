@@ -1,5 +1,13 @@
 import { fetchAccountUsage } from "./account.js";
-import { DEFAULT_CAPABILITIES, DEFAULT_PROVIDERS, SETTINGS_SCHEMA_VERSION, migrateSettings, type StoredProviderBase } from "./defaults.js";
+import {
+  DEFAULT_CAPABILITIES,
+  DEFAULT_PROVIDERS,
+  PROVIDER_SEED_VERSION,
+  SETTINGS_SCHEMA_VERSION,
+  mergePresetProviders,
+  migrateSettings,
+  type StoredProviderBase,
+} from "./defaults.js";
 import { listModels, type TokenSource } from "./models.js";
 import type { Storage } from "./storage.js";
 import type {
@@ -70,6 +78,8 @@ interface AgentsState {
   /** Capability ids the user switched off (live registry entries default to on). */
   disabledCaps: string[];
   providers: StoredProvider[];
+  /** Last DEFAULT_PROVIDERS seed version merged into this record. */
+  providerSeedVersion?: number;
   /** Encrypted plugin variable values: plugin name -> variable -> cipher text. */
   pluginSecrets?: Record<string, Record<string, string>>;
 }
@@ -82,6 +92,7 @@ export class AgentsStore {
     this.state = storage.readJson<AgentsState>("agents.json", {
       disabledCaps: [],
       providers: DEFAULT_PROVIDERS,
+      providerSeedVersion: PROVIDER_SEED_VERSION,
     });
     this.normalize();
   }
@@ -98,6 +109,13 @@ export class AgentsStore {
         }
       }
       delete this.state.caps;
+      this.persist();
+    }
+    // One-time merge of newly shipped provider presets.
+    const merged = mergePresetProviders(this.state.providers, this.state.providerSeedVersion);
+    if (merged.providers !== this.state.providers) {
+      this.state.providers = merged.providers;
+      this.state.providerSeedVersion = merged.seedVersion;
       this.persist();
     }
     this.state.providers = this.state.providers.map((p) => ({
