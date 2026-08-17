@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import type { ClientMessage, ServerMessage } from "../shared/protocol.js";
+import type { ClientMessage, ServerMessage } from "@deyin/contract/web";
 import { SessionHost } from "./host.js";
 import { WebAgentHost, type WebAgentStartOptions } from "./agent-host.js";
 import { introspect } from "./introspect.js";

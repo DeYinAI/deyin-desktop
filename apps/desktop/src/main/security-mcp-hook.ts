@@ -1,5 +1,5 @@
 import type { ToolRegistry } from "@deyin/agent-core";
-import type { SecurityFindingsReport } from "../shared/types.js";
+import type { SecurityFindingsReport } from "@deyin/contract";
 import type { SecurityFindingsStore } from "./security-findings-store.js";
 
 const SECURITY_SERVER = "deyin-security";

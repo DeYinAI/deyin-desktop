@@ -19,7 +19,7 @@ import {
   syncWorkspaceIdentity,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
-import type { DeyinApi } from "@contract/ipc.js";
+import type { DeyinApi } from "@deyin/contract";
 import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
 import type {
   Bootstrap,
@@ -35,7 +35,7 @@ import type {
   UsageDay,
   UsageEvent,
   UserProfile,
-} from "@contract/types.js";
+} from "@deyin/contract";
 import type {
   ClientMessage,
   EnvDetectResult,
@@ -45,7 +45,7 @@ import type {
   ServerMessage,
   TermAttachResult,
   TermCreateResult,
-} from "../shared/protocol.js";
+} from "@deyin/contract/web";
 
 const OAUTH_ISSUER = (import.meta.env.VITE_DEYIN_OAUTH_ISSUER as string) ?? "http://localhost:8788";
 const CLIENT_ID = (import.meta.env.VITE_DEYIN_CLIENT_ID as string) ?? "deyin-desktop";
@@ -542,6 +542,7 @@ export function createBrowserTransport(): DeyinApi {
     },
     plugins: {
       list: async () => [],
+      kernelStatus: async () => [],
       catalog: async () => {
         try {
           const res = await fetch("https://raw.githubusercontent.com/DeYinAI/registry/main/registry.json", {

@@ -1,5 +1,5 @@
 import { TerminalManager, assertInsideRoot, detectEnv, readTextFile, readTree, writeTextFile } from "@deyin/host-core";
-import type { EnvInfo, FileNode, TerminalCreateOptions } from "../shared/protocol.js";
+import type { EnvInfo, FileNode, TerminalCreateOptions } from "@deyin/contract/web";
 
 /**
  * A per-session sandbox root confines all file + terminal activity. On real deployments

@@ -15,17 +15,13 @@ files:
 # Ship the bundled DeYinAI Embedding ONNX model pack (if present) alongside
 # the app so the optimization plugin can use it without a user download.
 extraResources:
-  - from: ../../packages/optimization-plugin/models
+  - from: ../../packages/plugins/optimization/models
     to: optimization-models
     filter:
       - "**/*"
       - "!.gitkeep"
   - from: bundled-plugins
     to: bundled-plugins
-    filter:
-      - "**/*"
-  - from: ../../packages/computer-use-host/native/bin/Release/net8.0-windows/win-x64/publish
-    to: computer-use-host
     filter:
       - "**/*"
 # node-pty ships a native .node binary; it must stay outside the asar archive

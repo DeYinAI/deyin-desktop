@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog } from "electron";
 import { AuthManager } from "./auth.js";
 import { registerIpc, type IpcServices } from "./ipc.js";
-import { CH } from "../shared/ipc.js";
-import { resolveDeyinConfig } from "../shared/config.js";
-import { DEEP_LINK_SCHEME } from "../shared/config.js";
+import { CH } from "@deyin/contract";
+import { resolveDeyinConfig } from "@deyin/contract";
+import { DEEP_LINK_SCHEME } from "@deyin/contract";
 import { initLogger } from "./logger.js";
 import { createMainWindow } from "./window.js";
 import { disposeTray, ensureTray } from "./tray.js";
