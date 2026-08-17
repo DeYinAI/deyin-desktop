@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bashTool, parseWslPath } from "../src/tools/bash.js";
+import { resolvePath } from "../src/tools/util.js";
 import type { ToolContext } from "../src/types.js";
 
 const ctx = (): ToolContext => ({ cwd: process.cwd(), todos: [] });
@@ -35,6 +36,15 @@ test("parseWslPath routes WSL2 project dirs to their distro (any platform)", () 
   // Native Windows and POSIX paths are not WSL.
   assert.equal(parseWslPath("C:\\Users\\User\\proj"), null);
   assert.equal(parseWslPath("/home/user/proj"), null);
+});
+
+test("meta resolves the working directory the same way execute does", () => {
+  const root = ctx();
+  // No cwd arg: the workspace root.
+  assert.equal(bashTool.meta?.({}, root)?.cwd, root.cwd);
+  // Relative and absolute cwd args resolve against the workspace root.
+  assert.equal(bashTool.meta?.({ cwd: "packages/ui" }, root)?.cwd, resolvePath(root.cwd, "packages/ui"));
+  assert.equal(bashTool.meta?.({ cwd: "/tmp/build" }, root)?.cwd, resolvePath(root.cwd, "/tmp/build"));
 });
 
 test("runs a command and reports non-zero exit codes", { skip: !isPosix }, async () => {

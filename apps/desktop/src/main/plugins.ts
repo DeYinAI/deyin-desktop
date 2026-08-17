@@ -11,7 +11,7 @@ import {
   uninstallPlugin,
   type InstalledPlugin,
 } from "@deyin/agent-core";
-import type { PluginCatalogEntry, PluginInfo } from "../shared/types.js";
+import type { PluginCatalogEntry, PluginInfo } from "@deyin/contract";
 import type { CapabilityService } from "./capabilities.js";
 
 const CATALOG_URL = "https://raw.githubusercontent.com/DeYinAI/registry/main/registry.json";

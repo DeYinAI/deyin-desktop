@@ -14,7 +14,6 @@
     "noEmit": false
   },
   "include": [
-    "src/server/**/*.ts",
-    "src/shared/**/*.ts"
+    "src/server/**/*.ts"
   ]
 }

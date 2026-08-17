@@ -70,6 +70,7 @@ export { processListTool, redactArgs } from "./process-list.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export { commitFileMutation, applyFileMutationDirect } from "./file-mutation.js";
 export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
+export { createForgetTool, createMemoryTool, createRememberTool } from "./memory.js";
 export {
   createTaskTool,
   TASK_SUBAGENT_CATALOG_MARKER,

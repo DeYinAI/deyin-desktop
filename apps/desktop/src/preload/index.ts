@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { CH, type DeyinApi } from "../shared/ipc.js";
-import type { AgentEventEnvelope, IndexStatus, TerminalDataEvent, TerminalExitEvent, UpdatesState } from "../shared/types.js";
+import { CH, type DeyinApi } from "@deyin/contract";
+import type { AgentEventEnvelope, IndexStatus, TerminalDataEvent, TerminalExitEvent, UpdatesState } from "@deyin/contract";
 
 const api: DeyinApi = {
   bootstrap: () => ipcRenderer.invoke(CH.bootstrap),
@@ -132,6 +132,7 @@ const api: DeyinApi = {
     uninstall: (name) => ipcRenderer.invoke(CH.pluginsUninstall, name),
     setVariable: (plugin, name, value) => ipcRenderer.invoke(CH.pluginsSetVariable, plugin, name, value),
     variableState: (plugin, names) => ipcRenderer.invoke(CH.pluginsVariableState, plugin, names),
+    kernelStatus: () => ipcRenderer.invoke(CH.pluginsKernelStatus),
   },
   index: {
     status: () => ipcRenderer.invoke(CH.indexStatus),
@@ -167,7 +168,7 @@ agent: {
       return () => ipcRenderer.removeListener(CH.browserEnsure, listener);
     },
     onTabCommand: (cb) => {
-      const listener = (_e: unknown, cmd: import("../shared/ipc.js").BrowserTabCommand) => cb(cmd);
+      const listener = (_e: unknown, cmd: import("@deyin/contract").BrowserTabCommand) => cb(cmd);
       ipcRenderer.on(CH.browserTabCommand, listener);
       return () => ipcRenderer.removeListener(CH.browserTabCommand, listener);
     },

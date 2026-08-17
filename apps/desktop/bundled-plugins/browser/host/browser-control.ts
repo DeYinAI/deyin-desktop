@@ -3,8 +3,8 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path";
 import { BrowserWindow, app, session, webContents, type WebContents } from "electron";
 import type { ToolDefinition } from "@deyin/agent-core";
-import { CH } from "../../../src/shared/ipc.js";
-import type { BrowserTabCommand } from "../../../src/shared/ipc.js";
+import { CH } from "@deyin/contract";
+import type { BrowserTabCommand } from "@deyin/contract";
 
 /**
  * Real browser control (Cursor-style): the agent drives the workspace panel's

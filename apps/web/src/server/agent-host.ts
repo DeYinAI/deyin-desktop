@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { AgentShell, TerminalManager } from "@deyin/host-core";
+import { join } from "node:path";
+import { AgentShell, SessionEventJournal, TerminalManager } from "@deyin/host-core";
 import type { AgentEventEnvelope, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
 import {
   BUILTIN_SUBAGENTS,
   PermissionEngine,
   agentForMode,
   buildSystemPrompt,
-  createBuiltinRegistry,
   createTaskTool,
+  expandCommand,
+  matchCommand,
   rulesForApprovalMode,
   runAgent,
   runSubagent,
@@ -17,7 +19,12 @@ import {
   type SubagentDefinition,
   type ToolRegistry,
 } from "@deyin/agent-core";
-import type { WebAgentProviderRouting } from "../shared/protocol.js";
+import { PluginKernel } from "@deyin/kernel";
+import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
+import { createWebProfile } from "@deyin/bundle-web-app";
+import { Capabilities, capsLocalPlugin } from "@deyin/plugin-caps-local";
+import { buildToolRegistry, Tools } from "@deyin/tools";
+import type { WebAgentProviderRouting } from "@deyin/contract/web";
 
 /** Mirrors the desktop's prompt bridge timeout: unanswered prompts deny after 5 minutes. */
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -54,13 +61,42 @@ export class WebAgentHost {
   private shells = new Map<string, AgentShell>();
   private pendingPermissions = new Map<string, PendingPrompt<PermissionDecision>>();
   private pendingQuestions = new Map<string, PendingPrompt<Record<string, string | string[]>>>();
+  /** Per-session plugin kernel: base bundle + sandbox-scoped capabilities. */
+  private kernelPromise: Promise<PluginKernel> | null = null;
+  /** Append-only event journal inside the sandbox (session-event-log spine). */
+  private readonly journal: SessionEventJournal;
 
   constructor(
     private readonly root: string,
     private readonly terminals: TerminalManager,
     private readonly send: (envelope: AgentEventEnvelope) => void,
     private readonly emitTerminal: (msg: { type: "term.data"; termId: string; data: string } | { type: "term.exit"; termId: string; exitCode: number }) => void,
-  ) {}
+  ) {
+    this.journal = new SessionEventJournal(join(this.root, "journal"));
+  }
+
+  /**
+   * One kernel per web session, composed from bundle:base + the web profile:
+   * tool families and llm adapters from the shared base, capabilities scanned
+   * strictly inside the sandbox (userDir = sandbox root, never the server's
+   * home), so workspace .deyin skills/commands/subagents work on the web.
+   */
+  private ensureKernel(): Promise<PluginKernel> {
+    this.kernelPromise ??= (async () => {
+      const kernel = registerBasePlugins(
+        new PluginKernel({
+          env: { app: "web", platform: process.platform, userDataPath: this.root, workspaceRoot: this.root },
+        }),
+      );
+      kernel.register(capsLocalPlugin);
+      const statuses = await kernel.start([bundleBase, createWebProfile({ sandboxRoot: this.root })]);
+      for (const failed of statuses.filter((s) => s.state === "failed")) {
+        console.warn(`[deyin:web] plugin "${failed.name}" failed to activate: ${failed.error}`);
+      }
+      return kernel;
+    })();
+    return this.kernelPromise;
+  }
 
   start(options: WebAgentStartOptions): void {
     void this.startRun(options).catch((err) => {
@@ -98,10 +134,15 @@ export class WebAgentHost {
       shell.dispose();
     }
     this.shells.clear();
+    void this.kernelPromise?.then((kernel) => kernel.dispose());
+    this.kernelPromise = null;
   }
 
   private emit(threadId: string, event: AgentUiEvent): void {
     this.send({ threadId, event });
+    // Journal first, send after: an append failure must never drop the live
+    // event, so failures are swallowed (the journal is a durable shadow).
+    void this.journal.append(threadId, event).catch(() => undefined);
   }
 
   private finish(threadId: string, reason: "completed" | "max-steps" | "aborted", finalText: string): void {
@@ -131,8 +172,25 @@ export class WebAgentHost {
     const state: ActiveRun = { abort: new AbortController(), doneEmitted: false };
     this.active.set(options.threadId, state);
 
+    const kernel = await this.ensureKernel();
+    const caps = kernel.get(Capabilities).snapshot();
+    // Slash-command / skill expansion against the sandbox's own capabilities
+    // (same contract as the desktop host).
+    let prompt = options.prompt;
+    const invocation = matchCommand(prompt);
+    if (invocation) {
+      const command = caps?.commands.find((c) => c.name === invocation.name);
+      const skill = caps?.skills.find((s) => s.name === invocation.name);
+      if (command) prompt = expandCommand(command, invocation.args);
+      else if (skill) {
+        prompt = `Read the skill file at ${skill.path} with the read tool and follow it for this task: ${invocation.args || "(no extra arguments)"}`;
+      }
+    }
+    // Sandbox-defined subagents join the built-in set for the task tool.
+    const subagents: SubagentDefinition[] = [...BUILTIN_SUBAGENTS, ...(caps?.subagents ?? [])];
+
     const agent = agentForMode(options.mode);
-    const registry = this.buildRegistry(options);
+    const registry = await this.buildRegistry(options, subagents);
     const systemPrompt = buildSystemPrompt({
       cwd: this.root,
       agent,
@@ -149,7 +207,7 @@ export class WebAgentHost {
       messages: [
         { role: "system", content: systemPrompt },
         ...options.history,
-        { role: "user", content: options.prompt },
+        { role: "user", content: prompt },
       ],
       tools: registry,
       permissions: new PermissionEngine({
@@ -177,12 +235,13 @@ export class WebAgentHost {
     }
   }
 
-  /** Built-in toolset + the task tool over the built-in subagents. */
-  private buildRegistry(options: WebAgentStartOptions): ToolRegistry {
-    const registry = createBuiltinRegistry();
+  /** Kernel tool catalog + the task tool over built-in and sandbox subagents. */
+  private async buildRegistry(options: WebAgentStartOptions, subagents: SubagentDefinition[]): Promise<ToolRegistry> {
+    const kernel = await this.ensureKernel();
+    const registry = buildToolRegistry(kernel.get(Tools));
     registry.register(
       createTaskTool({
-        subagents: BUILTIN_SUBAGENTS,
+        subagents,
         runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) =>
           this.runSubagentTask(options, def, prompt, signal),
       }),
@@ -302,7 +361,7 @@ export class WebAgentHost {
         this.emit(threadId, { type: "reasoning-delta", delta: event.delta });
         break;
       case "tool-start":
-        this.emit(threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
+        this.emit(threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary, cwd: event.cwd });
         break;
       case "tool-delta":
         this.emit(threadId, { type: "tool-delta", callId: event.call.id, delta: event.delta });
@@ -316,6 +375,7 @@ export class WebAgentHost {
           result: event.result,
           ok: event.ok,
           denied: event.denied,
+          cwd: event.cwd,
         });
         break;
       case "todos":
