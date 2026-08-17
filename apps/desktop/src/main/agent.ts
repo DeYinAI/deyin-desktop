@@ -10,7 +10,6 @@ import {
   appendHookContext,
   buildSystemPromptParts,
   connectMcpDefinitions,
-  createBuiltinRegistry,
   createCodebaseSearchTool,
   createTaskTool,
   estimateContextUsage,
@@ -39,14 +38,19 @@ import {
 } from "@deyin/agent-core";
 import {
   bindAgentCacheHooks,
-  createOptimizationPlugin,
+  Optimization,
+  optimizationPluginDef,
   type OptimizationPlugin,
 } from "@deyin/optimization-plugin";
+import { PluginKernel } from "@deyin/kernel";
+import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
+import { createDesktopProfile } from "@deyin/bundle-desktop-app";
+import { buildToolRegistry, Tools } from "@deyin/tools";
 import type { OAuthClientProvider, PermissionEngineOptions, PermissionRule, ProviderApiFormat } from "@deyin/agent-core";
-import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ChatMode, IndexSearchHit } from "../shared/types.js";
-import { truncateToolResultUi } from "../shared/types.js";
-import { CH } from "../shared/ipc.js";
-import type { DeyinConfig } from "../shared/config.js";
+import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ChatMode, IndexSearchHit } from "@deyin/contract";
+import { truncateToolResultUi } from "@deyin/contract";
+import { CH } from "@deyin/contract";
+import type { DeyinConfig } from "@deyin/contract";
 import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
 import type { CapabilityService } from "./capabilities.js";
@@ -147,6 +151,8 @@ export class DesktopAgentHost {
   /** Caps how many task-tool subagent runs execute in parallel (settings.subagentConcurrency). */
   private readonly subagentLimiter = new Semaphore(() => this.opts.settings.get().subagentConcurrency);
   private optimizationPlugin: OptimizationPlugin | null = null;
+  /** The desktop plugin kernel: tools/llm seams + the lazy optimization plugin. */
+  private kernelPromise: Promise<PluginKernel> | null = null;
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   private optimizationPluginLoadError: string | null = null;
   private optimizationPluginLoadErrorNotified = false;
@@ -155,13 +161,47 @@ export class DesktopAgentHost {
     this.store = new SessionStore(join(app.getPath("userData"), "sessions"));
   }
 
+  /**
+   * The desktop kernel boots once from bundle:base + the desktop profile:
+   * tool families and llm adapters activate eagerly; optimization stays lazy
+   * until its setting flips it on.
+   */
+  private ensureKernel(): Promise<PluginKernel> {
+    this.kernelPromise ??= (async () => {
+      const packagedModelDir = join(process.resourcesPath, "optimization-models");
+      const kernel = registerBasePlugins(
+        new PluginKernel({
+          env: {
+            app: "desktop",
+            platform: process.platform,
+            userDataPath: app.getPath("userData"),
+          },
+        }),
+      );
+      const statuses = await kernel.start([
+        bundleBase,
+        createDesktopProfile({
+          userDataPath: app.getPath("userData"),
+          packagedModelDir: existsSync(packagedModelDir) ? packagedModelDir : undefined,
+        }),
+      ]);
+      for (const failed of statuses.filter((s) => s.state === "failed")) {
+        console.warn(`[deyin] plugin "${failed.name}" failed to activate: ${failed.error}`);
+      }
+      return kernel;
+    })();
+    return this.kernelPromise;
+  }
+
   private async ensureOptimizationPlugin(): Promise<OptimizationPlugin | null> {
     const settings = this.opts.settings.get();
+    const kernel = await this.ensureKernel();
     if (!settings.optimizationPluginEnabled) {
-      if (this.optimizationPlugin) {
-        this.optimizationPlugin.dispose();
-        this.optimizationPlugin = null;
+      const status = kernel.status().find((s) => s.name === optimizationPluginDef.name);
+      if (status && status.state !== "disposed") {
+        await kernel.disposePlugin(optimizationPluginDef.name);
       }
+      this.optimizationPlugin = null;
       this.optimizationPluginLoadError = null;
       this.optimizationPluginLoadErrorNotified = false;
       return null;
@@ -176,15 +216,11 @@ export class DesktopAgentHost {
     if (!this.optimizationPluginLoading) {
       this.optimizationPluginLoading = (async () => {
         try {
-          const dataDir = join(app.getPath("userData"), "plugins", "optimization");
-          const packagedModelDir = join(process.resourcesPath, "optimization-models");
-          const plugin = await createOptimizationPlugin({
-            dataDir,
-            packagedModelDir: existsSync(packagedModelDir) ? packagedModelDir : undefined,
-            enableToolCache: true,
-            enableResponseCache: true,
-            similarityThreshold: 0.93,
-          });
+          const status = await kernel.activatePlugin(optimizationPluginDef.name);
+          if (status.state === "failed") {
+            throw new Error(status.error ?? "optimization plugin failed to activate");
+          }
+          const plugin = kernel.get(Optimization);
           this.optimizationPlugin = plugin;
           this.optimizationPluginLoadError = null;
           this.optimizationPluginLoadErrorNotified = false;
@@ -200,6 +236,11 @@ export class DesktopAgentHost {
       })();
     }
     return this.optimizationPluginLoading;
+  }
+
+  /** Resolves the desktop kernel (creating it on demand) for diagnostics. */
+  async kernelReady(): Promise<PluginKernel> {
+    return this.ensureKernel();
   }
 
   private send(threadId: string, event: AgentUiEvent): void {
@@ -442,8 +483,10 @@ export class DesktopAgentHost {
       }
     }
 
-    // Tools: built-ins + semantic search + bundled host modules + web search + subagents + MCP.
-    const registry = createBuiltinRegistry();
+    // Tools: kernel catalog (bundle:base families) + semantic search + bundled
+    // host modules + web search + subagents + MCP.
+    const kernel = await this.ensureKernel();
+    const registry = buildToolRegistry(kernel.get(Tools));
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
@@ -784,7 +827,7 @@ return;
               this.send(options.threadId, { type: "reasoning-delta", delta: event.delta });
               break;
             case "tool-start":
-              this.send(options.threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
+              this.send(options.threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary, cwd: event.cwd });
               break;
             case "tool-delta":
               this.send(options.threadId, { type: "tool-delta", callId: event.call.id, delta: event.delta });
@@ -798,6 +841,7 @@ return;
                 result: truncateToolResultUi(event.result),
                 ok: event.ok,
                 denied: event.denied,
+                cwd: event.cwd,
               });
               break;
             case "file-change": {

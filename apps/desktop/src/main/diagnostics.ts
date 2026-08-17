@@ -13,7 +13,7 @@ import {
   type Storage,
   type UsageStore,
 } from "@deyin/host-core";
-import type { DeyinConfig } from "../shared/config.js";
+import type { DeyinConfig } from "@deyin/contract";
 import type { AuthManager } from "./auth.js";
 import { getLogger, logLine } from "./logger.js";
 

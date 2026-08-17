@@ -11,7 +11,7 @@ import {
   type CapabilitySnapshot,
   type McpServerDefinition,
 } from "@deyin/agent-core";
-import type { CapabilityItem, CapabilityKind, DeyinSettings, McpServerEntry, McpServerInput, McpTestResult } from "../shared/types.js";
+import type { CapabilityItem, CapabilityKind, DeyinSettings, McpServerEntry, McpServerInput, McpTestResult } from "@deyin/contract";
 
 const SCAN_TTL_MS = 4_000;
 

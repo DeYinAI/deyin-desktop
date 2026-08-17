@@ -33,6 +33,8 @@ export interface SessionMetaV2 extends SessionMetaBase {
   schemaVersion: number;
   prefixHash?: string;
   cacheStats?: SessionCacheStats;
+  /** Set when this session was forked from another; the log carries the full event. */
+  forkedFrom?: string;
 }
 
 export type SessionMetaRecord = Omit<SessionMetaV2, "updatedAt" | "messageCount">;
@@ -72,6 +74,8 @@ export function migrateSessionMeta(raw: unknown): SessionMetaRecord {
     schemaVersion: SESSION_SCHEMA_VERSION,
   };
 
+  const forkedFrom = typeof input.forkedFrom === "string" ? input.forkedFrom : undefined;
+
   // Legacy snake_case from early Advanced agent experiments.
   const prefixHash =
     typeof input.prefixHash === "string"
@@ -97,6 +101,7 @@ export function migrateSessionMeta(raw: unknown): SessionMetaRecord {
 
   if (prefixHash) base.prefixHash = prefixHash;
   if (cacheStats) base.cacheStats = cacheStats;
+  if (forkedFrom) base.forkedFrom = forkedFrom;
 
   return base;
 }

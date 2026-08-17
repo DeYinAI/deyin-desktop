@@ -101,6 +101,8 @@ export type ThreadEvent =
       snippetMore?: number;
     }
   | { kind: "model-switch"; from: string; to: string }
+  /** Timeline note for the /goal command; text null = goal cleared. */
+  | { kind: "goal-set"; text: string | null }
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string }
   | { kind: "worked"; seconds: number }
@@ -108,6 +110,8 @@ export type ThreadEvent =
       kind: "tool";
       name: string;
       summary: string;
+      /** Working directory the call ran in (bash cards show it next to the command). */
+      cwd?: string;
       result?: string;
       ok?: boolean;
       denied?: boolean;
@@ -745,9 +749,9 @@ export interface ContextUsageSnapshot {
 export type AgentUiEvent =
  | { type: "text-delta"; delta: string }
  | { type: "reasoning-delta"; delta: string }
- | { type: "tool-start"; callId: string; name: string; summary: string }
- | { type: "tool-delta"; callId: string; delta: string }
- | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
+  | { type: "tool-start"; callId: string; name: string; summary: string; cwd?: string }
+  | { type: "tool-delta"; callId: string; delta: string }
+  | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean; cwd?: string }
  | { type: "file-change"; path: string; before: string; after: string }
  | { type: "todos"; todos: AgentTodoItem[] }
  | { type: "usage"; totalTokens: number }

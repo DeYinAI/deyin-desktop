@@ -1,0 +1,42 @@
+{
+  "name": "@deyin/optimization-plugin",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Semantic caching plugin for Deyin: DeYinAI Embedding, tool-result cache, and response cache.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/plugins/optimization"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "plugin.json",
+    "models"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/agent-core": "workspace:*",
+    "@deyin/extension-api": "workspace:*",
+    "@deyin/kernel": "workspace:*"
+  },
+  "optionalDependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

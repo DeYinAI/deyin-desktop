@@ -38,9 +38,9 @@ export type AgentEvent =
   | { type: "text-delta"; delta: string }
   | { type: "reasoning-delta"; delta: string }
   | { type: "assistant-message"; message: AgentMessage }
-  | { type: "tool-start"; call: AgentToolCall; summary: string }
+  | { type: "tool-start"; call: AgentToolCall; summary: string; cwd?: string }
   | { type: "tool-delta"; call: AgentToolCall; delta: string }
-  | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean; fromCache?: boolean }
+  | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean; fromCache?: boolean; cwd?: string }
   | { type: "file-change"; change: FileChange }
   | { type: "todos"; todos: TodoItem[] }
   | { type: "usage"; usage: TokenUsage }
@@ -332,7 +332,8 @@ async function executeCall(
   }
 
   const summary = safeSummary(tool.summarize, args, call.name);
-  emit({ type: "tool-start", call, summary });
+  const cwd = safeMeta(tool.meta, args, ctx);
+  emit({ type: "tool-start", call, summary, cwd });
 
   // Delivery mode: block mutations until todos carry acceptance criteria.
   if (opts.evidenceGatesEnabled && ledger && isMutationTool(call.name) && tool.tier !== "read") {
@@ -402,14 +403,14 @@ async function executeCall(
       onOutput: (delta) => emit({ type: "tool-delta", call, delta }),
     };
     const result = await tool.execute(args, callCtx);
-    emit({ type: "tool-end", call, result, ok: true });
+    emit({ type: "tool-end", call, result, ok: true, cwd });
     ledger?.observeToolCall(call.name, args, true);
     if (opts.storeToolCache) await opts.storeToolCache(call, args, result).catch(() => undefined);
     if (opts.afterTool) await opts.afterTool(call, result, true).catch(() => undefined);
     return result;
   } catch (err) {
     const msg = `ERROR: ${err instanceof Error ? err.message : String(err)}`;
-    emit({ type: "tool-end", call, result: msg, ok: false });
+    emit({ type: "tool-end", call, result: msg, ok: false, cwd });
     ledger?.observeToolCall(call.name, args, false);
     if (opts.afterTool) await opts.afterTool(call, msg, false).catch(() => undefined);
     return msg;
@@ -425,5 +426,18 @@ function safeSummary(
     return summarize(args) || fallback;
   } catch {
     return fallback;
+  }
+}
+
+function safeMeta(
+  meta: ((args: Record<string, unknown>, ctx: ToolContext) => { cwd?: string }) | undefined,
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): string | undefined {
+  if (!meta) return undefined;
+  try {
+    return meta(args, ctx).cwd;
+  } catch {
+    return undefined;
   }
 }
