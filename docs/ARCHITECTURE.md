@@ -24,7 +24,7 @@ declared in the relevant `package.json`.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Renderer (packages/renderer-core + apps/*/renderer)               │
+│ Renderer (@deyin/ui, packages/ui/client)                          │
 │  - React SPA: task sidebar, chat, model picker, skills, settings  │
 │  - Talks to host via RpcTransport (IPC or WebSocket)              │
 │  - Talks to Openference via oauth-client (token) + model API      │
@@ -51,19 +51,59 @@ declared in the relevant `package.json`.
 
 | Package | Purpose |
 | --- | --- |
+| `@deyin/extension-api` | The zero-dependency contracts plugins are written against: `PluginDefinition { name, inject, provides, activateOn, apply(ctx, config) }`, `PluginContext` (services, events, waterfalls, scopes, effects), and config-row types. Bottom of the dependency graph. |
+| `@deyin/kernel` | The plugin runtime: topological activation over `provides`/`inject`, per-plugin failure isolation, scoped service registry, event bus + waterfall middleware, lazy activation on event patterns, and config-layer resolution (bundle → profile → user/workspace patches) with `dumpConfig()`. |
 | `@deyin/oauth-provider` | Standalone OAuth 2.0 / OIDC server (authorize, token, userinfo, device, introspect, revoke, discovery). Deployable on Node or Cloudflare Workers. |
 | `@deyin/oauth-client` | Reusable PKCE client for desktop (loopback), CLI (device flow), and browser (redirect). Handles token storage and refresh. |
-| `@deyin/rpc` | Shared typed RPC contract + transports (Electron IPC, WebSocket) used by both renderer and host. |
 | `@deyin/host-core` | Runtime-agnostic host services (PTY, files, git, exec, skills). Consumed by the Electron main process and the web host-server. |
-| `@deyin/renderer-core` | Shared React UI (screens, panels, state) rendered by both desktop and web. |
+| `@deyin/contract` | The typed RPC contract shared by every frontend and host: the IPC channel map (`CH` / `DeyinApi`), domain type re-exports, service config, and the web client ↔ host-server WebSocket protocol (`@deyin/contract/web`). |
+| `@deyin/ui` | The one renderer SPA (React), consumed as source by each app's bundler. The app entry injects the transport (preload IPC on desktop, WebSocket in the browser). |
+| `@deyin/optimization-plugin` | Semantic caching (embeddings, tool-result cache, response cache) — the first code-level plugin on the kernel, loaded by the desktop profile. |
 | `@deyin/branding` | Deyin logos, icons, and theme tokens. |
+
+## Extension model
+
+Deyin runs a dsh-style "everything is a plugin" architecture inside this
+monorepo. Direction of dependencies is fixed:
+`apps → plugin packages → @deyin/kernel → @deyin/extension-api`. A capability is
+a *seam* (a `ServiceKey` declared next to its definition) plus swappable
+*provider* plugins; consumers depend only on the seam, never a concrete
+provider.
+
+**Seams live today:** `tools` (a `ToolCatalog` that the six family plugins —
+fs, shell, git, web, plan, agent — register into; run registries build from
+the catalog), `llm` (adapter registry keyed by wire format with fallback to
+the agent-core dispatcher; openai/responses/anthropic adapters), `capabilities`
+(sandbox-scoped scan for skills/commands/subagents/hooks/mcp), `optimization`
+(lazy semantic caches). The agent loop, tool registry, and model adapters are
+no longer privileged — desktop and web hosts compose the same rows.
+
+A running process is composed from config layers
+(`@deyin/bundle-base → profile (@deyin/bundle-desktop-app / web-app / headless)
+→ user patch → workspace patch`), each a list of plugin rows patched by id, so
+composition is configuration, not code; `kernel.dumpConfig()` prints the
+resolved tree. One broken plugin fails in isolation and surfaces in the
+Plugins settings page ("Kernel plugins"); the host keeps running. Untrusted
+third-party code stays out-of-process behind MCP.
+
+**Session event log spine:** agent-core's `SessionStore` is the primary,
+append-only session store. Every session is one JSONL log: a meta record,
+then an ordered stream of events — model-visible messages plus lifecycle
+facts (`session-created`, `forked`, `title-set`, `compaction`). Transcripts
+are derived on load; `events(id)` replays the raw log; `fork(id, {atSeq})`
+creates a new session whose log is a verbatim prefix copy with fork
+provenance in its meta and log. Appends carry a self-healing newline
+boundary so a torn write can never swallow the next record, and legacy
+v1/v2 logs replay and fork unchanged through the on-load migration. The
+web session host additionally journals live UI events into the sandbox
+(`@deyin/host-core` `SessionEventJournal`) for reconnect/replay.
 
 ## Apps
 
 | App | Purpose |
 | --- | --- |
-| `apps/desktop` | Electron shell. Main process embeds `@deyin/host-core`; renderer loads `@deyin/renderer-core`. |
-| `apps/web` | Web deployment: static renderer + `host-server` (WebSocket, one sandboxed session per authenticated user). |
+| `apps/desktop` | Electron shell. Main process embeds `@deyin/host-core`; the renderer is `@deyin/ui`, built by electron-vite from `packages/ui/client`. |
+| `apps/web` | Web deployment: static renderer (`@deyin/ui`) + `host-server` (WebSocket, one sandboxed session per authenticated user). |
 
 ## Auth + model data flow
 

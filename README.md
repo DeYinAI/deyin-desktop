@@ -14,17 +14,30 @@ Identity and model access use Openference via OAuth 2.0 + PKCE.
 
 ```
 packages/
+  kernel/           Plugin kernel (dsh-style): extension-api contracts + runtime
+  tools/            The tools seam (@deyin/tools) + tool-family plugins
+                    (fs, shell, git, web, plan, agent)
+  llm/              The llm seam (@deyin/llm) + wire-adapter plugins
+                    (openai, responses, anthropic)
+  caps/             Capability-scan loader plugin (skills/commands/subagents/hooks/mcp)
+  bundle/           Config layers: bundle-base + desktop-app/web-app/headless profiles
+  ui/
+    contract/       Typed RPC contract (IPC channel map, domain types, web WS protocol)
+    client/         The one renderer SPA (@deyin/ui), consumed by desktop and web
+  openference/      oauth-client: reusable PKCE client (desktop loopback, CLI device
+                    flow, web redirect)
   oauth-provider/   Standalone OAuth 2.0 / OIDC server for Openference
-  oauth-client/     Reusable PKCE client (desktop loopback, CLI device flow, web redirect)
-  host-core/        Runtime-agnostic core: shared types/config, settings/providers/usage
-                    stores, model + search clients, and host services (PTY, files, env)
-  agent-core/       Agentic runtime: streaming tool-call loop, built-in tools (bash, read,
-                    write, edit, grep, glob, ls, websearch, todo), permission engine,
-                    sessions, layered config, MCP client
+  host-core/        Runtime-agnostic core: shared types/config, stores, host services
+                    (PTY, files, env), session event journal
+  agent-core/       Agentic runtime: streaming tool-call loop, tool implementations,
+                    permission engine, sessions, layered config, MCP client
+  plugins/          optimization: semantic caches (first kernel plugin, lazy)
   branding/         Deyin logos, icons, theme tokens
+native/
+  computer-use-host/  Windows sidecar binary (UIA/capture/input), zero importers
 apps/
-  desktop/          Electron shell (main = host, renderer = UI)
-  web/              Static renderer + per-session WebSocket host-server
+  desktop/          Electron shell (main = host; renderer = @deyin/ui)
+  web/              Static renderer (@deyin/ui) + per-session WebSocket host-server
   cli/              `deyin` in the terminal: interactive TUI + headless mode
 docs/               Architecture, features, capability manifest, OAuth guide, CLI guide
 ```

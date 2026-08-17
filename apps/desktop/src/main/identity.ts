@@ -12,7 +12,7 @@ import {
   type IdentitySyncResult,
   type Storage,
 } from "@deyin/host-core";
-import type { DeyinConfig } from "../shared/config.js";
+import type { DeyinConfig } from "@deyin/contract";
 import type { AuthManager } from "./auth.js";
 import { logLine } from "./logger.js";
 

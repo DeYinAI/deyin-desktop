@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { SecurityFindingsReport } from "../shared/types.js";
+import type { SecurityFindingsReport } from "@deyin/contract";
 
 function safeSegment(value: string, label: string): string {
   const trimmed = value.trim();

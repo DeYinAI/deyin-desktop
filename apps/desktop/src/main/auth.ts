@@ -7,8 +7,8 @@ import {
   loginWithLoopback,
   type DeepLinkLoginStart,
 } from "@deyin/oauth-client/node";
-import { DEEP_LINK_REDIRECT_URI, type DeyinConfig } from "../shared/config.js";
-import type { UserProfile } from "../shared/types.js";
+import { DEEP_LINK_REDIRECT_URI, type DeyinConfig } from "@deyin/contract";
+import type { UserProfile } from "@deyin/contract";
 
 /**
  * Owns the Openference session for the desktop app.

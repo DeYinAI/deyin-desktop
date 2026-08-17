@@ -1,8 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { cssVariables } from "@deyin/branding";
-import { App } from "@renderer/app.js";
-import "@renderer/styles.css";
+import { App } from "@deyin/ui";
+import "@deyin/ui/styles.css";
 import { createBrowserTransport, maybeCompleteLogin } from "./transport.js";
 
 async function main() {

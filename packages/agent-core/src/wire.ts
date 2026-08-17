@@ -2,7 +2,7 @@ import { ContentCompressor, type CompressionMode, type CompressionResult } from 
 import { countTokens } from "./tokenizer.js";
 import type { AgentMessage } from "./types.js";
 
-export type PromptCacheProvider = "openai" | "anthropic" | "openference" | "auto";
+export type PromptCacheProvider = "openai" | "anthropic" | "openference" | "deepseek" | "auto";
 
 export interface WireOptions {
  enableCompression?: boolean;
@@ -10,6 +10,8 @@ export interface WireOptions {
  enablePromptCaching?: boolean;
  /** Provider that receives cache markers. "openference" follows OpenAI-compatible shape. */
  provider?: PromptCacheProvider;
+ /** Model id, used to detect DeepSeek wire quirks (reasoning_content replay). */
+ model?: string;
  /** Stable key shared across agent steps for OpenAI-style prompt caching. */
  promptCacheKey?: string;
 }
@@ -334,7 +336,7 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
           // DeepSeek requires reasoning_content on assistant tool_calls turns when
           // replaying history. Missing it causes 400 errors and breaks prefix stability.
           // Send empty string if reasoning was never captured (graceful degradation).
-          const isDeepSeek = provider === "openai" || provider === "openference";
+          const isDeepSeek = provider === "deepseek" || (options.model ? /deepseek/i.test(options.model) : false);
           if (isDeepSeek && hasToolCalls) {
             wireMsg.reasoning_content = m.reasoning ?? "";
           }

@@ -1,0 +1,40 @@
+{
+  "name": "@deyin/plugin-tools-plan",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Planning tool family plugin (todo, plan/mode tools, report_goal_met) for the @deyin/tools seam.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/tools/tools-plan/"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/extension-api": "workspace:*",
+    "@deyin/tools": "workspace:*",
+    "@deyin/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@deyin/kernel": "workspace:*"
+  }
+}

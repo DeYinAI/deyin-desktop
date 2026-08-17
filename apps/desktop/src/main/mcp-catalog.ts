@@ -1,4 +1,4 @@
-import type { McpCatalogEntry, McpCatalogInstallInput } from "../shared/types.js";
+import type { McpCatalogEntry, McpCatalogInstallInput } from "@deyin/contract";
 import { loadBundledCatalog } from "./mcp-catalog-loader.js";
 import type { McpModuleService } from "./mcp-modules.js";
 

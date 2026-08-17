@@ -2,8 +2,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import type { ClientMessage, ServerMessage } from "../shared/protocol.js";
+import type { ClientMessage, ServerMessage } from "@deyin/contract/web";
 import { SessionHost } from "./host.js";
+import { WebAgentHost, type WebAgentStartOptions } from "./agent-host.js";
 import { introspect } from "./introspect.js";
 
 /**
@@ -13,6 +14,7 @@ import { introspect } from "./introspect.js";
  */
 export class Session {
   private host?: SessionHost;
+  private agentHost?: WebAgentHost;
   private authed = false;
 
   constructor(
@@ -41,12 +43,18 @@ export class Session {
       }
       const root = await mkdtemp(join(tmpdir(), "deyin-session-"));
       this.host = new SessionHost(root, (m) => this.send(m));
+      this.agentHost = new WebAgentHost(
+        root,
+        this.host.terminalManager,
+        (envelope) => this.send({ type: "agent.event", envelope }),
+        (m) => this.send(m),
+      );
       this.authed = true;
       this.send({ type: "auth.ok", user: { sub: result.sub ?? "unknown", plan: result.plan }, workspaceRoot: root });
       return;
     }
 
-    if (!this.authed || !this.host) {
+    if (!this.authed || !this.host || !this.agentHost) {
       this.send({ type: "auth.err", message: "Not authenticated." });
       return;
     }
@@ -81,6 +89,30 @@ export class Session {
         case "term.kill":
           this.host.killTerminal(msg.termId);
           break;
+        case "agent.start": {
+          const options = msg as WebAgentStartOptions & { type: "agent.start"; id: number };
+          this.agentHost.start({
+            threadId: options.threadId,
+            prompt: options.prompt,
+            model: options.model,
+            thinking: options.thinking,
+            approvalMode: options.approvalMode,
+            mode: options.mode,
+            history: options.history,
+            provider: options.provider,
+          });
+          this.send({ type: "reply", id: msg.id, ok: true, result: undefined });
+          break;
+        }
+        case "agent.stop":
+          this.agentHost.stop(msg.threadId);
+          break;
+        case "agent.approve":
+          this.agentHost.approve(msg.requestId, msg.decision);
+          break;
+        case "agent.answer":
+          this.agentHost.answerQuestion(msg.requestId, msg.answers);
+          break;
       }
     } catch (err) {
       if ("id" in msg && typeof msg.id === "number") {
@@ -90,6 +122,7 @@ export class Session {
   }
 
   dispose(): void {
+    this.agentHost?.dispose();
     this.host?.dispose();
   }
 }
