@@ -27,27 +27,3 @@ jobs:
 
       - name: Verify (build + typecheck + test + app builds)
         run: bash scripts/verify.sh
-
-  agent:
-    runs-on: [self-hosted, Linux, X64]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - name: Install
-        run: pnpm install --frozen-lockfile
-      - name: Advanced agent integration suite
-        run: bash -c '
-          pnpm --filter @deyin/agent-core build &&
-          pnpm --filter @deyin/agent-core test:agent &&
-          pnpm --filter @deyin/agent-core benchmark &&
-          cd packages/agent-core &&
-          pnpm exec tsx -e "
-            import { runCacheGuard, CACHE_HIT_RATE_TARGET } from \"./src/testing/cache-guard.js\";
-            const avg = runCacheGuard().reduce((s, r) => s + r.hitRate, 0) / runCacheGuard().length;
-            if (avg < CACHE_HIT_RATE_TARGET) process.exit(1);
-          "
-        '

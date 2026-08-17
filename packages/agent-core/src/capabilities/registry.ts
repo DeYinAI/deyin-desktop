@@ -35,6 +35,8 @@ export interface ScanOptions {
   builtinSkillsDir?: string;
   /** Extra built-in MCP servers the host injects (browser, search). */
   builtinMcpServers?: McpServerDefinition[];
+  /** Workspace trust decision (gates env interpolation in workspace mcp.json). */
+  trustedWorkspace?: boolean;
 }
 
 export async function scanCapabilities(opts: ScanOptions): Promise<CapabilitySnapshot> {
@@ -56,12 +58,17 @@ export async function scanCapabilities(opts: ScanOptions): Promise<CapabilitySna
     ? [{ dir: opts.builtinSkillsDir, source: "built-in" }]
     : [];
 
+  // Plugin-bundled hooks.json files load alongside workspace/user hooks.
+  const pluginHookFiles = plugins
+    .filter((plugin) => plugin.hooksFile)
+    .map((plugin) => ({ path: plugin.hooksFile!, source: `plugin:${plugin.name}` }));
+
   const [skills, commands, subagents, hooks, mcpServers] = await Promise.all([
     discoverSkills([...skillRoots(opts.cwd, userDir), ...pluginSkillRoots, ...builtinSkillRoots]),
     discoverCommands([...commandRoots(opts.cwd, userDir), ...pluginCommandRoots]),
     discoverSubagents([...subagentRoots(opts.cwd, userDir), ...pluginAgentRoots]),
-    loadHooks(opts.cwd, userDir),
-    loadMcpServers(opts.cwd, {}, userDir),
+    loadHooks(opts.cwd, userDir, pluginHookFiles),
+    loadMcpServers(opts.cwd, { trustedWorkspace: opts.trustedWorkspace === true }, userDir),
   ]);
 
   // Single-skill plugins: a root SKILL.md acts as the plugin's one skill.

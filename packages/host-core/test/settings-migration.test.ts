@@ -118,3 +118,36 @@ test("AgentsStore toggles persist and plugin secrets round-trip ciphered", () =>
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("v11: dropped fields fall out and kept fields survive", () => {
+  const v10 = {
+    schemaVersion: 10,
+    theme: "light",
+    fontSize: 15,
+    memoryEnabled: true,
+    enableCoordinator: true,
+    plannerModel: "openference::GLM-5.2",
+    enableFleet: true,
+    computerUseEnabled: true,
+    automationsCatchUp: false,
+    optimizationCompression: false,
+    cacheHitRateTarget: 0.9,
+    agentOnboardComplete: true,
+    bogusFutureField: "x",
+  } as unknown as Record<string, unknown>;
+  const migrated = migrateSettings(v10);
+  assert.equal(migrated.schemaVersion, 11);
+  assert.equal(migrated.theme, "light");
+  assert.equal(migrated.fontSize, 15);
+  assert.equal(migrated.memoryEnabled, true);
+  // Removed knobs are gone (not defaulted, gone).
+  assert.equal("enableCoordinator" in migrated, false);
+  assert.equal("plannerModel" in migrated, false);
+  assert.equal("enableFleet" in migrated, false);
+  assert.equal("computerUseEnabled" in migrated, false);
+  assert.equal("automationsCatchUp" in migrated, false);
+  assert.equal("optimizationCompression" in migrated, false);
+  assert.equal("cacheHitRateTarget" in migrated, false);
+  assert.equal("agentOnboardComplete" in migrated, false);
+  assert.equal("bogusFutureField" in migrated, false);
+});

@@ -1,0 +1,42 @@
+{
+  "name": "@deyin/ui",
+  "private": true,
+  "version": "0.1.1",
+  "description": "Deyin's shared renderer SPA \u2014 the one UI that runs unchanged inside Electron (desktop) and in the browser (web). Consumed as source by each app's bundler; the app entry injects the transport.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/ui/client"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/branding": "workspace:*",
+    "@deyin/contract": "workspace:*",
+    "@deyin/host-core": "workspace:*",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@stripe/stripe-js": "^9.12.1",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "tsx": "^4.19.2"
+  }
+}

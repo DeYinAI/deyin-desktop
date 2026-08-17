@@ -1,0 +1,125 @@
+/** Minimal line diff (LCS-based) for the workspace Diff tab. */
+
+export interface DiffLine {
+  type: "context" | "add" | "del";
+  text: string;
+  oldNo: number | null;
+  newNo: number | null;
+}
+
+export function computeLineDiff(before: string, after: string): DiffLine[] {
+  const a = before.split("\n");
+  const b = after.split("\n");
+
+  // LCS table (fine for the file sizes a preview handles).
+  const m = a.length;
+  const n = b.length;
+  const lcs: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+    }
+  }
+
+  const out: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push({ type: "context", text: a[i]!, oldNo: i + 1, newNo: j + 1 });
+      i++;
+      j++;
+    } else if (lcs[i + 1]![j]! >= lcs[i]![j + 1]!) {
+      out.push({ type: "del", text: a[i]!, oldNo: i + 1, newNo: null });
+      i++;
+    } else {
+      out.push({ type: "add", text: b[j]!, oldNo: null, newNo: j + 1 });
+      j++;
+    }
+  }
+  while (i < m) {
+    out.push({ type: "del", text: a[i]!, oldNo: i + 1, newNo: null });
+    i++;
+  }
+  while (j < n) {
+    out.push({ type: "add", text: b[j]!, oldNo: null, newNo: j + 1 });
+    j++;
+  }
+  return out;
+}
+
+export interface FileDiff {
+  fileName: string;
+  before: string;
+  after: string;
+}
+
+/** Above this size we skip diff rendering (LCS is quadratic) but keep the card. */
+const DIFF_MAX_LINES = 2000;
+
+/** Adds/dels counts for a file card; falls back to a cheap estimate on big files. */
+export function diffStats(before: string, after: string): { adds: number; dels: number; renderable: boolean } {
+  if (before === "" && after === "") return { adds: 0, dels: 0, renderable: false };
+  const a = before.split("\n");
+  const b = after.split("\n");
+  if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
+    const counts = new Map<string, number>();
+    for (const line of a) counts.set(line, (counts.get(line) ?? 0) + 1);
+    let common = 0;
+    for (const line of b) {
+      const left = counts.get(line) ?? 0;
+      if (left > 0) {
+        common += 1;
+        counts.set(line, left - 1);
+      }
+    }
+    return { adds: b.length - common, dels: a.length - common, renderable: false };
+  }
+  let adds = 0;
+  let dels = 0;
+  for (const line of computeLineDiff(before, after)) {
+    if (line.type === "add") adds += 1;
+    else if (line.type === "del") dels += 1;
+  }
+  return { adds, dels, renderable: true };
+}
+
+/** Context lines kept around each changed hunk in a chat-card snippet. */
+const SNIPPET_CONTEXT = 2;
+/** Total line cap for a chat-card snippet; the rest is summarized as "more". */
+const SNIPPET_MAX_LINES = 40;
+
+export interface DiffSnippet {
+  lines: DiffLine[];
+  /** Changed (add/del) lines that did not fit under the cap. */
+  more: number;
+}
+
+/**
+ * Compact excerpt of a line diff for the chat file card: changed hunks with a
+ * couple of context lines each, capped in total length (Cursor-style snippet).
+ */
+export function diffSnippet(before: string, after: string): DiffSnippet {
+  const all = computeLineDiff(before, after);
+
+  // Mark lines to keep: every change plus SNIPPET_CONTEXT lines around it.
+  const keep = new Array<boolean>(all.length).fill(false);
+  for (let i = 0; i < all.length; i++) {
+    if (all[i]!.type === "context") continue;
+    for (let j = Math.max(0, i - SNIPPET_CONTEXT); j <= Math.min(all.length - 1, i + SNIPPET_CONTEXT); j++) {
+      keep[j] = true;
+    }
+  }
+
+  const lines: DiffLine[] = [];
+  let more = 0;
+  for (let i = 0; i < all.length; i++) {
+    if (!keep[i]) continue;
+    if (lines.length < SNIPPET_MAX_LINES) {
+      lines.push(all[i]!);
+    } else if (all[i]!.type !== "context") {
+      more += 1;
+    }
+  }
+  return { lines, more };
+}

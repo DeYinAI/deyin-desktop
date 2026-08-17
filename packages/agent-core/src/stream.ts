@@ -10,16 +10,6 @@ import {
 
 export type { ProviderApiFormat, StreamEvent };
 
-/** Sum token usage across multiple requests (used for DeepSeek continuations). */
-export function foldTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
-  return {
-    promptTokens: a.promptTokens + b.promptTokens,
-    completionTokens: a.completionTokens + b.completionTokens,
-    totalTokens: a.totalTokens + b.totalTokens,
-    cachedPromptTokens: (a.cachedPromptTokens ?? 0) + (b.cachedPromptTokens ?? 0),
-  };
-}
-
 export interface StreamChatEventsOptions {
  apiBaseUrl: string;
  token: string;
@@ -49,12 +39,12 @@ export interface StreamChatEventsOptions {
   * "anthropic" speaks the Anthropic Messages API (x-api-key, /v1/messages).
   */
  apiFormat?: ProviderApiFormat;
-  /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
-  authHeader?: boolean;
-  /** Anthropic API version header; default "2023-06-01". */
-  anthropicVersion?: string;
-  /** Max continuation attempts for DeepSeek prefix-based cache. */
-  maxContinuations?: number;
+ /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
+ authHeader?: boolean;
+ /** Anthropic API version header; default "2023-06-01". */
+ anthropicVersion?: string;
+ /** Max auto-continuations for length-truncated responses (default 3, DeepSeek only). */
+ maxContinuations?: number;
 }
 
 interface WireDelta {
@@ -102,71 +92,139 @@ export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGen
  * Stream a chat completion from an OpenAI-compatible endpoint, accumulating
  * fragmented `tool_calls` deltas (ids, names and argument JSON arrive split across
  * many SSE chunks) and the final `finish_reason`.
+ *
+ * DeepSeek endpoints additionally auto-continue length-truncated responses via the
+ * beta prefix endpoint: the partial assistant text is resent with `prefix: true`
+ * so the model completes exactly where it stopped, with usage folded across calls.
  */
 async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): AsyncGenerator<StreamEvent> {
- const built = buildWireMessages(opts.messages, opts.wire ?? {});
- const body: Record<string, unknown> = {
- model: opts.model,
- messages: built.messages,
- stream: true,
- };
- if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
- if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
- if (opts.effort) body.reasoning_effort = opts.effort;
- if (opts.temperature !== undefined) body.temperature = opts.temperature;
- // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
- if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
- if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
+  const built = buildWireMessages(opts.messages, opts.wire ?? {});
+  const base = opts.apiBaseUrl.replace(/\/+$/, "");
+  const isDeepSeek = /deepseek\./i.test(base);
+  const maxContinuations = opts.maxContinuations ?? 3;
 
- const base = opts.apiBaseUrl.replace(/\/+$/, "");
- const res = await fetch(`${base}/chat/completions`, {
- method: "POST",
- headers: {
- "content-type": "application/json",
- authorization: `Bearer ${opts.token}`,
- },
- body: JSON.stringify(body),
- signal: opts.signal,
- });
+  let wireMessages = built.messages as unknown as Record<string, unknown>[];
+  let continuations = 0;
+  let content = "";
+  let reasoning = "";
+  let usage: TokenUsage | null = null;
 
- if (!res.ok || !res.body) {
- const detail = await res.text().catch(() => "");
- throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
- }
+  while (true) {
+    const isContinuation = continuations > 0;
+    const body: Record<string, unknown> = {
+      model: opts.model,
+      messages: wireMessages,
+      stream: true,
+    };
+    if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
+    if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
+    if (opts.effort) body.reasoning_effort = opts.effort;
+    if (opts.temperature !== undefined) body.temperature = opts.temperature;
+    // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
+    if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
+    if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
 
- const parser = new StreamAccumulator(built.compression);
- const reader = res.body.getReader();
- const decoder = new TextDecoder();
- let buffer = "";
- let sawDone = false;
+    const endpoint = isContinuation ? `${base}/beta/chat/completions` : `${base}/chat/completions`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    // Local providers (Ollama) run without a key: skip the auth header.
+    if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    });
 
- while (true) {
- const { done, value } = await reader.read();
- if (done) break;
- buffer += decoder.decode(value, { stream: true });
- const lines = buffer.split("\n");
- buffer = lines.pop() ?? "";
- for (const line of lines) {
- const event = parser.push(line);
- if (!event) continue;
- if (event.type === "done") {
- sawDone = true;
- yield event;
- return;
- }
- yield event;
- }
- }
- // Flush the trailing buffer: providers may end the stream without a final "\n".
- if (buffer.length > 0) {
- const event = parser.push(buffer);
- if (event) {
- if (event.type === "done") sawDone = true;
- yield event;
- }
- }
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
+    }
 
- if (!sawDone) yield parser.finish();
+    const parser = new StreamAccumulator(built.compression);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let doneEvent: StreamEvent | null = null;
+
+    while (doneEvent === null) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const event = parser.push(line);
+        if (!event) continue;
+        if (event.type === "done") {
+          doneEvent = event;
+          break;
+        }
+        if (event.type === "text") content += event.delta;
+        else if (event.type === "reasoning") reasoning += event.delta;
+        yield event;
+      }
+    }
+    // Flush the trailing buffer: providers may end the stream without a final "\n".
+    if (doneEvent === null && buffer.length > 0) {
+      const event = parser.push(buffer);
+      if (event && event.type === "done") doneEvent = event;
+      else if (event) {
+        if (event.type === "text") content += event.delta;
+        else if (event.type === "reasoning") reasoning += event.delta;
+        yield event;
+      }
+    }
+    if (doneEvent === null) doneEvent = parser.finish();
+
+    if (doneEvent.type !== "done") {
+      yield doneEvent;
+      return;
+    }
+    usage = foldTokenUsage(usage, doneEvent.usage);
+
+    // Length-truncated text on a DeepSeek endpoint: continue via the beta prefix
+    // endpoint instead of handing the loop a cut-off half answer.
+    const truncated =
+      doneEvent.finishReason === "length" &&
+      doneEvent.toolCalls.length === 0 &&
+      (doneEvent.content.length > 0 || content.length > 0);
+    if (isDeepSeek && truncated && continuations < maxContinuations) {
+      wireMessages = [
+        ...wireMessages,
+        { role: "assistant", content: doneEvent.content, prefix: true },
+      ];
+      continuations += 1;
+      continue;
+    }
+
+    yield {
+      ...doneEvent,
+      content: content || doneEvent.content,
+      reasoning: reasoning || doneEvent.reasoning,
+      usage,
+      ...(continuations > 0 ? { continuations } : {}),
+    };
+    return;
+  }
+}
+
+/**
+ * Sum token usage across continued requests: fields add, cached tokens add.
+ * `null` on either side passes the other through.
+ */
+export function foldTokenUsage(
+  a: TokenUsage | null,
+  b: TokenUsage | null,
+): TokenUsage | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return {
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cachedPromptTokens:
+      (a.cachedPromptTokens ?? 0) + (b.cachedPromptTokens ?? 0) || undefined,
+  };
 }
 
 /** Fallback tool-call ids must be unique across the whole transcript: some providers

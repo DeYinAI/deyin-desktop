@@ -10,7 +10,7 @@ import {
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { mcpModulesRoot, userDeyinDir } from "@deyin/agent-core";
-import type { McpCatalogEntry, McpModuleManifest, McpServerInput } from "../shared/types.js";
+import type { McpCatalogEntry, McpModuleManifest, McpServerInput } from "@deyin/contract";
 
 export function normalizeMcpName(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");

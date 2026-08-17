@@ -18,7 +18,13 @@ export const writeTool: ToolDefinition = {
   summarize: (args) => String(args.path ?? ""),
   async execute(args, ctx): Promise<string> {
     const path = resolvePathInWorkspace(ctx.cwd, asString(args.path, "path"));
-    const content = typeof args.content === "string" ? args.content : "";
+    // Some models emit `contents` despite the schema; accept both but never
+    // silently fall back to an empty destructive overwrite.
+    const raw = args.content ?? args.contents;
+    if (typeof raw !== "string") {
+      throw new Error("Missing `content` (string) argument — refusing to write an empty file.");
+    }
+    const content = raw;
     const before = await readFileForMutation(path);
     const outcome = await commitFileMutation({ path, before, after: content, operation: "write" }, ctx);
     if (outcome === "rejected") {

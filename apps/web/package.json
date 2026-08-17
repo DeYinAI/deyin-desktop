@@ -10,12 +10,21 @@
     "build": "vite build && pnpm build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start:server": "node dist/server/index.js",
-    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@deyin/agent-core": "workspace:*",
     "@deyin/branding": "workspace:*",
+    "@deyin/bundle-base": "workspace:*",
+    "@deyin/bundle-web-app": "workspace:*",
+    "@deyin/contract": "workspace:*",
     "@deyin/host-core": "workspace:*",
+    "@deyin/kernel": "workspace:*",
     "@deyin/oauth-client": "workspace:*",
+    "@deyin/plugin-caps-local": "workspace:*",
+    "@deyin/tools": "workspace:*",
+    "@deyin/ui": "workspace:*",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
     "react": "^18.3.1",

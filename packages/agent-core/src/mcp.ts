@@ -20,6 +20,31 @@ export interface McpConnection {
   close(): Promise<void>;
 }
 
+/** Hard cap on establishing a server connection + listing tools. */
+const MCP_CONNECT_TIMEOUT_MS = 20_000;
+/** Default per-call timeout for MCP tool invocations (progress resets it). */
+const MCP_CALL_TIMEOUT_MS = 120_000;
+
+/** Race a promise against a timer; run `onTimeout` before rejecting. */
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      onTimeout();
+      reject(new Error(`timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 function toSchema(inputSchema: unknown): ToolSchema {
   if (inputSchema && typeof inputSchema === "object" && (inputSchema as { type?: string }).type === "object") {
     return inputSchema as ToolSchema;
@@ -68,8 +93,13 @@ export async function connectMcpServer(
 }> {
   const transport = transportFor(def, opts.authProvider);
   const client = new Client({ name: "deyin", version: "0.1.0" }, { capabilities: {} });
-  await client.connect(transport);
-  const { tools } = await client.listTools();
+  // A stdio server that spawns but never answers must not hang agent startup.
+  await withTimeout(client.connect(transport), MCP_CONNECT_TIMEOUT_MS, () => void client.close().catch(() => undefined));
+  const { tools } = await withTimeout(
+    client.listTools(),
+    MCP_CONNECT_TIMEOUT_MS,
+    () => void client.close().catch(() => undefined),
+  );
   return { client, tools, close: () => client.close() };
 }
 
@@ -90,8 +120,12 @@ function registerServerTools(
       parameters: toSchema(tool.inputSchema),
       tier: "execute",
       summarize: () => qualified,
-      async execute(args): Promise<string> {
-        const result = await client.callTool({ name: tool.name, arguments: args });
+      async execute(args, ctx): Promise<string> {
+        const result = await client.callTool({ name: tool.name, arguments: args }, {
+          timeout: MCP_CALL_TIMEOUT_MS,
+          resetTimeoutOnProgress: true,
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        });
         const text = contentToText(result.content);
         return result.isError ? `ERROR: ${text || "MCP tool reported an error."}` : text || "(no output)";
       },

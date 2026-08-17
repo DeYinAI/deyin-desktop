@@ -1,0 +1,35 @@
+{
+  "name": "@deyin/kernel",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Deyin plugin kernel: loads PluginDefinitions in dependency order, runs them against scoped contexts with services/events/waterfalls, isolates failures per plugin, resolves config layers (bundles → profiles → patches), and supports lazy activation.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/kernel/kernel"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/extension-api": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

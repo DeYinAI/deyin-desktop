@@ -11,7 +11,7 @@ import {
   type CapabilitySnapshot,
   type McpServerDefinition,
 } from "@deyin/agent-core";
-import type { CapabilityItem, CapabilityKind, DeyinSettings, McpServerEntry, McpServerInput, McpTestResult } from "../shared/types.js";
+import type { CapabilityItem, CapabilityKind, DeyinSettings, McpServerEntry, McpServerInput, McpTestResult } from "@deyin/contract";
 
 const SCAN_TTL_MS = 4_000;
 
@@ -34,6 +34,7 @@ export class CapabilityService {
     private readonly pluginsDir: string,
     private readonly builtinSkillsDir: string,
     private readonly getSettings: () => DeyinSettings,
+    private readonly isWorkspaceTrusted: () => boolean = () => false,
   ) {
     // Ship the default skills as real files so they read/override like any other.
     try {
@@ -52,6 +53,7 @@ export class CapabilityService {
     if (this.cache && this.cacheKey === key && Date.now() - this.cacheAt < SCAN_TTL_MS) return this.cache;
     this.cache = await scanCapabilities({
       cwd: this.getWorkspaceRoot(),
+      trustedWorkspace: this.isWorkspaceTrusted(),
       pluginsDir: this.pluginsDir,
       builtinSkillsDir: this.builtinSkillsDir,
       builtinMcpServers: [

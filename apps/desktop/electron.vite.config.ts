@@ -62,8 +62,25 @@ function removeCrossOriginPlugin(): Plugin {
 
 // Bundle workspace packages into the main output; keep native/third-party deps external.
 const externalize = externalizeDepsPlugin({
- exclude: ["@deyin/oauth-client", "@deyin/branding", "@deyin/host-core", "@deyin/agent-core", "@deyin/computer-use-host", "@deyin/optimization-plugin"],
- });
+  exclude: [
+    "@deyin/oauth-client",
+    "@deyin/branding",
+    "@deyin/host-core",
+    "@deyin/agent-core",
+    "@deyin/contract",
+    "@deyin/extension-api",
+    "@deyin/kernel",
+    "@deyin/tools",
+    "@deyin/llm",
+    "@deyin/bundle-base",
+    "@deyin/bundle-desktop-app",
+    "@deyin/optimization-plugin",
+  ],
+});
+
+// The renderer SPA lives in @deyin/ui (packages/ui/client) and is shared with
+// the web app; only the entry html and transport are desktop-specific.
+const rendererRoot = resolve(root, "../../packages/ui/client");
 
 export default defineConfig({
   main: {
@@ -95,11 +112,11 @@ export default defineConfig({
     },
   },
   renderer: {
-    root: resolve(root, "src/renderer"),
+    root: rendererRoot,
     plugins: [react(), removeCrossOriginPlugin()],
     build: {
-      outDir: "out/renderer",
-      rollupOptions: { input: resolve(root, "src/renderer/index.html") },
+      outDir: resolve(root, "out/renderer"),
+      rollupOptions: { input: resolve(rendererRoot, "index.html") },
     },
   },
 });

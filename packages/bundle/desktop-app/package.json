@@ -1,0 +1,51 @@
+{
+  "name": "@deyin/bundle-desktop-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop profile layer \u2014 patches the base bundle for the Electron host (lazy optimization row with userData paths).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/bundle/desktop-app"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/bundle-base": "workspace:*",
+    "@deyin/extension-api": "workspace:*",
+    "@deyin/kernel": "workspace:*",
+    "@deyin/llm": "workspace:*",
+    "@deyin/optimization-plugin": "workspace:*",
+    "@deyin/plugin-llm-anthropic": "workspace:*",
+    "@deyin/plugin-llm-openai": "workspace:*",
+    "@deyin/plugin-llm-responses": "workspace:*",
+    "@deyin/plugin-tools-agent": "workspace:*",
+    "@deyin/plugin-tools-fs": "workspace:*",
+    "@deyin/plugin-tools-git": "workspace:*",
+    "@deyin/plugin-tools-plan": "workspace:*",
+    "@deyin/plugin-tools-shell": "workspace:*",
+    "@deyin/plugin-tools-web": "workspace:*",
+    "@deyin/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

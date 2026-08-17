@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import electronUpdater, { type AppUpdater } from "electron-updater";
-import { CH } from "../shared/ipc.js";
-import type { UpdatesState } from "../shared/types.js";
+import { CH } from "@deyin/contract";
+import type { UpdatesState } from "@deyin/contract";
 
 export interface UpdateController {
   getState(): UpdatesState;

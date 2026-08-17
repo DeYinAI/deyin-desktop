@@ -1,5 +1,5 @@
 import { TerminalManager, assertInsideRoot, detectEnv, readTextFile, readTree, writeTextFile } from "@deyin/host-core";
-import type { EnvInfo, FileNode, TerminalCreateOptions } from "../shared/protocol.js";
+import type { EnvInfo, FileNode, TerminalCreateOptions } from "@deyin/contract/web";
 
 /**
  * A per-session sandbox root confines all file + terminal activity. On real deployments
@@ -10,6 +10,11 @@ import type { EnvInfo, FileNode, TerminalCreateOptions } from "../shared/protoco
  */
 export class SessionHost {
   private readonly terminals: TerminalManager;
+
+  /** Shared PTY registry: the agent host registers its shells here for attach. */
+  get terminalManager(): TerminalManager {
+    return this.terminals;
+  }
 
   constructor(
     private readonly root: string,
