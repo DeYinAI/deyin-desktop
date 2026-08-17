@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { WebSocket } from "ws";
 import { Session } from "../src/server/session.js";
 import type { AgentEventEnvelope } from "@deyin/host-core/shared";
-import type { ServerMessage } from "../src/shared/protocol.js";
+import type { ServerMessage } from "@deyin/contract/web";
 
 /**
  * Full WS round-trip: mock OAuth introspection + mock model provider, then

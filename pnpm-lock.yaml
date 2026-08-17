@@ -31,7 +31,7 @@ importers:
         version: link:../../packages/host-core
       '@deyin/oauth-client':
         specifier: workspace:*
-        version: link:../../packages/oauth-client
+        version: link:../../packages/openference/oauth-client
       citty:
         specifier: ^0.1.6
         version: 0.1.6
@@ -79,48 +79,48 @@ importers:
       '@deyin/branding':
         specifier: workspace:*
         version: link:../../packages/branding
-      '@deyin/computer-use-host':
+      '@deyin/bundle-base':
         specifier: workspace:*
-        version: link:../../packages/computer-use-host
+        version: link:../../packages/bundle/base
+      '@deyin/bundle-desktop-app':
+        specifier: workspace:*
+        version: link:../../packages/bundle/desktop-app
+      '@deyin/contract':
+        specifier: workspace:*
+        version: link:../../packages/ui/contract
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../packages/kernel/extension-api
       '@deyin/host-core':
         specifier: workspace:*
         version: link:../../packages/host-core
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel/kernel
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm/llm
       '@deyin/oauth-client':
         specifier: workspace:*
-        version: link:../../packages/oauth-client
+        version: link:../../packages/openference/oauth-client
       '@deyin/optimization-plugin':
         specifier: workspace:*
-        version: link:../../packages/optimization-plugin
-      '@fontsource-variable/inter':
-        specifier: ^5.3.0
-        version: 5.3.0
-      '@fontsource/jetbrains-mono':
-        specifier: ^5.3.0
-        version: 5.3.0
-      '@stripe/stripe-js':
-        specifier: ^9.12.1
-        version: 9.12.1
+        version: link:../../packages/plugins/optimization
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools/tools
+      '@deyin/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui/client
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
-      '@types/react':
-        specifier: ^18.3.12
-        version: 18.3.31
-      '@types/react-dom':
-        specifier: ^18.3.1
-        version: 18.3.7(@types/react@18.3.31)
       '@types/ssh2':
         specifier: ^1.15.1
         version: 1.15.5
       '@vitejs/plugin-react':
         specifier: ^4.3.4
         version: 4.7.0(vite@5.4.21(@types/node@22.20.1))
-      '@xterm/addon-fit':
-        specifier: ^0.10.0
-        version: 0.10.0(@xterm/xterm@5.5.0)
-      '@xterm/xterm':
-        specifier: ^5.5.0
-        version: 5.5.0
       electron:
         specifier: ^33.2.1
         version: 33.4.11
@@ -130,18 +130,6 @@ importers:
       electron-vite:
         specifier: ^2.3.0
         version: 2.3.0(vite@5.4.21(@types/node@22.20.1))
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
-      react-markdown:
-        specifier: ^10.1.0
-        version: 10.1.0(@types/react@18.3.31)(react@18.3.1)
-      remark-gfm:
-        specifier: ^4.0.1
-        version: 4.0.1
       tsx:
         specifier: ^4.19.2
         version: 4.23.1
@@ -164,12 +152,33 @@ importers:
       '@deyin/branding':
         specifier: workspace:*
         version: link:../../packages/branding
+      '@deyin/bundle-base':
+        specifier: workspace:*
+        version: link:../../packages/bundle/base
+      '@deyin/bundle-web-app':
+        specifier: workspace:*
+        version: link:../../packages/bundle/web-app
+      '@deyin/contract':
+        specifier: workspace:*
+        version: link:../../packages/ui/contract
       '@deyin/host-core':
         specifier: workspace:*
         version: link:../../packages/host-core
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../packages/kernel/kernel
       '@deyin/oauth-client':
         specifier: workspace:*
-        version: link:../../packages/oauth-client
+        version: link:../../packages/openference/oauth-client
+      '@deyin/plugin-caps-local':
+        specifier: workspace:*
+        version: link:../../packages/caps/caps-local
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../../packages/tools/tools
+      '@deyin/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui/client
       '@xterm/addon-fit':
         specifier: ^0.10.0
         version: 0.10.0(@xterm/xterm@5.5.0)
@@ -221,6 +230,18 @@ importers:
         specifier: ^1.0.0
         version: 1.1.0
 
+  native/computer-use-host:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/agent-core:
     dependencies:
       '@deyin/host-core':
@@ -252,8 +273,247 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/computer-use-host:
+  packages/bundle/base:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+      '@deyin/optimization-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/optimization
+      '@deyin/plugin-llm-anthropic':
+        specifier: workspace:*
+        version: link:../../llm/llm-anthropic
+      '@deyin/plugin-llm-openai':
+        specifier: workspace:*
+        version: link:../../llm/llm-openai
+      '@deyin/plugin-llm-responses':
+        specifier: workspace:*
+        version: link:../../llm/llm-responses
+      '@deyin/plugin-tools-agent':
+        specifier: workspace:*
+        version: link:../../tools/tools-agent
+      '@deyin/plugin-tools-fs':
+        specifier: workspace:*
+        version: link:../../tools/tools-fs
+      '@deyin/plugin-tools-git':
+        specifier: workspace:*
+        version: link:../../tools/tools-git
+      '@deyin/plugin-tools-plan':
+        specifier: workspace:*
+        version: link:../../tools/tools-plan
+      '@deyin/plugin-tools-shell':
+        specifier: workspace:*
+        version: link:../../tools/tools-shell
+      '@deyin/plugin-tools-web':
+        specifier: workspace:*
+        version: link:../../tools/tools-web
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../../tools/tools
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/bundle/desktop-app:
+    dependencies:
+      '@deyin/bundle-base':
+        specifier: workspace:*
+        version: link:../base
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+      '@deyin/optimization-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/optimization
+      '@deyin/plugin-llm-anthropic':
+        specifier: workspace:*
+        version: link:../../llm/llm-anthropic
+      '@deyin/plugin-llm-openai':
+        specifier: workspace:*
+        version: link:../../llm/llm-openai
+      '@deyin/plugin-llm-responses':
+        specifier: workspace:*
+        version: link:../../llm/llm-responses
+      '@deyin/plugin-tools-agent':
+        specifier: workspace:*
+        version: link:../../tools/tools-agent
+      '@deyin/plugin-tools-fs':
+        specifier: workspace:*
+        version: link:../../tools/tools-fs
+      '@deyin/plugin-tools-git':
+        specifier: workspace:*
+        version: link:../../tools/tools-git
+      '@deyin/plugin-tools-plan':
+        specifier: workspace:*
+        version: link:../../tools/tools-plan
+      '@deyin/plugin-tools-shell':
+        specifier: workspace:*
+        version: link:../../tools/tools-shell
+      '@deyin/plugin-tools-web':
+        specifier: workspace:*
+        version: link:../../tools/tools-web
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../../tools/tools
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/bundle/headless:
+    dependencies:
+      '@deyin/bundle-base':
+        specifier: workspace:*
+        version: link:../base
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+      '@deyin/plugin-llm-anthropic':
+        specifier: workspace:*
+        version: link:../../llm/llm-anthropic
+      '@deyin/plugin-llm-openai':
+        specifier: workspace:*
+        version: link:../../llm/llm-openai
+      '@deyin/plugin-llm-responses':
+        specifier: workspace:*
+        version: link:../../llm/llm-responses
+      '@deyin/plugin-tools-agent':
+        specifier: workspace:*
+        version: link:../../tools/tools-agent
+      '@deyin/plugin-tools-fs':
+        specifier: workspace:*
+        version: link:../../tools/tools-fs
+      '@deyin/plugin-tools-git':
+        specifier: workspace:*
+        version: link:../../tools/tools-git
+      '@deyin/plugin-tools-plan':
+        specifier: workspace:*
+        version: link:../../tools/tools-plan
+      '@deyin/plugin-tools-shell':
+        specifier: workspace:*
+        version: link:../../tools/tools-shell
+      '@deyin/plugin-tools-web':
+        specifier: workspace:*
+        version: link:../../tools/tools-web
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../../tools/tools
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/bundle/web-app:
+    dependencies:
+      '@deyin/bundle-base':
+        specifier: workspace:*
+        version: link:../base
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../../llm/llm
+      '@deyin/plugin-caps-local':
+        specifier: workspace:*
+        version: link:../../caps/caps-local
+      '@deyin/plugin-llm-anthropic':
+        specifier: workspace:*
+        version: link:../../llm/llm-anthropic
+      '@deyin/plugin-llm-openai':
+        specifier: workspace:*
+        version: link:../../llm/llm-openai
+      '@deyin/plugin-llm-responses':
+        specifier: workspace:*
+        version: link:../../llm/llm-responses
+      '@deyin/plugin-tools-agent':
+        specifier: workspace:*
+        version: link:../../tools/tools-agent
+      '@deyin/plugin-tools-fs':
+        specifier: workspace:*
+        version: link:../../tools/tools-fs
+      '@deyin/plugin-tools-git':
+        specifier: workspace:*
+        version: link:../../tools/tools-git
+      '@deyin/plugin-tools-plan':
+        specifier: workspace:*
+        version: link:../../tools/tools-plan
+      '@deyin/plugin-tools-shell':
+        specifier: workspace:*
+        version: link:../../tools/tools-shell
+      '@deyin/plugin-tools-web':
+        specifier: workspace:*
+        version: link:../../tools/tools-web
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../../tools/tools
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/caps/caps-local:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
@@ -280,14 +540,121 @@ importers:
         specifier: ^1.0.0
         version: 1.1.0
 
-  packages/oauth-client:
+  packages/kernel/extension-api:
     devDependencies:
-      '@deyin/oauth-provider':
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/kernel/kernel:
+    dependencies:
+      '@deyin/extension-api':
         specifier: workspace:*
-        version: link:../oauth-provider
-      '@hono/node-server':
-        specifier: ^1.13.7
-        version: 1.19.15(hono@4.12.32)
+        version: link:../extension-api
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/llm/llm:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/llm/llm-anthropic:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../llm
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/llm/llm-openai:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../llm
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/llm/llm-responses:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/llm':
+        specifier: workspace:*
+        version: link:../llm
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
@@ -320,11 +687,35 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
-  packages/optimization-plugin:
+  packages/openference/oauth-client:
+    devDependencies:
+      '@deyin/oauth-provider':
+        specifier: workspace:*
+        version: link:../../oauth-provider
+      '@hono/node-server':
+        specifier: ^1.13.7
+        version: 1.19.15(hono@4.12.32)
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/plugins/optimization:
     dependencies:
       '@deyin/agent-core':
         specifier: workspace:*
-        version: link:../agent-core
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
     devDependencies:
       '@types/node':
         specifier: ^22.10.2
@@ -332,6 +723,246 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-agent:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-fs:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-git:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-plan:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-shell:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-web:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/ui/client:
+    dependencies:
+      '@deyin/branding':
+        specifier: workspace:*
+        version: link:../../branding
+      '@deyin/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@deyin/host-core':
+        specifier: workspace:*
+        version: link:../../host-core
+      '@fontsource-variable/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/jetbrains-mono':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@stripe/stripe-js':
+        specifier: ^9.12.1
+        version: 9.12.1
+      '@xterm/addon-fit':
+        specifier: ^0.10.0
+        version: 0.10.0(@xterm/xterm@5.5.0)
+      '@xterm/xterm':
+        specifier: ^5.5.0
+        version: 5.5.0
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@18.3.31)(react@18.3.1)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.31)
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/ui/contract:
+    dependencies:
+      '@deyin/host-core':
+        specifier: workspace:*
+        version: link:../../host-core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

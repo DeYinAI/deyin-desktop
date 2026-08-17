@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { McpCatalogEntry } from "../shared/types.js";
+import type { McpCatalogEntry } from "@deyin/contract";
 
 const CATALOG_DIR = join(dirname(fileURLToPath(import.meta.url)), "mcp-catalog");
 

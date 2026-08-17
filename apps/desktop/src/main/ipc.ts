@@ -32,7 +32,7 @@ import {
 } from "@deyin/host-core/shared";
 import { resolveContextRefs, searchContextPaths } from "@deyin/host-core";
 import type { PermissionDecision } from "@deyin/agent-core";
-import { CH } from "../shared/ipc.js";
+import { CH } from "@deyin/contract";
 import type {
   AgentStartOptions,
   Bootstrap,
@@ -47,8 +47,8 @@ import type {
   ProviderPatch,
   TerminalCreateOptions,
   UsageEvent,
-} from "../shared/types.js";
-import type { DeyinConfig } from "../shared/config.js";
+} from "@deyin/contract";
+import type { DeyinConfig } from "@deyin/contract";
 import { DesktopAgentHost } from "./agent.js";
 import type { AuthManager } from "./auth.js";
 import { BrowserControlService, workspacePartition } from "./browser.js";
@@ -449,7 +449,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
 
   /* MCP catalog / modules / native OAuth. */
   ipcMain.handle(CH.mcpCatalogList, () => mcpCatalog.list());
-  ipcMain.handle(CH.mcpCatalogInstall, (_e, input: import("../shared/types.js").McpCatalogInstallInput) => {
+  ipcMain.handle(CH.mcpCatalogInstall, (_e, input: import("@deyin/contract").McpCatalogInstallInput) => {
     mcpCatalog.install(input);
     return capabilities.listMcpServers();
   });
@@ -467,7 +467,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
 
   /* @ context attachments. */
   ipcMain.handle(CH.contextSearch, (_e, query: string) => searchContextPaths(opts.getWorkspaceRoot(), query));
-  ipcMain.handle(CH.contextResolve, (_e, refs: import("../shared/types.js").ContextRef[]) =>
+  ipcMain.handle(CH.contextResolve, (_e, refs: import("@deyin/contract").ContextRef[]) =>
     resolveContextRefs(opts.getWorkspaceRoot(), Array.isArray(refs) ? refs : []),
   );
 
@@ -507,7 +507,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Billing (Openference OAuth-backed). */
   const billingOpts = { oauthIssuer: config.oauthIssuer };
   ipcMain.handle(CH.billingOverview, () => fetchBillingOverview(billingOpts, () => auth.getAccessToken()));
-  ipcMain.handle(CH.billingSelectPlan, (_e, planId: number, options?: import("../shared/types.js").SelectPlanOptions) =>
+  ipcMain.handle(CH.billingSelectPlan, (_e, planId: number, options?: import("@deyin/contract").SelectPlanOptions) =>
     selectPlan(billingOpts, () => auth.getAccessToken(), planId, options),
   );
   ipcMain.handle(CH.billingPublishableKey, () => fetchBillingPublishableKey(billingOpts, () => auth.getAccessToken()));
@@ -549,6 +549,11 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
 
   /* Plugins. */
   ipcMain.handle(CH.pluginsList, () => plugins.list());
+  ipcMain.handle(CH.pluginsKernelStatus, async () => {
+    // Kick kernel creation so the page reflects real rows even before a first run.
+    const kernel = await agentHost.kernelReady();
+    return kernel.status();
+  });
   ipcMain.handle(CH.pluginsCatalog, (_e, force?: boolean) => plugins.catalog(force));
   ipcMain.handle(CH.pluginsInstall, async (_e, source: string) => {
     const result = await plugins.install(source);

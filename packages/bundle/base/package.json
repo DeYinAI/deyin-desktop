@@ -1,0 +1,51 @@
+{
+  "name": "@deyin/bundle-base",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Base plugin layer \u2014 every Deyin host starts from these rows (tools catalog + families, llm seam + adapters, lazy optimization).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/bundle/base"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/kernel": "workspace:*",
+    "@deyin/extension-api": "workspace:*",
+    "@deyin/tools": "workspace:*",
+    "@deyin/plugin-tools-fs": "workspace:*",
+    "@deyin/plugin-tools-shell": "workspace:*",
+    "@deyin/plugin-tools-git": "workspace:*",
+    "@deyin/plugin-tools-web": "workspace:*",
+    "@deyin/plugin-tools-plan": "workspace:*",
+    "@deyin/plugin-tools-agent": "workspace:*",
+    "@deyin/llm": "workspace:*",
+    "@deyin/plugin-llm-openai": "workspace:*",
+    "@deyin/plugin-llm-responses": "workspace:*",
+    "@deyin/plugin-llm-anthropic": "workspace:*",
+    "@deyin/optimization-plugin": "workspace:*",
+    "@deyin/agent-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

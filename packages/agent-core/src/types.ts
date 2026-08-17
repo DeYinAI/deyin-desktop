@@ -220,6 +220,12 @@ export interface ToolDefinition {
   tier: ToolPermissionTier;
   /** One-line human summary of a call, shown in permission prompts and tool cards. */
   summarize(args: Record<string, unknown>): string;
+  /**
+   * Structured context for UI tool cards, resolved the same way execute() would.
+   * Emitted on tool-start/tool-end so the renderer can show e.g. the working
+   * directory a bash call runs in.
+   */
+  meta?(args: Record<string, unknown>, ctx: ToolContext): { cwd?: string };
   /** Returns the tool result text (fed back to the model as a role:"tool" message). */
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }

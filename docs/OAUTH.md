@@ -77,7 +77,7 @@ const token = await client.getAccessToken(); // Bearer for api.openference.com/v
 ```
 
 A complete runnable version is in
-[`packages/oauth-client/examples/cli-login.ts`](../packages/oauth-client/examples/cli-login.ts).
+[`packages/openference/oauth-client/examples/cli-login.ts`](../packages/openference/oauth-client/examples/cli-login.ts).
 
 ## Token model
 
