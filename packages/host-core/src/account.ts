@@ -50,6 +50,7 @@ export async function fetchAccountUsage(
   try {
     const res = await fetch(`${opts.oauthIssuer.replace(/\/$/, "")}/api/user/me`, {
       headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
     const body = (await res.json()) as MeResponse;

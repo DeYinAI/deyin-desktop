@@ -247,6 +247,7 @@ export class IndexManager {
       this.watcher.on("error", () => {
         this.stopWatching();
         this.pollTimer = setInterval(() => this.scheduleSync(), POLL_MS);
+        (this.pollTimer as { unref?: () => void }).unref?.();
       });
     } catch {
       this.pollTimer = setInterval(() => this.scheduleSync(), POLL_MS);

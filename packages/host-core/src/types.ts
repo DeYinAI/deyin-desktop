@@ -60,7 +60,7 @@ export interface ChatMessage {
  * profile via ProjectsStore (desktop: projects.json, web: localStorage). */
 
 /** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
-export type ChatMode = "agent" | "plan" | "ask";
+export type ChatMode = "agent" | "plan" | "ask" | "delivery";
 
 export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -70,6 +70,8 @@ export interface PlanStep {
   text: string;
   done: boolean;
   status?: AgentTodoStatus;
+  acceptanceCriteria?: string;
+  signedOff?: boolean;
 }
 
 /** One rendered line of a chat file-card diff snippet (persisted with the thread). */
@@ -81,7 +83,7 @@ export interface DiffSnippetLine {
 }
 
 export type ThreadEvent =
-  | { kind: "user"; text: string }
+  | { kind: "user"; text: string; attachments?: ContextAttachment[]; linkedThreadIds?: string[] }
   | { kind: "assistant"; text: string }
   | { kind: "reasoning"; text: string; seconds?: number }
   | { kind: "plan"; steps: PlanStep[]; badge?: string }
@@ -99,10 +101,27 @@ export type ThreadEvent =
       snippetMore?: number;
     }
   | { kind: "model-switch"; from: string; to: string }
+  /** Timeline note for the /goal command; text null = goal cleared. */
+  | { kind: "goal-set"; text: string | null }
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string }
   | { kind: "worked"; seconds: number }
-  | { kind: "tool"; name: string; summary: string; result?: string; ok?: boolean; denied?: boolean }
+  | {
+      kind: "tool";
+      name: string;
+      summary: string;
+      /** Working directory the call ran in (bash cards show it next to the command). */
+      cwd?: string;
+      result?: string;
+      ok?: boolean;
+      denied?: boolean;
+      /** Epoch ms when the call started (set by tool-start). */
+      startedAt?: number;
+      /** Wall-clock duration (set by tool-end). */
+      durationMs?: number;
+    }
+  /** Live subagent (task tool) run: spawn → progress lines → done/failed. */
+  | { kind: "subagent"; id: string; name: string; status: "running" | "done" | "failed"; line?: string; ms?: number }
   /** Per-run token-optimization summary card (compression + cache savings). */
   | {
       kind: "optimization";
@@ -115,7 +134,21 @@ export type ThreadEvent =
       responseCacheHits: number;
       responseCacheMisses: number;
       estimatedCostSavingsUsd: number;
+      sessionCacheHit?: number;
+      sessionCacheMiss?: number;
+      cacheHitRate?: number;
+      prefixChanged?: boolean;
+      changeReasons?: Array<"system" | "tools" | "log_rewrite">;
     }
+  | { kind: "evidence-gate"; code: string; message: string }
+  | {
+      kind: "evidence-sign-off";
+      stepId: string;
+      verificationCommand: string;
+      diffSummary: string;
+      reviewNotes?: string;
+    }
+  | { kind: "compaction-notice"; softWarning: boolean; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
   | { kind: "error"; text: string };
 
 export interface Thread {
@@ -139,6 +172,181 @@ export interface Thread {
   pinned?: boolean;
   archived?: boolean;
   unread?: boolean;
+  /** Goal-mode objective for this thread (set from the composer). */
+  goal?: ThreadGoal;
+}
+
+/** Verifiable objective tracked by goal mode + report_goal_met. */
+export interface ThreadGoal {
+  text: string;
+  status: "active" | "met" | "unmet";
+  /** ISO timestamps. */
+  setAt?: string;
+  reportedAt?: string;
+  /** Last report_goal_met reason. */
+  reason?: string;
+}
+
+/* Change review queue --------------------------------------------------------- */
+
+/** Whether write/edit/delete go through the user review queue. */
+export type ReviewMode = "off" | "on";
+
+/** One queued file mutation awaiting user approval (desktop review mode). */
+export interface PendingChange {
+  id: string;
+  threadId: string;
+  path: string;
+  before: string;
+  after: string;
+  tool: "write" | "edit" | "delete";
+  status: "pending" | "approved" | "rejected";
+  createdAt: number;
+}
+
+/* Composer context attachments ------------------------------------------------ */
+
+/** An @-mentioned file/folder attached to an outgoing message. */
+export interface ContextAttachment {
+  path: string;
+  kind: "file" | "folder";
+  label?: string;
+}
+
+/** A #-mentioned thread linked as context. */
+export interface LinkedThreadRef {
+  threadId: string;
+  title?: string;
+  preview?: string;
+}
+
+/** Compact commit summary (Git tab history list). */
+export interface GitLogEntry {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
+/* MCP catalog / modules / OAuth ------------------------------------------------ */
+
+export type McpAuthMode = "none" | "token" | "oauth" | "token-or-oauth";
+
+export type McpCatalogCategory =
+  | "cloud-infra"
+  | "communication"
+  | "database"
+  | "design"
+  | "devtools"
+  | "local"
+  | "monitoring"
+  | "payments"
+  | "project-mgmt";
+
+export interface McpCatalogSecret {
+  envKey: string;
+  label: string;
+  required?: boolean;
+}
+
+export interface McpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: McpCatalogCategory;
+  vendor?: string;
+  /** Surfaced in the catalog's default "Featured" filter. */
+  featured?: boolean;
+  transport: "stdio" | "sse" | "http";
+  auth: McpAuthMode;
+  url?: string;
+  command?: string;
+  args?: string[];
+  headers?: Record<string, string>;
+  secrets?: McpCatalogSecret[];
+  docsUrl?: string;
+}
+
+export interface McpCatalogInstallInput {
+  entryId: string;
+  secrets?: Record<string, string>;
+  useOAuth?: boolean;
+}
+
+export interface McpModuleManifest {
+  id: string;
+  name: string;
+  vendor?: string;
+  category?: McpCatalogCategory;
+  version: number;
+  installedAt: string;
+  source: "catalog" | "custom";
+  catalogEntryId?: string;
+  authMode?: McpAuthMode;
+  usesNativeOAuth?: boolean;
+  docsUrl?: string;
+}
+
+export type McpAuthStatus = "none" | "authenticated" | "expired";
+
+export interface McpAuthResult {
+  ok: boolean;
+  message: string;
+  /** Tools discovered on the post-auth connection check. */
+  toolCount?: number;
+}
+
+/* Advanced agent diagnostics (main-process ring buffers, surfaced in Settings) ------- */
+
+export interface Advanced agentCacheInvalidationEntry {
+  at: number;
+  threadId: string;
+  reasons: string[];
+  prefixHash?: string;
+  logRewriteVersion?: number;
+  hitRate?: number;
+}
+
+export interface Advanced agentCoordinatorEntry {
+  at: number;
+  threadId: string;
+  route: string;
+  reason: string;
+}
+
+export interface Advanced agentFleetEntry {
+  at: number;
+  threadId: string;
+  kind: "preflight" | "start" | "complete" | "conflict" | "background-job";
+  detail: string;
+  taskCount?: number;
+}
+
+export interface Advanced agentEvidenceEntry {
+  at: number;
+  threadId: string;
+  code: string;
+  message: string;
+}
+
+export interface Advanced agentDiagnostics {
+  cache: {
+    prefixShape: {
+      prefixHash: string;
+      systemHash: string;
+      toolsHash: string;
+      logRewriteVersion: number;
+      toolSchemaTokens: number;
+    } | null;
+    invalidationHistory: Advanced agentCacheInvalidationEntry[];
+    sessionHit: number;
+    sessionMiss: number;
+    hitRate: number;
+  };
+  coordinator: Advanced agentCoordinatorEntry[];
+  fleet: Advanced agentFleetEntry[];
+  evidence: Advanced agentEvidenceEntry[];
 }
 
 export interface Project {
@@ -234,26 +442,16 @@ export interface DeyinSettings {
   /** Live local semantic indexing of the workspace. */
   indexingEnabled: boolean;
   onboard: OnboardProgress;
-  /** Run missed cron automations once on app startup. */
-  automationsCatchUp: boolean;
   /** Keep scheduler alive in the tray when all windows are closed. */
   keepRunningInBackground: boolean;
-  /** Tier-1: compress tool/user payloads before sending to the LLM. */
-  optimizationCompression: boolean;
-  /** Tier-1 compression aggressiveness. */
-  optimizationCompressionMode: "aggressive" | "balanced" | "conservative";
-  /** Tier-1: send provider prompt-cache keys / markers. */
-  optimizationPromptCaching: boolean;
   /** Tier-2: load semantic optimization plugin. */
   optimizationPluginEnabled: boolean;
-  /** Tier-2: semantic tool-result cache. */
-  optimizationToolCache: boolean;
-  /** Tier-2: semantic response cache. */
-  optimizationResponseCache: boolean;
-  /** Cosine similarity threshold for semantic cache hits (0.80–0.98). */
-  optimizationSimilarityThreshold: number;
   /** Background memory (remember/forget + automatic recall). */
   memoryEnabled: boolean;
+  /** Route write/edit/delete through the user review queue. */
+  reviewMode: "off" | "on";
+  /** Last version whose What's New modal was shown. */
+  whatsNewSeenVersion: string | null;
 }
 
 /* Automations ------------------------------------------------------------- */
@@ -426,6 +624,21 @@ export interface PluginInfo {
   components: { skills: number; commands: number; subagents: number; mcpServers: number; hooks: number };
   /** Secret variable names the plugin declares (values stored encrypted). */
   variables?: string[];
+  /** Marketplace card metadata from the plugin manifest. */
+  interface?: {
+    displayName: string;
+    shortDescription: string;
+    longDescription?: string;
+    category?: string;
+    capabilities?: Array<"Interactive" | "Read" | "Write">;
+    brandColor?: string;
+    defaultPrompt?: string[];
+    logo?: string;
+  };
+  bundled?: boolean;
+  /** Which bundled host module this plugin fronts (browser/chrome/computer-use/...). */
+  hostModule?: "computer-use" | "browser" | "chrome" | "visualize" | "security";
+  platform?: string;
 }
 
 /** One entry of the DeYinAI/registry catalog. */
@@ -462,12 +675,40 @@ export interface IndexSearchHit {
   preview: string;
 }
 
+/* @ context attachments ------------------------------------------------------ */
+
+/** A user-picked @ attachment in the composer (absolute or workspace-relative). */
+export interface ContextRef {
+  path: string;
+  kind: "file" | "folder";
+}
+
+/** One hit from the @ mention fuzzy path search. */
+export interface ContextSearchHit {
+  path: string;
+  kind: "file" | "folder";
+  label: string;
+}
+
+/** A resolved @ attachment with (possibly truncated) text content. */
+export interface ResolvedContextFile {
+  path: string;
+  kind: "file" | "folder";
+  content: string;
+  truncated?: boolean;
+}
+
 /* Agent sessions (desktop runtime) -------------------------------------------- */
 
 export interface AgentTodoItem {
   id: string;
   content: string;
   status: AgentTodoStatus;
+  /** Delivery mode: how to verify this step. */
+  acceptanceCriteria?: string;
+  /** Delivery mode: set by complete_step sign-off. */
+  signedOff?: boolean;
+  signOffNotes?: string;
 }
 
 /** Context Usage category ids (mirrors agent-core context-usage). */
@@ -494,20 +735,45 @@ export interface ContextUsageSnapshot {
   categories: ContextUsageCategory[];
   wire?: { originalTokens: number; compressedTokens: number };
   cached?: boolean;
+  /** Live prefix-cache diagnostics merged in from optimization events. */
+  cache?: {
+    hitRate: number;
+    sessionHit: number;
+    sessionMiss: number;
+    prefixChanged?: boolean;
+    changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+  };
 }
 
 /** Renderer-facing events streamed from the main-process agent runtime. */
 export type AgentUiEvent =
  | { type: "text-delta"; delta: string }
  | { type: "reasoning-delta"; delta: string }
- | { type: "tool-start"; callId: string; name: string; summary: string }
- | { type: "tool-delta"; callId: string; delta: string }
- | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean }
+  | { type: "tool-start"; callId: string; name: string; summary: string; cwd?: string }
+  | { type: "tool-delta"; callId: string; delta: string }
+  | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean; cwd?: string }
  | { type: "file-change"; path: string; before: string; after: string }
  | { type: "todos"; todos: AgentTodoItem[] }
  | { type: "usage"; totalTokens: number }
  | { type: "context-snapshot"; snapshot: ContextUsageSnapshot }
- | { type: "optimization"; originalInputTokens: number; compressedInputTokens: number; compressionRatio: number; cachedPromptTokens: number; toolCacheHits: number; toolCacheMisses: number; responseCacheHits: number; responseCacheMisses: number; estimatedCostSavingsUsd: number }
+ | {
+     type: "optimization";
+     originalInputTokens: number;
+     compressedInputTokens: number;
+     compressionRatio: number;
+     cachedPromptTokens: number;
+     toolCacheHits: number;
+     toolCacheMisses: number;
+     responseCacheHits: number;
+     responseCacheMisses: number;
+     estimatedCostSavingsUsd: number;
+     /** Per-turn cache diagnostics (omitted when the tracker has no data yet). */
+     sessionCacheHit?: number;
+     sessionCacheMiss?: number;
+     cacheHitRate?: number;
+     prefixChanged?: boolean;
+     changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+   }
  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
  | {
      type: "question-request";
@@ -528,10 +794,30 @@ export type AgentUiEvent =
      filePath?: string;
    }
  | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
- | { type: "subagent-start"; name: string; prompt: string }
- | { type: "subagent-end"; name: string; ok: boolean }
+ | { type: "subagent-start"; id: string; name: string; prompt: string }
+ | { type: "subagent-progress"; id: string; line: string }
+ | { type: "subagent-end"; id: string; name: string; ok: boolean; ms?: number; summary?: string }
  /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */
  | { type: "shell-session"; terminalId: string; label: string }
+ | { type: "pending-change"; change: PendingChange }
+ | { type: "pending-change-resolved"; changeId: string; threadId: string; status: "approved" | "rejected" }
+ | { type: "goal-updated"; goal: ThreadGoal | null }
+ | {
+     type: "compaction";
+     truncatedToolResults: number;
+     truncatedToolArgs: number;
+     droppedMessages: number;
+     /** True when usage crossed the soft warning line (no compaction yet). */
+     softWarning?: boolean;
+   }
+ | { type: "evidence-gate"; code: string; message: string; toolName?: string }
+ | {
+     type: "evidence-sign-off";
+     stepId: string;
+     verificationCommand: string;
+     diffSummary: string;
+     reviewNotes?: string;
+   }
  | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
  | { type: "error"; message: string };
 
@@ -553,6 +839,8 @@ export interface AgentStartOptions {
   history: { role: "user" | "assistant"; content: string }[];
   /** Seed the agent loop's todo list (e.g. plan todos handed to Build). */
   initialTodos?: AgentTodoItem[];
+  /** Active goal text; enables report_goal_met verification. */
+  goalText?: string;
 }
 
 /* Model providers ---------------------------------------------------------- */
@@ -589,6 +877,10 @@ export interface ProviderInfo {
   disabledModels: string[];
   /** Epoch ms of the last successful /models fetch; drives the 1-week cache. */
   modelsFetchedAt?: number;
+  /** Curated built-in preset (DeepSeek, OpenAI, ...) rather than user-added. */
+  preset?: boolean;
+  /** Local inference endpoint (Ollama): works without an API key. */
+  local?: boolean;
 }
 
 export interface ProviderPatch {

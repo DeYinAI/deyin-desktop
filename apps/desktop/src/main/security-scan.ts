@@ -1,5 +1,5 @@
 import { connectMcpServer, type McpServerDefinition } from "@deyin/agent-core";
-import type { SecurityFindingsReport } from "../shared/types.js";
+import type { SecurityFindingsReport } from "@deyin/contract";
 import type { CapabilityService } from "./capabilities.js";
 
 const SECURITY_MCP = "deyin-security";

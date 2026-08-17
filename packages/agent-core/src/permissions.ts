@@ -32,51 +32,60 @@ export interface PermissionEngineOptions {
   agentRules?: PermissionRule[];
   /** User config rules (global + project deyin.json). Override agent rules. */
   configRules?: PermissionRule[];
-  /** --yes / -y: skip every prompt and allow everything, even explicit denies (headless/CI). */
+  /** --yes / -y: skip every prompt and allow everything (headless/CI). */
   skipAll?: boolean;
-  /**
-   * Full-access mode: auto-allow every "ask" (no prompts) while explicit
-   * "deny" rules still win, so the mode agents' write/edit denies stay
-   * enforced (e.g. plan mode stays read-only for file changes). Unlike
-   * `skipAll`, this never overrides a deny.
-   */
-  autoAllow?: boolean;
+  /** Exact tool names that must never be auto-allowed by skipAll. */
+  neverSkipTools?: Iterable<string>;
+  /** Prefix patterns (e.g. "computer_") that must never be auto-allowed by skipAll. */
+  neverSkipPrefixes?: Iterable<string>;
+}
+
+function matchesNeverSkip(
+  toolName: string,
+  neverSkipTools: Set<string>,
+  neverSkipPrefixes: string[],
+): boolean {
+  if (neverSkipTools.has(toolName)) return true;
+  return neverSkipPrefixes.some((prefix) => toolName.startsWith(prefix));
 }
 
 /**
  * Three-tier permission merge: built-in tier defaults -> agent rules -> user config
  * rules, evaluated last-writer-wins, plus session "always allow" grants on top.
- * `autoAllow` turns every "ask" into "allow" without touching denies; `skipAll`
- * (CLI --yes) allows everything outright.
  */
 export class PermissionEngine {
-  private readonly agentRules: PermissionRule[];
-  private configRules: PermissionRule[];
-  private readonly skipAll: boolean;
-  private readonly autoAllow: boolean;
+  private readonly rules: PermissionRule[];
+  private skipAll: boolean;
+  private readonly neverSkipTools: Set<string>;
+  private readonly neverSkipPrefixes: string[];
   private readonly sessionGrants = new Set<string>();
 
   constructor(opts: PermissionEngineOptions = {}) {
-    this.agentRules = opts.agentRules ?? [];
-    this.configRules = opts.configRules ?? [];
+    this.rules = [...(opts.agentRules ?? []), ...(opts.configRules ?? [])];
     this.skipAll = opts.skipAll ?? false;
-    this.autoAllow = opts.autoAllow ?? false;
-  }
-
-  /** Replaces the user/mode config rules, e.g. after a mid-run mode switch. */
-  setConfigRules(rules: PermissionRule[]): void {
-    this.configRules = rules;
+    this.neverSkipTools = new Set(opts.neverSkipTools ?? []);
+    this.neverSkipPrefixes = [...(opts.neverSkipPrefixes ?? [])];
   }
 
   actionFor(tool: Pick<ToolDefinition, "name" | "tier">): PermissionAction {
-    if (this.skipAll) return "allow";
-    const rules = [...this.agentRules, ...this.configRules];
-    const match = rules.findLast((r) => r.tool === "*" || r.tool === tool.name);
-    const action = match?.action ?? tierDefault(tool.tier);
-    if (action === "deny") return "deny";
-    if (this.autoAllow) return "allow";
-    if (action === "ask" && this.sessionGrants.has(tool.name)) return "allow";
-    return action;
+    const protectedTool = matchesNeverSkip(tool.name, this.neverSkipTools, this.neverSkipPrefixes);
+    const match = this.rules.findLast((r) => r.tool === "*" || r.tool === tool.name);
+    const ruleAction = match?.action ?? tierDefault(tool.tier);
+    if (ruleAction === "deny") return "deny";
+    if (this.skipAll && !protectedTool) return "allow";
+    if (ruleAction === "ask" && this.sessionGrants.has(tool.name) && !protectedTool) return "allow";
+    return ruleAction;
+  }
+
+  /** Rebuild rules and skipAll after a mode switch mid-run. */
+  reconfigure(opts: PermissionEngineOptions): void {
+    this.rules.length = 0;
+    this.rules.push(...(opts.agentRules ?? []), ...(opts.configRules ?? []));
+    this.skipAll = opts.skipAll ?? false;
+    this.neverSkipTools.clear();
+    for (const t of opts.neverSkipTools ?? []) this.neverSkipTools.add(t);
+    this.neverSkipPrefixes.length = 0;
+    this.neverSkipPrefixes.push(...(opts.neverSkipPrefixes ?? []));
   }
 
   /** Session-scoped "always allow" (the "don't ask again" choice in the prompt). */

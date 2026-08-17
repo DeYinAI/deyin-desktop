@@ -18,7 +18,6 @@ export * from "./identity.js";
 export * from "./redact.js";
 export * from "./i18n.js";
 export * from "./telemetry.js";
-export * from "./agent-metrics.js";
 export * from "./linked-thread-context.js";
 export { formatUserMessageWithContext, dedupeContextRefs } from "./context-message.js";
 export { isPathInsideRoot } from "./pathInside.js";

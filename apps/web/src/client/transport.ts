@@ -4,6 +4,7 @@ import {
   DEFAULT_CAPABILITIES,
   DEFAULT_PROVIDERS,
   DEFAULT_SETTINGS,
+  mergePresetProviders,
   applyEvent,
   computeStats,
   fetchAccountUsage,
@@ -16,10 +17,10 @@ import {
   redactObject,
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
-  emptyAdvanced agentMetrics,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
-import type { DeyinApi } from "@contract/ipc.js";
+import type { DeyinApi } from "@deyin/contract";
+import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
 import type {
   Bootstrap,
   CapabilityItem,
@@ -34,7 +35,7 @@ import type {
   UsageDay,
   UsageEvent,
   UserProfile,
-} from "@contract/types.js";
+} from "@deyin/contract";
 import type {
   ClientMessage,
   EnvDetectResult,
@@ -44,7 +45,7 @@ import type {
   ServerMessage,
   TermAttachResult,
   TermCreateResult,
-} from "../shared/protocol.js";
+} from "@deyin/contract/web";
 
 const OAUTH_ISSUER = (import.meta.env.VITE_DEYIN_OAUTH_ISSUER as string) ?? "http://localhost:8788";
 const CLIENT_ID = (import.meta.env.VITE_DEYIN_CLIENT_ID as string) ?? "deyin-desktop";
@@ -94,6 +95,7 @@ class HostSocket {
   private dataHandlers = new Set<(e: { id: string; data: string }) => void>();
   private exitHandlers = new Set<(e: { id: string; exitCode: number }) => void>();
   private rootHandlers = new Set<(root: string | null) => void>();
+  private agentEventHandlers = new Set<(envelope: AgentEventEnvelope) => void>();
   /** Sandbox root assigned by the host after auth; kept across transient disconnects. */
   workspaceRoot: string | null = null;
 
@@ -220,6 +222,9 @@ class HostSocket {
       case "term.exit":
         this.exitHandlers.forEach((h) => h({ id: msg.termId, exitCode: msg.exitCode }));
         break;
+      case "agent.event":
+        this.agentEventHandlers.forEach((h) => h(msg.envelope));
+        break;
     }
   }
 
@@ -249,6 +254,10 @@ class HostSocket {
   onExit(cb: (e: { id: string; exitCode: number }) => void): () => void {
     this.exitHandlers.add(cb);
     return () => this.exitHandlers.delete(cb);
+  }
+  onAgentEvent(cb: (envelope: AgentEventEnvelope) => void): () => void {
+    this.agentEventHandlers.add(cb);
+    return () => this.agentEventHandlers.delete(cb);
   }
 }
 
@@ -281,7 +290,16 @@ function writeLocal<T>(key: string, value: T): void {
 type StoredProvider = StoredProviderBase;
 
 function readProviders(): StoredProvider[] {
-  return readLocal<StoredProvider[]>("deyin.providers", DEFAULT_PROVIDERS).map((p) => ({
+  // Merge newly shipped presets once per seed version (same rule as desktop).
+  const merged = mergePresetProviders(
+    readLocal<StoredProvider[]>("deyin.providers", DEFAULT_PROVIDERS),
+    readLocal<number | undefined>("deyin.providerSeedVersion", undefined),
+  );
+  if (localStorage.getItem("deyin.providers")) {
+    writeLocal("deyin.providers", merged.providers);
+    writeLocal("deyin.providerSeedVersion", merged.seedVersion);
+  }
+  return merged.providers.map((p) => ({
     ...p,
     enabled: p.enabled ?? true,
     apiFormat: p.apiFormat ?? "chat-completions",
@@ -524,6 +542,7 @@ export function createBrowserTransport(): DeyinApi {
     },
     plugins: {
       list: async () => [],
+      kernelStatus: async () => [],
       catalog: async () => {
         try {
           const res = await fetch("https://raw.githubusercontent.com/DeYinAI/registry/main/registry.json", {
@@ -556,13 +575,44 @@ export function createBrowserTransport(): DeyinApi {
       onStatus: () => () => undefined,
     },
     agent: {
-      // The renderer only uses the agent runtime on the desktop platform.
-      start: async () => undefined,
-      stop: () => undefined,
-      approve: () => undefined,
-      answerQuestion: () => undefined,
+      // Full agent runtime: runs agent-core inside the session sandbox on the
+      // host-server; events stream back over the same WebSocket. Provider keys
+      // are read from this browser's storage and sent per run, never persisted.
+      start: async (options: AgentStartOptions) => {
+        const provider = readProviders().find((p) => p.id === options.providerId);
+        const keys = readKeys();
+        const primary = !provider || provider.kind === "primary";
+        const token = primary
+          ? ((await oauth.getAccessToken().catch(() => null)) ?? "")
+          : (keys[provider.id] ?? (provider.local ? "" : ""));
+        if (!token && !primary && !provider?.local) {
+          throw new Error(`No API key stored for ${provider?.name ?? options.providerId}.`);
+        }
+        await host.invoke((id: number) => ({
+          type: "agent.start",
+          id,
+          threadId: options.threadId,
+          prompt: options.prompt,
+          model: options.model,
+          thinking: options.thinking,
+          approvalMode: options.approvalMode,
+          mode: options.mode,
+          history: options.history,
+          provider: {
+            baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
+            token,
+            apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
+            authHeader: provider?.authHeader,
+          },
+        }));
+      },
+      stop: (threadId) => host.fireAndForget({ type: "agent.stop", threadId }),
+      approve: (requestId, decision) =>
+        host.fireAndForget({ type: "agent.approve", requestId, decision }),
+      answerQuestion: (requestId, answers) =>
+        host.fireAndForget({ type: "agent.answer", requestId, answers }),
       disposeShell: () => undefined,
-      onEvent: () => () => undefined,
+      onEvent: (cb: (envelope: AgentEventEnvelope) => void) => host.onAgentEvent(cb),
     },
     context: {
       search: async () => [],
@@ -574,15 +624,6 @@ export function createBrowserTransport(): DeyinApi {
       reject: async () => false,
       approveAll: async () => 0,
       rejectAll: async () => 0,
-    },
-    git: {
-      status: async () => null,
-      diff: async () => "",
-      stage: async () => undefined,
-      commit: async () => "",
-      branches: async () => [],
-      checkout: async () => undefined,
-      log: async () => [],
     },
     security: {
       listFindings: async () => null,
@@ -599,16 +640,6 @@ export function createBrowserTransport(): DeyinApi {
       onEnsure: () => () => undefined,
       onTabCommand: () => () => undefined,
       onActive: () => () => undefined,
-    },
-    computerUse: {
-      getAllowlist: async () => [],
-      setAllowlist: async () => undefined,
-      listApps: async () => [],
-      onActive: () => () => undefined,
-    },
-    chrome: {
-      onConsentRequest: () => () => undefined,
-      respondConsent: () => undefined,
     },
     visualize: {
       read: async () => "",
@@ -865,56 +896,6 @@ export function createBrowserTransport(): DeyinApi {
         else if (level === "warn") console.warn("[deyin]", message);
         else console.info("[deyin]", message);
       },
-    },
-    automations: {
-      list: async () => [],
-      create: async (): Promise<never> => {
-        throw new Error("Automations are not available in the web app.");
-      },
-      update: async (): Promise<never> => {
-        throw new Error("Automations are not available in the web app.");
-      },
-      remove: async () => [],
-      toggle: async () => [],
-      run: async (): Promise<never> => {
-        throw new Error("Automations are not available in the web app.");
-      },
-      stop: () => undefined,
-      runs: async () => [],
-      onEvent: () => () => undefined,
-      onRunFinished: () => () => undefined,
-    },
-    sshHosts: {
-      list: async () => [],
-      add: async () => [],
-      update: async () => [],
-      remove: async () => [],
-      setCredentials: async () => [],
-      test: async () => ({ ok: false, message: "SSH hosts are not available in the web app." }),
-      pinFingerprint: async () => [],
-      importKey: async () => null,
-    },
-    agent: {
-      metrics: async () => emptyAdvanced agentMetrics(),
-      weeklyReport: async () => ({
-        generatedAt: new Date().toISOString(),
-        weekBucket: emptyAdvanced agentMetrics().weekBucket,
-        snapshot: emptyAdvanced agentMetrics(),
-        notes: ["Advanced agent metrics are not available in the web app."],
-      }),
-      diagnostics: async () => ({
-        cache: {
-          prefixShape: null,
-          invalidationHistory: [],
-          sessionHit: 0,
-          sessionMiss: 0,
-          hitRate: 0,
-        },
-        coordinator: [],
-        fleet: [],
-        evidence: [],
-      }),
-      clearThreadCache: async () => undefined,
     },
     beta: {
       submitFeedback: async () => ({ ok: false }),
