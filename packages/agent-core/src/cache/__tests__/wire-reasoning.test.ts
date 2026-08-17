@@ -14,7 +14,7 @@ test("tool-call history replays include reasoning_content", () => {
     { role: "tool", toolCallId: "c1", toolName: "read", content: "export const x = 1;" },
   ];
 
-  const wire = toWireMessages(messages, { provider: "openai" });
+  const wire = toWireMessages(messages, { provider: "deepseek" });
   assert.deepEqual(wire[0], {
     role: "assistant",
     content: null,
@@ -34,7 +34,7 @@ test("missing reasoning sends empty string on tool-call turns (graceful degradat
     },
   ];
 
-  const wire = buildWireMessages(messages, { provider: "openai" }).messages;
+  const wire = buildWireMessages(messages, { provider: "openference", model: "deepseek-chat" }).messages;
   assert.equal((wire[0] as { reasoning_content?: string }).reasoning_content, "");
 });
 

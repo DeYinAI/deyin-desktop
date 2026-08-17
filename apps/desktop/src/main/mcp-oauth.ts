@@ -14,7 +14,7 @@ import {
   type StoredOAuthClientInformation,
   type StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
-import type { McpAuthResult, McpAuthStatus, McpModuleManifest } from "../shared/types.js";
+import type { McpAuthResult, McpAuthStatus, McpModuleManifest } from "@deyin/contract";
 import { assertModuleId } from "./mcp-modules.js";
 import { mcpOAuthCallbackStateValid } from "./mcp-oauth-state.js";
 

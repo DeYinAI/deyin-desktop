@@ -65,16 +65,16 @@ jobs:
           - { name: linux, labels: [self-hosted, Linux, X64] }
     runs-on: ${{ matrix.labels }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       # pnpm version comes from the "packageManager" field in package.json;
       # specifying it here too makes action-setup fail with a version conflict.
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: ${{ matrix.name != 'windows' && 'pnpm' || '' }}
+          cache: pnpm
 
       # No Python/node-gyp needed: electron-builder skips native rebuilds
       # (npmRebuild: false) and node-pty ships N-API prebuilds for win32;
@@ -89,17 +89,6 @@ jobs:
       # from the branding SVG before packaging. Uses root devDeps sharp + png-to-ico.
       - name: Generate app icons
         run: pnpm --filter @deyin/branding make-icons
-
-      - uses: actions/setup-dotnet@v5
-        if: matrix.name == 'windows'
-        with:
-          dotnet-version: "8.0.x"
-        env:
-          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
-
-      - name: Publish computer-use native host
-        if: matrix.name == 'windows'
-        run: dotnet publish packages/computer-use-host/native -c Release -r win-x64 --self-contained false
 
       # Signing (fill in secrets to enable):
       #   macOS:   CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
@@ -162,11 +151,11 @@ jobs:
       contents: write
     runs-on: [self-hosted, Linux, X64]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm

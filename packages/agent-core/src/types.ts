@@ -1,5 +1,3 @@
-import type { EvidenceLedger } from "./evidence/ledger.js";
-
 /** One tool invocation requested by the model (arguments is the raw JSON string). */
 export interface AgentToolCall {
   id: string;
@@ -47,7 +45,9 @@ export interface TodoItem {
   id: string;
   content: string;
   status: "pending" | "in_progress" | "completed" | "cancelled";
+  /** Delivery mode: how to verify this step (required before mutations). */
   acceptanceCriteria?: string;
+  /** Delivery mode: set by complete_step after verified sign-off. */
   signedOff?: boolean;
   signOffNotes?: string;
 }
@@ -99,18 +99,6 @@ export interface ToolContext {
   onPlanCreated?: (plan: PlanArtifact) => void;
   /** Host bridge for EnterPlanMode / ExitPlanMode / SwitchMode. */
   onModeChange?: (change: ModeChangeRequest) => Promise<string>;
-  /** Evidence ledger for delivery mode verification tracking. */
-  evidenceLedger?: EvidenceLedger;
-  /** Callback fired when agent signs off on a completed step in delivery mode. */
-  onEvidenceSignOff?: (evidence: { stepId: string; verificationCommand?: string; diffSummary?: string; reviewNotes?: string }) => void;
-  /** Apply file mutation through review queue (desktop review mode). */
-  applyFileChange?: (request: { path: string; operation: string; before: string; after: string }) => Promise<"applied" | "rejected">;
-  /** Active goal text for report-goal-met tool. */
-  goalText?: string;
-  /** Callback when agent reports goal met/unmet in delivery mode. */
-  onGoalReport?: (report: { met: boolean; reason: string }) => void;
-  /** Wait for background jobs to complete. */
-  waitForJobs?: (jobIds: string[], timeoutMs: number) => Promise<Array<{ id: string; label: string; status: string; result?: string; error?: string; output?: string }>>;
   /** Skills discovered for this run (Skill tool). */
   skills?: DiscoveredSkill[];
   /** Session metadata for read_session_context. */
@@ -128,6 +116,35 @@ export interface ToolContext {
   ) => void;
   /** Background-memory bridge (remember / forget / memory tools). */
   memory?: MemoryBridge;
+  /**
+   * Desktop review mode: route file mutations through the pending-review queue
+   * instead of applying directly. Returns "rejected" when the user rejects.
+   */
+  applyFileChange?: (request: import("./tools/file-mutation.js").FileMutationRequest) => Promise<"applied" | "rejected">;
+  /** Active goal text for report_goal_met (goal mode). */
+  goalText?: string;
+  /** Fired when the model reports goal status. */
+  onGoalReport?: (report: { met: boolean; reason: string }) => void;
+  /** Delivery mode: evidence ledger tracking mutations and verifications. */
+  evidenceLedger?: import("./evidence/ledger.js").EvidenceLedger;
+  /** Delivery mode: fired on each complete_step sign-off. */
+  onEvidenceSignOff?: (signOff: {
+    stepId: string;
+    verificationCommand: string;
+    diffSummary: string;
+    reviewNotes?: string;
+  }) => void;
+  /** Collect background job results (task is_background / fleet). */
+  waitForJobs?: (jobIds: string[], blockUntilMs: number) => Promise<BackgroundJobResult[]>;
+}
+
+/** One collected background job result (wait tool). */
+export interface BackgroundJobResult {
+  id: string;
+  label: string;
+  status: string;
+  result?: string;
+  error?: string;
 }
 
 /** Host bridge over the durable memory store (remember/forget/memory tools). */
@@ -203,6 +220,12 @@ export interface ToolDefinition {
   tier: ToolPermissionTier;
   /** One-line human summary of a call, shown in permission prompts and tool cards. */
   summarize(args: Record<string, unknown>): string;
+  /**
+   * Structured context for UI tool cards, resolved the same way execute() would.
+   * Emitted on tool-start/tool-end so the renderer can show e.g. the working
+   * directory a bash call runs in.
+   */
+  meta?(args: Record<string, unknown>, ctx: ToolContext): { cwd?: string };
   /** Returns the tool result text (fed back to the model as a role:"tool" message). */
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }

@@ -5,9 +5,12 @@ import {
   type ContextSnapshot,
   type SystemPromptSections,
 } from "./context-usage.js";
+import type { EvidenceLedger } from "./evidence/ledger.js";
+import { EvidenceLedger as EvidenceLedgerClass, isMutationTool } from "./evidence/ledger.js";
+import { blockPrematureCompletion, checkMutationReadiness } from "./evidence/gates.js";
 import { OptimizationTracker, type OptimizationMetrics } from "./optimization.js";
 import { buildRecallSuffix } from "./recall.js";
-import type { PermissionEngine, PermissionResolver } from "./permissions.js";
+import type { PermissionDecision, PermissionEngine, PermissionResolver } from "./permissions.js";
 import { streamChatEvents } from "./stream.js";
 import type { ProviderApiFormat } from "./transports.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -35,15 +38,16 @@ export type AgentEvent =
   | { type: "text-delta"; delta: string }
   | { type: "reasoning-delta"; delta: string }
   | { type: "assistant-message"; message: AgentMessage }
-  | { type: "tool-start"; call: AgentToolCall; summary: string }
+  | { type: "tool-start"; call: AgentToolCall; summary: string; cwd?: string }
   | { type: "tool-delta"; call: AgentToolCall; delta: string }
-  | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean; fromCache?: boolean }
+  | { type: "tool-end"; call: AgentToolCall; result: string; ok: boolean; denied?: boolean; fromCache?: boolean; cwd?: string }
   | { type: "file-change"; change: FileChange }
   | { type: "todos"; todos: TodoItem[] }
   | { type: "usage"; usage: TokenUsage }
   | { type: "context-snapshot"; snapshot: ContextSnapshot }
   | { type: "optimization"; metrics: OptimizationMetrics }
   | { type: "compaction"; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
+  | { type: "evidence-gate"; code: string; message: string; toolName?: string }
   | { type: "done"; reason: AgentRunResult["reason"] };
 
 export interface AgentRunOptions {
@@ -97,6 +101,10 @@ export interface AgentRunOptions {
   promptCacheKey?: string;
   /** Structured system-prompt slices for Context Usage category accounting. */
   systemSections?: SystemPromptSections;
+  /** Delivery mode: enforce evidence gates (todos + acceptance criteria + sign-offs). */
+  evidenceGatesEnabled?: boolean;
+  /** Delivery mode: ledger recording mutations/verifications (created by the host when omitted). */
+  evidenceLedger?: EvidenceLedger;
 }
 
 export interface AgentRunResult {
@@ -129,6 +137,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const todos = opts.todos ?? [];
   const tracker = new OptimizationTracker();
   const promptCacheKey = opts.promptCacheKey ?? `deyin-agent:${opts.model}:${opts.cwd}`;
+  const evidenceGates = opts.evidenceGatesEnabled === true;
+  const ledger = opts.evidenceLedger ?? (evidenceGates ? new EvidenceLedgerClass() : undefined);
 
   const ctx: ToolContext = {
     cwd: opts.cwd,
@@ -138,6 +148,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     onFileChanged: (change) => emit({ type: "file-change", change }),
     shell: opts.shell,
     messages: opts.messages,
+    evidenceLedger: ledger,
     ...opts.toolContext,
   };
 
@@ -182,7 +193,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     });
 
     const token = await opts.getToken();
-    if (!token) throw new AuthRequiredError();
+    // Empty string is valid: local providers (Ollama) need no key.
+    if (token === null || token === undefined) throw new AuthRequiredError();
 
     emit({ type: "step-start", step });
 
@@ -246,7 +258,19 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     emit({ type: "assistant-message", message: assistant });
     if (content) finalText = content;
 
-    if (toolCalls.length === 0) return finish("completed", step);
+    if (toolCalls.length === 0) {
+      // Delivery mode: reject premature "all done" claims until every step is
+      // signed off. Append the gate message as a user turn and keep the loop going.
+      if (evidenceGates && ledger) {
+        const gate = blockPrematureCompletion(content, todos, ledger);
+        if (!gate.ok) {
+          emit({ type: "evidence-gate", code: gate.code, message: gate.message });
+          append({ role: "user", content: `Delivery gate (${gate.code}): ${gate.message} Continue working the steps; do not repeat this summary.` });
+          continue;
+        }
+      }
+      return finish("completed", step);
+    }
 
     // Run same-step tool calls concurrently (Cursor-style). Results are appended
     // in the original tool_calls order so the transcript stays valid for providers
@@ -256,7 +280,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         append(toolResult(call, "Aborted by the user before execution."));
       }
     } else {
-      const outcomes = await Promise.all(toolCalls.map((call) => executeCall(call, opts, ctx, emit, tracker)));
+      const outcomes = await Promise.all(toolCalls.map((call) => executeCall(call, opts, ctx, emit, tracker, ledger)));
       for (let i = 0; i < toolCalls.length; i++) {
         append(toolResult(toolCalls[i]!, outcomes[i]!));
       }
@@ -287,6 +311,7 @@ async function executeCall(
   ctx: ToolContext,
   emit: (event: AgentEvent) => void,
   tracker: OptimizationTracker,
+  ledger?: EvidenceLedger,
 ): Promise<string> {
   const tool = opts.tools.get(call.name);
   if (!tool) {
@@ -307,7 +332,19 @@ async function executeCall(
   }
 
   const summary = safeSummary(tool.summarize, args, call.name);
-  emit({ type: "tool-start", call, summary });
+  const cwd = safeMeta(tool.meta, args, ctx);
+  emit({ type: "tool-start", call, summary, cwd });
+
+  // Delivery mode: block mutations until todos carry acceptance criteria.
+  if (opts.evidenceGatesEnabled && ledger && isMutationTool(call.name) && tool.tier !== "read") {
+    const gate = checkMutationReadiness(ctx.todos);
+    if (!gate.ok) {
+      emit({ type: "evidence-gate", code: gate.code, message: gate.message, toolName: call.name });
+      const msg = `ERROR: delivery gate (${gate.code}): ${gate.message}`;
+      emit({ type: "tool-end", call, result: msg, ok: false, denied: true });
+      return msg;
+    }
+  }
 
   // Lifecycle hooks run before the permission prompt so a blocking hook never
   // bothers the user with a dialog for an action that would be vetoed anyway.
@@ -326,7 +363,14 @@ async function executeCall(
 
   let action = opts.permissions.actionFor(tool);
   if (action === "ask") {
-    const decision = await opts.resolvePermission({ toolName: tool.name, tier: tool.tier, args, summary });
+    let decision: PermissionDecision;
+    try {
+      decision = await opts.resolvePermission({ toolName: tool.name, tier: tool.tier, args, summary });
+    } catch {
+      // A crashed/rejected dialog must not tear down the run with a dangling
+      // assistant tool_calls message in the transcript — treat it as a denial.
+      decision = "deny";
+    }
     if (decision === "allow-always") {
       opts.permissions.grantForSession(tool.name);
       action = "allow";
@@ -337,6 +381,7 @@ async function executeCall(
   if (action === "deny") {
     const msg = "Denied: the user rejected this tool call. Do not retry it; adjust your approach or ask the user.";
     emit({ type: "tool-end", call, result: msg, ok: false, denied: true });
+    ledger?.observeToolCall(call.name, args, false);
     return msg;
   }
 
@@ -358,13 +403,15 @@ async function executeCall(
       onOutput: (delta) => emit({ type: "tool-delta", call, delta }),
     };
     const result = await tool.execute(args, callCtx);
-    emit({ type: "tool-end", call, result, ok: true });
+    emit({ type: "tool-end", call, result, ok: true, cwd });
+    ledger?.observeToolCall(call.name, args, true);
     if (opts.storeToolCache) await opts.storeToolCache(call, args, result).catch(() => undefined);
     if (opts.afterTool) await opts.afterTool(call, result, true).catch(() => undefined);
     return result;
   } catch (err) {
     const msg = `ERROR: ${err instanceof Error ? err.message : String(err)}`;
-    emit({ type: "tool-end", call, result: msg, ok: false });
+    emit({ type: "tool-end", call, result: msg, ok: false, cwd });
+    ledger?.observeToolCall(call.name, args, false);
     if (opts.afterTool) await opts.afterTool(call, msg, false).catch(() => undefined);
     return msg;
   }
@@ -379,5 +426,18 @@ function safeSummary(
     return summarize(args) || fallback;
   } catch {
     return fallback;
+  }
+}
+
+function safeMeta(
+  meta: ((args: Record<string, unknown>, ctx: ToolContext) => { cwd?: string }) | undefined,
+  args: Record<string, unknown>,
+  ctx: ToolContext,
+): string | undefined {
+  if (!meta) return undefined;
+  try {
+    return meta(args, ctx).cwd;
+  } catch {
+    return undefined;
   }
 }

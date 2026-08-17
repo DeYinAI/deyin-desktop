@@ -243,6 +243,9 @@ export const bashTool: ToolDefinition = {
     required: ["command"],
   },
   summarize: (args) => String(args.command ?? "").split("\n")[0]?.slice(0, 120) ?? "",
+  meta: (args, ctx) => ({
+    cwd: asOptionalString(args.cwd) ? resolvePath(ctx.cwd, String(args.cwd)) : ctx.cwd,
+  }),
   async execute(args, ctx: ToolContext): Promise<string> {
     const command = asString(args.command, "command");
     const cwd = asOptionalString(args.cwd) ? resolvePath(ctx.cwd, String(args.cwd)) : ctx.cwd;

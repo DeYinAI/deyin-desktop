@@ -10,7 +10,6 @@ import {
   appendHookContext,
   buildSystemPromptParts,
   connectMcpDefinitions,
-  createBuiltinRegistry,
   createCodebaseSearchTool,
   createTaskTool,
   estimateContextUsage,
@@ -39,17 +38,28 @@ import {
 } from "@deyin/agent-core";
 import {
   bindAgentCacheHooks,
-  createOptimizationPlugin,
+  Optimization,
+  optimizationPluginDef,
   type OptimizationPlugin,
 } from "@deyin/optimization-plugin";
-import type { ProviderApiFormat } from "@deyin/agent-core";
-import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ChatMode, IndexSearchHit } from "../shared/types.js";
-import { truncateToolResultUi } from "../shared/types.js";
-import { CH } from "../shared/ipc.js";
-import type { DeyinConfig } from "../shared/config.js";
+import { PluginKernel } from "@deyin/kernel";
+import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
+import { createDesktopProfile } from "@deyin/bundle-desktop-app";
+import { buildToolRegistry, Tools } from "@deyin/tools";
+import type { OAuthClientProvider, PermissionEngineOptions, PermissionRule, ProviderApiFormat } from "@deyin/agent-core";
+import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ChatMode, IndexSearchHit } from "@deyin/contract";
+import { truncateToolResultUi } from "@deyin/contract";
+import { CH } from "@deyin/contract";
+import type { DeyinConfig } from "@deyin/contract";
 import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
 import type { CapabilityService } from "./capabilities.js";
+import type { VisualizeService } from "./visualize.js";
+import { PendingReviewQueue } from "./pending-review.js";
+import { registerBundledHostTools } from "./plugin-host.js";
+import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
+import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
+import { dialog } from "electron";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Files bigger than this ship to the renderer without diff content. */
@@ -58,6 +68,13 @@ const FILE_DIFF_CAP = 400_000;
 /** Short stable hash for response-cache keying (model|mode|system prompt). */
 function shortHash(text: string): string {
  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+/** Ping every window that workspace files changed (git/diff refresh). */
+function broadcastGitChanged(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(CH.gitChanged, undefined);
+  }
 }
 
 interface ThreadSession {
@@ -79,6 +96,8 @@ interface ThreadSession {
   shellUnavailable?: boolean;
   /** True after the renderer has been told about shell.id. */
   shellAnnounced?: boolean;
+  /** True after the 50% context soft warning fired for this session. */
+  softWarningSent?: boolean;
 }
 
 interface ActiveRun {
@@ -94,9 +113,16 @@ export interface AgentHostOptions {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
+  visualize?: VisualizeService;
   terminals: TerminalManager;
   /** Background memory store (remember/forget tools + recall). */
   memory: MemoryStore;
+  /** Shared change-review queue (review mode) — also surfaced over IPC. */
+  review: PendingReviewQueue;
+  /** Native OAuth provider store for MCP modules (token-backed connections). */
+  mcpAuth?: { getProvider(serverName: string): OAuthClientProvider | undefined };
+  /** Workspace trust decisions (gates hooks.json / mcp.json execution). */
+  trust: WorkspaceTrust;
   getWorkspaceRoot: () => string | null;
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   /** Context window for the model, when known (drives compaction). */
@@ -110,7 +136,6 @@ export interface AgentHostOptions {
  */
 export class DesktopAgentHost {
   private readonly sessions = new Map<string, ThreadSession>();
-  private readonly threadToSession = new Map<string, string>();
   private readonly active = new Map<string, ActiveRun>();
   private readonly pendingPermissions = new Map<
     string,
@@ -126,6 +151,8 @@ export class DesktopAgentHost {
   /** Caps how many task-tool subagent runs execute in parallel (settings.subagentConcurrency). */
   private readonly subagentLimiter = new Semaphore(() => this.opts.settings.get().subagentConcurrency);
   private optimizationPlugin: OptimizationPlugin | null = null;
+  /** The desktop plugin kernel: tools/llm seams + the lazy optimization plugin. */
+  private kernelPromise: Promise<PluginKernel> | null = null;
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   private optimizationPluginLoadError: string | null = null;
   private optimizationPluginLoadErrorNotified = false;
@@ -134,21 +161,52 @@ export class DesktopAgentHost {
     this.store = new SessionStore(join(app.getPath("userData"), "sessions"));
   }
 
+  /**
+   * The desktop kernel boots once from bundle:base + the desktop profile:
+   * tool families and llm adapters activate eagerly; optimization stays lazy
+   * until its setting flips it on.
+   */
+  private ensureKernel(): Promise<PluginKernel> {
+    this.kernelPromise ??= (async () => {
+      const packagedModelDir = join(process.resourcesPath, "optimization-models");
+      const kernel = registerBasePlugins(
+        new PluginKernel({
+          env: {
+            app: "desktop",
+            platform: process.platform,
+            userDataPath: app.getPath("userData"),
+          },
+        }),
+      );
+      const statuses = await kernel.start([
+        bundleBase,
+        createDesktopProfile({
+          userDataPath: app.getPath("userData"),
+          packagedModelDir: existsSync(packagedModelDir) ? packagedModelDir : undefined,
+        }),
+      ]);
+      for (const failed of statuses.filter((s) => s.state === "failed")) {
+        console.warn(`[deyin] plugin "${failed.name}" failed to activate: ${failed.error}`);
+      }
+      return kernel;
+    })();
+    return this.kernelPromise;
+  }
+
   private async ensureOptimizationPlugin(): Promise<OptimizationPlugin | null> {
     const settings = this.opts.settings.get();
+    const kernel = await this.ensureKernel();
     if (!settings.optimizationPluginEnabled) {
-      if (this.optimizationPlugin) {
-        this.optimizationPlugin.dispose();
-        this.optimizationPlugin = null;
+      const status = kernel.status().find((s) => s.name === optimizationPluginDef.name);
+      if (status && status.state !== "disposed") {
+        await kernel.disposePlugin(optimizationPluginDef.name);
       }
+      this.optimizationPlugin = null;
       this.optimizationPluginLoadError = null;
       this.optimizationPluginLoadErrorNotified = false;
       return null;
     }
     if (this.optimizationPlugin) {
-      this.optimizationPlugin.runtime.config.enableToolCache = settings.optimizationToolCache;
-      this.optimizationPlugin.runtime.config.enableResponseCache = settings.optimizationResponseCache;
-      this.optimizationPlugin.setSimilarityThreshold(settings.optimizationSimilarityThreshold);
       return this.optimizationPlugin;
     }
     // After a failed load, do not re-init on every run (spam + cost). Clear by toggling the setting off/on.
@@ -158,15 +216,11 @@ export class DesktopAgentHost {
     if (!this.optimizationPluginLoading) {
       this.optimizationPluginLoading = (async () => {
         try {
-          const dataDir = join(app.getPath("userData"), "plugins", "optimization");
-          const packagedModelDir = join(process.resourcesPath, "optimization-models");
-          const plugin = await createOptimizationPlugin({
-            dataDir,
-            packagedModelDir: existsSync(packagedModelDir) ? packagedModelDir : undefined,
-            enableToolCache: settings.optimizationToolCache,
-            enableResponseCache: settings.optimizationResponseCache,
-            similarityThreshold: settings.optimizationSimilarityThreshold,
-          });
+          const status = await kernel.activatePlugin(optimizationPluginDef.name);
+          if (status.state === "failed") {
+            throw new Error(status.error ?? "optimization plugin failed to activate");
+          }
+          const plugin = kernel.get(Optimization);
           this.optimizationPlugin = plugin;
           this.optimizationPluginLoadError = null;
           this.optimizationPluginLoadErrorNotified = false;
@@ -182,6 +236,11 @@ export class DesktopAgentHost {
       })();
     }
     return this.optimizationPluginLoading;
+  }
+
+  /** Resolves the desktop kernel (creating it on demand) for diagnostics. */
+  async kernelReady(): Promise<PluginKernel> {
+    return this.ensureKernel();
   }
 
   private send(threadId: string, event: AgentUiEvent): void {
@@ -266,8 +325,16 @@ export class DesktopAgentHost {
     return shell;
   }
 
+  /** Abort every active run (app quit). Denies pending prompts, closes shells below. */
+  stopAll(): void {
+    for (const threadId of [...this.active.keys()]) this.stop(threadId);
+  }
+
   /** Dispose the persistent shell for a thread (e.g. thread archived). */
   disposeShell(threadId: string): void {
+    // Archiving ends the thread: any queued review change must not survive to a
+    // late Approve that would write to disk after the thread is gone.
+    this.opts.review.clearThread(threadId);
     const session = this.sessions.get(threadId);
     if (!session) return;
     // Invalidate in-flight createShell without clearing shellCreating (keeps mutex).
@@ -282,19 +349,6 @@ export class DesktopAgentHost {
 
   disposeAllShells(): void {
     for (const threadId of this.sessions.keys()) this.disposeShell(threadId);
-  }
-
-  /** Stop in-flight runs and tear down persistent shells (app quit). */
-  shutdown(): void {
-    for (const threadId of [...this.active.keys()]) this.stop(threadId);
-    this.disposeAllShells();
-    if (this.optimizationPlugin) {
-      this.optimizationPlugin.dispose();
-      this.optimizationPlugin = null;
-    }
-    this.optimizationPluginLoading = null;
-    this.optimizationPluginLoadError = null;
-    this.optimizationPluginLoadErrorNotified = false;
   }
 
   isRunning(threadId: string): boolean {
@@ -369,16 +423,52 @@ export class DesktopAgentHost {
 
   private async run(options: AgentStartOptions, signal: AbortSignal, active: ActiveRun): Promise<void> {
     const cwd = this.opts.getWorkspaceRoot() ?? app.getPath("home") ?? process.cwd();
-    const caps = await this.opts.capabilities.enabledForRun();
+    let caps = await this.opts.capabilities.enabledForRun();
     const settings = this.opts.settings.get();
 
+    // Workspace trust gate: a cloned repo's hooks.json / mcp.json define shell
+    // commands. They run only after a one-time explicit trust decision; an
+    // untrusted workspace's hooks and MCP servers are skipped for this run.
+    const root = this.opts.getWorkspaceRoot();
+    if (root && workspaceHasDeyinArtifacts(root) && !this.opts.trust.isTrusted(root)) {
+      let trusted = false;
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+      if (win) {
+        const choice = dialog.showMessageBoxSync(win, {
+          type: "warning",
+          title: "Trust this workspace?",
+          message: `Trust "${root}"?`,
+          detail:
+            "This workspace contains Deyin configuration (.deyin/hooks.json or .deyin/mcp.json) that can run " +
+            "commands when you send a message. Trust it only if you trust where this code came from.",
+          buttons: ["Trust workspace and continue", "Skip workspace config"],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        trusted = choice === 0;
+      }
+      if (trusted) {
+        this.opts.trust.trust(root);
+        this.opts.capabilities.invalidate();
+        caps = await this.opts.capabilities.enabledForRun();
+      } else {
+        caps = {
+          ...caps,
+          hooks: caps.hooks.filter((h) => h.source !== "workspace"),
+          mcpServers: caps.mcpServers.filter((s) => s.source !== "workspace"),
+        };
+      }
+    }
+
     // Provider routing: primary = Openference OAuth; custom = stored key.
+    // Local providers (Ollama) run without a key: pass an empty token through.
     const provider = this.opts.agents.listProviders(true).find((p) => p.id === options.providerId);
     let apiBaseUrl = this.opts.config.apiBaseUrl;
     let getToken: () => Promise<string | null> = () => this.opts.auth.getAccessToken();
     if (provider && provider.kind === "custom") {
       apiBaseUrl = provider.baseUrl ?? apiBaseUrl;
-      getToken = () => Promise.resolve(this.opts.agents.getKey(provider.id));
+      getToken = () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null));
     }
 
     // Command / skill expansion (/name args).
@@ -393,14 +483,23 @@ export class DesktopAgentHost {
       }
     }
 
-    // Tools: built-ins + semantic search + browser + web search + subagents + MCP.
-    const registry = createBuiltinRegistry();
+    // Tools: kernel catalog (bundle:base families) + semantic search + bundled
+    // host modules + web search + subagents + MCP.
+    const kernel = await this.ensureKernel();
+    const registry = buildToolRegistry(kernel.get(Tools));
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
-    if (settings.browserControlEnabled && caps.browserEnabled) {
-      for (const tool of this.opts.browser.tools()) registry.register(tool);
-    }
+    // Bundled host modules (browser/visualize) register their
+    // own tools behind their settings + capability toggles, and hand back the
+    // extra ask-tier permission rules (e.g. computer-use confirmation).
+    const hostRules = await registerBundledHostTools(registry, this.opts.agents, this.opts.settings, {
+      browser: this.opts.browser,
+      visualize: this.opts.visualize,
+    }).catch((err) => {
+      console.warn("[deyin] bundled host tools failed to register:", err);
+      return [] as PermissionRule[];
+    });
     const subagents = caps.subagents;
     if (subagents.length > 0) {
       registry.register(
@@ -408,17 +507,14 @@ export class DesktopAgentHost {
           subagents,
           runSubagent: (def, subPrompt, subSignal) =>
             this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subSignal),
-          onBackgroundDone: (def, result) => {
-            this.send(options.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
-          },
         }),
       );
     }
-    const mcpConnections: McpConnection[] = await connectMcpDefinitions(
-      caps.mcpServers.map((def) => this.opts.capabilities.resolvePluginVariables(def)),
-      registry,
-      { onError: () => undefined },
-    );
+    // Connected lazily inside the run's try/finally so a failure between here
+    // and the finally cannot leak spawned MCP child processes.
+    const mcpConnections: McpConnection[] = [];
+    // OAuth-backed MCP modules use the stored native-OAuth tokens.
+    const mcpAuth = this.opts.mcpAuth;
 
     // Hooks (custom only, from hooks.json files).
     const hooks = caps.hooks;
@@ -428,17 +524,33 @@ export class DesktopAgentHost {
     session.messages.push({ role: "user", content: prompt });
     this.store.append(session.sessionId, { role: "user", content: prompt });
 
+    // Goal mode: the model must be told the objective or report_goal_met can
+    // never fire. Injected as the last pre-request message for salience.
+    if (options.goalText && options.goalText.trim().length > 0) {
+      const goalMsg: AgentMessage = {
+        role: "system",
+        content:
+          `<system_reminder>\nActive goal for this task: ${options.goalText.trim()}\n` +
+          `Work toward this goal and nothing else. When — and only when — the objective is verifiably satisfied, ` +
+          `call report_goal_met with met=true and a short reason. If it is not yet satisfied, keep working; ` +
+          `call report_goal_met with met=false only to report a blocker or that you cannot verify it.\n</system_reminder>`,
+      };
+      session.messages.push(goalMsg);
+      this.store.append(session.sessionId, goalMsg);
+    }
+
     // Two independent axes: the access level (approvalMode chip) provides the base
     // rules; the composer mode's own restrictions come last so plan/ask stay
-    // read-only even under "full access". autoAllow (full access) converts every
-    // "ask" into "allow" in any mode — no approval dialogs — while the mode
-    // agent's explicit denies still win. skipAll is reserved for CLI --yes / automations.
-    const modeAgent = agentForMode(options.mode);
-    const permissions = new PermissionEngine({
-      agentRules: rulesForApprovalMode(options.approvalMode),
-      configRules: modeAgent.permissions ?? [],
-      autoAllow: options.approvalMode === "full-access",
+    // read-only even under "full access". skipAll only ever applies to agent mode.
+    // computer_*/chrome_navigate stay behind a prompt even under skipAll.
+    const buildPermissionOptions = (mode: ChatMode): PermissionEngineOptions => ({
+      agentRules: [...rulesForApprovalMode(options.approvalMode), ...hostRules],
+      configRules: agentForMode(mode).permissions ?? [],
+      skipAll: options.approvalMode === "full-access" && mode === "agent",
+      neverSkipTools: NEVER_SKIP_TOOLS,
+      neverSkipPrefixes: NEVER_SKIP_PREFIXES,
     });
+    const permissions = new PermissionEngine(buildPermissionOptions(options.mode));
 
     // Persistent PTY shell for bash: created lazily on the first bash tool call
     // (after approval). If node-pty is missing, bash falls back to one-shot spawn.
@@ -461,6 +573,16 @@ export class DesktopAgentHost {
     };
 
     try {
+ mcpConnections.push(
+   ...(await connectMcpDefinitions(
+     caps.mcpServers.map((def) => this.opts.capabilities.resolvePluginVariables(def)),
+     registry,
+     {
+       onError: () => undefined,
+       ...(mcpAuth ? { getAuthProvider: (name) => mcpAuth.getProvider(name) } : {}),
+     },
+   )),
+ );
 const optPlugin = await this.ensureOptimizationPlugin();
  if (
  this.opts.settings.get().optimizationPluginEnabled &&
@@ -496,7 +618,7 @@ const optPlugin = await this.ensureOptimizationPlugin();
  historyHash,
  };
  const responseCacheWorkspace = `${cwd}|${options.threadId}`;
- if (optPlugin && settings.optimizationResponseCache) {
+ if (optPlugin) {
  const cached = await optPlugin.beforeAgentRun(optPlugin.runtime, prompt, responseCacheWorkspace, responseCacheContext);
  if (cached.hit) {
  // Claim completion before side effects so stop() cannot interleave an aborted done
@@ -517,12 +639,13 @@ const optPlugin = await this.ensureOptimizationPlugin();
      messages: session.messages,
      systemSections: session.systemSections,
      tools: registry.toWire(),
-     wire: {
-       enableCompression: settings.optimizationCompression,
-       compressionMode: settings.optimizationCompressionMode,
-       enablePromptCaching: settings.optimizationPromptCaching,
-       provider: provider?.kind === "custom" ? "openai" : "openference",
-     },
+        wire: {
+          enableCompression: true,
+          compressionMode: "balanced",
+          enablePromptCaching: true,
+          provider: provider?.kind === "custom" ? "openai" : "openference",
+          model: options.model,
+        },
      cached: true,
    }),
  });
@@ -559,6 +682,29 @@ return;
         cwd,
       };
 
+      // Review mode: write/edit/delete route through the shared queue and wait
+      // for user approval before touching disk; otherwise apply directly.
+      const reviewEnabled = this.opts.settings.get().reviewMode === "on";
+      const applyFileChange = (request: import("@deyin/agent-core").FileMutationRequest) => {
+        const wcId = BrowserWindow.getFocusedWindow()?.webContents.id ?? BrowserWindow.getAllWindows()[0]?.webContents.id ?? 0;
+        return this.opts.review.request(
+          options.threadId,
+          request,
+          reviewEnabled,
+          wcId,
+          (change) => this.send(options.threadId, { type: "pending-change", change }),
+          (change) => {
+            this.send(options.threadId, {
+              type: "file-change",
+              path: change.path,
+              before: change.before,
+              after: change.after,
+            });
+            broadcastGitChanged();
+          },
+        );
+      };
+
       const result = await runAgent({
         apiBaseUrl,
         getToken,
@@ -577,10 +723,30 @@ return;
         shell: shellBridge,
         systemSections: session.systemSections,
         memory: settings.memoryEnabled ? this.opts.memory : undefined,
+        evidenceGatesEnabled: options.mode === "delivery",
         toolContext: {
           skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
           sessionMeta: liveMeta,
           memory: settings.memoryEnabled ? this.opts.memory : undefined,
+          applyFileChange,
+          goalText: options.goalText,
+          onGoalReport: (report) => {
+            this.send(options.threadId, {
+              type: "goal-updated",
+              goal: report.met
+                ? { text: options.goalText ?? "", status: "met", reportedAt: new Date().toISOString(), reason: report.reason }
+                : { text: options.goalText ?? "", status: "active", reportedAt: new Date().toISOString(), reason: report.reason },
+            });
+          },
+          onEvidenceSignOff: (signOff) => {
+            this.send(options.threadId, {
+              type: "evidence-sign-off",
+              stepId: signOff.stepId,
+              verificationCommand: signOff.verificationCommand,
+              diffSummary: signOff.diffSummary,
+              reviewNotes: signOff.reviewNotes,
+            });
+          },
           resolveInteraction: (request) => this.resolveInteraction(options.threadId, request),
           onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
           onModeChange: async (change) => {
@@ -588,12 +754,13 @@ return;
               options.threadId,
               session,
               options,
-              permissions,
               change,
               cwd,
               registry,
               caps.skills,
               hooks,
+              permissions,
+              buildPermissionOptions,
             );
             liveMeta.mode = session.mode;
             return result;
@@ -602,6 +769,8 @@ return;
             const key = `${options.threadId}:${to}`;
             const list = this.agentInbox.get(key) ?? [];
             list.push(content);
+            // Bounded ring: inboxes are diagnostics-only today.
+            if (list.length > 50) list.splice(0, list.length - 50);
             this.agentInbox.set(key, list);
             return `Message delivered to ${to}.`;
           },
@@ -612,10 +781,11 @@ return;
           },
         },
         wire: {
-          enableCompression: settings.optimizationCompression,
-          compressionMode: settings.optimizationCompressionMode,
-          enablePromptCaching: settings.optimizationPromptCaching,
+          enableCompression: true,
+          compressionMode: "balanced",
+          enablePromptCaching: true,
           provider: provider?.kind === "custom" ? "openai" : "openference",
+          model: options.model,
         },
         promptCacheKey: `deyin:${options.providerId}:${options.model}:${cwd}`,
         lookupToolCache: cacheHooks?.lookupToolCache,
@@ -657,7 +827,7 @@ return;
               this.send(options.threadId, { type: "reasoning-delta", delta: event.delta });
               break;
             case "tool-start":
-              this.send(options.threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
+              this.send(options.threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary, cwd: event.cwd });
               break;
             case "tool-delta":
               this.send(options.threadId, { type: "tool-delta", callId: event.call.id, delta: event.delta });
@@ -671,6 +841,7 @@ return;
                 result: truncateToolResultUi(event.result),
                 ok: event.ok,
                 denied: event.denied,
+                cwd: event.cwd,
               });
               break;
             case "file-change": {
@@ -689,12 +860,40 @@ return;
             case "todos":
               this.send(options.threadId, { type: "todos", todos: event.todos });
               break;
+            case "compaction":
+              this.send(options.threadId, {
+                type: "compaction",
+                truncatedToolResults: event.truncatedToolResults,
+                truncatedToolArgs: event.truncatedToolArgs,
+                droppedMessages: event.droppedMessages,
+              });
+              break;
+            case "evidence-gate":
+              this.send(options.threadId, {
+                type: "evidence-gate",
+                code: event.code,
+                message: event.message,
+                toolName: event.toolName,
+              });
+              break;
 case "usage":
  this.send(options.threadId, { type: "usage", totalTokens: event.usage.totalTokens });
  break;
- case "context-snapshot":
+ case "context-snapshot": {
  this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
+ // Soft compaction warning: crossed 50% once per run (renderer shows a hint).
+ if (event.snapshot.percent >= 50 && !session.softWarningSent) {
+   session.softWarningSent = true;
+   this.send(options.threadId, {
+     type: "compaction",
+     truncatedToolResults: 0,
+     truncatedToolArgs: 0,
+     droppedMessages: 0,
+     softWarning: true,
+   });
+ }
  break;
+ }
  case "optimization":
  this.send(options.threadId, {
  type: "optimization",
@@ -707,13 +906,18 @@ case "usage":
  responseCacheHits: event.metrics.responseCacheHits,
  responseCacheMisses: event.metrics.responseCacheMisses,
  estimatedCostSavingsUsd: event.metrics.estimatedCostSavingsUsd,
+ sessionCacheHit: event.metrics.sessionCacheHit,
+ sessionCacheMiss: event.metrics.sessionCacheMiss,
+ cacheHitRate: event.metrics.cacheDiagnostics?.hitRate,
+ prefixChanged: event.metrics.cacheDiagnostics?.prefixChanged,
+ changeReasons: event.metrics.cacheDiagnostics?.changeReasons,
  });
  break;
           }
         },
       });
 
-if (optPlugin && settings.optimizationResponseCache && result.finalText) {
+if (optPlugin && result.finalText) {
  await optPlugin.afterAgentRun(optPlugin.runtime, prompt, result.finalText, responseCacheWorkspace, responseCacheContext).catch(() => undefined);
  }
 
@@ -747,7 +951,9 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     getToken: () => Promise<string | null>,
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; report: string }> {
-    this.send(parent.threadId, { type: "subagent-start", name: def.name, prompt: prompt.slice(0, 200) });
+    const subagentId = randomUUID();
+    const startedAt = Date.now();
+    this.send(parent.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
     const cwd = this.opts.getWorkspaceRoot() ?? process.cwd();
     const parentProvider = this.opts.agents.listProviders(true).find((p) => p.id === parent.providerId);
     const parentProviderWire: { apiFormat: ProviderApiFormat; authHeader?: boolean } = {
@@ -761,12 +967,18 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
       effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
       maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
       parentRouting: { apiBaseUrl, getToken, apiFormat: parentProviderWire.apiFormat, authHeader: parentProviderWire.authHeader },
+      // Surface the child's tool activity as one-line progress updates.
+      onEvent: (event) => {
+        if (event.type === "tool-start") {
+          this.send(parent.threadId, { type: "subagent-progress", id: subagentId, line: `${event.call.name} ${event.summary}`.trim() });
+        }
+      },
       resolveProvider: (providerId) => {
         const provider = this.opts.agents.listProviders(true).find((p) => p.id === providerId);
         if (provider && provider.kind === "custom") {
           return {
             apiBaseUrl: provider.baseUrl ?? this.opts.config.apiBaseUrl,
-            getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id)),
+            getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null)),
             apiFormat: provider.apiFormat ?? "chat-completions",
             authHeader: provider.authHeader,
           };
@@ -779,14 +991,11 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
         };
       },
       // Subagents inherit the parent run's mode restrictions: a plan/ask session
-      // must stay read-only even inside a spawned task. Mode rules come last so
-      // a restrictive parent (ask mode denies bash) still gates readonly
-      // subagents; full access auto-allows asks (no dialogs) while the
-      // write/edit denies keep applying.
+      // must stay read-only even inside a spawned task.
       permissionEngine: new PermissionEngine({
         agentRules: rulesForApprovalMode(parent.approvalMode),
-        configRules: [...subagentReadonlyRules(def), ...(agentForMode(parent.mode).permissions ?? [])],
-        autoAllow: parent.approvalMode === "full-access",
+        configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules(def)],
+        skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
       }),
       resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
       extraTools: this.opts.settings.get().indexingEnabled
@@ -794,7 +1003,14 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
         : [],
       signal,
     });
-    this.send(parent.threadId, { type: "subagent-end", name: def.name, ok: result.ok });
+    this.send(parent.threadId, {
+      type: "subagent-end",
+      id: subagentId,
+      name: def.name,
+      ok: result.ok,
+      ms: Date.now() - startedAt,
+      summary: result.report.slice(0, 200),
+    });
     return result;
   }
 
@@ -852,7 +1068,6 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
       shellEpoch: 0,
     };
     this.sessions.set(options.threadId, session);
-    this.threadToSession.set(options.threadId, meta.id);
     return session;
   }
 
@@ -934,12 +1149,13 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     threadId: string,
     session: ThreadSession,
     options: AgentStartOptions,
-    permissions: PermissionEngine,
     change: ModeChangeRequest,
     cwd: string,
     registry: ToolRegistry,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
+    permissions: PermissionEngine,
+    buildPermissionOptions: (mode: ChatMode) => PermissionEngineOptions,
   ): Promise<string> {
     const previous = session.mode;
     if (change.event === "enter" && change.target === "plan") {
@@ -948,10 +1164,11 @@ if (optPlugin && settings.optimizationResponseCache && result.finalText) {
     const nextMode = change.target;
     session.mode = nextMode;
     options.mode = nextMode;
-    // The permission engine is built once per run; refresh its mode rules so
-    // plan/ask read-only restrictions follow the mode switch (and lift again
-    // when switching back to agent).
-    permissions.setConfigRules(agentForMode(nextMode).permissions ?? []);
+
+    // Re-arm the permission engine for the new mode: the prompt alone must never
+    // be the only thing keeping plan/ask read-only (full-access skipAll from the
+    // previous agent-mode run would otherwise persist).
+    permissions.reconfigure(buildPermissionOptions(nextMode));
 
     const reminder = modeReminder(change);
     if (reminder) {
@@ -998,6 +1215,8 @@ function modeReminder(change: ModeChangeRequest): string {
         return "You have entered plan mode. You MUST NOT modify the workspace. Use read/grep/glob/ls to gather evidence. If the request is ambiguous, use ask_question to clarify. Then call todo_write with implementation steps and create_plan or output your final plan as markdown.";
       case "ask":
         return "You are in ask mode. Answer questions and explore the codebase. You MUST NOT modify the workspace or run commands.";
+      case "delivery":
+        return "You are in delivery mode. Before editing, call todo_write with acceptanceCriteria per step. After each change, verify with bash and call complete_step. Do not declare completion until every step is signed off.";
       case "agent":
         return "You are in agent mode. Implement the user's request end to end using all available tools.";
     }

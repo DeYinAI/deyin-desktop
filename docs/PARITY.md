@@ -74,15 +74,18 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Browser control (CDP navigate/click/type/screenshot/console/network, per-workspace profile) | Done | `main/browser.ts`, `components/WorkspacePanel.tsx` |
 | File explorer / read | Done | `components/WorkspacePanel.tsx` (Files tab), `main/host/files.ts`, `host-core/src/context-refs.ts`, web `server/host.ts` |
 | Workspace folder picker (open/switch) | Foundation | `main/ipc.ts` (`workspace:open`) |
-| Automations engine (cron + manual; local or SSH) | Shipped (desktop) | `main/automations/*`, `components/settings/AutomationsPage.tsx` |
-| Agent runtime on the web (WS channel to the session host) | Planned | web falls back to plain chat streaming today |
-| OS-level computer use (Windows) | Done | C# `deyin-computer-use-host.exe` (UIA + capture + SendInput), named-pipe client, default-deny allowlist, Esc cancel |
-| Chrome CDP (logged-in sessions) | Done (Windows) | Consent dialog, Default profile attach, origin policy, expanded `chrome_*` tools |
+| Agent runtime on the web (WS channel to the session host) | Done | `apps/web/src/server/agent-host.ts` runs `@deyin/agent-core` in the session sandbox; events stream over `agent.event` WS pushes using the desktop-shaped `AgentEventEnvelope` |
 | Inline visualizations | Done | `visualize_write` tool, path-safe read/write, tightened CSP in `InlineVisualization.tsx` |
 | Security findings panel | Done | `SecurityFindingsPanel.tsx`, semgrep/npm audit MCP, workspace-bounded scans |
 | Security scan plugin | Done (MVP) | bundled `security` plugin + MCP `deyin-security` |
 | Bundled first-party plugins | Done | `apps/desktop/bundled-plugins/`, materialize on startup, marketplace cards |
-| Web hosting (same renderer) | Done | `@deyin/web` reuses `apps/desktop/src/renderer` verbatim |
+| Web hosting (same renderer) | Done | `@deyin/web` and `@deyin/desktop` both build the `@deyin/ui` renderer package |
+| Plugin kernel (seams: tools, llm, caps, optimization) | Done | `@deyin/extension-api`, `@deyin/kernel`, `@deyin/tools` + 6 family plugins, `@deyin/llm` + 3 adapters, `@deyin/plugin-caps-local` |
+| Config-layer composition (bundles → profiles → patches) | Done | `@deyin/bundle-base`, `@deyin/bundle-desktop-app`, `@deyin/bundle-web-app`, `@deyin/bundle-headless`; `kernel.dumpConfig()` |
+| Kernel plugin status in Plugins settings | Done | `main/agent.ts` (`kernelReady`), `CH.pluginsKernelStatus`, `settings/PluginsPage.tsx` ("Kernel plugins") |
+| Web sandbox capabilities (skills/commands/subagents in `.deyin`) | Done | `apps/web/src/server/agent-host.ts` kernel + `@deyin/plugin-caps-local` scoped to the sandbox |
+| Session event log spine (primary store: replay, fork, migration) | Done | `agent-core/src/session.ts` (`events()`, `fork()`, lifecycle events), `test/session-log.test.ts`, migration suite |
+| Session event journal (web sandbox UI events) | Done | `host-core/src/session-journal.ts`, journaled in `agent-host.ts` `emit()` |
 | Auto-update | Done (packaged builds) | `main/updater.ts` |
 
 ## Verification
