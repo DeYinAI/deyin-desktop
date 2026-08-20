@@ -8,6 +8,8 @@ import type {
   DeyinSettings,
   DiagnosticsResult,
   EnvInfo,
+  ImageGenerateRequest,
+  ImageGenerateResult,
   FileNode,
   GitBlameLine,
   GitBranch,
@@ -55,6 +57,10 @@ import type {
   ResolvedContextFile,
   PendingChange,
   SecurityFindingsReport,
+  RepoConnectRequest,
+  RepoStateResult,
+  RepoShipResult,
+  RepoProgressEvent,
 } from "./types.js";
 
 /** Decision for an agent permission request (mirrors agent-core). */
@@ -167,6 +173,9 @@ export const CH = {
   browserTabCommand: "deyin:browser:tabCommand",
   browserActive: "deyin:browser:active",
   visualizeRead: "deyin:visualize:read",
+  imagesSave: "deyin:images:save",
+  imagesRead: "deyin:images:read",
+  imagesGenerate: "deyin:images:generate",
   telemetryRecord: "deyin:telemetry:record",
   providersList: "deyin:providers:list",
   providersAdd: "deyin:providers:add",
@@ -290,6 +299,18 @@ export interface DeyinApi {
     /** Fires when the workspace's git state changes (watcher or a completed op). */
     onChanged(cb: () => void): () => void;
   };
+  /**
+   * Web repo workflow (connect a git repo into the session sandbox, work on a
+   * dedicated branch, ship via commit → push → merge). Optional: only the web
+   * transport implements it; desktop uses workspace.openFolder + git.
+   */
+  repo?: {
+    connect(opts: RepoConnectRequest): Promise<RepoStateResult>;
+    state(): Promise<RepoStateResult>;
+    ship(message?: string): Promise<RepoShipResult>;
+    /** Streaming progress for clone/connect/ship operations. */
+    onProgress(cb: (e: RepoProgressEvent) => void): () => void;
+  };
   projects: {
     /** Persisted folder-projects + active selection. The renderer patches projects
      *  and active ids; workspaceRoot is owned by the host. */
@@ -386,6 +407,14 @@ export interface DeyinApi {
   };
   visualize: {
     read(threadId: string, fileName: string): Promise<string>;
+  };
+  images: {
+    /** Persist generated image bytes for a thread; returns the embed file name. */
+    save(threadId: string, input: { base64: string; mediaType?: string }): Promise<{ file: string }>;
+    /** Stored image as a `data:` URL, for inline rendering in chat. */
+    read(threadId: string, fileName: string): Promise<string>;
+    /** Run a text-to-image model and store the results for the thread. */
+    generate(request: ImageGenerateRequest): Promise<ImageGenerateResult>;
   };
   telemetry: {
     /** Anonymous feature-usage event; dropped unless telemetry is enabled. */

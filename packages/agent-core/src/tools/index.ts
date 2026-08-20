@@ -18,6 +18,7 @@ import { todoReadTool } from "./todo-read.js";
 import { ToolRegistry } from "./registry.js";
 import { todoTool } from "./todo.js";
 import { webFetchTool } from "./web-fetch.js";
+import { generateImageTool } from "./generate-image.js";
 import { websearchTool } from "./websearch.js";
 import { writeTool } from "./write.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
@@ -33,12 +34,13 @@ export { grepTool } from "./grep.js";
 export { globTool } from "./glob.js";
 export { lsTool } from "./ls.js";
 export { websearchTool } from "./websearch.js";
+export { generateImageTool, inlineImageDirective } from "./generate-image.js";
 export { webFetchTool } from "./web-fetch.js";
 export { todoTool, renderTodos } from "./todo.js";
 export { todoReadTool } from "./todo-read.js";
 export { askQuestionTool } from "./ask-question.js";
 export { createPlanTool } from "./create-plan.js";
-export { enterPlanModeTool, exitPlanModeTool, switchModeTool } from "./mode-tools.js";
+export { enterPlanModeTool, exitPlanModeTool, switchModeTool, modeReminder } from "./mode-tools.js";
 export { skillTool } from "./skill.js";
 export { readSessionContextTool } from "./read-session-context.js";
 export { sendMessageTool } from "./send-message.js";
@@ -110,6 +112,7 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   ...GIT_TOOLS,
   fileTreeTool,
   reportGoalMetTool,
+  generateImageTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

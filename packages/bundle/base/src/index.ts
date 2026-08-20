@@ -14,6 +14,7 @@ import { toolsGitPlugin } from "@deyin/plugin-tools-git";
 import { toolsWebPlugin } from "@deyin/plugin-tools-web";
 import { toolsPlanPlugin } from "@deyin/plugin-tools-plan";
 import { toolsAgentPlugin } from "@deyin/plugin-tools-agent";
+import { toolsImagePlugin } from "@deyin/plugin-tools-image";
 import { llmPlugin, Llm } from "@deyin/llm";
 import { llmOpenaiPlugin } from "@deyin/plugin-llm-openai";
 import { llmResponsesPlugin } from "@deyin/plugin-llm-responses";
@@ -29,6 +30,7 @@ export const BASE_PLUGIN_DEFS: readonly PluginDefinition[] = [
   toolsWebPlugin,
   toolsPlanPlugin,
   toolsAgentPlugin,
+  toolsImagePlugin,
   llmPlugin,
   llmOpenaiPlugin,
   llmResponsesPlugin,
@@ -54,6 +56,7 @@ export const bundleBase: ConfigLayer = {
     { id: "tools-web", plugin: toolsWebPlugin.name },
     { id: "tools-plan", plugin: toolsPlanPlugin.name },
     { id: "tools-agent", plugin: toolsAgentPlugin.name },
+    { id: "tools-image", plugin: toolsImagePlugin.name },
     { id: "llm", plugin: llmPlugin.name },
     { id: "llm-openai", plugin: llmOpenaiPlugin.name },
     { id: "llm-responses", plugin: llmResponsesPlugin.name },

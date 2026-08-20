@@ -107,7 +107,12 @@ export function toAnthropicMessages(messages: AgentMessage[], options: WireOptio
       }
       case "user": {
         const text = compress(m.content, "message");
-        push("user", { type: "text", text });
+        if (text.length > 0 || (m.images?.length ?? 0) === 0) {
+          push("user", { type: "text", text });
+        }
+        for (const img of m.images ?? []) {
+          push("user", { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.base64 } });
+        }
         break;
       }
       case "assistant": {
@@ -210,9 +215,24 @@ export function toResponsesInput(messages: AgentMessage[], options: WireOptions 
         else if (text.length > 0) input.push({ role: "system", content: text });
         break;
       }
-      case "user":
-        input.push({ role: "user", content: compress(m.content, "message") });
+      case "user": {
+        const text = compress(m.content, "message");
+        if (m.images?.length) {
+          input.push({
+            role: "user",
+            content: [
+              { type: "input_text", text },
+              ...m.images.map((img) => ({
+                type: "input_image",
+                image_url: `data:${img.mediaType};base64,${img.base64}`,
+              })),
+            ],
+          });
+        } else {
+          input.push({ role: "user", content: text });
+        }
         break;
+      }
       case "assistant": {
         if (m.reasoning && m.reasoning.length > 0) {
           input.push({ type: "reasoning", content: [{ type: "reasoning_text", text: m.reasoning }] });
@@ -309,8 +329,22 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
         }
         return { role: "system", content };
       }
-      case "user":
-        return { role: "user", content: compress(m.content, "message") };
+      case "user": {
+        const text = compress(m.content, "message");
+        if (m.images?.length) {
+          return {
+            role: "user",
+            content: [
+              { type: "text", text },
+              ...m.images.map((img) => ({
+                type: "image_url",
+                image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+              })),
+            ],
+          };
+        }
+        return { role: "user", content: text };
+      }
       case "assistant": {
         const hasToolCalls = m.toolCalls !== undefined && m.toolCalls.length > 0;
         const contentText = m.content.length > 0 ? compress(m.content, "message") : m.content;

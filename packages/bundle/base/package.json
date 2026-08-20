@@ -36,6 +36,7 @@
     "@deyin/plugin-tools-web": "workspace:*",
     "@deyin/plugin-tools-plan": "workspace:*",
     "@deyin/plugin-tools-agent": "workspace:*",
+    "@deyin/plugin-tools-image": "workspace:*",
     "@deyin/llm": "workspace:*",
     "@deyin/plugin-llm-openai": "workspace:*",
     "@deyin/plugin-llm-responses": "workspace:*",

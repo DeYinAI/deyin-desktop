@@ -16,6 +16,7 @@ import {
   detectEnv,
   git,
   GitWatcher,
+  imageDataUrl,
   type GitResult,
   readTextFile,
   readTree,
@@ -42,6 +43,7 @@ import type {
   GitRepoInfo,
   GitResultLite,
   GitStatus,
+  ImageGenerateRequest,
   McpServerInput,
   ProjectsState,
   ProviderPatch,
@@ -65,6 +67,8 @@ import { McpOAuthService } from "./mcp-oauth.js";
 import { SecurityService } from "./security.js";
 import { scanDiffViaMcp } from "./security-scan.js";
 import { VisualizeService } from "./visualize.js";
+import { ImageService } from "./images.js";
+import { runImageGeneration, type ImageRouting } from "./image-gen.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { WorkspaceTrustStore } from "./workspace-trust.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -234,6 +238,19 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Security findings + host tool services. */
   const security = new SecurityService();
   const visualize = new VisualizeService();
+  const images = new ImageService();
+
+  /** Provider routing for image generation, mirroring the chat/agent routing. */
+  const imageRouting = (providerId?: string): ImageRouting => {
+    const provider = providerId ? agents.listProviders(true).find((p) => p.id === providerId) : undefined;
+    if (!provider || provider.kind === "primary") {
+      return { apiBaseUrl: config.apiBaseUrl, getToken: () => auth.getAccessToken() };
+    }
+    return {
+      apiBaseUrl: provider.baseUrl ?? config.apiBaseUrl,
+      getToken: () => Promise.resolve(agents.getKey(provider.id) ?? (provider.local ? "" : null)),
+    };
+  };
 
   /* MCP modules / catalog / native OAuth. */
   const mcpModules = new McpModuleService(homedir(), () => capabilities.invalidate());
@@ -259,6 +276,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     capabilities,
     browser,
     visualize,
+    images,
     terminals,
     memory,
     review,
@@ -272,6 +290,11 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       if (fromProvider) return fromProvider;
       // Primary Openference catalog lives in ModelsCache (provider.models is often empty).
       return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
+    },
+    getImageModels: (providerId) => {
+      const provider = agents.listProviders(true).find((p) => p.id === providerId);
+      const list = provider && provider.kind !== "primary" ? provider.models : modelsCache.listCached();
+      return list.filter((m) => m.kind === "image").map((m) => m.id);
     },
   });
 
@@ -305,6 +328,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       workspaceRoot: opts.getWorkspaceRoot(),
       version: app.getVersion(),
       platform: "desktop",
+      homeDir: homedir(),
     };
   });
 
@@ -521,6 +545,15 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
 
   /* Visualizations. */
   ipcMain.handle(CH.visualizeRead, (_e, threadId: string, fileName: string) => visualize.readFragment(threadId, fileName));
+
+  /* Generated images: store, read back as a data URL, and run a model directly. */
+  ipcMain.handle(CH.imagesSave, (_e, threadId: string, input: { base64: string; mediaType?: string }) => ({
+    file: images.save(threadId, input).file,
+  }));
+  ipcMain.handle(CH.imagesRead, (_e, threadId: string, fileName: string) => imageDataUrl(images.read(threadId, fileName)));
+  ipcMain.handle(CH.imagesGenerate, (_e, request: ImageGenerateRequest) =>
+    runImageGeneration(images, imageRouting(request.providerId), request),
+  );
 
   /* Beta feedback: best-effort upload to the Openference backend. */
   ipcMain.handle(

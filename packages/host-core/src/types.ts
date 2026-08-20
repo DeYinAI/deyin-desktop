@@ -13,6 +13,10 @@ export interface ModelInfo {
   name: string;
   contextLength?: number;
   maxOutputTokens?: number;
+  /** Accepts image inputs (catalog metadata or a curated id heuristic). */
+  vision?: boolean;
+  /** "image" models generate pictures (text-to-image) instead of chat text. */
+  kind?: "chat" | "image";
 }
 
 export interface FileNode {
@@ -29,6 +33,8 @@ export interface Bootstrap {
   version: string;
   /** Which runtime hosts the renderer: the Electron shell or a browser tab. */
   platform: "desktop" | "web";
+  /** User home directory, for `~`-shortening workspace paths in the UI. */
+  homeDir?: string | null;
 }
 
 export interface TerminalCreateOptions {
@@ -826,6 +832,12 @@ export interface AgentEventEnvelope {
   event: AgentUiEvent;
 }
 
+/** Image attached to an agent run's user message (base64, no data: prefix). */
+export interface AgentImageInput {
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  base64: string;
+}
+
 export interface AgentStartOptions {
   threadId: string;
   prompt: string;
@@ -841,6 +853,10 @@ export interface AgentStartOptions {
   initialTodos?: AgentTodoItem[];
   /** Active goal text; enables report_goal_met verification. */
   goalText?: string;
+  /** Images attached to this run's user message (vision). */
+  images?: AgentImageInput[];
+  /** Text-to-image model ids from the catalog, for the generate_image tool. */
+  imageModels?: string[];
 }
 
 /* Model providers ---------------------------------------------------------- */
@@ -849,6 +865,10 @@ export interface ProviderModel {
   id: string;
   name: string;
   contextLength?: number;
+  /** Accepts image inputs (catalog metadata or a curated id heuristic). */
+  vision?: boolean;
+  /** "image" models generate pictures (text-to-image) instead of chat text. */
+  kind?: "chat" | "image";
 }
 
 export type ProviderApiFormat = "chat-completions" | "responses" | "anthropic";

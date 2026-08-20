@@ -17,6 +17,8 @@ interface WorkspacePanelProps {
   platform: "desktop" | "web";
   projectName: string;
   workspaceRoot: string | null;
+  /** Bumped when the sandbox content changes outside root switches (repo connect). */
+  filesRefreshKey?: number;
   activeTab: PanelTab;
   /** Active chat thread (drives the Security tab). */
   threadId?: string | null;
@@ -79,6 +81,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           platform={props.platform}
           active={props.activeTab === "files"}
           workspaceRoot={props.workspaceRoot}
+          refreshKey={props.filesRefreshKey}
           codeDisplay={props.codeDisplay}
           onOpenFolder={props.onOpenFolder}
         />

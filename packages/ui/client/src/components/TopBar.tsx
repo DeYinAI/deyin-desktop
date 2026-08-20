@@ -12,6 +12,8 @@ interface TopBarProps {
   workspaceRoot: string | null;
   panelOpen: boolean;
   terminalOpen: boolean;
+  /** Left sidebar visibility; the expand control only shows while it is hidden. */
+  sidebarOpen: boolean;
   /** Session prefix cache hit rate (0–1), when measured. */
   cacheHitRate?: number | null;
   sessionCacheHit?: number;
@@ -24,6 +26,7 @@ interface TopBarProps {
     sessionTotal: number;
   } | null;
   onOpenFolder: () => void;
+  onToggleSidebar: () => void;
   onTogglePanel: () => void;
   onToggleTerminal: () => void;
   onThreadAction: (threadId: string, action: ThreadAction) => void;
@@ -56,12 +59,11 @@ export function TopBar(props: TopBarProps) {
     <header className="titlebar">
       <div className={`titlebar__left ${isMac ? "titlebar__left--mac" : ""}`}>
         <span className="titlebar__logo"><Logo size={20} /></span>
-        <button className="icon-btn" title="Back" disabled>
-          <Icon name="arrowLeft" size={14} />
-        </button>
-        <button className="icon-btn" title="Forward" disabled>
-          <Icon name="arrowRight" size={14} />
-        </button>
+        {!props.sidebarOpen && (
+          <button className="icon-btn" title="Expand sidebar" onClick={props.onToggleSidebar}>
+            <Icon name="panelLeft" size={15} />
+          </button>
+        )}
         <span className="titlebar__thread">{props.threadTitle}</span>
         <button className="titlebar__project" onClick={props.onOpenFolder} title="Open folder">
           <Icon name="folder" size={13} />

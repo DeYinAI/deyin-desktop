@@ -5,10 +5,10 @@
  * The host-facing shapes come from @deyin/host-core (the same types the desktop contract
  * uses), so the browser transport satisfies the desktop `DeyinApi` by construction.
  */
-import type { AgentEventEnvelope, EnvInfo, FileNode, ProviderApiFormat, TerminalCreateOptions } from "@deyin/host-core/shared";
+import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, EnvInfo, FileNode, ProviderApiFormat, TerminalCreateOptions } from "@deyin/host-core/shared";
 
 export type { EnvInfo, FileNode, ShellInfo, TerminalCreateOptions } from "@deyin/host-core/shared";
-export type { AgentEventEnvelope } from "@deyin/host-core/shared";
+export type { AgentEventEnvelope, AgentImageInput, AgentTodoItem } from "@deyin/host-core/shared";
 
 /** Provider routing the agent uses server-side; the API key lives only in this message. */
 export interface WebAgentProviderRouting {
@@ -25,6 +25,11 @@ export type ClientMessage =
   | { type: "files.read"; id: number; path: string }
   | { type: "files.write"; id: number; path: string; content: string }
   | { type: "env.detect"; id: number }
+  /** Generic git RPC: `op` names a @deyin/host-core git service method. */
+  | { type: "git.call"; id: number; op: string; args: unknown[] }
+  | { type: "repo.connect"; id: number; url: string; token?: string; branch?: string }
+  | { type: "repo.state"; id: number }
+  | { type: "repo.ship"; id: number; message?: string }
   | {
       type: "agent.start";
       id: number;
@@ -36,6 +41,14 @@ export type ClientMessage =
       mode: "agent" | "plan" | "ask" | "delivery";
       history: { role: "user" | "assistant"; content: string }[];
       provider: WebAgentProviderRouting;
+      /** Seed the loop's todo list (plan todos handed to Build). */
+      initialTodos?: AgentTodoItem[];
+      /** Active goal text; enables report_goal_met verification. */
+      goalText?: string;
+      /** Images attached to this run's user message (vision). */
+      images?: AgentImageInput[];
+      /** Text-to-image model ids from the client's catalog (generate_image). */
+      imageModels?: string[];
     }
   | { type: "agent.stop"; threadId: string }
   | { type: "agent.approve"; requestId: string; decision: "allow" | "allow-always" | "deny" }
@@ -44,7 +57,20 @@ export type ClientMessage =
   | { type: "term.attach"; id: number; termId: string }
   | { type: "term.write"; termId: string; data: string }
   | { type: "term.resize"; termId: string; cols: number; rows: number }
-  | { type: "term.kill"; termId: string };
+  | { type: "term.kill"; termId: string }
+  | { type: "images.save"; id: number; threadId: string; base64: string; mediaType?: string }
+  | { type: "images.read"; id: number; threadId: string; file: string }
+  | {
+      type: "images.generate";
+      id: number;
+      threadId: string;
+      prompt: string;
+      model: string;
+      size?: string;
+      n?: number;
+      negativePrompt?: string;
+      provider: WebAgentProviderRouting;
+    };
 
 export type ServerMessage =
   | { type: "auth.ok"; user: { sub: string; email?: string; name?: string; plan?: string }; workspaceRoot: string }
@@ -53,7 +79,11 @@ export type ServerMessage =
   | { type: "reply"; id: number; ok: false; error: string }
   | { type: "term.data"; termId: string; data: string }
   | { type: "term.exit"; termId: string; exitCode: number }
-  | { type: "agent.event"; envelope: AgentEventEnvelope };
+  | { type: "agent.event"; envelope: AgentEventEnvelope }
+  /** Pushed when the sandbox repo's git state changed (watcher or completed op). */
+  | { type: "git.changed" }
+  /** Streaming progress for repo connect (clone/checkout) and ship operations. */
+  | { type: "repo.progress"; stage: "clone" | "connect" | "ship"; line: string };
 
 export interface FilesTreeResult {
   nodes: FileNode[];
@@ -73,3 +103,14 @@ export interface TermAttachResult {
 export interface EnvDetectResult {
   env: EnvInfo;
 }
+
+export interface ImagesSaveResult {
+  file: string;
+}
+export interface ImagesReadResult {
+  /** `data:` URL, ready for an <img src>. */
+  dataUrl: string;
+}
+
+export type { RepoStateResult, RepoShipResult, RepoProgressStage, RepoProgressEvent } from "./types.js";
+export type { ImageGenerateRequest, ImageGenerateResult, GeneratedImageInfo } from "./types.js";

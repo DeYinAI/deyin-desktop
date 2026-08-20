@@ -15,6 +15,12 @@ interface SidebarProps {
   settings: DeyinSettings;
   busy: boolean;
   connecting: boolean;
+  /** Thread history arrows, mirroring the browser-style back/forward pair. */
+  canBack: boolean;
+  canForward: boolean;
+  onBack: () => void;
+  onForward: () => void;
+  onCollapse: () => void;
   onNewTask: () => void;
   onNewProject: () => void;
   onSelectProject: (projectId: string) => void;
@@ -29,6 +35,15 @@ interface SidebarProps {
   onOpenPlans: () => void;
   onOpenSettings: () => void;
   /** Open the Automations view (scheduled agent runs). */
+  onOpenAutomations: () => void;
+  /** Open the appearance/customisation surface. */
+  onOpenCustomize: () => void;
+}
+
+/** A pinned thread, carrying the project it belongs to so the flat list can select it. */
+interface PinnedEntry {
+  projectId: string;
+  thread: Thread;
 }
 
 /** Ticking clock so the relative age labels keep up without a state change. */
@@ -41,10 +56,9 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-function orderThreads(threads: Thread[]): Thread[] {
-  return threads
-    .filter((t) => !t.archived)
-    .sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false));
+/** Threads shown under their project: pinned ones live in their own section. */
+function projectThreads(threads: Thread[]): Thread[] {
+  return threads.filter((t) => !t.archived && !t.pinned);
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -67,11 +81,61 @@ export function Sidebar(props: SidebarProps) {
       .filter((p): p is Project => p !== null);
   }, [props.projects, filter]);
 
+  // Pinned threads float to a section of their own, newest first, across projects.
+  const pinned = useMemo<PinnedEntry[]>(() => {
+    return props.projects
+      .flatMap((project) =>
+        project.threads
+          .filter((thread) => thread.pinned && !thread.archived)
+          .map((thread) => ({ projectId: project.id, thread })),
+      )
+      .sort((a, b) => b.thread.updatedAt - a.thread.updatedAt);
+  }, [props.projects]);
+
+  const renderThread = (projectId: string, thread: Thread, indented: boolean) =>
+    thread.id === props.renamingThreadId ? (
+      <RenameRow key={thread.id} thread={thread} indented={indented} onSubmit={props.onRenameSubmit} />
+    ) : (
+      <button
+        key={thread.id}
+        className={[
+          "thread-row",
+          indented ? "" : "thread-row--flush",
+          thread.id === props.activeThreadId ? "thread-row--active" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        aria-current={thread.id === props.activeThreadId ? "page" : undefined}
+        onClick={() => props.onSelectThread(projectId, thread.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          props.onThreadContext(thread.id, e.clientX, e.clientY);
+        }}
+      >
+        {thread.unread && <span className="thread-row__unread" />}
+        <span className="thread-row__title">{thread.title}</span>
+        <ThreadAge updatedAt={thread.updatedAt} now={now} />
+      </button>
+    );
+
   return (
     <aside className="sidebar">
+      <div className="sidebar__head">
+        <button className="icon-btn" title={t("nav.collapseSidebar")} onClick={props.onCollapse}>
+          <Icon name="panelLeft" size={15} />
+        </button>
+        <div className="sidebar__head-spacer" />
+        <button className="icon-btn" title={t("nav.back")} disabled={!props.canBack} onClick={props.onBack}>
+          <Icon name="arrowLeft" size={14} />
+        </button>
+        <button className="icon-btn" title={t("nav.forward")} disabled={!props.canForward} onClick={props.onForward}>
+          <Icon name="arrowRight" size={14} />
+        </button>
+      </div>
+
       <nav className="sidebar__nav">
-        <button className="nav-item" onClick={props.onNewTask}>
-          <Icon name="plus" size={14} />
+        <button className="nav-item nav-item--warm" onClick={props.onNewTask}>
+          <Icon name="sparkles" size={14} />
           <span>{t("nav.newTask")}</span>
           <span className="kbd">Ctrl+N</span>
         </button>
@@ -80,9 +144,26 @@ export function Sidebar(props: SidebarProps) {
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
         </button>
+        <button className="nav-item nav-item--accent" onClick={props.onOpenAutomations}>
+          <Icon name="automation" size={14} />
+          <span>{t("nav.automations")}</span>
+        </button>
+        <button className="nav-item nav-item--accent" onClick={props.onOpenCustomize}>
+          <Icon name="customize" size={14} />
+          <span>{t("nav.customize")}</span>
+        </button>
       </nav>
 
       <div className="sidebar__scroll">
+        {pinned.length > 0 && (
+          <>
+            <div className="sidebar__section">{t("nav.pinned")}</div>
+            <div className="sidebar__pinned">
+              {pinned.map((entry) => renderThread(entry.projectId, entry.thread, false))}
+            </div>
+          </>
+        )}
+
         <div className="sidebar__section-row">
           <div className="sidebar__section">{t("nav.projects")}</div>
           <div className="sidebar__section-actions">
@@ -94,7 +175,7 @@ export function Sidebar(props: SidebarProps) {
                 setFilter("");
               }}
             >
-              <Icon name="search" size={12} />
+              <Icon name="filter" size={13} />
             </button>
             <button
               className="icon-btn icon-btn--small"
@@ -106,7 +187,7 @@ export function Sidebar(props: SidebarProps) {
               disabled={props.platform !== "desktop"}
               onClick={props.onNewProject}
             >
-              <Icon name="plus" size={13} />
+              <Icon name="folderPlus" size={14} />
             </button>
           </div>
         </div>
@@ -121,39 +202,22 @@ export function Sidebar(props: SidebarProps) {
           />
         )}
 
-        {visibleProjects.map((project) => (
-          <div className="project" key={project.id}>
-            <button
-              className={`project__row ${project.id === props.activeProjectId ? "project__row--active" : ""}`}
-              onClick={() => props.onSelectProject(project.id)}
-              title={project.root ?? project.name}
-            >
-              <Icon name="folder" size={14} />
-              <span className="project__name">{project.name}</span>
-            </button>
-            {orderThreads(project.threads).map((thread) =>
-              thread.id === props.renamingThreadId ? (
-                <RenameRow key={thread.id} thread={thread} onSubmit={props.onRenameSubmit} />
-              ) : (
-                <button
-                  key={thread.id}
-                  className={`thread-row ${thread.id === props.activeThreadId ? "thread-row--active" : ""}`}
-                  aria-current={thread.id === props.activeThreadId ? "page" : undefined}
-                  onClick={() => props.onSelectThread(project.id, thread.id)}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    props.onThreadContext(thread.id, e.clientX, e.clientY);
-                  }}
-                >
-                  {thread.pinned && <Icon name="pin" size={11} />}
-                  {thread.unread && <span className="thread-row__unread" />}
-                  <span className="thread-row__title">{thread.title}</span>
-                  <ThreadAge updatedAt={thread.updatedAt} now={now} />
-                </button>
-              ),
-            )}
-          </div>
-        ))}
+        {visibleProjects.map((project) => {
+          const active = project.id === props.activeProjectId;
+          return (
+            <div className="project" key={project.id}>
+              <button
+                className={`project__row ${active ? "project__row--active" : ""}`}
+                onClick={() => props.onSelectProject(project.id)}
+                title={project.root ?? project.name}
+              >
+                <Icon name={active ? "folderOpen" : "folder"} size={14} />
+                <span className="project__name">{project.name}</span>
+              </button>
+              {projectThreads(project.threads).map((thread) => renderThread(project.id, thread, true))}
+            </div>
+          );
+        })}
         {props.projects.length === 0 &&
           (props.platform === "desktop" ? (
             <button className="sidebar__newproject" onClick={props.onNewProject}>
@@ -166,9 +230,6 @@ export function Sidebar(props: SidebarProps) {
         {props.projects.length > 0 && visibleProjects.length === 0 && (
           <div className="sidebar__empty">No matches for “{filter}”.</div>
         )}
-
-        <div className="sidebar__section">{t("nav.tasks")}</div>
-        <div className="sidebar__empty">{t("nav.noTasks")}</div>
       </div>
 
       <div className="sidebar__footer">
@@ -184,7 +245,6 @@ export function Sidebar(props: SidebarProps) {
           onOpenUsage={props.onOpenUsage}
           onOpenPlans={props.onOpenPlans}
         />
-        <div className="sidebar__footer-spacer" />
         <button className="icon-btn" title={t("nav.settings")} onClick={props.onOpenSettings}>
           <Icon name="gear" size={15} />
         </button>
@@ -205,7 +265,15 @@ function ThreadAge({ updatedAt, now }: { updatedAt: number; now: number }) {
   );
 }
 
-function RenameRow({ thread, onSubmit }: { thread: Thread; onSubmit: (threadId: string, title: string) => void }) {
+function RenameRow({
+  thread,
+  indented,
+  onSubmit,
+}: {
+  thread: Thread;
+  indented: boolean;
+  onSubmit: (threadId: string, title: string) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -219,7 +287,7 @@ function RenameRow({ thread, onSubmit }: { thread: Thread; onSubmit: (threadId: 
   };
 
   return (
-    <div className="thread-row thread-row--rename">
+    <div className={`thread-row thread-row--rename ${indented ? "" : "thread-row--flush"}`}>
       <input
         ref={inputRef}
         className="input input--inline"

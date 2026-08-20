@@ -40,11 +40,9 @@ export function ModelPicker(props: ModelPickerProps) {
   const shownProvider = providers.find((p) => p.id === shownProviderId);
 
   const modelsOf = (provider: ProviderInfo | undefined): ProviderModel[] => {
-    if (!provider) return props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength }));
-    const list =
-      provider.kind === "primary"
-        ? props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength }))
-        : provider.models;
+    const primaryModels = () => props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength, kind: m.kind }));
+    if (!provider) return primaryModels();
+    const list = provider.kind === "primary" ? primaryModels() : provider.models;
     // Models switched off in Settings stay out of the picker.
     const disabled = new Set(provider.disabledModels);
     return list.filter((m) => !disabled.has(m.id));
@@ -82,8 +80,14 @@ export function ModelPicker(props: ModelPickerProps) {
                 onClick={() => pick(shownProvider?.id, model.id)}
               >
                 <span className="modelmenu__name">{model.name}</span>
-                {formatContext(model.contextLength) && (
-                  <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
+                {model.kind === "image" ? (
+                  <span className="badge badge--muted" title="Text-to-image model">
+                    Image
+                  </span>
+                ) : (
+                  formatContext(model.contextLength) && (
+                    <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
+                  )
                 )}
                 {model.id === props.selected && <Icon name="check" size={12} />}
               </button>

@@ -69,7 +69,7 @@ export const createPlanTool: ToolDefinition = {
     }
 
     const artifact: PlanArtifact = { name, overview, plan: planBody, todos: todos.length > 0 ? todos : undefined };
-    const plansDir = join(homedir(), ".deyin", "plans");
+    const plansDir = ctx.plansDir ?? join(homedir(), ".deyin", "plans");
     await mkdir(plansDir, { recursive: true });
     const fileName = `${slugify(name) || "plan"}-${randomUUID().slice(0, 8)}.plan.md`;
     const filePath = join(plansDir, fileName);

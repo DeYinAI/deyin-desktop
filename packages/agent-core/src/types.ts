@@ -5,13 +5,19 @@ export interface AgentToolCall {
   arguments: string;
 }
 
+/** An image attached to a user message (base64, no data: prefix). */
+export interface AgentImage {
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  base64: string;
+}
+
 /**
  * Transcript message. A superset of host-core's ChatMessage: assistant messages can
  * carry tool calls, and tool messages carry the result of one call.
  */
 export type AgentMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | { role: "user"; content: string; images?: AgentImage[] }
   | { role: "assistant"; content: string; reasoning?: string; toolCalls?: AgentToolCall[] }
   | { role: "tool"; toolCallId: string; toolName: string; content: string };
 
@@ -97,6 +103,12 @@ export interface ToolContext {
   resolveInteraction?: (request: InteractionRequest) => Promise<string>;
   /** Fired when create_plan writes a plan artifact. */
   onPlanCreated?: (plan: PlanArtifact) => void;
+  /**
+   * Directory where create_plan writes plan markdown. Defaults to
+   * ~/.deyin/plans; sandboxed hosts override it to keep plans inside the
+   * session workspace.
+   */
+  plansDir?: string;
   /** Host bridge for EnterPlanMode / ExitPlanMode / SwitchMode. */
   onModeChange?: (change: ModeChangeRequest) => Promise<string>;
   /** Skills discovered for this run (Skill tool). */
@@ -134,8 +146,32 @@ export interface ToolContext {
     diffSummary: string;
     reviewNotes?: string;
   }) => void;
+  /** Host bridge for text-to-image generation (generate_image tool). */
+  imageGen?: ImageGenBridge;
   /** Collect background job results (task is_background / fleet). */
   waitForJobs?: (jobIds: string[], blockUntilMs: number) => Promise<BackgroundJobResult[]>;
+}
+
+/** One image the host generated and stored for the current thread. */
+export interface GeneratedImageRef {
+  /** Stored file name, embedded in the chat's inline-image directive. */
+  file: string;
+  /** Model that produced it (for the tool result summary). */
+  model: string;
+  mediaType: string;
+  /** Absolute path on disk, when the host stores images on a filesystem. */
+  path?: string;
+}
+
+/** Host bridge over the provider's images endpoint plus the thread image store. */
+export interface ImageGenBridge {
+  generate(request: {
+    prompt: string;
+    model?: string;
+    size?: string;
+    n?: number;
+    negativePrompt?: string;
+  }): Promise<GeneratedImageRef[]>;
 }
 
 /** One collected background job result (wait tool). */

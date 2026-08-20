@@ -16,7 +16,7 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Custom title bar + window controls | Done | `components/TopBar.tsx`, `main/window.ts` (frameless), `main/ipc.ts` (`win:*`) |
 | Session timeline cards (plan, file change, model switch, skill, thought) | Done | `components/ChatView.tsx`, `renderer/threads.ts` |
 | Composer: + insert menu, access mode, model, auto-run | Done | `components/Composer.tsx` (approval mode persisted in settings) |
-| Composer modes: Agent / Plan / Ask (Shift+Tab cycle, Ctrl+. menu) | Done (desktop; web falls back to plain chat) | `components/Composer.tsx`, `main/agent.ts` (`agentForMode`), `agent-core/agents.ts` |
+| Composer modes: Agent / Plan / Ask (Shift+Tab cycle, Ctrl+. menu) | Done (shared; web runs the same plan/ask agents in the session sandbox) | `components/Composer.tsx`, `main/agent.ts` (`agentForMode`), `agent-core/agents.ts`, `apps/web/src/server/agent-host.ts` |
 | Mode/access split enforced in the permission engine (plan/ask read-only even at full access) | Done | `main/agent.ts` (`PermissionEngine` layering), `agent-core/permissions.ts` |
 | Plan mode UX: plan doc to Plan tab + Build handoff to Agent mode | Done | `app.tsx` (`buildFromPlan`), `components/ChatView.tsx` (`PlanReadyCard`), `WorkspacePanel.tsx` |
 | Markdown chat output (GFM tables, themed code blocks) | Done | `components/Markdown.tsx` (react-markdown + remark-gfm over the custom `CodeBlock`) |
@@ -25,7 +25,10 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Projects / threads sidebar | Done (persisted via ProjectsStore) | `components/Sidebar.tsx`, `renderer/threads.ts`, `host-core/src/stores.ts` |
 | Workspace panel: Plan tab | Done (agent-fed live stream + todos) | `components/WorkspacePanel.tsx`, `app.tsx` (`planStream`) |
 | Workspace panel: Diff tab | Done (LCS line diff + source preview + review Accept/Reject) | `components/WorkspacePanel.tsx`, `renderer/diff.ts`, `components/ReviewBanner.tsx` |
-| Workspace panel: Git tab | Done (status, stage, commit, branches, log) | `components/GitTab.tsx`, `host-core/src/host/git.ts`, `main/ipc.ts` |
+| Workspace panel: Git tab | Done (status, stage, commit, branches, log; web via sandbox git RPCs) | `components/GitTab.tsx`, `host-core/src/host/git.ts`, `main/ipc.ts`, `apps/web/src/server/session.ts` |
+| Web repo workflow (connect URL → work branch → Ship button: commit/push/merge, PR-link fallback) | Done (web) | `apps/web/src/server/repo.ts`, `components/RepoBar.tsx`, `client/transport.ts` (`repo` API) |
+| Vision: image attach (paste/drag/pick) routed to a vision-capable model in the user's plan | Done (shared pipeline, all 3 wire formats) | `components/Composer.tsx`, `vision.ts`, `host-core/src/models.ts` (`modelSupportsVision`), `agent-core/src/wire.ts` |
+| Text-to-image: image models in the picker + `generate_image` tool, pictures rendered inline in chat | Done (desktop + web) | `host-core/src/images.ts` (`isImageModel`, `generateImages`), `host-core/src/host/image-store.ts`, `agent-core/tools/generate-image.ts`, `components/InlineImage.tsx`, `client/embeds.ts`, `main/image-gen.ts`, `apps/web/src/server/session.ts` |
 | Composer: @ file/folder context chips + resolver | Done | `components/Composer.tsx`, `host-core/src/context-refs.ts`, `app.tsx` |
 | Composer: # linked thread context | Done | `components/Composer.tsx`, `host-core/src/linked-thread-context.ts` |
 | Change review before apply | Done | `main/pending-review.ts`, `agent-core/src/tools/file-mutation.ts`, `ReviewBanner.tsx` |

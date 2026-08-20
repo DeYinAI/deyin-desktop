@@ -580,6 +580,73 @@ The loop lives inside one agent run, which has a step budget (~40 tool calls) an
 Always define one before starting: "until the deploy status is success or failed", "until tests pass", "at most 10 iterations". On stop, summarize all iterations in two or three lines.
 `,
   },
+  {
+    name: "generate-image",
+    description:
+      "Create pictures with a text-to-image model (SDXL, FLUX, DALL·E) and embed them in the reply. Use when the user asks for an image, illustration, icon, logo, mockup, concept art, texture, or a picture of anything.",
+    content: `
+# Generate an Image
+
+Deyin talks to text-to-image models through the \`generate_image\` tool. The tool stores the picture with the thread and hands back an embed directive; the chat only renders the picture once that directive is in your reply.
+
+## 1. Decide whether to generate
+
+Generate when the user asks to *see* something: illustration, icon, logo idea, character, texture, poster, UI mockup, concept art, photo-style scene. Do not generate for diagrams of code or data that a chart or ASCII sketch communicates better — use \`visualize_write\` for charts and HTML, \`write\` for SVG a developer will edit.
+
+## 2. Write the prompt
+
+The image model never sees the conversation, so the prompt must stand alone. Fold in what the user said, plus the details they implied:
+
+- Subject and action: "a red fox curled asleep"
+- Setting: "on a mossy log in a foggy pine forest"
+- Style: "watercolor illustration", "isometric 3D render", "35mm photo"
+- Composition and light: "close-up, shallow depth of field, warm rim light"
+- For icons/logos: "flat vector icon, centered, solid background, no text"
+
+Keep it one dense paragraph. Image models are weak at text inside pictures — if the user needs words in the image, say so and offer to render the text as a caption or in HTML instead.
+
+Use \`negative_prompt\` for what must not appear ("no watermark, no extra fingers, no text").
+
+## 3. Call the tool
+
+~~~
+generate_image(
+  prompt: "flat vector icon of a paper plane, single accent color, centered on a plain background, crisp edges, no text",
+  size: "1024x1024",
+  alt: "Paper-plane app icon"
+)
+~~~
+
+- \`model\` — omit it and the workspace's default text-to-image model is used. Name one when the user asks for a specific model, or when they want speed (a "lightning"/"turbo" variant) over fidelity (a full base model).
+- \`size\` — "1024x1024" square by default; "1152x896" landscape, "896x1152" portrait. Match the use ("wallpaper" → landscape, "app icon" → square).
+- \`n\` — ask for 2-3 only when the user wants options; each image costs a generation.
+
+## 4. Embed the result in your reply
+
+The tool returns one or more directives. Copy each one onto its own line in your reply — unembedded, the picture never appears:
+
+~~~
+Here is the icon:
+
+::deyin-inline-image{file="img-abc123.png" alt="Paper-plane app icon"}
+~~~
+
+Say one line about what you made, then let the picture speak. Do not describe the image back to the user in detail — they can see it.
+
+## 5. Iterate
+
+When the user asks for changes, generate again with a revised prompt rather than apologizing: carry over what worked, change only what they objected to, and say what you changed ("same composition, colder palette"). Keep the old directive out of the new reply so the thread shows the current version.
+
+## Failure modes
+
+- "No text-to-image model is available" — the signed-in plan has none enabled. Tell the user to pick one under Settings → Models, and offer an SVG or HTML alternative meanwhile.
+- Generation errors mention the provider's message; a size the model rejects is the usual cause — retry once at "1024x1024" before reporting failure.
+
+## Verify
+
+The reply contains one directive per image, each on its own line, and the file names match what the tool returned.
+`,
+  },
 ];
 
 /**
