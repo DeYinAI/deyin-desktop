@@ -8,7 +8,8 @@ import {
   migrateSettings,
   type StoredProviderBase,
 } from "./defaults.js";
-import { listModels, type TokenSource } from "./models.js";
+import { classifyModelKinds, isImageModel } from "./images.js";
+import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
 import type { Storage } from "./storage.js";
 import type {
   AccountUsage,
@@ -191,6 +192,8 @@ export class AgentsStore {
     const { keyCipher, ...rest } = p;
     return {
       ...rest,
+      // Lists stored before modality classification carry no `kind`.
+      models: classifyModelKinds(rest.models),
       status: p.kind === "primary" ? (connected ? "connected" : "not-connected") : keyCipher ? "connected" : "not-connected",
       hasKey: Boolean(keyCipher),
     };
@@ -277,15 +280,35 @@ export class AgentsStore {
       });
       if (!res.ok) return { ok: false, status: res.status, message: `HTTP ${res.status}` };
       const body = (await res.json().catch(() => ({}))) as {
-        data?: { id?: unknown; context_length?: unknown; max_output_tokens?: unknown }[];
+        data?: {
+          id?: unknown;
+          context_length?: unknown;
+          max_output_tokens?: unknown;
+          vision?: unknown;
+          capabilities?: unknown;
+          type?: unknown;
+          modality?: unknown;
+          output_modalities?: unknown;
+        }[];
       };
       const models = (Array.isArray(body.data) ? body.data : [])
-        .filter((m): m is { id: string; context_length?: number } => typeof m.id === "string" && m.id.length > 0)
-        .map((m) => ({
-          id: m.id,
-          name: m.id,
-          contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
-        }));
+        .filter((m): m is { id: string; context_length?: number; vision?: unknown; capabilities?: unknown } => typeof m.id === "string" && m.id.length > 0)
+        .map((m) => {
+          const image = isImageModel(m.id, m);
+          return {
+            id: m.id,
+            name: m.id,
+            contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
+            // Image models take a prompt, not a conversation: never route vision to them.
+            vision: image
+              ? false
+              : modelSupportsVision(m.id, {
+                  vision: typeof m.vision === "boolean" || typeof m.vision === "number" || typeof m.vision === "string" ? m.vision : undefined,
+                  capabilities: m.capabilities,
+                }),
+            kind: image ? ("image" as const) : ("chat" as const),
+          };
+        });
       if (models.length > 0) {
         provider.models = models;
         provider.modelsFetchedAt = Date.now();
@@ -411,7 +434,7 @@ export class ModelsCache {
 
   async get(force = false): Promise<ModelInfo[]> {
     const fresh = this.state.models.length > 0 && Date.now() - this.state.fetchedAt < MODELS_TTL_MS;
-    if (!force && fresh) return this.state.models;
+    if (!force && fresh) return this.listCached();
     if (this.inflight) return this.inflight;
     this.inflight = listModels(this.config, this.getToken)
       .then((models) => {
@@ -419,7 +442,7 @@ export class ModelsCache {
           this.state = { models, fetchedAt: Date.now() };
           this.storage.writeJson("models-cache.json", this.state);
         }
-        return this.state.models.length > 0 ? this.state.models : models;
+        return this.state.models.length > 0 ? this.listCached() : classifyModelKinds(models);
       })
       .finally(() => {
         this.inflight = null;
@@ -429,7 +452,8 @@ export class ModelsCache {
 
   /** Sync peek of the last cached catalog (no network). Empty until first fetch. */
   listCached(): ModelInfo[] {
-    return this.state.models;
+    // Catalogs cached by an older build carry no `kind`; classify on read.
+    return classifyModelKinds(this.state.models);
   }
 
   fetchedAt(): number {

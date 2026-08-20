@@ -71,6 +71,8 @@ interface FilesTabProps {
   /** True when the Files tab is the visible panel tab (gates Ctrl+S). */
   active: boolean;
   workspaceRoot: string | null;
+  /** Bumped by the app when sandbox content changes without a root switch. */
+  refreshKey?: number;
   codeDisplay: CodeDisplaySettings;
   onOpenFolder?: () => void;
 }
@@ -184,6 +186,12 @@ export function FilesTab(props: FilesTabProps) {
   }, [props.workspaceRoot]);
 
   refreshTreeRef.current = refreshTree;
+
+  // Sandbox content changed without a root switch (e.g. a repo was cloned in).
+  useEffect(() => {
+    if (props.refreshKey === undefined || props.refreshKey === 0) return;
+    void refreshTreeRef.current();
+  }, [props.refreshKey]);
 
   const prevRootRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {

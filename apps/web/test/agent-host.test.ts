@@ -148,3 +148,75 @@ test("web agent: provider failure surfaces an error and unlocks with done", asyn
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("web agent: enter_plan_mode emits mode-changed and create_plan reaches the UI inside the sandbox", async () => {
+  let request = 0;
+  const server = await startMockOpenAI(() => {
+    request += 1;
+    if (request === 1) return toolCallResponse("call-1", "enter_plan_mode", {});
+    if (request === 2)
+      return toolCallResponse("call-2", "create_plan", {
+        name: "Fix login flow",
+        overview: "Patch the session cookie path.",
+        plan: "# Fix login flow\n\n1. Edit auth.ts\n2. Test",
+        todos: [{ id: "step-1", content: "Edit auth.ts" }],
+      });
+    return textResponse("planned");
+  });
+  const root = mkdtempSync(join(tmpdir(), "deyin-web-agent-"));
+  const envelopes: AgentEventEnvelope[] = [];
+  const host = makeHost(root, envelopes);
+  try {
+    host.start(baseOptions({ provider: { baseUrl: server.url, token: "t", apiFormat: "chat-completions" } }));
+    await waitForDone(envelopes);
+
+    const modeChanged = envelopes.find((e) => e.event.type === "mode-changed");
+    assert.ok(modeChanged, "mode-changed emitted");
+    if (modeChanged?.event.type === "mode-changed") {
+      assert.equal(modeChanged.event.mode, "plan");
+      assert.equal(modeChanged.event.previousMode, "agent");
+    }
+
+    const planCreated = envelopes.find((e) => e.event.type === "plan-created");
+    assert.ok(planCreated, "plan-created emitted");
+    if (planCreated?.event.type === "plan-created") {
+      assert.equal(planCreated.event.name, "Fix login flow");
+      assert.equal(planCreated.event.plan, "# Fix login flow\n\n1. Edit auth.ts\n2. Test");
+      assert.ok(
+        planCreated.event.filePath?.startsWith(join(root, ".deyin", "plans")),
+        "plan file lands inside the sandbox, not the server home",
+      );
+      assert.ok(existsSync(planCreated.event.filePath ?? ""), "plan file exists on disk");
+    }
+  } finally {
+    host.dispose();
+    await server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("web agent: exit_plan_mode switches back to the previous mode", async () => {
+  let request = 0;
+  const server = await startMockOpenAI(() => {
+    request += 1;
+    if (request === 1) return toolCallResponse("call-1", "enter_plan_mode", {});
+    if (request === 2) return toolCallResponse("call-2", "exit_plan_mode", { userApproved: true });
+    return textResponse("implementing");
+  });
+  const root = mkdtempSync(join(tmpdir(), "deyin-web-agent-"));
+  const envelopes: AgentEventEnvelope[] = [];
+  const host = makeHost(root, envelopes);
+  try {
+    host.start(baseOptions({ provider: { baseUrl: server.url, token: "t", apiFormat: "chat-completions" } }));
+    await waitForDone(envelopes);
+
+    const modes = envelopes
+      .filter((e) => e.event.type === "mode-changed")
+      .map((e) => (e.event.type === "mode-changed" ? e.event.mode : ""));
+    assert.deepEqual(modes, ["plan", "agent"], "mode switches plan → agent");
+  } finally {
+    host.dispose();
+    await server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

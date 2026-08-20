@@ -7,6 +7,29 @@ async function changeMode(ctx: Parameters<ToolDefinition["execute"]>[1], change:
   return ctx.onModeChange(change);
 }
 
+/** System-reminder text injected when a run changes composer mode. */
+export function modeReminder(change: ModeChangeRequest): string {
+  if (change.event === "enter") {
+    switch (change.target) {
+      case "plan":
+        return "You have entered plan mode. You MUST NOT modify the workspace. Use read/grep/glob/ls to gather evidence. If the request is ambiguous, use ask_question to clarify. Then call todo_write with implementation steps and create_plan or output your final plan as markdown.";
+      case "ask":
+        return "You are in ask mode. Answer questions and explore the codebase. You MUST NOT modify the workspace or run commands.";
+      case "delivery":
+        return "You are in delivery mode. Before editing, call todo_write with acceptanceCriteria per step. After each change, verify with bash and call complete_step. Do not declare completion until every step is signed off.";
+      case "agent":
+        return "You are in agent mode. Implement the user's request end to end using all available tools.";
+    }
+  }
+  if (change.event === "exit" && change.previous === "plan") {
+    return "You have exited plan mode. The plan has been presented to the user for approval.";
+  }
+  if (change.event === "switch") {
+    return modeReminder({ ...change, event: "enter" });
+  }
+  return "";
+}
+
 export const enterPlanModeTool: ToolDefinition = {
   name: "enter_plan_mode",
   description:

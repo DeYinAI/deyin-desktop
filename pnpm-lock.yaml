@@ -308,6 +308,9 @@ importers:
       '@deyin/plugin-tools-git':
         specifier: workspace:*
         version: link:../../tools/tools-git
+      '@deyin/plugin-tools-image':
+        specifier: workspace:*
+        version: link:../../tools/tools-image
       '@deyin/plugin-tools-plan':
         specifier: workspace:*
         version: link:../../tools/tools-plan
@@ -800,6 +803,31 @@ importers:
         version: 5.9.3
 
   packages/tools/tools-git:
+    dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
+      '@deyin/extension-api':
+        specifier: workspace:*
+        version: link:../../kernel/extension-api
+      '@deyin/tools':
+        specifier: workspace:*
+        version: link:../tools
+    devDependencies:
+      '@deyin/kernel':
+        specifier: workspace:*
+        version: link:../../kernel/kernel
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.23.1
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/tools/tools-image:
     dependencies:
       '@deyin/agent-core':
         specifier: workspace:*

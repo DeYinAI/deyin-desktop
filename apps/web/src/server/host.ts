@@ -17,7 +17,7 @@ export class SessionHost {
   }
 
   constructor(
-    private readonly root: string,
+    readonly root: string,
     emit: (msg: { type: "term.data"; termId: string; data: string } | { type: "term.exit"; termId: string; exitCode: number }) => void,
   ) {
     this.terminals = new TerminalManager(

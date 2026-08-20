@@ -219,7 +219,7 @@ function TerminalInstance({
       fontSize,
       scrollback,
       cursorBlink: true,
-      theme: { background: "#05070a", foreground: colors.text, cursor: colors.accent },
+      theme: { background: colors.bg, foreground: colors.text, cursor: colors.accent },
     });
     termRef.current = term;
     const fit = new FitAddon();

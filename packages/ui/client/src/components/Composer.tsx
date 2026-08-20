@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { threadPreview } from "@deyin/host-core/shared";
 import { useT } from "../i18n.js";
 import { ContextUsage } from "./ContextUsage.js";
@@ -14,6 +14,38 @@ import type {
   ModelInfo,
   Thread,
 } from "@deyin/contract";
+
+/** An image attached to the next message, read as base64 (works on web + desktop). */
+export interface ComposerImage {
+  id: string;
+  name: string;
+  mediaType: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+  base64: string;
+}
+
+const MAX_IMAGES = 4;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Read an image file into a ComposerImage (base64, no data: prefix). */
+function readImageFile(file: File): Promise<ComposerImage> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.onload = () => {
+      const dataUrl = String(reader.result ?? "");
+      const comma = dataUrl.indexOf(",");
+      const header = comma >= 0 ? dataUrl.slice(0, comma) : "";
+      const mediaType = (header.match(/^data:([^;]+)/)?.[1] ?? file.type) as ComposerImage["mediaType"];
+      resolve({
+        id: `img-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        name: file.name,
+        mediaType,
+        base64: dataUrl.slice(comma + 1),
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 interface ComposerProps {
   value: string;
@@ -57,6 +89,9 @@ interface ComposerProps {
   compactionNotice?: string | null;
   attachments?: ContextAttachment[];
   onAttachmentsChange?: (next: ContextAttachment[]) => void;
+  /** Images attached to the next message (vision); base64, platform-independent. */
+  images?: ComposerImage[];
+  onImagesChange?: (next: ComposerImage[]) => void;
   linkedThreads?: LinkedThreadRef[];
   onLinkedThreadsChange?: (next: LinkedThreadRef[]) => void;
   /** Other threads in the project for # linking. */
@@ -244,10 +279,46 @@ export function Composer(props: ComposerProps) {
     [linkedThreads, props],
   );
 
+  const images = props.images ?? [];
+  const [imageError, setImageError] = useState<string | null>(null);
+
+  /** Attach image files (picker, drag-drop or paste) as base64 vision inputs. */
+  const addImageFiles = useCallback(
+    (files: File[]) => {
+      if (!props.onImagesChange) return;
+      setImageError(null);
+      const picked = files.filter((f) => f.type.startsWith("image/"));
+      if (picked.length === 0) return;
+      if (images.length + picked.length > MAX_IMAGES) {
+        setImageError(`At most ${MAX_IMAGES} images per message.`);
+        return;
+      }
+      const oversized = picked.find((f) => f.size > MAX_IMAGE_BYTES);
+      if (oversized) {
+        setImageError(`${oversized.name} is larger than 5 MB.`);
+        return;
+      }
+      void Promise.all(picked.map(readImageFile))
+        .then((loaded) => {
+          props.onImagesChange!([...images, ...loaded]);
+          ref.current?.focus();
+        })
+        .catch((err) => setImageError(err instanceof Error ? err.message : String(err)));
+    },
+    [images, props],
+  );
+
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
+    const dropped = [...e.dataTransfer.files];
+    // Images become vision attachments on every platform (base64 read).
+    const imageFiles = dropped.filter((f) => f.type.startsWith("image/"));
+    if (imageFiles.length > 0 && props.onImagesChange) {
+      addImageFiles(imageFiles);
+      return;
+    }
     if (!props.onAttachmentsChange || !props.workspaceRoot) return;
-    const paths = [...e.dataTransfer.files].map((f) => (f as File & { path?: string }).path).filter(Boolean) as string[];
+    const paths = dropped.map((f) => (f as File & { path?: string }).path).filter(Boolean) as string[];
     if (paths.length === 0) return;
     const next = [...attachments];
     for (const path of paths) {
@@ -256,6 +327,15 @@ export function Composer(props: ComposerProps) {
       }
     }
     props.onAttachmentsChange(next);
+  };
+
+  // Paste screenshots straight into the composer (vision input).
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pasted = [...(e.clipboardData?.files ?? [])];
+    if (pasted.some((f) => f.type.startsWith("image/")) && props.onImagesChange) {
+      e.preventDefault();
+      addImageFiles(pasted);
+    }
   };
 
   useEffect(() => {
@@ -308,8 +388,22 @@ export function Composer(props: ComposerProps) {
 
   return (
     <div className="composer" ref={rootRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-      {(attachments.length > 0 || linkedThreads.length > 0) && (
+      {(attachments.length > 0 || linkedThreads.length > 0 || images.length > 0) && (
         <div className="composer__chips">
+          {images.map((img) => (
+            <span key={img.id} className="chip chip--attach chip--image" title={img.name}>
+              <img className="chip__thumb" src={`data:${img.mediaType};base64,${img.base64}`} alt={img.name} />
+              <span>{img.name}</span>
+              <button
+                type="button"
+                className="chip__remove"
+                aria-label="Remove image"
+                onClick={() => props.onImagesChange?.(images.filter((x) => x.id !== img.id))}
+              >
+                <Icon name="close" size={10} />
+              </button>
+            </span>
+          ))}
           {attachments.map((a) => (
             <span key={a.path} className="chip chip--attach">
               <Icon name={a.kind === "folder" ? "folder" : "file"} size={12} />
@@ -347,6 +441,11 @@ export function Composer(props: ComposerProps) {
       {props.compactionNotice && (
         <div className="composer__compact-warn" role="status">
           {props.compactionNotice}
+        </div>
+      )}
+      {imageError && (
+        <div className="composer__attach-warn" role="status">
+          {imageError}
         </div>
       )}
       {attachmentHeavy && (
@@ -432,19 +531,21 @@ export function Composer(props: ComposerProps) {
         hidden
         onChange={(e) => {
           setPlusOpen(false);
+          const picked = [...e.target.files ?? []];
+          e.target.value = "";
+          // Images become base64 vision attachments on every platform.
+          const imageFiles = picked.filter((f) => f.type.startsWith("image/"));
+          if (imageFiles.length > 0 && props.onImagesChange) addImageFiles(imageFiles);
           if (!props.onAttachmentsChange) return;
-          const picked = [...e.target.files ?? []]
-            .map((f) => (f as File & { path?: string }).path)
-            .filter((p): p is string => Boolean(p));
-          if (picked.length === 0) return;
+          const paths = picked.map((f) => (f as File & { path?: string }).path).filter((p): p is string => Boolean(p));
+          if (paths.length === 0) return;
           const next = [...attachments];
-          for (const path of picked) {
+          for (const path of paths) {
             if (!next.some((a) => a.path === path)) {
               next.push({ kind: "file", path, label: path.split(/[\\/]/).pop() });
             }
           }
           props.onAttachmentsChange(next);
-          e.target.value = "";
         }}
       />
       <textarea
@@ -468,6 +569,7 @@ export function Composer(props: ComposerProps) {
           autoGrow();
         }}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
       />
       <div className="composer__row">
         <div className="menu">

@@ -16,6 +16,7 @@ import {
   expandCommand,
   loadContextFiles,
   matchCommand,
+  modeReminder,
   runAgent,
   runHooks,
   Semaphore,
@@ -24,6 +25,7 @@ import {
   runSubagent,
   subagentReadonlyRules,
   type AgentMessage,
+  type ImageGenBridge,
   type InteractionRequest,
   type LoadedHook,
   type ModeChangeRequest,
@@ -55,6 +57,8 @@ import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
 import type { CapabilityService } from "./capabilities.js";
 import type { VisualizeService } from "./visualize.js";
+import type { ImageService } from "./images.js";
+import { runImageGeneration } from "./image-gen.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
@@ -114,6 +118,8 @@ export interface AgentHostOptions {
   capabilities: CapabilityService;
   browser: BrowserControlService;
   visualize?: VisualizeService;
+  /** Generated-image store (generate_image tool + direct image-model runs). */
+  images?: ImageService;
   terminals: TerminalManager;
   /** Background memory store (remember/forget tools + recall). */
   memory: MemoryStore;
@@ -127,6 +133,8 @@ export interface AgentHostOptions {
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   /** Context window for the model, when known (drives compaction). */
   getContextLength: (providerId: string, modelId: string) => number | undefined;
+  /** Text-to-image model ids available on a provider (first is the default). */
+  getImageModels?: (providerId: string) => string[];
 }
 
 /**
@@ -256,6 +264,46 @@ export class DesktopAgentHost {
    * is unavailable (bash then uses one-shot spawn). Parallel bash calls in the
    * same step share one in-flight create promise so only one PTY is spawned.
    */
+  /**
+   * generate_image bridge: routes to the same provider the run uses, defaults to
+   * the first text-to-image model in the catalog, and stores every result in the
+   * thread's image store so the reply can embed it.
+   */
+  private imageGenBridge(
+    options: AgentStartOptions,
+    apiBaseUrl: string,
+    getToken: () => Promise<string | null>,
+    signal: AbortSignal,
+  ): ImageGenBridge | undefined {
+    const store = this.opts.images;
+    if (!store) return undefined;
+    return {
+      generate: async (request) => {
+        const available = this.opts.getImageModels?.(options.providerId) ?? [];
+        const model = request.model ?? available[0];
+        if (!model) {
+          throw new Error(
+            "No text-to-image model is available on this provider. Pick one in Settings → Models, or pass an explicit model id.",
+          );
+        }
+        const result = await runImageGeneration(
+          store,
+          { apiBaseUrl, getToken },
+          {
+            threadId: options.threadId,
+            prompt: request.prompt,
+            model,
+            size: request.size,
+            n: request.n,
+            negativePrompt: request.negativePrompt,
+            signal,
+          },
+        );
+        return result.images.map((image) => ({ file: image.file, model, mediaType: image.mediaType }));
+      },
+    };
+  }
+
   private async ensureShell(threadId: string, session: ThreadSession, cwd: string): Promise<ToolShell | undefined> {
     if (session.shell) {
       const wasMissing = !this.opts.terminals.isRegistered(session.shell.id);
@@ -521,7 +569,11 @@ export class DesktopAgentHost {
 
     // Transcript: reuse the in-memory session, else restore/create a persisted one.
     const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
-    session.messages.push({ role: "user", content: prompt });
+    session.messages.push({
+      role: "user",
+      content: prompt,
+      ...(options.images?.length ? { images: options.images } : {}),
+    });
     this.store.append(session.sessionId, { role: "user", content: prompt });
 
     // Goal mode: the model must be told the objective or report_goal_met can
@@ -726,6 +778,7 @@ return;
         evidenceGatesEnabled: options.mode === "delivery",
         toolContext: {
           skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
+          imageGen: this.imageGenBridge(options, apiBaseUrl, getToken, signal),
           sessionMeta: liveMeta,
           memory: settings.memoryEnabled ? this.opts.memory : undefined,
           applyFileChange,
@@ -1208,24 +1261,3 @@ if (optPlugin && result.finalText) {
   }
 }
 
-function modeReminder(change: ModeChangeRequest): string {
-  if (change.event === "enter") {
-    switch (change.target) {
-      case "plan":
-        return "You have entered plan mode. You MUST NOT modify the workspace. Use read/grep/glob/ls to gather evidence. If the request is ambiguous, use ask_question to clarify. Then call todo_write with implementation steps and create_plan or output your final plan as markdown.";
-      case "ask":
-        return "You are in ask mode. Answer questions and explore the codebase. You MUST NOT modify the workspace or run commands.";
-      case "delivery":
-        return "You are in delivery mode. Before editing, call todo_write with acceptanceCriteria per step. After each change, verify with bash and call complete_step. Do not declare completion until every step is signed off.";
-      case "agent":
-        return "You are in agent mode. Implement the user's request end to end using all available tools.";
-    }
-  }
-  if (change.event === "exit" && change.previous === "plan") {
-    return "You have exited plan mode. The plan has been presented to the user for approval.";
-  }
-  if (change.event === "switch") {
-    return modeReminder({ ...change, event: "enter" });
-  }
-  return "";
-}

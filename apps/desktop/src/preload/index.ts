@@ -181,6 +181,11 @@ agent: {
   visualize: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.visualizeRead, threadId, fileName),
   },
+  images: {
+    save: (threadId, input) => ipcRenderer.invoke(CH.imagesSave, threadId, input),
+    read: (threadId, fileName) => ipcRenderer.invoke(CH.imagesRead, threadId, fileName),
+    generate: (request) => ipcRenderer.invoke(CH.imagesGenerate, request),
+  },
   telemetry: {
     record: (name, props) => ipcRenderer.send(CH.telemetryRecord, name, props),
   },

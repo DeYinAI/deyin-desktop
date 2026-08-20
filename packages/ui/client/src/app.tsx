@@ -7,10 +7,13 @@ import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDi
 import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ChatView } from "./components/ChatView.js";
-import { Composer } from "./components/Composer.js";
+import { Composer, type ComposerImage } from "./components/Composer.js";
 import { ComposerHeader } from "./components/ComposerHeader.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { GitBranchBadge } from "./components/GitBranchBadge.js";
+import { RepoBar } from "./components/RepoBar.js";
+import { RepoChip } from "./components/RepoChip.js";
+import { resolveVisionModel } from "./vision.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
@@ -37,6 +40,7 @@ import {
   agentStateStore,
   type AgentSideEffect,
 } from "./hooks/useAgentState.js";
+import { useThreadHistory } from "./hooks/useThreadHistory.js";
 import {
   DEFAULT_THREAD_TITLE,
   deriveTitle,
@@ -64,6 +68,8 @@ import type {
  EnvInfo,
  ModelInfo,
  ProviderInfo,
+ AgentImageInput,
+ RepoStateResult,
  UserProfile,
  SecurityFindingsReport,
 } from "@deyin/contract";
@@ -115,6 +121,7 @@ export function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [projectsHydrated, setProjectsHydrated] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>("openference");
@@ -123,11 +130,15 @@ export function App() {
   const [input, setInput] = useState("");
   const [composerAttachments, setComposerAttachments] = useState<ContextAttachment[]>([]);
   const [composerLinked, setComposerLinked] = useState<LinkedThreadRef[]>([]);
+  /** Images attached to the next message (vision); base64, platform-independent. */
+  const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
   const [pendingReview, setPendingReview] = useState<PendingChange[]>([]);
   const [securityReport, setSecurityReport] = useState<SecurityFindingsReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [streamText, setStreamText] = useState<string | null>(null);
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
+  /** Bumped when the sandbox content changes outside root switches (repo connect). */
+  const [filesRefreshKey, setFilesRefreshKey] = useState(0);
   const [showWhatsNew, setShowWhatsNew] = useState(false);
   const [showBetaFeedback, setShowBetaFeedback] = useState(false);
 
@@ -248,6 +259,92 @@ export function App() {
     }, 400);
     return () => clearTimeout(timer);
   }, [projectsHydrated, projects, activeProjectId, activeThreadId]);
+
+  /* Web repo workflow: connect a git repo into the session sandbox, work on a
+   * dedicated branch, ship with the top-right button. The URL + branch persist
+   * locally so a reload re-clones into the fresh sandbox; tokens never persist. */
+  const [repoState, setRepoState] = useState<RepoStateResult | null>(null);
+  const [repoBusy, setRepoBusy] = useState<"connect" | "ship" | null>(null);
+  const [repoProgressLine, setRepoProgressLine] = useState<string | null>(null);
+  const [repoConnectOpen, setRepoConnectOpen] = useState(false);
+
+  const connectRepo = useCallback(async (opts: { url: string; token?: string; branch?: string }): Promise<RepoStateResult | null> => {
+    if (!window.deyin.repo) return null;
+    setRepoBusy("connect");
+    try {
+      const state = await window.deyin.repo.connect(opts);
+      setRepoState(state);
+      if (state.branch) {
+        try {
+          localStorage.setItem("deyin.repo", JSON.stringify({ url: opts.url, branch: state.branch }));
+        } catch { /* private mode */ }
+      }
+      return state;
+    } finally {
+      setRepoBusy(null);
+      setRepoProgressLine(null);
+    }
+  }, []);
+
+  const shipRepo = useCallback(async (message?: string) => {
+    if (!window.deyin.repo) return null;
+    setRepoBusy("ship");
+    try {
+      return await window.deyin.repo.ship(message);
+    } finally {
+      setRepoBusy(null);
+      setRepoProgressLine(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const repo = window.deyin.repo;
+    if (!repo) return;
+    return repo.onProgress((e) => setRepoProgressLine(e.line));
+  }, []);
+
+  // After a (re)connect the sandbox gains files the Files tab has never seen.
+  const repoConnected = repoState?.connected === true;
+  useEffect(() => {
+    if (!repoConnected) return;
+    setFilesRefreshKey((k) => k + 1);
+  }, [repoConnected]);
+
+  // Web sessions get a fresh sandbox per WebSocket connection: if this browser
+  // already carried a repo config, re-clone and resume the stored work branch.
+  useEffect(() => {
+    if (boot?.platform !== "web" || !workspaceRoot || !window.deyin.repo) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const state = await window.deyin.repo!.state();
+        if (cancelled) return;
+        if (state.connected) {
+          setRepoState(state);
+          return;
+        }
+        let cfg: { url: string; branch?: string } | null = null;
+        try {
+          const raw = localStorage.getItem("deyin.repo");
+          cfg = raw ? (JSON.parse(raw) as { url: string; branch?: string }) : null;
+        } catch { /* ignore */ }
+        if (!cfg?.url) return;
+        setRepoBusy("connect");
+        const next = await window.deyin.repo!.connect({ url: cfg.url, branch: cfg.branch });
+        if (!cancelled) setRepoState(next);
+      } catch {
+        // Offline or the remote moved on — the user can connect manually.
+      } finally {
+        if (!cancelled) {
+          setRepoBusy(null);
+          setRepoProgressLine(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [boot?.platform, workspaceRoot]);
 
   useEffect(() => {
     if (settings && composerMode === "delivery") {
@@ -730,6 +827,22 @@ export function App() {
     );
   }, []);
 
+  const allThreadIds = useMemo(() => projects.flatMap((p) => p.threads.map((t) => t.id)), [projects]);
+
+  /** Focus a thread, following it into its own project when that differs. */
+  const selectThread = useCallback(
+    (threadId: string, projectId?: string) => {
+      const owner = projectId ?? projects.find((p) => p.threads.some((t) => t.id === threadId))?.id;
+      if (owner && owner !== activeProjectId) void selectProject(owner);
+      setActiveThreadId(threadId);
+      updateThread(threadId, { unread: false });
+      setView("workspace");
+    },
+    [projects, activeProjectId, selectProject, updateThread],
+  );
+
+  const threadHistory = useThreadHistory(activeThreadId, allThreadIds, selectThread);
+
   /** Composer mode change: remembered app-wide and stamped on the active thread. */
   const selectMode = useCallback(
     (mode: ChatMode) => {
@@ -819,10 +932,22 @@ export function App() {
       thread: Thread,
       text: string,
       mode: ChatMode,
-      meta?: { attachments?: ContextAttachment[]; linkedThreadIds?: string[] },
+      meta?: {
+        attachments?: ContextAttachment[];
+        linkedThreadIds?: string[];
+        /** Vision images attached to this run's user message. */
+        images?: AgentImageInput[];
+        /** Text-to-image model ids from the catalog (generate_image tool). */
+        imageModels?: string[];
+        /** Model override (e.g. a vision-capable model routed at send time). */
+        model?: string;
+        /** Inline notice shown next to the sent message (e.g. vision routing). */
+        notice?: string;
+      },
     ) => {
       const attachments = meta?.attachments ?? [];
       const linkedThreadIds = meta?.linkedThreadIds ?? [];
+      const runModel = meta?.model ?? selectedModel;
       let agentPrompt = text;
       try {
         const refs = dedupeContextRefs(attachments.map((a) => ({ kind: a.kind, path: a.path })));
@@ -835,20 +960,25 @@ export function App() {
       }
 
       const isFirstMessage = toChatMessages(thread.events).length === 0;
-      appendEvents(thread.id, [{ kind: "user", text, attachments, linkedThreadIds }]);
+      appendEvents(thread.id, [
+        { kind: "user", text, attachments, linkedThreadIds },
+        ...(meta?.notice ? [{ kind: "assistant" as const, text: meta.notice }] : []),
+      ]);
       agentStateStore.startRun(thread.id, mode);
-      if (isFirstMessage) void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: true });
+      if (isFirstMessage) void window.deyin.usage.record({ model: runModel, tokens: 0, newSession: true });
       window.deyin.agent.start({
         threadId: thread.id,
         prompt: agentPrompt,
         providerId: selectedProviderId,
-        model: selectedModel,
+        model: runModel,
         thinking: settings?.thinking ?? true,
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
         history: toChatMessages(thread.events),
         initialTodos: thread.todos,
         goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
+        images: meta?.images,
+        imageModels: meta?.imageModels,
       }).catch((err: unknown) => {
         // The host refused the run (e.g. web sandbox not connected): surface it
         // and unlock the composer instead of wedging the thread.
@@ -869,6 +999,7 @@ export function App() {
     }
     setComposerAttachments([]);
     setComposerLinked([]);
+    setComposerImages([]);
     void window.deyin.review?.list(activeThreadId).then(setPendingReview);
     void window.deyin.security.listFindings(activeThreadId).then(setSecurityReport);
   }, [activeThreadId]);
@@ -1082,6 +1213,12 @@ export function App() {
     const isFirstMessage = toChatMessages(thread.events).length === 0;
     const history = [...toChatMessages(thread.events), { role: "user" as const, content: text }];
 
+    // Models available for the selected provider, used for image + vision routing.
+    const modelList =
+      selectedProviderId === "openference" ? models : (providers.find((p) => p.id === selectedProviderId)?.models ?? []);
+    const imageModels = modelList.filter((m) => m.kind === "image").map((m) => m.id);
+    const isImageRun = modelList.find((m) => m.id === selectedModel)?.kind === "image";
+
     if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
       const provisional = deriveTitle(text);
       updateThread(thread.id, { title: provisional });
@@ -1089,7 +1226,8 @@ export function App() {
       // Skip the LLM call when the provisional title is already short enough.
       const needsLlmTitle = provisional.endsWith("…") || provisional.split(/\s+/).length > 6;
       if (needsLlmTitle) {
-        void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: selectedModel, text })
+        const titleModel = isImageRun ? (modelList.find((m) => m.kind !== "image")?.id ?? selectedModel) : selectedModel;
+        void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: titleModel, text })
           .then((generated) => {
             if (!generated) return;
             setProjects((cur) =>
@@ -1107,18 +1245,78 @@ export function App() {
       }
     }
 
-    // Agent runtime (default on desktop): run the tool-calling loop in the main
-    // process in the selected composer mode; falls back to the plain text
-    // stream when switched off (or on the web, which has no agent host yet).
+    // Text-to-image model picked in the composer: the prompt goes straight to the
+    // images endpoint — these models have no chat completion to stream. The result
+    // is stored per thread and embedded with the inline-image directive.
+    if (isImageRun) {
+      appendEvents(thread.id, [{ kind: "user", text }]);
+      setInput("");
+      setComposerImages([]);
+      setStreamText(`Generating image with ${selectedModel}…`);
+      try {
+        const result = await window.deyin.images.generate({
+          threadId: thread.id,
+          prompt: text,
+          model: selectedModel,
+          providerId: selectedProviderId,
+        });
+        const alt = text.slice(0, 120).replace(/"/g, "'");
+        const body = result.images.map((img) => `::deyin-inline-image{file="${img.file}" alt="${alt}"}`).join("\n");
+        appendEvents(thread.id, [{ kind: "assistant", text: `${body}\n\n*${selectedModel}*` }]);
+      } catch (err) {
+        appendEvents(thread.id, [
+          { kind: "assistant", text: `Image generation failed: ${err instanceof Error ? err.message : String(err)}` },
+        ]);
+      } finally {
+        setStreamText(null);
+        void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: isFirstMessage });
+      }
+      return;
+    }
+
+    // Agent runtime (default): run the tool-calling loop in the host process in
+    // the selected composer mode; falls back to the plain text stream when
+    // switched off. Images require the agent runtime (vision content parts).
+    const images: AgentImageInput[] = composerImages.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
     if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
+      // Vision routing: images must land on a vision-capable model from the
+      // user's plan (the provider model list); unknown capabilities pass through.
+      let runModel = selectedModel;
+      let visionNotice: string | undefined;
+      if (images.length > 0) {
+        const route = resolveVisionModel(modelList, selectedModel);
+        if (!route) {
+          appendEvents(thread.id, [
+            {
+              kind: "assistant",
+              text: "Your plan doesn't include a vision-capable model yet. Remove the attached images, or pick a vision model from the model menu.",
+            },
+          ]);
+          return; // Keep the message and images in the composer.
+        }
+        runModel = route.model;
+        if (route.routedTo) visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
+      }
       setInput("");
       const sendMeta = {
         attachments: [...composerAttachments],
         linkedThreadIds: composerLinked.map((l) => l.threadId),
+        images,
+        imageModels,
+        model: runModel,
+        notice: visionNotice,
       };
       setComposerAttachments([]);
       setComposerLinked([]);
+      setComposerImages([]);
       void startAgentRun(thread, text, composerMode, sendMeta);
+      return;
+    }
+
+    if (images.length > 0) {
+      appendEvents(thread.id, [
+        { kind: "assistant", text: "Plain chat mode doesn't support images. Enable the agent runtime in Settings → General." },
+      ]);
       return;
     }
 
@@ -1175,7 +1373,7 @@ export function App() {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, runningThreadId, activeThread, boot, providers, selectedProviderId, selectedModel, settings, composerMode, composerAttachments, composerLinked, connect, appendEvents, startAgentRun, updateThread, ensureThread]);
+  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, selectedProviderId, selectedModel, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
@@ -1231,6 +1429,12 @@ export function App() {
 
   const projectName =
     activeProject?.name ?? (workspaceRoot ? workspaceRoot.split(/[\\/]/).pop() ?? "Workspace" : "No workspace");
+
+  // Same inputs ChatView uses for its empty branch — drives the centered
+  // new-chat layout (logo hero + repo chip + composer).
+  const chatEvents = [...(activeThread?.events ?? []), ...(agentRunState?.runEvents ?? [])];
+  const chatStreamText = agentRunState?.streamText ?? streamText;
+  const isChatEmpty = chatEvents.length === 0 && chatStreamText === null;
 
   const language = settings?.language ?? "en";
 
@@ -1313,11 +1517,13 @@ export function App() {
         workspaceRoot={workspaceRoot}
         panelOpen={panelOpen}
         terminalOpen={terminalOpen}
+        sidebarOpen={sidebarOpen}
         cacheHitRate={activeCacheMetrics?.hitRate ?? null}
         sessionCacheHit={activeCacheMetrics?.sessionHit}
         sessionCacheMiss={activeCacheMetrics?.sessionMiss}
         tokenStats={sessionTokenStats}
         onOpenFolder={() => void addProjectFolder()}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
         onTogglePanel={() => {
           setPanelOpen((v) => !v);
           setView("workspace");
@@ -1330,7 +1536,8 @@ export function App() {
       />
       {boot?.platform === "desktop" ? <UpdateBanner /> : null}
 
-      <div className="app__body">
+      <div className={`app__body${sidebarOpen ? "" : " app__body--nosidebar"}`}>
+        {sidebarOpen && (
         <Sidebar
           platform={boot?.platform ?? "desktop"}
           projects={projects}
@@ -1341,17 +1548,18 @@ export function App() {
           settings={settings ?? DEFAULT_SETTINGS}
           busy={busy}
           connecting={connecting}
+          canBack={threadHistory.canBack}
+          canForward={threadHistory.canForward}
+          onBack={threadHistory.back}
+          onForward={threadHistory.forward}
+          onCollapse={() => setSidebarOpen(false)}
           onNewTask={newTask}
           onNewProject={() => void addProjectFolder()}
           onSelectProject={(projectId) => {
             void selectProject(projectId);
             setView("workspace");
           }}
-          onSelectThread={(_pid, tid) => {
-            setActiveThreadId(tid);
-            updateThread(tid, { unread: false });
-            setView("workspace");
-          }}
+          onSelectThread={(pid, tid) => selectThread(tid, pid)}
           onOpenSearch={() => setSearchOpen(true)}
           onThreadContext={(threadId, x, y) => setThreadMenu({ threadId, x, y })}
           onRenameSubmit={(threadId, title) => {
@@ -1373,12 +1581,23 @@ export function App() {
             setView("settings");
             window.deyin.telemetry?.record("settings-opened");
           }}
+          onOpenAutomations={() => {
+            // Scheduled agent runs live under Settings → Data (Fleet & scheduler).
+            setSettingsPage("data");
+            setView("settings");
+          }}
+          onOpenCustomize={() => {
+            // Appearance/theme controls live on the General page.
+            setSettingsPage("general");
+            setView("settings");
+          }}
         />
+        )}
 
         <div className="app__center">
           {<>
           <div className="app__columns">
-            <main className="chat-column">
+            <main className={`chat-column${isChatEmpty ? " chat-column--empty" : ""}`}>
               <div className="chat-column__bar">
                 <EnvironmentBadge
                   env={env}
@@ -1391,14 +1610,22 @@ export function App() {
                     setPanelTab("git");
                   }}
                 />
+                {boot?.platform === "web" && (
+                  <RepoBar
+                    repoState={repoState}
+                    busy={repoBusy}
+                    progressLine={repoProgressLine}
+                    connectOpen={repoConnectOpen}
+                    onConnectOpenChange={setRepoConnectOpen}
+                    onConnect={connectRepo}
+                    onShip={shipRepo}
+                  />
+                )}
               </div>
 
               <ChatView
-                events={[
-                  ...(activeThread?.events ?? []),
-                  ...(agentRunState?.runEvents ?? []),
-                ]}
-                streamText={agentRunState?.streamText ?? streamText}
+                events={chatEvents}
+                streamText={chatStreamText}
                 streamReasoning={agentRunState?.streamReasoning ?? null}
                 greetingName={greetingName}
                 threadKey={activeThreadId}
@@ -1503,12 +1730,27 @@ export function App() {
                     }}
                   />
                 )}
-                <ComposerHeader
-                  platform={boot?.platform ?? "desktop"}
-                  projectName={projectName}
-                  workspaceRoot={workspaceRoot}
-                  onPickFolder={() => void addProjectFolder()}
-                />
+                {isChatEmpty ? (
+                  <RepoChip
+                    workspaceRoot={workspaceRoot}
+                    homeDir={boot?.homeDir ?? null}
+                    projectName={projectName}
+                    platform={boot?.platform === "web" ? "web" : "desktop"}
+                    onPickFolder={() => void addProjectFolder()}
+                    onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+                    onOpenSourceControl={() => {
+                      setPanelOpen(true);
+                      setPanelTab("git");
+                    }}
+                  />
+                ) : (
+                  <ComposerHeader
+                    platform={boot?.platform ?? "desktop"}
+                    projectName={projectName}
+                    workspaceRoot={workspaceRoot}
+                    onPickFolder={() => void addProjectFolder()}
+                  />
+                )}
                 <Composer
                   value={input}
                   models={models}
@@ -1551,6 +1793,8 @@ export function App() {
                   compactionNotice={activeCompactionNotice}
                   attachments={composerAttachments}
                   onAttachmentsChange={setComposerAttachments}
+                  images={composerImages}
+                  onImagesChange={setComposerImages}
                   linkedThreads={composerLinked}
                   onLinkedThreadsChange={setComposerLinked}
                   threadsForPicker={activeProject?.threads}
@@ -1565,6 +1809,7 @@ export function App() {
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
                 workspaceRoot={workspaceRoot}
+                filesRefreshKey={filesRefreshKey}
                 activeTab={panelTab}
                 planMarkdown={
                   livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { themeByName, type CodeTheme } from "../code.js";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
+import { Logo } from "./Logo.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos } from "./TodoChecklist.js";
 import type { ThreadEvent } from "../threads.js";
@@ -117,8 +118,13 @@ export function ChatView(props: ChatViewProps) {
   if (props.events.length === 0 && props.streamText === null) {
     return (
       <div className="chat chat--empty" ref={scrollRef}>
-        <div className="greeting">
-          {props.greetingName}, <span className="muted">what are we building?</span>
+        <div className="empty-hero">
+          <span className="empty-hero__logo" aria-hidden>
+            <Logo size={84} />
+          </span>
+          <div className="greeting">
+            {props.greetingName}, <span className="muted">what are we building?</span>
+          </div>
         </div>
       </div>
     );
@@ -146,6 +152,7 @@ export function ChatView(props: ChatViewProps) {
               onEditPlan={props.onEditPlan}
               planPending={Boolean(props.pendingPlan) && isLastPlanReady(props.events, group.event)}
               threadTitles={props.threadTitles}
+              threadId={props.threadKey}
             />
           ),
         )}
@@ -154,7 +161,7 @@ export function ChatView(props: ChatViewProps) {
         )}
         {props.streamText !== null && props.streamText.length > 0 && (
           <div className="assistant-text">
-            <Markdown text={props.streamText} theme={codeTheme} display={props.codeDisplay} />
+            <Markdown text={props.streamText} theme={codeTheme} display={props.codeDisplay} threadId={props.threadKey} />
           </div>
         )}
         {props.streamText !== null &&
@@ -321,6 +328,7 @@ function EventRow({
   onEditPlan,
   planPending,
   threadTitles,
+  threadId,
 }: {
   event: ThreadEvent;
   codeTheme: CodeTheme;
@@ -335,6 +343,8 @@ function EventRow({
   planPending?: boolean;
   /** threadId -> title map for #-linked thread chips in user bubbles. */
   threadTitles?: Record<string, string>;
+  /** Active thread id — inline visualization/image embeds read from its store. */
+  threadId?: string | null;
 }) {
   switch (event.kind) {
     case "user": {
@@ -361,7 +371,7 @@ function EventRow({
     case "assistant":
       return (
         <div className="assistant-text">
-          <Markdown text={event.text} theme={codeTheme} display={codeDisplay} />
+          <Markdown text={event.text} theme={codeTheme} display={codeDisplay} threadId={threadId} />
         </div>
       );
 

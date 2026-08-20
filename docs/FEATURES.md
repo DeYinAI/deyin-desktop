@@ -180,3 +180,17 @@ without adopting its operator/lifestyle scope:
 
 ## Multi-model
 - Model picker backed by Openference's live `/v1/models` catalog.
+- Catalog entries are classified: chat models stream completions, vision models accept
+  image attachments, and text-to-image models are tagged **Image** in the picker.
+
+## Image generation
+- Text-to-image models (SDXL, FLUX, DALL·E and friends) are detected from the catalog's
+  modality metadata, with a curated id heuristic as fallback (`host-core/src/images.ts`).
+- Picking an image model in the composer sends the prompt straight to the provider's
+  OpenAI-compatible `/images/generations` endpoint — no chat completion involved.
+- The agent can generate pictures mid-task with the `generate_image` tool (prompt, model,
+  size, `n`, negative prompt) and the built-in `/generate-image` skill covers prompt
+  craft, sizes and iteration.
+- Results are stored per thread (desktop: `userData/images/<thread>`, web: inside the
+  session sandbox) and embedded in the reply as `::deyin-inline-image{file="…" alt="…"}`,
+  which the chat renders as an inline picture, lazily decoded when it scrolls into view.

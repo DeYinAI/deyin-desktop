@@ -180,6 +180,40 @@ const PATHS: Record<string, JSX.Element> = {
     </>
   ),
   star: <path d="M8 2.2l1.6 3.2 3.5.5-2.5 2.5.6 3.5L8 10.2l-3.2 1.7.6-3.5-2.5-2.5 3.5-.5z" />,
+  panelLeft: (
+    <>
+      <rect x="2" y="3" width="12" height="10" rx="1.8" />
+      <path d="M6.4 3v10" />
+    </>
+  ),
+  folderOpen: (
+    <>
+      <path d="M2 11.8V4.5A1.5 1.5 0 013.5 3h3L8 5h4.5A1.5 1.5 0 0114 6.5v1" />
+      <path d="M2.2 12.6l1.7-4a1 1 0 01.92-.6h9.06a.8.8 0 01.74 1.1l-1.4 3.5a1 1 0 01-.93.63H3.5a1.3 1.3 0 01-1.3-1.3z" />
+    </>
+  ),
+  folderPlus: (
+    <>
+      <path d="M14 9V6.5A1.5 1.5 0 0012.5 5H8L6.5 3h-3A1.5 1.5 0 002 4.5v7A1.5 1.5 0 003.5 13H8" />
+      <path d="M11.5 9.5v4.2M9.4 11.6h4.2" />
+    </>
+  ),
+  filter: <path d="M2.5 4h11M4.5 8h7M6.6 12h2.8" />,
+  automation: (
+    <>
+      <rect x="2.2" y="2.4" width="4.6" height="4.6" rx="1.3" />
+      <rect x="9.2" y="9" width="4.6" height="4.6" rx="1.3" />
+      <path d="M6.8 4.7h2.9a1.8 1.8 0 011.8 1.8V9" />
+    </>
+  ),
+  customize: (
+    <>
+      <rect x="2.2" y="2.2" width="4.9" height="4.9" rx="1.3" />
+      <rect x="8.9" y="2.2" width="4.9" height="4.9" rx="1.3" />
+      <rect x="2.2" y="8.9" width="4.9" height="4.9" rx="1.3" />
+      <path d="M11.35 9v4.6M9.05 11.3h4.6" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof PATHS & string;

@@ -136,16 +136,19 @@ export function ProfileMenu({
   return (
     <div className="menu" ref={rootRef}>
       <button
-        className="connect-row"
+        className="connect-row connect-row--profile"
         onClick={() => {
           if (open) setSubmenu(null);
           setOpen((v) => !v);
         }}
       >
-        <span className="avatar avatar--small">
+        <span className="avatar">
           {user.picture ? <img src={user.picture} alt="" /> : initials(user.name)}
         </span>
-        <span className="connect-row__name">{user.name ?? user.email ?? "Signed in"}</span>
+        <span className="connect-row__stack">
+          <span className="connect-row__name">{user.name ?? user.email ?? "Signed in"}</span>
+          {planLabel && <span className="connect-row__plan">{planLabel}</span>}
+        </span>
       </button>
       {open && (
         <div className="menu__panel menu__panel--up profilemenu">

@@ -9,6 +9,7 @@ import {
   computeStats,
   fetchAccountUsage,
   fetchPublicPlans,
+  modelSupportsVision,
   selectPlan,
   fetchBillingOverview,
   fetchBillingPublishableKey,
@@ -26,11 +27,25 @@ import type {
   CapabilityItem,
   DeyinSettings,
   EnvInfo,
+  GitBlameLine,
+  GitBranch,
+  GitCommit,
+  GitCommitDetail,
+  GitFileDiff,
+  GitRemote,
+  GitRepoInfo,
+  GitResultLite,
+  GitStash,
+  GitStatus,
+  ImageGenerateResult,
   PluginCatalogEntry,
   ProjectsState,
   ProviderInfo,
   ProviderPatch,
   ProviderTestResult,
+  RepoProgressEvent,
+  RepoStateResult,
+  RepoShipResult,
   SearchResult,
   UsageDay,
   UsageEvent,
@@ -96,6 +111,8 @@ class HostSocket {
   private exitHandlers = new Set<(e: { id: string; exitCode: number }) => void>();
   private rootHandlers = new Set<(root: string | null) => void>();
   private agentEventHandlers = new Set<(envelope: AgentEventEnvelope) => void>();
+  private gitChangedHandlers = new Set<() => void>();
+  private repoProgressHandlers = new Set<(e: RepoProgressEvent) => void>();
   /** Sandbox root assigned by the host after auth; kept across transient disconnects. */
   workspaceRoot: string | null = null;
 
@@ -225,6 +242,12 @@ class HostSocket {
       case "agent.event":
         this.agentEventHandlers.forEach((h) => h(msg.envelope));
         break;
+      case "git.changed":
+        this.gitChangedHandlers.forEach((h) => h());
+        break;
+      case "repo.progress":
+        this.repoProgressHandlers.forEach((h) => h({ stage: msg.stage, line: msg.line }));
+        break;
     }
   }
 
@@ -258,6 +281,14 @@ class HostSocket {
   onAgentEvent(cb: (envelope: AgentEventEnvelope) => void): () => void {
     this.agentEventHandlers.add(cb);
     return () => this.agentEventHandlers.delete(cb);
+  }
+  onGitChanged(cb: () => void): () => void {
+    this.gitChangedHandlers.add(cb);
+    return () => this.gitChangedHandlers.delete(cb);
+  }
+  onRepoProgress(cb: (e: RepoProgressEvent) => void): () => void {
+    this.repoProgressHandlers.add(cb);
+    return () => this.repoProgressHandlers.delete(cb);
   }
 }
 
@@ -385,8 +416,13 @@ export function createBrowserTransport(): DeyinApi {
         if (!token) return [];
         const res = await fetch(`${API_BASE}/models`, { headers: { authorization: `Bearer ${token}` } });
         if (!res.ok) return [];
-        const body = (await res.json()) as { data?: { id: string; context_length?: number }[] };
-        return (body.data ?? []).map((m) => ({ id: m.id, name: m.id, contextLength: m.context_length }));
+        const body = (await res.json()) as { data?: { id: string; context_length?: number; vision?: boolean; capabilities?: unknown }[] };
+        return (body.data ?? []).map((m) => ({
+          id: m.id,
+          name: m.id,
+          contextLength: m.context_length,
+          vision: modelSupportsVision(m.id, m),
+        }));
       },
       // The web fetches live every time (no local cache file), so refresh = list.
       refresh() {
@@ -413,35 +449,45 @@ export function createBrowserTransport(): DeyinApi {
       onRootChanged: (cb) => host.onRootChanged(cb),
     },
     git: (() => {
-      // The web sandbox has no git integration yet: report "not a repo".
-      const unavailable = { ok: false, message: "Git is not available in the web sandbox." };
+      // Real git over the host-server: a generic RPC mapped onto the shared
+      // host-core git service, scoped to the session sandbox root.
+      const call = <T>(op: string, ...args: unknown[]) => host.invoke<T>((id) => ({ type: "git.call", id, op, args }));
       return {
-        info: async () => ({ isRepo: false, root: null, branch: null, detached: false, ahead: 0, behind: 0, remotes: [] }),
-        status: async () => ({ branch: null, detached: false, upstream: null, ahead: 0, behind: 0, staged: [], unstaged: [], untracked: [], conflicts: [] }),
-        branches: async () => [],
-        checkout: async () => unavailable,
-        stage: async () => unavailable,
-        unstage: async () => unavailable,
-        discard: async () => unavailable,
-        commit: async () => unavailable,
-        fetch: async () => unavailable,
-        pull: async () => unavailable,
-        push: async () => unavailable,
-        createBranch: async () => unavailable,
-        deleteBranch: async () => unavailable,
-        log: async () => [],
-        show: async (ref: string) => ({ commit: { hash: ref, shortHash: ref.slice(0, 7), subject: "", author: "", authorEmail: "", date: "", parents: [] }, files: [] }),
-        diffFile: async (path: string) => ({ path, before: "", after: "", binary: false }),
-        diffCommit: async (_ref: string, path: string) => ({ path, before: "", after: "", binary: false }),
-        blame: async () => [],
-        remotes: async () => [],
-        stashList: async () => [],
-        stashPush: async () => unavailable,
-        stashPop: async () => unavailable,
-        stashDrop: async () => unavailable,
-        onChanged: () => () => undefined,
+        info: () => call<GitRepoInfo>("info"),
+        status: () => call<GitStatus>("status"),
+        branches: () => call<GitBranch[]>("branches"),
+        checkout: (name: string) => call<GitResultLite>("checkout", name),
+        stage: (paths: string[]) => call<GitResultLite>("stage", paths),
+        unstage: (paths: string[]) => call<GitResultLite>("unstage", paths),
+        discard: (paths: string[]) => call<GitResultLite>("discard", paths),
+        commit: (message: string, opts?: { amend?: boolean }) => call<GitResultLite>("commit", message, opts),
+        fetch: () => call<GitResultLite>("fetch"),
+        pull: (opts?: { rebase?: boolean }) => call<GitResultLite>("pull", opts),
+        push: (opts?: { setUpstream?: boolean }) => call<GitResultLite>("push", opts),
+        createBranch: (name: string, from?: string) => call<GitResultLite>("createBranch", name, from),
+        deleteBranch: (name: string, force?: boolean) => call<GitResultLite>("deleteBranch", name, force),
+        log: (opts?: { limit?: number; skip?: number; path?: string; ref?: string }) => call<GitCommit[]>("log", opts),
+        show: (ref: string) => call<GitCommitDetail>("show", ref),
+        diffFile: (path: string, mode: "worktree" | "staged" | "head") => call<GitFileDiff>("diffFile", path, mode),
+        diffCommit: (ref: string, path: string) => call<GitFileDiff>("diffCommit", ref, path),
+        blame: (path: string) => call<GitBlameLine[]>("blame", path),
+        remotes: () => call<GitRemote[]>("remotes"),
+        stashList: () => call<GitStash[]>("stashList"),
+        stashPush: (message?: string, includeUntracked?: boolean) => call<GitResultLite>("stashPush", message, includeUntracked),
+        stashPop: (index?: number) => call<GitResultLite>("stashPop", index),
+        stashDrop: (index: number) => call<GitResultLite>("stashDrop", index),
+        onChanged: (cb: () => void) => host.onGitChanged(cb),
       };
     })(),
+    repo: {
+      // Codex-web style task workflow: clone into the sandbox, work on a
+      // dedicated branch, ship with commit → push → merge.
+      connect: (opts: { url: string; token?: string; branch?: string }) =>
+        host.invoke<RepoStateResult>((id) => ({ type: "repo.connect", id, url: opts.url, token: opts.token, branch: opts.branch })),
+      state: () => host.invoke<RepoStateResult>((id) => ({ type: "repo.state", id })),
+      ship: (message?: string) => host.invoke<RepoShipResult>((id) => ({ type: "repo.ship", id, message })),
+      onProgress: (cb: (e: RepoProgressEvent) => void) => host.onRepoProgress(cb),
+    },
     projects: {
       get: async () =>
         readLocal<ProjectsState>("deyin.projects", {
@@ -598,6 +644,10 @@ export function createBrowserTransport(): DeyinApi {
           approvalMode: options.approvalMode,
           mode: options.mode,
           history: options.history,
+          initialTodos: options.initialTodos,
+          goalText: options.goalText,
+          images: options.images,
+          imageModels: options.imageModels,
           provider: {
             baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
             token,
@@ -643,6 +693,45 @@ export function createBrowserTransport(): DeyinApi {
     },
     visualize: {
       read: async () => "",
+    },
+    images: {
+      save: (threadId, input) =>
+        host.invoke<{ file: string }>((id: number) => ({
+          type: "images.save",
+          id,
+          threadId,
+          base64: input.base64,
+          mediaType: input.mediaType,
+        })),
+      read: async (threadId, file) => {
+        const result = await host.invoke<{ dataUrl: string }>((id: number) => ({ type: "images.read", id, threadId, file }));
+        return result.dataUrl;
+      },
+      generate: async (request) => {
+        const provider = readProviders().find((p) => p.id === request.providerId);
+        const keys = readKeys();
+        const primary = !provider || provider.kind === "primary";
+        const token = primary ? ((await oauth.getAccessToken().catch(() => null)) ?? "") : (keys[provider.id] ?? "");
+        if (!token && !primary && !provider?.local) {
+          throw new Error(`No API key stored for ${provider?.name ?? request.providerId}.`);
+        }
+        return await host.invoke<ImageGenerateResult>((id: number) => ({
+          type: "images.generate",
+          id,
+          threadId: request.threadId,
+          prompt: request.prompt,
+          model: request.model,
+          size: request.size,
+          n: request.n,
+          negativePrompt: request.negativePrompt,
+          provider: {
+            baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
+            token,
+            apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
+            authHeader: provider?.authHeader,
+          },
+        }));
+      },
     },
     telemetry: {
       // Web builds do not report telemetry.

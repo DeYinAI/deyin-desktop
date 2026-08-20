@@ -14,9 +14,15 @@ export const LOCALES: { id: Locale; label: string }[] = [
 
 const en = {
   // Sidebar / chrome
-  "nav.newTask": "New task",
+  "nav.newTask": "New chat",
   "nav.search": "Search",
   "nav.projects": "Projects",
+  "nav.pinned": "Pinned",
+  "nav.customize": "Customize",
+  "nav.collapseSidebar": "Collapse sidebar",
+  "nav.expandSidebar": "Expand sidebar",
+  "nav.back": "Back",
+  "nav.forward": "Forward",
   "nav.tasks": "Tasks",
   "nav.noTasks": "No tasks yet",
   "nav.newProject": "New project",
@@ -319,9 +325,15 @@ const en = {
 export type MessageKey = keyof typeof en;
 
 const zh: Partial<Record<MessageKey, string>> = {
-  "nav.newTask": "新任务",
+  "nav.newTask": "新对话",
   "nav.search": "搜索",
   "nav.projects": "项目",
+  "nav.pinned": "已置顶",
+  "nav.customize": "个性化",
+  "nav.collapseSidebar": "收起侧边栏",
+  "nav.expandSidebar": "展开侧边栏",
+  "nav.back": "后退",
+  "nav.forward": "前进",
   "nav.tasks": "任务",
   "nav.noTasks": "暂无任务",
   "nav.newProject": "新建项目",
@@ -600,9 +612,15 @@ const zh: Partial<Record<MessageKey, string>> = {
 };
 
 const de: Partial<Record<MessageKey, string>> = {
-  "nav.newTask": "Neue Aufgabe",
+  "nav.newTask": "Neuer Chat",
   "nav.search": "Suchen",
   "nav.projects": "Projekte",
+  "nav.pinned": "Angeheftet",
+  "nav.customize": "Anpassen",
+  "nav.collapseSidebar": "Seitenleiste einklappen",
+  "nav.expandSidebar": "Seitenleiste ausklappen",
+  "nav.back": "Zurück",
+  "nav.forward": "Vorwärts",
   "nav.tasks": "Aufgaben",
   "nav.noTasks": "Noch keine Aufgaben",
   "nav.newProject": "Neues Projekt",

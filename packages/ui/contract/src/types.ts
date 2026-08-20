@@ -42,6 +42,7 @@ export type {
   IndexSearchHit,
   AgentTodoItem,
   AgentTodoStatus,
+  AgentImageInput,
   PlanStep,
   DiffSnippetLine,
   AgentUiEvent,
@@ -143,6 +144,69 @@ export interface SecurityFindingsReport {
 
 /** UI cap for tool result content (both streaming tail and final tool-end result). */
 export const TOOL_RESULT_UI_CAP = 64_000;
+
+/* Web repo workflow (connect a git repo → work branch → ship) ----------------- */
+
+export interface RepoConnectRequest {
+  url: string;
+  /** Optional access token for private repos; kept in the session, never persisted. */
+  token?: string;
+  /** Existing branch to resume (reconnect); omit to create a fresh work branch. */
+  branch?: string;
+}
+
+export interface RepoStateResult {
+  connected: boolean;
+  url: string | null;
+  branch: string | null;
+  defaultBranch: string | null;
+}
+
+export interface RepoShipResult {
+  ok: boolean;
+  /** True when the work branch was merged into the default branch and pushed. */
+  merged: boolean;
+  branch: string;
+  defaultBranch: string;
+  /** Commit subjects shipped with this merge (base..branch). */
+  commits: string[];
+  message: string;
+  /** Compare URL offered when direct push/merge is not possible. */
+  prUrl: string | null;
+}
+
+export type RepoProgressStage = "clone" | "connect" | "ship";
+
+export interface RepoProgressEvent {
+  stage: RepoProgressStage;
+  line: string;
+}
+
+/** One text-to-image run requested from the chat or the agent. */
+export interface ImageGenerateRequest {
+  threadId: string;
+  prompt: string;
+  /** Text-to-image model id (from the model catalog). */
+  model: string;
+  /** Provider routing: omit for the primary (Openference) provider. */
+  providerId?: string;
+  size?: string;
+  n?: number;
+  negativePrompt?: string;
+}
+
+export interface GeneratedImageInfo {
+  /** Stored file name, embedded as ::deyin-inline-image{file="..."}. */
+  file: string;
+  mediaType: string;
+  /** Provider-rewritten prompt, when the endpoint reports one. */
+  revisedPrompt?: string;
+}
+
+export interface ImageGenerateResult {
+  images: GeneratedImageInfo[];
+  model: string;
+}
 
 /** Keep the last `cap` characters so streaming and tool-end stay consistent. */
 export function truncateToolResultUi(text: string, cap = TOOL_RESULT_UI_CAP): string {

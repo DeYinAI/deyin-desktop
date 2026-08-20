@@ -6,37 +6,41 @@ export const brand = {
   tagline: "Agentic development, with Openference.",
 } as const;
 
-/** Dark theme palette (default). */
+/** Dark theme palette (default). Mirrors the legacy UI dark palette: Tailwind v4
+ * neutrals for surfaces and text, sky for the accent, alpha-based borders. */
 export const colors = {
-  // Surfaces
-  bg: "#0b0d0e",
-  surface: "#141719",
-  surfaceRaised: "#1b1f22",
-  surfaceOverlay: "#212528",
-  border: "#26292d",
-  borderStrong: "#31353a",
+  // Surfaces. Flat editor-grade greys: the window/sidebar ground sits a shade
+  // below the content card, so the card reads as raised without a hard border.
+  bg: "#181818",
+  surface: "#1f1f1f",
+  surfaceRaised: "#2a2a2a",
+  surfaceOverlay: "#252525",
+  border: "rgba(255, 255, 255, 0.075)",
+  borderStrong: "rgba(255, 255, 255, 0.22)",
   /** Ultra-subtle internal separator (rows inside cards). */
-  hairline: "rgba(255, 255, 255, 0.055)",
+  hairline: "rgba(255, 255, 255, 0.05)",
 
-  // Text
-  text: "#e6e8ea",
-  textMuted: "#9aa0a6",
-  textFaint: "#6b7178",
+  // Text (neutral-200, alpha steps for muted/faint as in legacy UI)
+  text: "#e0e0e0",
+  textMuted: "rgba(224, 224, 224, 0.62)",
+  textFaint: "rgba(224, 224, 224, 0.34)",
 
-  // Accent (the deyin blue)
-  accent: "#4f7cff",
-  accentHover: "#6690ff",
-  accentSoft: "rgba(79, 124, 255, 0.14)",
+  // Accent (legacy UI brand: sky-500/sky-400, soft fill from sky-950)
+  accent: "#00a5ea",
+  accentHover: "#00bbfd",
+  accentSoft: "#052f4a80",
+  /** Warm counter-accent: the "new chat" mark and other create affordances. */
+  accentWarm: "#e2a45c",
 
-  // Send button (neutral filled)
-  sendBg: "#e6e8ea",
-  sendFg: "#101214",
+  // Send button (legacy UI primary: neutral-50 fill, neutral-950 text)
+  sendBg: "#fafafa",
+  sendFg: "#0a0a0a",
 
   // Status
-  success: "#3fb950",
-  warning: "#d29922",
-  danger: "#ff6b6b",
-  running: "#4f7cff",
+  success: "#00c65a",
+  warning: "#eab300",
+  danger: "#fb2c36",
+  running: "#00a5ea",
 } as const;
 
 /** Light theme palette. */
@@ -56,6 +60,7 @@ export const colorsLight = {
   accent: "#3f66e0",
   accentHover: "#2f55d4",
   accentSoft: "rgba(63, 102, 224, 0.12)",
+  accentWarm: "#b4690e",
 
   sendBg: "#1f1f1e",
   sendFg: "#ffffff",

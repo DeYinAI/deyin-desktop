@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { AgentShell, SessionEventJournal, TerminalManager } from "@deyin/host-core";
-import type { AgentEventEnvelope, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
+import { AgentShell, ImageStore, SessionEventJournal, TerminalManager, generateImages } from "@deyin/host-core";
+import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
 import {
   BUILTIN_SUBAGENTS,
   PermissionEngine,
@@ -10,14 +10,19 @@ import {
   createTaskTool,
   expandCommand,
   matchCommand,
+  modeReminder,
   rulesForApprovalMode,
   runAgent,
   runSubagent,
   subagentReadonlyRules,
   type AgentEvent,
+  type AgentMessage,
+  type ImageGenBridge,
   type PermissionDecision,
+  type PermissionEngineOptions,
   type SubagentDefinition,
   type ToolRegistry,
+  type ToolSessionMeta,
 } from "@deyin/agent-core";
 import { PluginKernel } from "@deyin/kernel";
 import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
@@ -38,6 +43,14 @@ export interface WebAgentStartOptions {
   mode: ChatMode;
   history: { role: "user" | "assistant"; content: string }[];
   provider: WebAgentProviderRouting;
+  /** Seed the loop's todo list (plan todos handed to Build). */
+  initialTodos?: AgentTodoItem[];
+  /** Active goal text; enables report_goal_met verification. */
+  goalText?: string;
+  /** Images attached to this run's user message (vision). */
+  images?: AgentImageInput[];
+  /** Text-to-image model ids from the client's catalog (generate_image). */
+  imageModels?: string[];
 }
 
 interface ActiveRun {
@@ -71,6 +84,10 @@ export class WebAgentHost {
     private readonly terminals: TerminalManager,
     private readonly send: (envelope: AgentEventEnvelope) => void,
     private readonly emitTerminal: (msg: { type: "term.data"; termId: string; data: string } | { type: "term.exit"; termId: string; exitCode: number }) => void,
+    /** Live repo branch info (null until a repository is connected). */
+    private readonly repoInfo: () => { branch: string; defaultBranch: string } | null = () => null,
+    /** Sandbox-scoped store for images the agent generates. */
+    private readonly images?: ImageStore,
   ) {
     this.journal = new SessionEventJournal(join(this.root, "journal"));
   }
@@ -189,13 +206,36 @@ export class WebAgentHost {
     // Sandbox-defined subagents join the built-in set for the task tool.
     const subagents: SubagentDefinition[] = [...BUILTIN_SUBAGENTS, ...(caps?.subagents ?? [])];
 
-    const agent = agentForMode(options.mode);
-    const registry = await this.buildRegistry(options, subagents);
-    const systemPrompt = buildSystemPrompt({
-      cwd: this.root,
-      agent,
-      toolNames: registry.names(),
+    // Live per-run session state: mode tools mutate it so permissions, the
+    // system prompt and the UI follow mid-run mode switches (same contract as
+    // the desktop host).
+    const sessionMeta: ToolSessionMeta = { threadId: options.threadId, mode: options.mode };
+    const buildPermissions = (mode: ChatMode): PermissionEngineOptions => ({
+      agentRules: rulesForApprovalMode(options.approvalMode),
+      configRules: agentForMode(mode).permissions ?? [],
+      skipAll: options.approvalMode === "full-access" && mode === "agent",
     });
+    const permissions = new PermissionEngine(buildPermissions(options.mode));
+
+    const registry = await this.buildRegistry(options, subagents);
+    const buildPrompt = (mode: ChatMode): string => {
+      let prompt = buildSystemPrompt({ cwd: this.root, agent: agentForMode(mode), toolNames: registry.names() });
+      const repo = this.repoInfo();
+      if (repo) {
+        prompt += `\n\n## Git workflow\nYou are working on branch "${repo.branch}" off "${repo.defaultBranch}". Commit your work to this branch as you go. Never push, merge, or open pull requests — the user ships changes with the Ship button.`;
+      }
+      return prompt;
+    };
+    // Hoisted so onModeChange can swap the system prompt and append reminders.
+    const messages: AgentMessage[] = [
+      { role: "system", content: buildPrompt(options.mode) },
+      ...options.history,
+      {
+        role: "user",
+        content: prompt,
+        ...(options.images?.length ? { images: options.images } : {}),
+      },
+    ];
 
     const result = await runAgent({
       apiBaseUrl: options.provider.baseUrl,
@@ -204,17 +244,10 @@ export class WebAgentHost {
       authHeader: options.provider.authHeader,
       model: options.model,
       thinking: options.thinking,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...options.history,
-        { role: "user", content: prompt },
-      ],
+      messages,
       tools: registry,
-      permissions: new PermissionEngine({
-        agentRules: rulesForApprovalMode(options.approvalMode),
-        configRules: agent.permissions ?? [],
-        skipAll: options.approvalMode === "full-access" && options.mode === "agent",
-      }),
+      permissions,
+      todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
       resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
       cwd: this.root,
       maxSteps: 40,
@@ -222,10 +255,57 @@ export class WebAgentHost {
       shell: await this.ensureShell(options.threadId),
       onEvent: (event) => this.forwardEvent(options.threadId, event),
       toolContext: {
+        sessionMeta,
+        goalText: options.goalText,
+        imageGen: this.imageGenBridge(options, state.abort.signal),
+        // Plans stay inside the sandbox (never the server's home directory).
+        plansDir: join(this.root, ".deyin", "plans"),
         resolveInteraction: (request) =>
           request.type === "ask-question"
             ? this.askQuestion(options.threadId, request)
             : Promise.resolve("Unknown interaction request."),
+        onGoalReport: (report) =>
+          this.emit(options.threadId, {
+            type: "goal-updated",
+            goal: {
+              text: options.goalText ?? "",
+              status: report.met ? ("met" as const) : ("active" as const),
+              reportedAt: new Date().toISOString(),
+              reason: report.reason,
+            },
+          }),
+        onPlanCreated: (plan) =>
+          this.emit(options.threadId, {
+            type: "plan-created",
+            name: plan.name,
+            overview: plan.overview,
+            plan: plan.plan,
+            filePath: plan.filePath,
+          }),
+        onModeChange: async (change) => {
+          const previous = (sessionMeta.mode as ChatMode | undefined) ?? options.mode;
+          const nextMode = change.target;
+          sessionMeta.mode = nextMode;
+          options.mode = nextMode;
+
+          // Re-arm the permission engine for the new mode: the prompt alone
+          // must never be the only thing keeping plan/ask read-only.
+          permissions.reconfigure(buildPermissions(nextMode));
+
+          const reminder = modeReminder(change);
+          if (reminder) {
+            messages.push({ role: "system", content: `<system_reminder>\n${reminder}\n</system_reminder>` });
+          }
+          messages[0] = { role: "system", content: buildPrompt(nextMode) };
+          this.emit(options.threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });
+
+          if (change.event === "exit" && change.previous === "plan") {
+            return change.userApproved
+              ? "Plan mode exited. The user approved the plan — proceed with implementation."
+              : "Plan mode exited. The plan has been presented to the user for approval.";
+          }
+          return `Switched to ${nextMode} mode.${change.explanation ? ` ${change.explanation}` : ""}`;
+        },
       },
     });
 
@@ -290,6 +370,40 @@ export class WebAgentHost {
       summary: result.report.slice(0, 200),
     });
     return result;
+  }
+
+  /**
+   * generate_image bridge: the run's provider credential drives the images
+   * endpoint and results land in the sandbox image store, which the client reads
+   * back over `images.read` to render the picture inline.
+   */
+  private imageGenBridge(options: WebAgentStartOptions, signal: AbortSignal): ImageGenBridge | undefined {
+    const store = this.images;
+    if (!store) return undefined;
+    return {
+      generate: async (request) => {
+        const model = request.model ?? options.imageModels?.[0];
+        if (!model) {
+          throw new Error(
+            "No text-to-image model is available on this provider. Pick one in Settings → Models, or pass an explicit model id.",
+          );
+        }
+        const generated = await generateImages({
+          apiBaseUrl: options.provider.baseUrl,
+          token: options.provider.token,
+          model,
+          prompt: request.prompt,
+          size: request.size ?? "1024x1024",
+          n: request.n ?? 1,
+          ...(request.negativePrompt ? { extra: { negative_prompt: request.negativePrompt } } : {}),
+          signal,
+        });
+        return generated.map((image) => {
+          const saved = store.save(options.threadId, { base64: image.base64, mediaType: image.mediaType });
+          return { file: saved.file, model, mediaType: saved.mediaType };
+        });
+      },
+    };
   }
 
   private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
