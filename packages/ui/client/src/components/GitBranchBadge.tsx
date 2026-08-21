@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon.js";
 import type { GitBranch, GitRepoInfo, GitStatus } from "@deyin/contract";
 
@@ -39,17 +39,44 @@ function dirtyCount(status: GitStatus | null): number {
   return paths.size;
 }
 
+/** Spells the badge's counts out, since the pills themselves stay terse. */
+function branchTitle(branch: string, dirty: number, ahead: number, behind: number): string {
+  const parts = [`Branch: ${branch}`];
+  if (dirty > 0) parts.push(`${dirty} uncommitted ${dirty === 1 ? "change" : "changes"}`);
+  if (ahead > 0) parts.push(`${ahead} ${ahead === 1 ? "commit" : "commits"} ahead of upstream`);
+  if (behind > 0) parts.push(`${behind} ${behind === 1 ? "commit" : "commits"} behind upstream`);
+  return parts.join(" · ");
+}
+
 interface GitBranchBadgeProps {
   workspaceRoot: string | null;
   /** Open the Source Control panel (wired in Phase 2). */
   onOpenSourceControl?: () => void;
+  /** Trigger styling; the composer's workspace bar uses its own chip class. */
+  className?: string;
+  /** Open the branch list upwards (for triggers near the bottom of the window). */
+  menuUp?: boolean;
 }
 
-/** Top-bar branch indicator: current branch, dirty count, ahead/behind, branch switcher. */
-export function GitBranchBadge({ workspaceRoot, onOpenSourceControl }: GitBranchBadgeProps) {
+/** Branch indicator: current branch, dirty count, ahead/behind, branch switcher. */
+export function GitBranchBadge({
+  workspaceRoot,
+  onOpenSourceControl,
+  className = "env-badge",
+  menuUp = false,
+}: GitBranchBadgeProps) {
   const { info, status, branches, refresh } = useGitStatus(workspaceRoot);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
 
   // Not a git repo (or not detected yet): show nothing, like an IDE status bar.
   if (!info?.isRepo) return null;
@@ -80,11 +107,19 @@ export function GitBranchBadge({ workspaceRoot, onOpenSourceControl }: GitBranch
   };
 
   return (
-    <div className="menu">
-      <button className="env-badge" title={`Branch: ${branchLabel}`} onClick={() => setOpen((v) => !v)}>
+    <div className="menu" ref={rootRef}>
+      <button
+        className={className}
+        title={branchTitle(branchLabel, dirty, info.ahead, info.behind)}
+        onClick={() => setOpen((v) => !v)}
+      >
         <Icon name="gitBranch" size={12} />
-        <span>{branchLabel}</span>
-        {dirty > 0 && <span className="git-badge__dirty">{dirty}</span>}
+        <span className="git-badge__branch">{branchLabel}</span>
+        {dirty > 0 && (
+          <span className="git-badge__dirty">
+            {dirty} {dirty === 1 ? "change" : "changes"}
+          </span>
+        )}
         {info.ahead > 0 && (
           <span className="git-badge__track">
             <Icon name="arrowUp" size={9} />
@@ -97,10 +132,10 @@ export function GitBranchBadge({ workspaceRoot, onOpenSourceControl }: GitBranch
             {info.behind}
           </span>
         )}
-        <Icon name="chevronDown" size={10} />
+        <Icon name="chevronDown" size={10} className="git-badge__caret" />
       </button>
       {open && (
-        <div className="menu__panel">
+        <div className={`menu__panel${menuUp ? " menu__panel--up" : ""}`}>
           <div className="menu__header">Branches</div>
           {locals.length === 0 && <div className="menu__info">No local branches.</div>}
           {locals.map((b) => (

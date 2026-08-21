@@ -7,12 +7,13 @@ import { AppearancePage } from "./settings/AppearancePage.js";
 import { IdentityPage } from "./settings/IdentityPage.js";
 import { IndexingPage } from "./settings/IndexingPage.js";
 import { McpPage } from "./settings/McpPage.js";
+import { ModelRolesPage } from "./settings/ModelRolesPage.js";
 import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
 import { PluginsPage } from "./settings/PluginsPage.js";
 import { TerminalPage } from "./settings/TerminalPage.js";
 import { BrowserPage } from "./settings/BrowserPage.js";
 import { UsageStatsPage } from "./settings/UsageStatsPage.js";
-import { PageHeader, SectionTitle, SettingCard, TabBar, Toggle } from "./settings/controls.js";
+import { SectionHeader, SettingCard, SettingGroup, TabBar, Toggle } from "./settings/controls.js";
 import type { MessageKey } from "@deyin/host-core/shared";
 import type {
   AccountUsage,
@@ -27,6 +28,7 @@ import type {
 export type SettingsPage =
   | "general"
   | "models"
+  | "modelRoles"
   | "integrations"
   | "skills"
   | "workspace"
@@ -86,6 +88,7 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     entries: [
       { page: "general", labelKey: "settings.nav.general", icon: "gear" },
       { page: "models", labelKey: "settings.nav.models", icon: "cpu" },
+      { page: "modelRoles", labelKey: "settings.nav.modelRoles", icon: "brain" },
     ],
   },
   {
@@ -168,12 +171,35 @@ export function SettingsView(props: SettingsViewProps) {
     void window.deyin.caps.toggle(id, enabled).then(setCaps);
   };
 
+  const setRoleModel = (role: string, model: string | undefined) => {
+    const next = { ...(props.settings.roleModels ?? {}) };
+    if (model) next[role] = model;
+    else delete next[role];
+    props.onChangeSettings({ roleModels: next });
+  };
+
   const setSubagentModel = (name: string, model: string | undefined) => {
     const next = { ...(props.settings.subagentModels ?? {}) };
     if (model) next[name] = model;
     else delete next[name];
     props.onChangeSettings({ subagentModels: next });
   };
+
+  const integrationTabs = (
+    <TabBar
+      tabs={INTEGRATION_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
+      value={integrationTab}
+      onChange={setIntegrationTab}
+    />
+  );
+
+  const skillTabs = (
+    <TabBar
+      tabs={SKILL_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
+      value={skillTab}
+      onChange={setSkillTab}
+    />
+  );
 
   const visibleNav = NAV.filter((group) => {
     if (isWeb) {
@@ -226,35 +252,33 @@ export function SettingsView(props: SettingsViewProps) {
             onRefreshLiveModels={props.onRefreshLiveModels ?? (() => Promise.resolve())}
           />
         )}
+        {page === "modelRoles" && (
+          <ModelRolesPage
+            providers={providers}
+            liveModels={props.liveModels}
+            roleModels={props.settings.roleModels ?? {}}
+            subagents={caps.filter((c) => c.kind === "subagent")}
+            subagentModels={props.settings.subagentModels ?? {}}
+            onSetRoleModel={setRoleModel}
+            onSetSubagentModel={setSubagentModel}
+          />
+        )}
         {page === "integrations" && (
-          <div className="settings-page">
-            <PageHeader title={t("settings.nav.integrations")} description={t("settings.integrations.desc")} />
-            <TabBar
-              tabs={INTEGRATION_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
-              value={integrationTab}
-              onChange={setIntegrationTab}
-            />
-            {integrationTab === "mcp" && <McpPage onToggle={toggleCap} />}
-            {integrationTab === "plugins" && <PluginsPage onToggle={toggleCap} />}
-          </div>
+          <>
+            {integrationTab === "mcp" && <McpPage onToggle={toggleCap} tabs={integrationTabs} />}
+            {integrationTab === "plugins" && <PluginsPage onToggle={toggleCap} tabs={integrationTabs} />}
+          </>
         )}
         {page === "skills" && (
-          <div className="settings-page">
-            <PageHeader title={t("settings.nav.skillsAgents")} description={t("settings.skills.desc")} />
-            <TabBar
-              tabs={SKILL_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
-              value={skillTab}
-              onChange={setSkillTab}
-            />
-            <CapabilityPage
-              kind={skillTab}
-              items={caps.filter((c) => c.kind === skillTab)}
-              onToggle={toggleCap}
-              providers={providers}
-              liveModels={props.liveModels}
-              onSetSubagentModel={skillTab === "subagent" ? setSubagentModel : undefined}
-            />
-          </div>
+          <CapabilityPage
+            kind={skillTab}
+            items={caps.filter((c) => c.kind === skillTab)}
+            onToggle={toggleCap}
+            tabs={skillTabs}
+            providers={providers}
+            liveModels={props.liveModels}
+            onSetSubagentModel={skillTab === "subagent" ? setSubagentModel : undefined}
+          />
         )}
         {page === "workspace" && (
           <>
@@ -272,25 +296,26 @@ export function SettingsView(props: SettingsViewProps) {
               refreshing={accountRefreshing}
             />
             <div className="settings-page">
-              <PageHeader title={t("settings.nav.agentData")} description={t("settings.nav.agentData")} />
-              <SectionTitle>Agent</SectionTitle>
-              <SettingCard title="Memory" description="Background memory (remember/forget + automatic recall).">
-                <Toggle
-                  checked={props.settings.memoryEnabled}
-                  onChange={(memoryEnabled) => props.onChangeSettings({ memoryEnabled })}
-                />
-              </SettingCard>
-              <SettingCard
-                title="Semantic caches"
-                description="Tool-result and response caches via the optimization plugin (embeddings-based)."
-              >
-                <Toggle
-                  checked={props.settings.optimizationPluginEnabled}
-                  onChange={(optimizationPluginEnabled) =>
-                    props.onChangeSettings({ optimizationPluginEnabled })
-                  }
-                />
-              </SettingCard>
+              <SectionHeader title="Agent data" note="Stored on this device." />
+              <SettingGroup>
+                <SettingCard title="Memory" description="Background memory (remember/forget + automatic recall).">
+                  <Toggle
+                    checked={props.settings.memoryEnabled}
+                    onChange={(memoryEnabled) => props.onChangeSettings({ memoryEnabled })}
+                  />
+                </SettingCard>
+                <SettingCard
+                  title="Semantic caches"
+                  description="Tool-result and response caches via the optimization plugin (embeddings-based)."
+                >
+                  <Toggle
+                    checked={props.settings.optimizationPluginEnabled}
+                    onChange={(optimizationPluginEnabled) =>
+                      props.onChangeSettings({ optimizationPluginEnabled })
+                    }
+                  />
+                </SettingCard>
+              </SettingGroup>
             </div>
           </>
         )}

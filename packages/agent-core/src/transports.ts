@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
+import { addImage, parseImagePart, type StreamImage } from "@deyin/host-core";
 import { toAnthropicMessages, toResponsesInput, type CompressionResult, type WireOptions } from "./wire.js";
 
 /**
@@ -28,6 +29,8 @@ export type StreamEvent =
       };
       /** Number of auto-continuations used (length-truncated responses). */
       continuations?: number;
+      /** Images the model produced inside the completion, in arrival order. */
+      images?: StreamImage[];
     };
 
 export interface TransportOptions {
@@ -60,6 +63,13 @@ export interface TransportOptions {
   authHeader?: boolean;
   /** Anthropic API version header; default "2023-06-01". */
   anthropicVersion?: string;
+  /**
+   * Ask the model for pictures as well as text. Set when the selected model
+   * declares image output in the catalog: chat-completions gateways take
+   * `modalities: ["text", "image"]`, the Responses API takes the built-in
+   * `image_generation` tool.
+   */
+  imageOutput?: boolean;
 }
 
 /** Fallback tool-call ids must be unique across the whole transcript. */
@@ -183,8 +193,8 @@ interface AnthropicWireUsage {
 interface AnthropicWireEvent {
   type?: string;
   index?: number;
-  message?: { usage?: AnthropicWireUsage };
-  content_block?: { type?: string; id?: string; name?: string };
+  message?: { usage?: AnthropicWireUsage; content?: unknown };
+  content_block?: { type?: string; id?: string; name?: string; source?: unknown };
   delta?: { type?: string; text?: string; thinking?: string; partial_json?: string; stop_reason?: string };
   usage?: AnthropicWireUsage;
   error?: { type?: string; message?: string };
@@ -203,6 +213,8 @@ export class AnthropicAccumulator {
   private usage: TokenUsage | null = null;
   private calls = new Map<number, { id: string; name: string; arguments: string }>();
   private error: string | null = null;
+  private readonly images: StreamImage[] = [];
+  private readonly seenImages = new Set<string>();
   private readonly compressionInfo?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
 
   constructor(compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] }) {
@@ -236,6 +248,13 @@ export class AnthropicAccumulator {
         this.mergeUsage(ev.message?.usage);
         return null;
       case "content_block_start": {
+        // Gateways that proxy an image-generating model onto the Messages API
+        // deliver the picture as a whole image content block.
+        if (ev.content_block?.type === "image") {
+          const image = parseImagePart(ev.content_block, "message");
+          if (image) addImage(this.images, this.seenImages, image);
+          return null;
+        }
         if (ev.content_block?.type === "tool_use") {
           this.calls.set(ev.index ?? this.calls.size, {
             id: ev.content_block.id ?? "",
@@ -303,6 +322,7 @@ export class AnthropicAccumulator {
       finishReason: this.finishReason,
       usage: this.usage,
       ...(this.compressionInfo ? { compression: this.compressionInfo } : {}),
+      ...(this.images.length > 0 ? { images: [...this.images] } : {}),
     };
   }
 }
@@ -396,7 +416,19 @@ interface ResponsesWireEvent {
   type?: string;
   delta?: string;
   item_id?: string;
-  item?: { type?: string; id?: string; call_id?: string; name?: string; arguments?: string };
+  item?: {
+    type?: string;
+    id?: string;
+    call_id?: string;
+    name?: string;
+    arguments?: string;
+    /** image_generation_call: the finished picture, base64. */
+    result?: unknown;
+    content?: unknown;
+  };
+  /** response.image_generation_call.* frames carry the payload at the top level. */
+  result?: unknown;
+  partial_image_b64?: string;
   response?: { usage?: ResponsesUsage; incomplete_details?: { reason?: string } };
   error?: { code?: string; message?: string };
 }
@@ -416,6 +448,8 @@ export class ResponsesAccumulator {
   private calls = new Map<string, { id: string; name: string; arguments: string }>();
   private order: string[] = [];
   private error: string | null = null;
+  private readonly images: StreamImage[] = [];
+  private readonly seenImages = new Set<string>();
   private readonly compressionInfo?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
 
   constructor(compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] }) {
@@ -453,8 +487,29 @@ export class ResponsesAccumulator {
         if (call) call.arguments += ev.delta;
         return null;
       }
+      case "response.image_generation_call.completed":
+      case "response.image_generation_call.result": {
+        // Final frame of the built-in image tool. Partial previews arrive as
+        // response.image_generation_call.partial_image and are skipped: only the
+        // completed picture is worth storing.
+        const image = parseImagePart(ev.result ?? ev.item, "tool");
+        if (image) addImage(this.images, this.seenImages, image);
+        return null;
+      }
       case "response.output_item.done": {
         const item = ev.item;
+        // The built-in image tool reports its picture as a finished output item.
+        if (item?.type === "image_generation_call") {
+          const image = parseImagePart(item.result ?? item, "tool");
+          if (image) addImage(this.images, this.seenImages, image);
+          return null;
+        }
+        if (item?.type === "message" && Array.isArray(item.content)) {
+          for (const part of item.content) {
+            const image = parseImagePart(part, "message");
+            if (image) addImage(this.images, this.seenImages, image);
+          }
+        }
         if (item?.type === "function_call") {
           const id = item.id ?? item.call_id ?? "";
           const call = (id && this.calls.get(id)) || (item.call_id ? this.calls.get(item.call_id) : undefined);
@@ -518,6 +573,7 @@ export class ResponsesAccumulator {
       finishReason: this.finishReason,
       usage: this.usage,
       ...(this.compressionInfo ? { compression: this.compressionInfo } : {}),
+      ...(this.images.length > 0 ? { images: [...this.images] } : {}),
     };
   }
 }
@@ -541,6 +597,11 @@ export async function* streamResponsesEvents(opts: TransportOptions): AsyncGener
       description: t.function.description,
       parameters: t.function.parameters,
     }));
+  }
+  if (opts.imageOutput) {
+    // Built-in image tool: the model decides when to draw, and the picture comes
+    // back as an image_generation_call output item.
+    body.tools = [...((body.tools as unknown[]) ?? []), { type: "image_generation" }];
   }
   if (opts.effort) body.reasoning = { effort: opts.effort };
   if (opts.maxTokens !== undefined) body.max_output_tokens = opts.maxTokens;

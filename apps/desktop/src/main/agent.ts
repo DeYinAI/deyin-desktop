@@ -2,7 +2,17 @@ import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { BrowserWindow, app } from "electron";
-import { AgentShell, ShellUnavailableError, type AgentsStore, type MemoryStore, type SettingsStore, type TerminalManager } from "@deyin/host-core";
+import {
+  AgentShell,
+  ShellUnavailableError,
+  createImageBridge,
+  storeAttachedImages,
+  type AgentsStore,
+  type ImageModelChoice,
+  type MemoryStore,
+  type SettingsStore,
+  type TerminalManager,
+} from "@deyin/host-core";
 import {
   PermissionEngine,
   SessionStore,
@@ -23,10 +33,12 @@ import {
   agentForMode,
   rulesForApprovalMode,
   runSubagent,
+  skipPromptsForApproval,
   subagentReadonlyRules,
   type AgentMessage,
   type ImageGenBridge,
   type InteractionRequest,
+  createRoleRouter,
   type LoadedHook,
   type ModeChangeRequest,
   type McpConnection,
@@ -58,7 +70,6 @@ import type { BrowserControlService } from "./browser.js";
 import type { CapabilityService } from "./capabilities.js";
 import type { VisualizeService } from "./visualize.js";
 import type { ImageService } from "./images.js";
-import { runImageGeneration } from "./image-gen.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
@@ -133,8 +144,11 @@ export interface AgentHostOptions {
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   /** Context window for the model, when known (drives compaction). */
   getContextLength: (providerId: string, modelId: string) => number | undefined;
-  /** Text-to-image model ids available on a provider (first is the default). */
-  getImageModels?: (providerId: string) => string[];
+  /**
+   * Image-capable models on a provider, best first: dedicated text-to-image
+   * models ("endpoint") and chat models that draw ("chat").
+   */
+  getImageModels?: (providerId: string) => ImageModelChoice[];
 }
 
 /**
@@ -269,39 +283,59 @@ export class DesktopAgentHost {
    * the first text-to-image model in the catalog, and stores every result in the
    * thread's image store so the reply can embed it.
    */
+  /**
+   * Endpoint + credentials for a provider id. Primary providers use the
+   * Openference OAuth token; custom ones use the stored key, and local
+   * providers (Ollama) run keyless on an empty token.
+   */
+  private providerRouting(providerId: string): {
+    apiBaseUrl: string;
+    getToken: () => Promise<string | null>;
+    apiFormat: ProviderApiFormat;
+    authHeader?: boolean;
+  } {
+    const provider = this.opts.agents.listProviders(true).find((p) => p.id === providerId);
+    const apiFormat = provider?.apiFormat ?? "chat-completions";
+    if (provider && provider.kind === "custom") {
+      return {
+        apiBaseUrl: provider.baseUrl ?? this.opts.config.apiBaseUrl,
+        getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null)),
+        apiFormat,
+        authHeader: provider.authHeader,
+      };
+    }
+    return {
+      apiBaseUrl: this.opts.config.apiBaseUrl,
+      getToken: () => this.opts.auth.getAccessToken(),
+      apiFormat,
+      authHeader: provider?.authHeader,
+    };
+  }
+
   private imageGenBridge(
     options: AgentStartOptions,
     apiBaseUrl: string,
     getToken: () => Promise<string | null>,
+    cwd: string,
     signal: AbortSignal,
   ): ImageGenBridge | undefined {
     const store = this.opts.images;
     if (!store) return undefined;
-    return {
-      generate: async (request) => {
-        const available = this.opts.getImageModels?.(options.providerId) ?? [];
-        const model = request.model ?? available[0];
-        if (!model) {
-          throw new Error(
-            "No text-to-image model is available on this provider. Pick one in Settings → Models, or pass an explicit model id.",
-          );
-        }
-        const result = await runImageGeneration(
-          store,
-          { apiBaseUrl, getToken },
-          {
-            threadId: options.threadId,
-            prompt: request.prompt,
-            model,
-            size: request.size,
-            n: request.n,
-            negativePrompt: request.negativePrompt,
-            signal,
-          },
-        );
-        return result.images.map((image) => ({ file: image.file, model, mediaType: image.mediaType }));
-      },
-    };
+    return createImageBridge({
+      store,
+      threadId: options.threadId,
+      apiBaseUrl,
+      getToken,
+      models: () => this.opts.getImageModels?.(options.providerId) ?? [],
+      cwd,
+      signal,
+    });
+  }
+
+  /** True when the run's model returns pictures inside its chat completion. */
+  private modelEmitsImages(options: AgentStartOptions): boolean {
+    const models = this.opts.getImageModels?.(options.providerId) ?? [];
+    return models.some((m) => m.id === options.model && m.route === "chat");
   }
 
   private async ensureShell(threadId: string, session: ThreadSession, cwd: string): Promise<ToolShell | undefined> {
@@ -512,12 +546,25 @@ export class DesktopAgentHost {
     // Provider routing: primary = Openference OAuth; custom = stored key.
     // Local providers (Ollama) run without a key: pass an empty token through.
     const provider = this.opts.agents.listProviders(true).find((p) => p.id === options.providerId);
-    let apiBaseUrl = this.opts.config.apiBaseUrl;
-    let getToken: () => Promise<string | null> = () => this.opts.auth.getAccessToken();
-    if (provider && provider.kind === "custom") {
-      apiBaseUrl = provider.baseUrl ?? apiBaseUrl;
-      getToken = () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null));
-    }
+    const { apiBaseUrl, getToken } = this.providerRouting(options.providerId);
+
+    // Per-phase model routing: plan/implement/ask/delivery follow the composer
+    // mode, and read-only tool churn can fall to a cheap model. Undefined when
+    // the user configured no role overrides, which keeps the single-model path.
+    const router = createRoleRouter({
+      roleModels: settings.roleModels,
+      base: {
+        model: options.model,
+        providerId: options.providerId,
+        apiBaseUrl,
+        getToken,
+        apiFormat: provider?.apiFormat ?? "chat-completions",
+        authHeader: provider?.authHeader,
+        contextLength: this.opts.getContextLength(options.providerId, options.model),
+      },
+      resolveProvider: (providerId) => this.providerRouting(providerId),
+      getContextLength: (providerId, model) => this.opts.getContextLength(providerId, model),
+    });
 
     // Command / skill expansion (/name args).
     let prompt = options.prompt;
@@ -535,6 +582,11 @@ export class DesktopAgentHost {
     // host modules + web search + subagents + MCP.
     const kernel = await this.ensureKernel();
     const registry = buildToolRegistry(kernel.get(Tools));
+    // No image model on the plan (or no image store): drop generate_image rather
+    // than advertising a tool whose every call would fail.
+    if (!this.opts.images || (this.opts.getImageModels?.(options.providerId) ?? []).length === 0) {
+      registry.unregister("generate_image");
+    }
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
@@ -569,9 +621,15 @@ export class DesktopAgentHost {
 
     // Transcript: reuse the in-memory session, else restore/create a persisted one.
     const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
+    // Attached pictures also land in the thread's image store, so generate_image
+    // can edit them by file name instead of drawing something new.
+    const attached =
+      options.images?.length && this.opts.images
+        ? storeAttachedImages(this.opts.images, options.threadId, options.images)
+        : { files: [], note: "" };
     session.messages.push({
       role: "user",
-      content: prompt,
+      content: prompt + attached.note,
       ...(options.images?.length ? { images: options.images } : {}),
     });
     this.store.append(session.sessionId, { role: "user", content: prompt });
@@ -593,12 +651,12 @@ export class DesktopAgentHost {
 
     // Two independent axes: the access level (approvalMode chip) provides the base
     // rules; the composer mode's own restrictions come last so plan/ask stay
-    // read-only even under "full access". skipAll only ever applies to agent mode.
-    // computer_*/chrome_navigate stay behind a prompt even under skipAll.
+    // read-only even under "full access". Under full access every build-style
+    // mode (agent, delivery) skips prompts entirely — deny rules still win.
     const buildPermissionOptions = (mode: ChatMode): PermissionEngineOptions => ({
       agentRules: [...rulesForApprovalMode(options.approvalMode), ...hostRules],
       configRules: agentForMode(mode).permissions ?? [],
-      skipAll: options.approvalMode === "full-access" && mode === "agent",
+      skipAll: skipPromptsForApproval(options.approvalMode, mode),
       neverSkipTools: NEVER_SKIP_TOOLS,
       neverSkipPrefixes: NEVER_SKIP_PREFIXES,
     });
@@ -763,6 +821,7 @@ return;
         apiFormat: provider?.apiFormat ?? "chat-completions",
         authHeader: provider?.authHeader,
         model: options.model,
+        router,
         contextLength: this.opts.getContextLength(options.providerId, options.model),
         messages: session.messages,
         tools: registry,
@@ -771,6 +830,7 @@ return;
         cwd,
         thinking: options.thinking,
         signal,
+        imageOutput: this.modelEmitsImages(options),
         todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
         shell: shellBridge,
         systemSections: session.systemSections,
@@ -778,7 +838,7 @@ return;
         evidenceGatesEnabled: options.mode === "delivery",
         toolContext: {
           skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
-          imageGen: this.imageGenBridge(options, apiBaseUrl, getToken, signal),
+          imageGen: this.imageGenBridge(options, apiBaseUrl, getToken, cwd, signal),
           sessionMeta: liveMeta,
           memory: settings.memoryEnabled ? this.opts.memory : undefined,
           applyFileChange,
@@ -921,6 +981,15 @@ return;
                 droppedMessages: event.droppedMessages,
               });
               break;
+            case "model-routed":
+              this.send(options.threadId, {
+                type: "model-routed",
+                step: event.step,
+                role: event.role,
+                model: event.model,
+                providerId: event.providerId,
+              });
+              break;
             case "evidence-gate":
               this.send(options.threadId, {
                 type: "evidence-gate",
@@ -1020,35 +1089,23 @@ if (optPlugin && result.finalText) {
       effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
       maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
       parentRouting: { apiBaseUrl, getToken, apiFormat: parentProviderWire.apiFormat, authHeader: parentProviderWire.authHeader },
+      // Children can draw too: same provider, same thread image store.
+      imageGen: this.imageGenBridge(parent, apiBaseUrl, getToken, cwd, signal ?? new AbortController().signal),
       // Surface the child's tool activity as one-line progress updates.
       onEvent: (event) => {
         if (event.type === "tool-start") {
           this.send(parent.threadId, { type: "subagent-progress", id: subagentId, line: `${event.call.name} ${event.summary}`.trim() });
         }
       },
-      resolveProvider: (providerId) => {
-        const provider = this.opts.agents.listProviders(true).find((p) => p.id === providerId);
-        if (provider && provider.kind === "custom") {
-          return {
-            apiBaseUrl: provider.baseUrl ?? this.opts.config.apiBaseUrl,
-            getToken: () => Promise.resolve(this.opts.agents.getKey(provider.id) ?? (provider.local ? "" : null)),
-            apiFormat: provider.apiFormat ?? "chat-completions",
-            authHeader: provider.authHeader,
-          };
-        }
-        return {
-          apiBaseUrl: this.opts.config.apiBaseUrl,
-          getToken: () => this.opts.auth.getAccessToken(),
-          apiFormat: parentProviderWire.apiFormat,
-          authHeader: parentProviderWire.authHeader,
-        };
-      },
+      resolveProvider: (providerId) => this.providerRouting(providerId),
       // Subagents inherit the parent run's mode restrictions: a plan/ask session
       // must stay read-only even inside a spawned task.
       permissionEngine: new PermissionEngine({
         agentRules: rulesForApprovalMode(parent.approvalMode),
         configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules(def)],
-        skipAll: parent.approvalMode === "full-access" && parent.mode === "agent" && !def.readonly,
+        // Full access covers spawned work too: a readonly definition still has
+        // write/edit denied, but its bash rule must not turn into a prompt.
+        skipAll: skipPromptsForApproval(parent.approvalMode, parent.mode),
       }),
       resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
       extraTools: this.opts.settings.get().indexingEnabled
@@ -1063,6 +1120,8 @@ if (optPlugin && result.finalText) {
       ok: result.ok,
       ms: Date.now() - startedAt,
       summary: result.report.slice(0, 200),
+      // Full-ish body for the Agent panel; the card still shows `summary`.
+      report: result.report.slice(0, 20_000),
     });
     return result;
   }

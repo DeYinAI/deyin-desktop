@@ -157,10 +157,12 @@ export interface GeneratedImageRef {
   /** Stored file name, embedded in the chat's inline-image directive. */
   file: string;
   /** Model that produced it (for the tool result summary). */
-  model: string;
+  model?: string;
   mediaType: string;
   /** Absolute path on disk, when the host stores images on a filesystem. */
   path?: string;
+  /** Workspace path the image was copied to, when `saveTo` was requested. */
+  savedTo?: string;
 }
 
 /** Host bridge over the provider's images endpoint plus the thread image store. */
@@ -171,7 +173,21 @@ export interface ImageGenBridge {
     size?: string;
     n?: number;
     negativePrompt?: string;
+    /**
+     * Pictures to edit or use as reference: stored image file names from an
+     * earlier generation, or workspace-relative paths. Routes the request to the
+     * provider's image-edit endpoint.
+     */
+    inputImages?: string[];
+    /** Workspace-relative path to also write the finished picture to. */
+    saveTo?: string;
   }): Promise<GeneratedImageRef[]>;
+  /**
+   * Persist an image a chat model produced inside its own completion (Gemini
+   * flash-image and friends). Hosts that cannot store images omit this, and the
+   * loop keeps the text-only reply.
+   */
+  save?(image: { base64?: string; url?: string; mediaType?: string }): Promise<GeneratedImageRef>;
 }
 
 /** One collected background job result (wait tool). */
@@ -205,6 +221,10 @@ export type ToolPermissionTier = "read" | "write" | "execute" | "interaction";
 export interface AskQuestionOption {
   id: string;
   label: string;
+  /** One-line explanation of what picking this option means. */
+  description?: string;
+  /** Marks the option the model suggests; the UI badges it. */
+  recommended?: boolean;
 }
 
 export interface AskQuestionItem {

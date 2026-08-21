@@ -17,6 +17,12 @@ export interface ModelInfo {
   vision?: boolean;
   /** "image" models generate pictures (text-to-image) instead of chat text. */
   kind?: "chat" | "image";
+  /**
+   * Chat model that can return generated images inside its completion
+   * (Gemini flash-image / nano-banana). Streams like any chat model; the picture
+   * arrives attached to the assistant message.
+   */
+  imageOutput?: boolean;
 }
 
 export interface FileNode {
@@ -94,7 +100,7 @@ export type ThreadEvent =
   | { kind: "reasoning"; text: string; seconds?: number }
   | { kind: "plan"; steps: PlanStep[]; badge?: string }
   /** Compact plan artifact in chat; full markdown lives in the Plan tab. */
-  | { kind: "plan-ready"; title?: string; fileName?: string }
+  | { kind: "plan-ready"; title?: string; fileName?: string; preview?: string }
   | {
       kind: "file";
       name: string;
@@ -105,6 +111,8 @@ export type ThreadEvent =
       snippet?: DiffSnippetLine[];
       /** Changed lines beyond the snippet cap ("… N more"). */
       snippetMore?: number;
+      /** Run this edit belongs to — the undo checkpoint the chat card restores. */
+      checkpointId?: string;
     }
   | { kind: "model-switch"; from: string; to: string }
   /** Timeline note for the /goal command; text null = goal cleared. */
@@ -127,7 +135,21 @@ export type ThreadEvent =
       durationMs?: number;
     }
   /** Live subagent (task tool) run: spawn → progress lines → done/failed. */
-  | { kind: "subagent"; id: string; name: string; status: "running" | "done" | "failed"; line?: string; ms?: number }
+  | {
+      kind: "subagent";
+      id: string;
+      name: string;
+      status: "running" | "done" | "failed";
+      /** Latest activity line (shown under the name on the card). */
+      line?: string;
+      ms?: number;
+      /** Truncated delegation prompt, for the Agent panel header. */
+      prompt?: string;
+      /** Every progress line seen so far — the Agent panel's activity log. */
+      lines?: string[];
+      /** The subagent's final report (truncated), rendered in the Agent panel. */
+      report?: string;
+    }
   /** Per-run token-optimization summary card (compression + cache savings). */
   | {
       kind: "optimization";
@@ -419,6 +441,12 @@ export interface DeyinSettings {
   telemetry: boolean;
   browserControlEnabled: boolean;
   defaultModel: string | null;
+  /**
+   * Per-phase model overrides: role -> "providerId::modelId" (a bare "modelId"
+   * keeps the session's provider). Roles are "plan", "implement", "ask",
+   * "delivery" and "tool"; anything left out uses the session's own model.
+   */
+  roleModels: Record<string, string>;
   /** Per-subagent model overrides: subagent name -> "providerId::modelId". */
   subagentModels: Record<string, string>;
   /** Per-subagent reasoning-effort overrides: name -> "low" | "medium" | "high". */
@@ -443,6 +471,10 @@ export interface DeyinSettings {
   defaultShell: string | null;
   terminalFontSize: number;
   terminalScrollback: number;
+  /** Shape of the terminal caret. */
+  terminalCursorStyle: "bar" | "block" | "underline";
+  /** Copy a terminal selection to the clipboard as soon as it is made. */
+  terminalCopyOnSelect: boolean;
   /** Open the terminal panel when the agent first runs a shell command. */
   revealTerminalOnAgentCommand: boolean;
   /** Live local semantic indexing of the workspace. */
@@ -789,7 +821,7 @@ export type AgentUiEvent =
        id: string;
        prompt: string;
        allow_multiple?: boolean;
-       options: Array<{ id: string; label: string }>;
+       options: Array<{ id: string; label: string; description?: string; recommended?: boolean }>;
      }>;
    }
  | {
@@ -800,9 +832,12 @@ export type AgentUiEvent =
      filePath?: string;
    }
  | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
+ /** A step ran on a different model than the previous one (per-phase routing). */
+ | { type: "model-routed"; step: number; role: string; model: string; providerId?: string }
  | { type: "subagent-start"; id: string; name: string; prompt: string }
  | { type: "subagent-progress"; id: string; line: string }
- | { type: "subagent-end"; id: string; name: string; ok: boolean; ms?: number; summary?: string }
+ /** `summary` is the one-line card tail; `report` carries the body the Agent panel renders. */
+ | { type: "subagent-end"; id: string; name: string; ok: boolean; ms?: number; summary?: string; report?: string }
  /** Announces the persistent agent PTY so the renderer can attach an Agent tab. */
  | { type: "shell-session"; terminalId: string; label: string }
  | { type: "pending-change"; change: PendingChange }
@@ -857,6 +892,11 @@ export interface AgentStartOptions {
   images?: AgentImageInput[];
   /** Text-to-image model ids from the catalog, for the generate_image tool. */
   imageModels?: string[];
+  /**
+   * Chat model ids that return pictures inside their completion. The run asks
+   * for image output when the selected model is one of these.
+   */
+  imageChatModels?: string[];
 }
 
 /* Model providers ---------------------------------------------------------- */
@@ -869,6 +909,12 @@ export interface ProviderModel {
   vision?: boolean;
   /** "image" models generate pictures (text-to-image) instead of chat text. */
   kind?: "chat" | "image";
+  /**
+   * Chat model that can return generated images inside its completion
+   * (Gemini flash-image / nano-banana). Streams like any chat model; the picture
+   * arrives attached to the assistant message.
+   */
+  imageOutput?: boolean;
 }
 
 export type ProviderApiFormat = "chat-completions" | "responses" | "anthropic";
@@ -965,11 +1011,24 @@ export interface AccountUsage {
   weekTokens: number;
   totalRequests: number;
   totalTokens: number;
+  /** Raw request count inside the plan's current rolling window. */
+  windowRequests: number;
+  /** Quota consumed in requests'-worth (after per-model multipliers). This —
+   *  not the raw request count — is what the plan limits are enforced against,
+   *  so allowance meters must divide these by the matching limit. */
+  weekQuotaUsed: number;
+  windowQuotaUsed: number;
   /** Weekly plan limits; null when the plan does not define them. */
   requestsPerWeek: number | null;
   tokensPerWeek: number | null;
+  /** Rolling-window plan limit (e.g. 250 requests per 5 hours); null when the
+   *  plan defines no window limit. */
+  requestsPerWindow: number | null;
+  windowHours: number | null;
   /** ISO timestamp of the next weekly quota reset, when reported. */
   weeklyResetAt: string | null;
+  /** ISO timestamp when the current rolling window slot ends, when reported. */
+  windowResetAt: string | null;
   /** Prepaid credit balance in USD, when reported. */
   creditsUsd: number | null;
   /** Identity context, present only when the server reports it. */

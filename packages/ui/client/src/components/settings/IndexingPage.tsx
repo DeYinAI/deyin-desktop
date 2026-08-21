@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { CardGrid, PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import { Icon } from "../Icon.js";
+import { EmptyState, PageHeader, SectionHeader, SettingCard, SettingGroup, Toggle } from "./controls.js";
 import type { DeyinSettings, IndexSearchHit, IndexStatus } from "@deyin/contract";
 
 interface Props {
@@ -58,38 +59,41 @@ export function IndexingPage({ workspaceRoot, settings, onChange }: Props) {
     <div className="settings-page">
       <PageHeader
         title="Indexing"
-        description="Deyin builds a local semantic index of your workspace so the agent can search code by meaning (codebase_search). Everything stays on this machine."
+        description="Deyin builds a local semantic index of your workspace so the agent can search code by meaning. Everything stays on this machine."
       />
 
-      <SectionTitle>Workspace index</SectionTitle>
-      <CardGrid>
-      <SettingCard title="Semantic indexing" description="Index the workspace and keep it in sync as files change.">
-        <Toggle checked={settings.indexingEnabled} onChange={(v) => onChange({ indexingEnabled: v })} />
-      </SettingCard>
-      <SettingCard
-        title={workspaceRoot ?? "No workspace open"}
-        description={
-          status
-            ? `${STATE_LABEL[status.state]} — ${describe()}${status.watching ? " · watching for changes" : ""}${status.error ? ` · ${status.error}` : ""}`
-            : "Open a folder to enable indexing."
-        }
-      >
-        <button
-          className="btn btn--outline"
-          disabled={!workspaceRoot || rebuilding || !settings.indexingEnabled}
-          onClick={() => void rebuild()}
+      <SectionHeader title="Codebase" />
+      <SettingGroup>
+        <SettingCard
+          title="Semantic indexing"
+          description="Index the open workspace and keep it in sync as files change."
         >
-          {rebuilding || status?.state === "indexing" ? "Indexing…" : "Rebuild index"}
-        </button>
-      </SettingCard>
-      <SettingCard
-        title="Ignore rules"
-        description="`.gitignore` is respected automatically; add a `.deyinignore` at the workspace root for index-only exclusions."
-      />
-      </CardGrid>
+          <Toggle checked={settings.indexingEnabled} onChange={(v) => onChange({ indexingEnabled: v })} />
+        </SettingCard>
+        <SettingCard
+          title={workspaceRoot ?? "No workspace open"}
+          description={
+            status
+              ? `${STATE_LABEL[status.state]} — ${describe()}${status.watching ? " · watching for changes" : ""}${status.error ? ` · ${status.error}` : ""}`
+              : "Open a folder to enable indexing."
+          }
+        >
+          <button
+            className="btn btn--outline btn--small"
+            disabled={!workspaceRoot || rebuilding || !settings.indexingEnabled}
+            onClick={() => void rebuild()}
+          >
+            {rebuilding || status?.state === "indexing" ? "Indexing…" : "Rebuild index"}
+          </button>
+        </SettingCard>
+        <SettingCard
+          title="Ignore rules"
+          description=".gitignore is respected automatically; add a .deyinignore at the workspace root for index-only exclusions."
+        />
+      </SettingGroup>
 
-      <SectionTitle>Try a search</SectionTitle>
-      <div className="field__row" style={{ marginBottom: 10 }}>
+      <SectionHeader title="Try a search" note="Runs the same query the agent's codebase_search uses." />
+      <div className="inline-form">
         <input
           className="input"
           placeholder="e.g. where are settings persisted?"
@@ -99,11 +103,12 @@ export function IndexingPage({ workspaceRoot, settings, onChange }: Props) {
             if (e.key === "Enter") void search();
           }}
         />
-        <button className="btn btn--outline" disabled={!query.trim()} onClick={() => void search()}>
+        <button className="btn btn--outline btn--small" disabled={!query.trim()} onClick={() => void search()}>
+          <Icon name="search" size={12} />
           Search
         </button>
       </div>
-      {hits && hits.length === 0 && <div className="hint">No results.</div>}
+      {hits && hits.length === 0 && <EmptyState icon="zoom" title="No results." />}
       {hits?.map((hit, i) => (
         <div className="index-hit" key={i}>
           <div className="index-hit__path">

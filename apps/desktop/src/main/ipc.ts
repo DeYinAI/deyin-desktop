@@ -294,7 +294,12 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     getImageModels: (providerId) => {
       const provider = agents.listProviders(true).find((p) => p.id === providerId);
       const list = provider && provider.kind !== "primary" ? provider.models : modelsCache.listCached();
-      return list.filter((m) => m.kind === "image").map((m) => m.id);
+      // Dedicated text-to-image models first, then chat models that draw: the
+      // bridge picks by route, and falls back to whatever is left.
+      return [
+        ...list.filter((m) => m.kind === "image").map((m) => ({ id: m.id, route: "endpoint" as const })),
+        ...list.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => ({ id: m.id, route: "chat" as const })),
+      ];
     },
   });
 

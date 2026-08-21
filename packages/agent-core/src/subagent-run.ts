@@ -5,7 +5,7 @@ import { PermissionEngine, type PermissionResolver, type PermissionRule } from "
 import { buildSystemPrompt } from "./prompt.js";
 import { createBuiltinRegistry } from "./tools/index.js";
 import type { ProviderApiFormat } from "./transports.js";
-import type { ToolDefinition, AgentMessage } from "./types.js";
+import type { ImageGenBridge, ToolDefinition, AgentMessage } from "./types.js";
 import type { SubagentDefinition } from "./capabilities/subagents.js";
 
 /**
@@ -47,6 +47,22 @@ export function rulesForApprovalMode(mode: ApprovalMode): PermissionRule[] {
     case "read-only":
       return READONLY_RULES;
   }
+}
+
+/**
+ * Composer modes that do not restrict the workspace themselves. Plan/ask carry
+ * their own deny rules, and those rules beat skipAll, but a tool they simply
+ * forgot to list must still prompt there instead of silently running.
+ */
+const UNRESTRICTED_MODES: ReadonlySet<ChatMode> = new Set<ChatMode>(["agent", "delivery"]);
+
+/**
+ * Whether a run may skip every permission prompt. "Full access" means exactly
+ * that: in a build-style mode nothing is ever put in front of the user. Shared
+ * by the desktop host, the web host and their subagents so all three agree.
+ */
+export function skipPromptsForApproval(approvalMode: ApprovalMode, mode: ChatMode): boolean {
+  return approvalMode === "full-access" && UNRESTRICTED_MODES.has(mode);
 }
 
 /** Built-in agent backing each composer mode. */
@@ -107,6 +123,11 @@ export interface SubagentRunRequest {
   signal?: AbortSignal;
   /** Live observation of the child run (used for subagent progress lines). */
   onEvent?: (event: AgentEvent) => void;
+  /**
+   * Parent's image bridge. Passed on so a subagent asked for icons or mockups
+   * can draw; without it generate_image is dropped from the child's toolset.
+   */
+  imageGen?: ImageGenBridge;
 }
 
 export interface SubagentRunResult {
@@ -157,6 +178,8 @@ export async function runSubagent(
   let registry = createBuiltinRegistry();
   for (const tool of req.extraTools ?? []) registry.register(tool);
   if (def.tools && def.tools.length > 0) registry = registry.filtered(def.tools);
+  // No image bridge from the parent: the child cannot draw, so do not offer it.
+  if (!req.imageGen) registry.unregister("generate_image");
 
   const messages: AgentMessage[] = [
     {
@@ -195,6 +218,7 @@ export async function runSubagent(
       thinking: req.parent.thinking,
       signal: req.signal,
       onEvent: req.onEvent,
+      ...(req.imageGen ? { toolContext: { imageGen: req.imageGen } } : {}),
     });
     return { ok: true, report: result.finalText || "(subagent returned no text)" };
   } catch (err) {

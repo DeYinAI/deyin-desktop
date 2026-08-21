@@ -1,23 +1,19 @@
 /** The Deyin mark: geometric lowercase "d" with an orbit dot. Original artwork,
- * inlined so it renders without asset loading. Mirrors packages/branding/assets. */
+ * inlined so it renders without asset loading. No enclosing tile — the glyph is
+ * optically centred on the canvas, so it sits right inline at any size.
+ *
+ * One flat blue-grey, chosen to clear both theme grounds: the mark carries no
+ * background of its own, so the single value has to read on the dark window and
+ * the light one alike. Mirrors packages/branding/assets/logo-mark.svg. */
 export function Logo({ size = 28 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 96 96" fill="none" aria-label="Deyin">
-      <defs>
-        <linearGradient id="deyinBg" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#151b2e" />
-          <stop offset="1" stopColor="#0a0e18" />
-        </linearGradient>
-        <linearGradient id="deyinInk" x1="24" y1="20" x2="72" y2="76" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#8fb4ff" />
-          <stop offset="1" stopColor="#4f7cff" />
-        </linearGradient>
-      </defs>
-      <rect width="96" height="96" rx="22" fill="url(#deyinBg)" />
-      <rect x="1" y="1" width="94" height="94" rx="21" stroke="#2a3350" strokeWidth="2" fill="none" />
-      <circle cx="44" cy="57" r="15" stroke="url(#deyinInk)" strokeWidth="8" fill="none" />
-      <path d="M59 22V72" stroke="url(#deyinInk)" strokeWidth="8" strokeLinecap="round" />
-      <circle cx="74" cy="27" r="5" fill="#9fd2ff" />
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="none" aria-label="Deyin">
+      {/* bowl of the "d" */}
+      <circle cx="214" cy="328" r="96" stroke="#7488a0" strokeWidth="58" fill="none" />
+      {/* ascender of the "d" */}
+      <path d="M310 88V424" stroke="#7488a0" strokeWidth="58" strokeLinecap="round" />
+      {/* orbit dot */}
+      <circle cx="390" cy="115" r="27" fill="#7488a0" />
     </svg>
   );
 }

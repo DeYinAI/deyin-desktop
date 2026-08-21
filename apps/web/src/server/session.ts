@@ -133,7 +133,10 @@ export class Session {
             goalText: options.goalText,
             images: options.images,
             imageModels: options.imageModels,
+            imageChatModels: options.imageChatModels,
             provider: options.provider,
+            roleModels: options.roleModels,
+            roleProviders: options.roleProviders,
           });
           this.send({ type: "reply", id: msg.id, ok: true, result: undefined });
           break;

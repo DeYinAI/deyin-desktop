@@ -1,6 +1,6 @@
 import { CodeBlock, DARK_CODE_THEMES, LIGHT_CODE_THEMES, themeByName } from "../../code.js";
 import { useT } from "../../i18n.js";
-import { CardGrid, PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "@deyin/contract";
 
 const SAMPLE = `interface ThemeConfig {
@@ -25,8 +25,8 @@ export function AppearancePage({ settings, onChange }: Props) {
     <div className="settings-page">
       <PageHeader title={t("appearance.title")} description={t("appearance.desc")} />
 
-      <SectionTitle>{t("appearance.interface")}</SectionTitle>
-      <CardGrid>
+      <SectionHeader title={t("appearance.interface")} />
+      <SettingGroup>
       <SettingCard title={t("appearance.colorTheme")} description={t("appearance.colorThemeDesc")}>
         <select
           className="select"
@@ -50,10 +50,10 @@ export function AppearancePage({ settings, onChange }: Props) {
           <span className="hint">{settings.fontSize}px</span>
         </div>
       </SettingCard>
-      </CardGrid>
+      </SettingGroup>
 
-      <SectionTitle>{t("appearance.codeDisplay")}</SectionTitle>
-      <CardGrid>
+      <SectionHeader title={t("appearance.codeDisplay")} />
+      <SettingGroup>
       <SettingCard title={t("appearance.lightCodeTheme")} description="Highlighting palette used with the light interface.">
         <select
           className="select"
@@ -96,9 +96,9 @@ export function AppearancePage({ settings, onChange }: Props) {
           <span className="hint">px</span>
         </div>
       </SettingCard>
-      </CardGrid>
+      </SettingGroup>
 
-      <SectionTitle>{t("appearance.codePreview")}</SectionTitle>
+      <SectionHeader title={t("appearance.codePreview")} />
       <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
         Live preview of both code themes with the current display options. The theme matching the interface is active.
       </p>

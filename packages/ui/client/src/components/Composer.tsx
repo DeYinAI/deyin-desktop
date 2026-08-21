@@ -98,6 +98,8 @@ interface ComposerProps {
   threadsForPicker?: Thread[];
   activeThreadId?: string | null;
   workspaceRoot?: string | null;
+  /** Bumped by the host to pull focus into the input (e.g. after declining a plan). */
+  focusSignal?: number;
 }
 
 const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "hand" | "eye" }> = {
@@ -133,6 +135,10 @@ export function Composer(props: ComposerProps) {
     () => (props.deliveryModeEnabled === false ? MODE_ORDER.filter((m) => m !== "delivery") : MODE_ORDER),
     [props.deliveryModeEnabled],
   );
+  const focusSignal = props.focusSignal ?? 0;
+  useEffect(() => {
+    if (focusSignal > 0) ref.current?.focus();
+  }, [focusSignal]);
   const [plusOpen, setPlusOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);

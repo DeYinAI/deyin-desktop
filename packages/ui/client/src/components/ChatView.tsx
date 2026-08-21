@@ -4,6 +4,7 @@ import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import { Logo } from "./Logo.js";
 import { Markdown } from "./Markdown.js";
+import { subagentDisplayName, subagentStatusLine } from "./SubagentPanel.js";
 import { TodoRows, countVisibleTodos } from "./TodoChecklist.js";
 import type { ThreadEvent } from "../threads.js";
 import { TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
@@ -25,6 +26,8 @@ export interface ChatCodeDisplay {
 export interface PlanArtifactLive {
   title: string;
   fileName: string;
+  /** Opening slice of the plan as it streams in. */
+  preview?: string;
 }
 
 interface ChatViewProps {
@@ -39,10 +42,10 @@ interface ChatViewProps {
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
   onOpenPlan?: () => void;
-  /** Plan awaiting approval: shows Revise/Edit/Build inline on the plan card (Cursor-style, no modal). */
-  pendingPlan?: { title: string; overview?: string; filePath?: string } | null;
-  onRevisePlan?: () => void;
-  onEditPlan?: () => void;
+  /** Plan written but not built yet and no gate on screen: the card offers Build. */
+  canBuildPlan?: boolean;
+  /** Full plan markdown of the active thread — enables Copy on the newest plan card. */
+  planMarkdown?: string | null;
   /** In-flight plan file card; full markdown streams only in the Plan tab. */
   planArtifact?: PlanArtifactLive | null;
   /** Active thread id — switching threads resets scroll to the bottom, pinned. */
@@ -51,6 +54,8 @@ interface ChatViewProps {
   threadTitles?: Record<string, string>;
   /** Open the Agent terminal tab for the current thread (bash tool cards). */
   onOpenAgentTerminal?: () => void;
+  /** Open the workspace Agent panel on a subagent run (subagent cards). */
+  onOpenSubagent?: (id: string) => void;
 }
 
 /** The session timeline: chat bubbles interleaved with agent activity cards. */
@@ -148,11 +153,12 @@ export function ChatView(props: ChatViewProps) {
               onUndo={props.onUndo}
               onBuild={props.onBuild}
               onOpenPlan={props.onOpenPlan}
-              onRevisePlan={props.onRevisePlan}
-              onEditPlan={props.onEditPlan}
-              planPending={Boolean(props.pendingPlan) && isLastPlanReady(props.events, group.event)}
+              planLatest={isLastPlanReady(props.events, group.event)}
+              canBuildPlan={props.canBuildPlan}
+              planMarkdown={props.planMarkdown}
               threadTitles={props.threadTitles}
               threadId={props.threadKey}
+              onOpenSubagent={props.onOpenSubagent}
             />
           ),
         )}
@@ -173,11 +179,14 @@ export function ChatView(props: ChatViewProps) {
             </div>
           )}
         {props.planArtifact && (
-          <PlanFileCard
+          <PlanCard
             title={props.planArtifact.title}
             fileName={props.planArtifact.fileName}
+            preview={props.planArtifact.preview}
             streaming
             onOpenPlan={props.onOpenPlan}
+            codeTheme={codeTheme}
+            codeDisplay={props.codeDisplay}
           />
         )}
       </div>
@@ -324,11 +333,12 @@ function EventRow({
   onUndo,
   onBuild,
   onOpenPlan,
-  onRevisePlan,
-  onEditPlan,
-  planPending,
+  planLatest,
+  canBuildPlan,
+  planMarkdown,
   threadTitles,
   threadId,
+  onOpenSubagent,
 }: {
   event: ThreadEvent;
   codeTheme: CodeTheme;
@@ -337,14 +347,18 @@ function EventRow({
   onUndo: (name: string) => void;
   onBuild?: () => void;
   onOpenPlan?: () => void;
-  onRevisePlan?: () => void;
-  onEditPlan?: () => void;
-  /** True when this card is the plan awaiting user approval. */
-  planPending?: boolean;
+  /** True when this is the newest plan card in the timeline (owns Copy/Build). */
+  planLatest?: boolean;
+  /** The newest plan is written but not built yet. */
+  canBuildPlan?: boolean;
+  /** Full plan markdown of the thread (newest plan card only). */
+  planMarkdown?: string | null;
   /** threadId -> title map for #-linked thread chips in user bubbles. */
   threadTitles?: Record<string, string>;
   /** Active thread id — inline visualization/image embeds read from its store. */
   threadId?: string | null;
+  /** Open the workspace Agent panel on this subagent run. */
+  onOpenSubagent?: (id: string) => void;
 }) {
   switch (event.kind) {
     case "user": {
@@ -380,14 +394,16 @@ function EventRow({
 
     case "plan-ready":
       return (
-        <PlanFileCard
+        <PlanCard
           title={event.title}
           fileName={event.fileName}
+          preview={event.preview}
+          fullText={planLatest ? planMarkdown : null}
+          canBuild={planLatest && canBuildPlan}
           onBuild={onBuild}
           onOpenPlan={onOpenPlan}
-          pending={planPending}
-          onRevise={onRevisePlan}
-          onEdit={onEditPlan}
+          codeTheme={codeTheme}
+          codeDisplay={codeDisplay}
         />
       );
 
@@ -434,7 +450,7 @@ function EventRow({
       return <ToolCard event={event} />;
 
     case "subagent":
-      return <SubagentCard event={event} />;
+      return <SubagentCard event={event} onOpen={onOpenSubagent} />;
 
     case "error":
       return (
@@ -557,49 +573,122 @@ function isLastPlanReady(events: ThreadEvent[], event: ThreadEvent): boolean {
   return false;
 }
 
-/** Cursor-style plan artifact: file card in chat; full markdown only in the Plan tab. */
-function PlanFileCard({
+/** Plan artifact in chat: a preview card that opens the full document in the Plan
+ *  panel. The body shows the opening of the plan under a fade, so the timeline
+ *  stays skimmable while the whole plan is one click away. */
+function PlanCard({
   title,
   fileName,
+  preview,
+  fullText,
   streaming,
-  onBuild,
+  canBuild,
   onOpenPlan,
-  pending,
-  onRevise,
-  onEdit,
+  onBuild,
+  codeTheme,
+  codeDisplay,
 }: {
   title?: string;
   fileName?: string;
+  /** Opening slice of the plan markdown, rendered under the title. */
+  preview?: string;
+  /** Whole plan document — enables Copy when the chat still holds it. */
+  fullText?: string | null;
   streaming?: boolean;
-  onBuild?: () => void;
+  /** Plan is written but not built yet: offer Build on the card itself. */
+  canBuild?: boolean;
   onOpenPlan?: () => void;
-  /** Plan is awaiting approval — show Revise/Edit/Build inline instead of a modal. */
-  pending?: boolean;
-  onRevise?: () => void;
-  onEdit?: () => void;
+  onBuild?: () => void;
+  codeTheme: CodeTheme;
+  codeDisplay: ChatCodeDisplay;
 }) {
   const t = useT();
+  const [copied, setCopied] = useState(false);
   const name = fileName?.trim() || "plan.md";
-  const subtitle = title?.trim() && title.trim() !== name ? title.trim() : t("chat.planFileDesc");
+  const heading = title?.trim() && title.trim() !== name ? title.trim() : name;
+  const body = preview?.trim() ?? "";
+  const copyText = (fullText ?? preview ?? "").trim();
+
+  const copy = () => {
+    if (!copyText) return;
+    void navigator.clipboard?.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    });
+  };
+
+  const open = () => onOpenPlan?.();
+
   return (
-    <div className={`file-card plan-file-card ${streaming ? "plan-file-card--streaming" : ""}`}>
-      <div className="file-card__head">
-        <span className="file-card__badge">MD</span>
-        <span className="file-card__name" title={subtitle}>
-          {name}
+    <div
+      className={`plan-card${streaming ? " plan-card--streaming" : ""}${onOpenPlan ? " plan-card--clickable" : ""}`}
+      role={onOpenPlan ? "button" : undefined}
+      tabIndex={onOpenPlan ? 0 : undefined}
+      title={onOpenPlan ? t("chat.openPlan") : undefined}
+      onClick={onOpenPlan ? open : undefined}
+      onKeyDown={
+        onOpenPlan
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+              }
+            }
+          : undefined
+      }
+    >
+      <div className="plan-card__head">
+        <Icon name="sparkles" size={13} className="plan-card__glyph" />
+        <span className="plan-card__kind">{t("chat.plan")}</span>
+        <span className="plan-card__status">
+          {streaming ? t("chat.planWriting") : t("chat.planReady")}
         </span>
-        {streaming ? (
-          <span className="plan-file-card__status">{t("chat.planWriting")}</span>
-        ) : (
-          <span className="plan-file-card__status">{t("chat.planReady")}</span>
-        )}
-        <span className="file-card__actions">
+        <span className="plan-card__actions" onClick={(e) => e.stopPropagation()}>
+          {copyText && !streaming && (
+            <button
+              type="button"
+              className="plan-card__iconbtn"
+              onClick={copy}
+              aria-label={t("chat.copyPlan")}
+              title={copied ? t("chat.copied") : t("chat.copyPlan")}
+            >
+              <Icon name={copied ? "check" : "copy"} size={12} />
+            </button>
+          )}
           {onOpenPlan && (
-            <button type="button" className="chip chip--small" onClick={onOpenPlan}>
+            <button
+              type="button"
+              className="plan-card__iconbtn"
+              onClick={open}
+              aria-label={t("chat.openPlan")}
+              title={t("chat.openPlan")}
+            >
+              <Icon name="panel" size={12} />
+            </button>
+          )}
+        </span>
+      </div>
+
+      <div className="plan-card__body">
+        <div className="plan-card__title">{heading}</div>
+        {body ? (
+          <div className="plan-card__preview" aria-hidden>
+            <Markdown text={body} theme={codeTheme} display={codeDisplay} />
+          </div>
+        ) : (
+          <div className="plan-card__hint">{t("chat.planFileDesc")}</div>
+        )}
+      </div>
+
+      <div className="plan-card__foot" onClick={(e) => e.stopPropagation()}>
+        <span className="plan-card__file">{name}</span>
+        <span className="plan-card__foot-actions">
+          {onOpenPlan && (
+            <button type="button" className="chip chip--small" onClick={open}>
               {t("chat.openPlan")}
             </button>
           )}
-          {onBuild && !streaming && (
+          {canBuild && onBuild && !streaming && (
             <button type="button" className="chip chip--small chip--accent" onClick={onBuild}>
               <Icon name="play" size={11} />
               {t("chat.build")}
@@ -607,29 +696,6 @@ function PlanFileCard({
           )}
         </span>
       </div>
-      {pending && !streaming && (
-        <div className="plan-file-card__pending">
-          <span className="plan-file-card__hint">{t("chat.planReadyDesc")}</span>
-          <span className="file-card__actions">
-            {onRevise && (
-              <button type="button" className="chip chip--small" onClick={onRevise}>
-                {t("chat.revise")}
-              </button>
-            )}
-            {onEdit && (
-              <button type="button" className="chip chip--small" onClick={onEdit}>
-                {t("chat.editPlan")}
-              </button>
-            )}
-            {onBuild && (
-              <button type="button" className="chip chip--small chip--accent" onClick={onBuild}>
-                <Icon name="play" size={11} />
-                {t("chat.build")}
-              </button>
-            )}
-          </span>
-        </div>
-      )}
     </div>
   );
 }
@@ -797,20 +863,41 @@ function shortenPath(path: string, max = 32): string {
   return `…/${tail.join("/")}`;
 }
 
-/** Live subagent run: spinner + current activity while running, summary when done. */
-function SubagentCard({ event }: { event: Extract<ThreadEvent, { kind: "subagent" }> }) {
+/**
+ * Live subagent run, rendered as a two-line entry: the subagent's name over its
+ * current activity, with the parent's "waiting" note underneath while it runs.
+ * Clicking opens the workspace Agent panel on this run.
+ */
+function SubagentCard({
+  event,
+  onOpen,
+}: {
+  event: Extract<ThreadEvent, { kind: "subagent" }>;
+  onOpen?: (id: string) => void;
+}) {
   const running = event.status === "running";
   const failed = event.status === "failed";
   return (
-    <div className={`subagent-card ${failed ? "subagent-card--failed" : ""} ${running ? "subagent-card--running" : ""}`}>
-      <div className="subagent-card__row">
+    <div className="subagent-block">
+      <button
+        type="button"
+        className={`subagent-card ${failed ? "subagent-card--failed" : ""} ${running ? "subagent-card--running" : ""}`}
+        onClick={() => onOpen?.(event.id)}
+        disabled={!onOpen}
+        title={onOpen ? "Open this subagent in the Agent panel" : undefined}
+      >
         <span className={`subagent-card__icon ${running ? "subagent-card__spinner" : ""}`}>
-          <Icon name={running ? "clock" : failed ? "close" : "check"} size={12} />
+          <Icon name={running ? "sparkles" : failed ? "close" : "check"} size={13} />
         </span>
-        <code className="subagent-card__name">{event.name}</code>
-        {event.line && <span className="subagent-card__line">{event.line}</span>}
-        {event.ms !== undefined && <span className="tool-card__duration">{formatDuration(event.ms)}</span>}
-      </div>
+        <span className="subagent-card__body">
+          <span className="subagent-card__row">
+            <span className="subagent-card__name">{subagentDisplayName(event.name)}</span>
+            {event.ms !== undefined && <span className="subagent-card__duration">{formatDuration(event.ms)}</span>}
+          </span>
+          <span className="subagent-card__line">{subagentStatusLine(event)}</span>
+        </span>
+      </button>
+      {running && <div className="subagent-block__waiting">Waiting for subagent</div>}
     </div>
   );
 }

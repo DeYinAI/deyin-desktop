@@ -1,21 +1,17 @@
-<svg width="96" height="96" viewBox="0 0 96 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Deyin mark: geometric lowercase "d" with an orbit dot. Original artwork. -->
-  <defs>
-    <linearGradient id="deyinBg" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#151b2e"/>
-      <stop offset="1" stop-color="#0a0e18"/>
-    </linearGradient>
-    <linearGradient id="deyinInk" x1="24" y1="20" x2="72" y2="76" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8fb4ff"/>
-      <stop offset="1" stop-color="#4f7cff"/>
-    </linearGradient>
-  </defs>
-  <rect width="96" height="96" rx="22" fill="url(#deyinBg)"/>
-  <rect x="1" y="1" width="94" height="94" rx="21" stroke="#2a3350" stroke-width="2" fill="none"/>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Deyin mark: geometric lowercase "d" with an orbit dot. Original artwork.
+       No enclosing tile — the glyph is optically centred on the canvas
+       (content spans x 95..417, y 65..447) so it sits right in a dock, a
+       favicon, or inline in the UI without extra padding.
+
+       One flat blue-grey, no gradient. The value is picked to clear both theme
+       grounds: it stays legible on the dark #181818 window and on the light
+       #f4f4f3 one, which matters because the mark carries no background of
+       its own. -->
   <!-- bowl of the "d" -->
-  <circle cx="44" cy="57" r="15" stroke="url(#deyinInk)" stroke-width="8" fill="none"/>
+  <circle cx="214" cy="328" r="96" stroke="#7488a0" stroke-width="58" fill="none"/>
   <!-- ascender of the "d" -->
-  <path d="M59 22V72" stroke="url(#deyinInk)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M310 88V424" stroke="#7488a0" stroke-width="58" stroke-linecap="round"/>
   <!-- orbit dot -->
-  <circle cx="74" cy="27" r="5" fill="#9fd2ff"/>
+  <circle cx="390" cy="115" r="27" fill="#7488a0"/>
 </svg>

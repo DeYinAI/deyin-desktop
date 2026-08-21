@@ -9,9 +9,12 @@ import type { EvidenceLedger } from "./evidence/ledger.js";
 import { EvidenceLedger as EvidenceLedgerClass, isMutationTool } from "./evidence/ledger.js";
 import { blockPrematureCompletion, checkMutationReadiness } from "./evidence/gates.js";
 import { OptimizationTracker, type OptimizationMetrics } from "./optimization.js";
+import type { ModelRole, PreviousStep, StepRouter } from "./model-routing.js";
 import { buildRecallSuffix } from "./recall.js";
 import type { PermissionDecision, PermissionEngine, PermissionResolver } from "./permissions.js";
 import { streamChatEvents } from "./stream.js";
+import type { StreamImage } from "@deyin/host-core";
+import { inlineImageDirective } from "./tools/generate-image.js";
 import type { ProviderApiFormat } from "./transports.js";
 import type { ToolRegistry } from "./tools/registry.js";
 import {
@@ -48,6 +51,7 @@ export type AgentEvent =
   | { type: "optimization"; metrics: OptimizationMetrics }
   | { type: "compaction"; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
   | { type: "evidence-gate"; code: string; message: string; toolName?: string }
+  | { type: "model-routed"; step: number; role: ModelRole; model: string; providerId?: string }
   | { type: "done"; reason: AgentRunResult["reason"] };
 
 export interface AgentRunOptions {
@@ -105,6 +109,19 @@ export interface AgentRunOptions {
   evidenceGatesEnabled?: boolean;
   /** Delivery mode: ledger recording mutations/verifications (created by the host when omitted). */
   evidenceLedger?: EvidenceLedger;
+  /**
+   * Per-step model routing. When set, the loop asks the router which model to
+   * use before every request, so plan/implement/ask/tool phases can run on
+   * different models and a mid-run `switch_mode` re-routes immediately.
+   * Omit it (the default) and the run uses `model` throughout.
+   */
+  router?: StepRouter;
+  /**
+   * The selected model declares image output in the catalog (Gemini flash-image,
+   * an image tool on the Responses API). Asks the provider for pictures and lets
+   * the loop store whatever the model draws.
+   */
+  imageOutput?: boolean;
 }
 
 export interface AgentRunResult {
@@ -132,11 +149,15 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const schemaSplit = splitToolSchemaTokens(toolSchemas);
   const schemaTokens = schemaSplit.tools + schemaSplit.mcp + schemaSplit.subagents;
   // Leave room for tool schemas on every request; compactMessages only sees transcript tokens.
-  const budget = Math.max(1_024, Math.floor(contextTokens * BUDGET_FRACTION) - schemaTokens);
+  // Recomputed per step: a routed model may have a different context window.
+  const budgetFor = (windowTokens: number): number =>
+    Math.max(1_024, Math.floor(windowTokens * BUDGET_FRACTION) - schemaTokens);
   const usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedPromptTokens: 0 };
   const todos = opts.todos ?? [];
   const tracker = new OptimizationTracker();
   const promptCacheKey = opts.promptCacheKey ?? `deyin-agent:${opts.model}:${opts.cwd}`;
+  const cacheKeyFor = (model: string): string =>
+    model === opts.model ? promptCacheKey : `${promptCacheKey}:${model}`;
   const evidenceGates = opts.evidenceGatesEnabled === true;
   const ledger = opts.evidenceLedger ?? (evidenceGates ? new EvidenceLedgerClass() : undefined);
 
@@ -170,11 +191,30 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   }
 
   let finalText = "";
+  /** What the last step produced; drives the cheap `tool` role (see roleForStep). */
+  let previousStep: PreviousStep | undefined;
+  /** Model used by the previous step, so `model-routed` only fires on a change. */
+  let previousModel = "";
 
   for (let step = 1; step <= maxSteps; step++) {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
-    const compaction = compactMessages(opts.messages, budget);
+    // Resolve this step's model before compaction: the window we compact to
+    // must be the window of the model that is about to see the transcript.
+    const routed = opts.router?.({
+      step,
+      mode: typeof ctx.sessionMeta?.mode === "string" ? ctx.sessionMeta.mode : undefined,
+      previous: previousStep,
+    });
+    const stepModel = routed?.model ?? opts.model;
+    const stepWindow = routed?.contextLength ?? contextTokens;
+    const stepWire = opts.wire ? { ...opts.wire, model: stepModel } : undefined;
+    if (routed && stepModel !== previousModel) {
+      emit({ type: "model-routed", step, role: routed.role, model: stepModel, providerId: routed.providerId });
+    }
+    previousModel = stepModel;
+
+    const compaction = compactMessages(opts.messages, budgetFor(stepWindow));
     if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0 || compaction.truncatedToolArgs > 0) {
       emit({ type: "compaction", ...compaction });
     }
@@ -184,15 +224,15 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     emit({
       type: "context-snapshot",
       snapshot: estimateContextUsage({
-        contextLength: opts.contextLength ?? 0,
+        contextLength: routed?.contextLength ?? opts.contextLength ?? 0,
         messages: opts.messages,
         systemSections: opts.systemSections,
         tools: toolSchemas,
-        wire: opts.wire,
+        wire: stepWire,
       }),
     });
 
-    const token = await opts.getToken();
+    const token = await (routed?.getToken ?? opts.getToken)();
     // Empty string is valid: local providers (Ollama) need no key.
     if (token === null || token === undefined) throw new AuthRequiredError();
 
@@ -201,22 +241,24 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     let content = "";
     let reasoning = "";
     let toolCalls: AgentToolCall[] = [];
+    let streamImages: StreamImage[] = [];
     try {
       for await (const event of streamChatEvents({
-        apiBaseUrl: opts.apiBaseUrl,
+        apiBaseUrl: routed?.apiBaseUrl ?? opts.apiBaseUrl,
         token,
-        model: opts.model,
+        model: stepModel,
         messages: opts.messages,
         tools: toolSchemas,
         thinking: opts.thinking,
         effort: opts.effort,
-        apiFormat: opts.apiFormat,
-        authHeader: opts.authHeader,
+        apiFormat: routed?.apiFormat ?? opts.apiFormat,
+        authHeader: routed?.authHeader ?? opts.authHeader,
         maxTokens: opts.maxTokens,
         signal: opts.signal,
-        wire: opts.wire,
-        promptCacheKey,
+        wire: stepWire,
+        promptCacheKey: cacheKeyFor(stepModel),
         promptCacheOptions: opts.wire?.enablePromptCaching === false ? undefined : { mode: "implicit" },
+        imageOutput: opts.imageOutput,
       })) {
         if (event.type === "text") {
           emit({ type: "text-delta", delta: event.delta });
@@ -226,6 +268,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
  content = event.content;
  reasoning = event.reasoning;
  toolCalls = event.toolCalls;
+ streamImages = event.images ?? [];
  if (event.usage) {
  usage.promptTokens += event.usage.promptTokens;
  usage.completionTokens += event.usage.completionTokens;
@@ -248,6 +291,18 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       throw err;
     }
 
+    // A model that draws its own pictures returns them beside the text. Store
+    // each one and append its embed directive so the reply renders the image —
+    // exactly what generate_image does for the images endpoint.
+    if (streamImages.length > 0) {
+      const embedded = await storeStreamImages(streamImages, ctx);
+      if (embedded.length > 0) {
+        const block = (content.endsWith("\n") || content.length === 0 ? "" : "\n\n") + embedded.join("\n");
+        content += block;
+        emit({ type: "text-delta", delta: block });
+      }
+    }
+
     const assistant: AgentMessage = {
       role: "assistant",
       content,
@@ -257,6 +312,16 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     append(assistant);
     emit({ type: "assistant-message", message: assistant });
     if (content) finalText = content;
+
+    // Record what this step did so the next one can be recognised as pure
+    // read-only churn. Unknown tools count as non-read: never route a step that
+    // followed something we cannot classify to the cheap model.
+    const toolNames = toolCalls.map((call) => call.name);
+    previousStep = {
+      hadProse: content.trim().length > 0,
+      toolNames,
+      allRead: toolNames.every((name) => opts.tools.get(name)?.tier === "read"),
+    };
 
     if (toolCalls.length === 0) {
       // Delivery mode: reject premature "all done" claims until every step is
@@ -440,4 +505,30 @@ function safeMeta(
   } catch {
     return undefined;
   }
+}
+
+
+/**
+ * Persist images a chat model produced inside its completion and return one
+ * embed directive per stored picture. Needs a host image bridge with `save`;
+ * without one the pictures cannot be stored, so the reply keeps the text only.
+ */
+async function storeStreamImages(images: StreamImage[], ctx: ToolContext): Promise<string[]> {
+  const bridge = ctx.imageGen;
+  if (!bridge?.save) return [];
+  const lines: string[] = [];
+  for (const image of images) {
+    try {
+      const stored = await bridge.save({
+        ...(image.base64 !== undefined ? { base64: image.base64 } : {}),
+        ...(image.url !== undefined ? { url: image.url } : {}),
+        mediaType: image.mediaType,
+      });
+      lines.push(inlineImageDirective(stored.file));
+    } catch (err) {
+      // Surfaced in the reply rather than swallowed: the user asked for a picture.
+      lines.push(`*(an image could not be stored: ${err instanceof Error ? err.message : String(err)})*`);
+    }
+  }
+  return lines;
 }

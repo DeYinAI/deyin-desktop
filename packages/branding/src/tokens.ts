@@ -98,6 +98,16 @@ export const typography = {
   sizeXl: "20px",
 } as const;
 
+/** The terminal chrome needs the same colors in CSS as xterm gets in JS, so the
+ * panel frame can never drift from the surface xterm paints inside it. */
+function terminalLines(palette: { background: string; foreground: string; brightBlack: string }): string[] {
+  return [
+    `  --terminal-bg: ${palette.background};`,
+    `  --terminal-fg: ${palette.foreground};`,
+    `  --terminal-dim: ${palette.brightBlack};`,
+  ];
+}
+
 function colorLines(palette: Record<string, string>): string[] {
   return Object.entries(palette).map(([k, v]) => `  --color-${kebab(k)}: ${v};`);
 }
@@ -117,11 +127,13 @@ export function cssVariables(): string {
   lines.push(':root, :root[data-theme="dark"] {');
   lines.push("  color-scheme: dark;");
   lines.push(...colorLines(colors));
+  lines.push(...terminalLines(terminalDark));
   lines.push("}");
 
   lines.push(':root[data-theme="light"] {');
   lines.push("  color-scheme: light;");
   lines.push(...colorLines(colorsLight));
+  lines.push(...terminalLines(terminalLight));
   lines.push("}");
 
   return lines.join("\n");
@@ -129,4 +141,72 @@ export function cssVariables(): string {
 
 function kebab(s: string): string {
   return s.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+}
+
+/** ANSI + chrome colors for the integrated terminal (xterm `ITheme` shape).
+ *
+ * xterm's stock palette is the raw VGA one (pure #00ff00 green, #0000ff blue);
+ * against Deyin's flat greys it glares and reads as a foreign window. These are
+ * desaturated, luminance-matched ramps: each bright pair sits one step above its
+ * normal, and every hue clears ~4.5:1 against its own background so shell
+ * prompts, `ls` output and diffs stay legible without turning neon.
+ */
+export const terminalDark = {
+  background: "#141414",
+  foreground: "#dcdcdc",
+  cursor: colors.accent,
+  cursorAccent: "#141414",
+  selectionBackground: "rgba(0, 165, 234, 0.30)",
+  selectionInactiveBackground: "rgba(255, 255, 255, 0.10)",
+
+  black: "#3a3a3a",
+  red: "#e06c78",
+  green: "#63cc8e",
+  yellow: "#d9b25f",
+  blue: "#5aa9ef",
+  magenta: "#c48ce6",
+  cyan: "#4fc3d1",
+  white: "#c9cbcd",
+
+  brightBlack: "#6e7276",
+  brightRed: "#f58a94",
+  brightGreen: "#84e0a8",
+  brightYellow: "#efc97f",
+  brightBlue: "#82c3ff",
+  brightMagenta: "#d9adf5",
+  brightCyan: "#72dbe8",
+  brightWhite: "#f3f4f5",
+} as const;
+
+/** Light-theme counterpart: same hues, inverted luminance so they hold on paper. */
+export const terminalLight = {
+  background: "#ffffff",
+  foreground: "#26262a",
+  cursor: colorsLight.accent,
+  cursorAccent: "#ffffff",
+  selectionBackground: "rgba(63, 102, 224, 0.20)",
+  selectionInactiveBackground: "rgba(0, 0, 0, 0.08)",
+
+  black: "#2b2b2f",
+  red: "#c1372f",
+  green: "#1e7a45",
+  yellow: "#8a6100",
+  blue: "#2f55d4",
+  magenta: "#8b3fbe",
+  cyan: "#0d6f7d",
+  white: "#a8a8a4",
+
+  brightBlack: "#65656b",
+  brightRed: "#d8483c",
+  brightGreen: "#2a9455",
+  brightYellow: "#a4780b",
+  brightBlue: "#3f66e0",
+  brightMagenta: "#a253d8",
+  brightCyan: "#12889a",
+  brightWhite: "#3a3a3e",
+} as const;
+
+/** Terminal colors for an interface theme variant. */
+export function terminalTheme(variant: "light" | "dark") {
+  return variant === "light" ? terminalLight : terminalDark;
 }

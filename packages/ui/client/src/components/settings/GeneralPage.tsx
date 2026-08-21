@@ -1,6 +1,6 @@
 import { LOCALES } from "@deyin/host-core/shared";
 import { useT } from "../../i18n.js";
-import { CardGrid, PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "@deyin/contract";
 
 interface Props {
@@ -15,8 +15,8 @@ export function GeneralPage({ settings, version, onChange }: Props) {
     <div className="settings-page">
       <PageHeader title={t("general.title")} description={t("general.desc")} />
 
-      <SectionTitle>{t("general.application")}</SectionTitle>
-      <CardGrid>
+      <SectionHeader title={t("general.application")} />
+      <SettingGroup>
         <SettingCard title={t("general.language")} description={t("general.languageDesc")}>
           <select
             className="select"
@@ -53,21 +53,21 @@ export function GeneralPage({ settings, version, onChange }: Props) {
             <option value="on">Review before apply</option>
           </select>
         </SettingCard>
-      </CardGrid>
+      </SettingGroup>
 
-      <SectionTitle>{t("general.privacy")}</SectionTitle>
-      <CardGrid>
+      <SectionHeader title={t("general.privacy")} />
+      <SettingGroup>
         <SettingCard title={t("general.telemetry")} description={t("general.telemetryDesc")}>
           <Toggle checked={settings.telemetry} onChange={(v) => onChange({ telemetry: v })} />
         </SettingCard>
-      </CardGrid>
+      </SettingGroup>
 
-      <SectionTitle>{t("general.about")}</SectionTitle>
-      <CardGrid>
+      <SectionHeader title={t("general.about")} />
+      <SettingGroup>
         <SettingCard title={t("general.version")} description={t("general.versionDesc")}>
           <span className="hint">{version}</span>
         </SettingCard>
-      </CardGrid>
+      </SettingGroup>
     </div>
   );
 }

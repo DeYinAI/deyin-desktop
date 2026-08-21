@@ -16,6 +16,7 @@ export * from "./context-usage.js";
 export * from "./optimization.js";
 export * from "./cache/index.js";
 export * from "./testing/cache-guard.js";
+export * from "./model-routing.js";
 export * from "./loop.js";
 export * from "./session.js";
 export * from "./config.js";

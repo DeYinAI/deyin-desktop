@@ -1,4 +1,4 @@
-import { isImageModel } from "./images.js";
+import { modelImageCapability } from "./images.js";
 import type { ModelInfo } from "./types.js";
 
 interface OpenAIModelListItem {
@@ -11,7 +11,11 @@ interface OpenAIModelListItem {
   /** Optional modality metadata: marks text-to-image entries. */
   type?: unknown;
   modality?: unknown;
+  modalities?: unknown;
+  input_modalities?: unknown;
   output_modalities?: unknown;
+  /** OpenRouter-style nested modality block. */
+  architecture?: unknown;
 }
 
 /** Model ids from known vision-capable families, used when the catalog carries
@@ -64,15 +68,19 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
     const items = body.data ?? [];
     if (items.length === 0) return DEFAULT_MODELS;
     return items.map((m) => {
-      const image = isImageModel(m.id, m);
+      const capability = modelImageCapability(m.id, m);
+      // "endpoint" models take a prompt, not a conversation: never route vision
+      // to them. "chat" models generate pictures inside a normal completion, so
+      // they stay chat models that additionally emit images.
+      const endpointOnly = capability === "endpoint";
       return {
         id: m.id,
         name: m.id,
         contextLength: m.context_length,
         maxOutputTokens: m.max_output_tokens,
-        // Image models take a prompt, not a conversation: never route vision to them.
-        vision: image ? false : modelSupportsVision(m.id, m),
-        kind: image ? ("image" as const) : ("chat" as const),
+        vision: endpointOnly ? false : modelSupportsVision(m.id, m),
+        kind: endpointOnly ? ("image" as const) : ("chat" as const),
+        ...(capability === "chat" ? { imageOutput: true } : {}),
       };
     });
   } catch {

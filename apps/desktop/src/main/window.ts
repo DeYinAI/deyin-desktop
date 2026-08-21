@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { BrowserWindow, shell, webContents } from "electron";
 import { colors } from "@deyin/branding";
+import { loadAppIcon } from "./app-icon.js";
 import { isAppQuitting, logShutdown } from "./shutdown.js";
 
 let mainWindow: BrowserWindow | null = null;
@@ -32,6 +33,7 @@ function prepareWindowForClose(window: BrowserWindow): void {
 
 /** Create the main application window: frameless with a custom title bar. */
 export function createMainWindow(): BrowserWindow {
+  const icon = loadAppIcon();
   const window = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -40,6 +42,7 @@ export function createMainWindow(): BrowserWindow {
     show: false,
     backgroundColor: colors.bg,
     title: "Deyin",
+    ...(icon.isEmpty() ? {} : { icon }),
     // The renderer draws its own top bar with window controls.
     frame: process.platform === "darwin",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : undefined,

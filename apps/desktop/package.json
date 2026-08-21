@@ -1,6 +1,6 @@
 {
   "name": "@deyin/desktop",
-  "version": "2.1.10",
+  "version": "2.1.11",
   "description": "Deyin desktop app (Electron). Agentic development environment with native computer use, billing, MCP servers, and plugin system.",
   "license": "MIT",
   "author": "Deyin <hello@deyin.ai>",
@@ -15,7 +15,9 @@
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
     "typecheck": "pnpm typecheck:node",
     "test": "tsx --test test/*.test.ts bundled-plugins/security/test/*.test.ts",
+    "prepackage": "pnpm --filter @deyin/branding make-icons",
     "package": "pnpm run build && electron-builder --publish never --config electron-builder.yml",
+    "prepackage:dir": "pnpm --filter @deyin/branding make-icons",
     "package:dir": "pnpm run build && electron-builder --dir --config electron-builder.yml"
   },
   "dependencies": {

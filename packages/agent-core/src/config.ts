@@ -29,6 +29,11 @@ export interface DeyinCliConfigFile {
   thinking?: boolean;
   maxSteps?: number;
   permissions?: PermissionRule[];
+  /**
+   * Per-phase model overrides: role -> model id. Roles are "implement", "plan",
+   * "ask", "delivery" and "tool"; anything left out uses `model`.
+   */
+  roleModels?: Record<string, string>;
   /** Per-subagent model overrides: subagent name -> "providerId::modelId". */
   subagentModels?: Record<string, string>;
   /** Default step cap for subagent runs (frontmatter max_steps overrides). */
@@ -48,6 +53,7 @@ export interface ResolvedCliConfig {
   thinking: boolean;
   maxSteps: number;
   permissions: PermissionRule[];
+  roleModels: Record<string, string>;
   subagentModels: Record<string, string>;
   subagentMaxSteps: number;
   memoryEnabled: boolean;
@@ -95,6 +101,7 @@ function mergeLayer(base: ResolvedCliConfig, layer: DeyinCliConfigFile, source: 
   if (layer.thinking !== undefined) base.thinking = layer.thinking;
   if (layer.maxSteps !== undefined) base.maxSteps = layer.maxSteps;
   if (layer.permissions) base.permissions = [...base.permissions, ...layer.permissions];
+  if (layer.roleModels) base.roleModels = { ...base.roleModels, ...layer.roleModels };
   if (layer.subagentModels) base.subagentModels = { ...base.subagentModels, ...layer.subagentModels };
   if (layer.subagentMaxSteps !== undefined) base.subagentMaxSteps = layer.subagentMaxSteps;
   if (layer.memoryEnabled !== undefined) base.memoryEnabled = layer.memoryEnabled;
@@ -125,6 +132,7 @@ export function loadCliConfig(opts: {
     thinking: true,
     maxSteps: 40,
     permissions: [],
+    roleModels: {},
     subagentModels: {},
     subagentMaxSteps: 20,
     memoryEnabled: true,

@@ -22,7 +22,8 @@ export function QuestionPrompt({ title, questions, onSubmit, onCancel }: Props):
 
   const items: PickerItem[] = question.options.map((opt) => ({
     value: opt.id,
-    label: opt.label,
+    label: opt.recommended ? `${opt.label} (recommended)` : opt.label,
+    hint: opt.description,
   }));
 
   return (

@@ -145,3 +145,25 @@ test("useAgentState: tool events carry duration and subagent cards progress", as
   assert.ok(failed && failed.kind === "subagent" && failed.status === "failed");
   assert.equal(failed.line, "read b.ts");
 });
+
+test("useAgentState: subagent cards keep the prompt, the full activity log and the report", async () => {
+  __testResetAgentStore();
+  const threadId = "subagent-panel-thread";
+  agentStateStore.startRun(threadId, "agent");
+
+  __testDispatch({ threadId, event: { type: "subagent-start", id: "s1", name: "bugbot", prompt: "Diff: branch changes" } });
+  __testDispatch({ threadId, event: { type: "subagent-progress", id: "s1", line: "bash git diff" } });
+  __testDispatch({ threadId, event: { type: "subagent-progress", id: "s1", line: "read src/auth.ts" } });
+  __testDispatch({
+    threadId,
+    event: { type: "subagent-end", id: "s1", name: "bugbot", ok: true, ms: 900, summary: "1 finding", report: "| Severity |" },
+  });
+
+  const run = __testGetThreadState(threadId).runEvents.find((e) => e.kind === "subagent");
+  assert.ok(run && run.kind === "subagent");
+  assert.equal(run.prompt, "Diff: branch changes");
+  // Every progress line is retained for the Agent panel, not just the latest.
+  assert.deepEqual(run.lines, ["bash git diff", "read src/auth.ts"]);
+  assert.equal(run.line, "1 finding");
+  assert.equal(run.report, "| Severity |");
+});
