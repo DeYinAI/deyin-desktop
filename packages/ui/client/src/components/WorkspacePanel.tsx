@@ -5,6 +5,7 @@ import { useT } from "../i18n.js";
 import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
 import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
+import { SubagentPanel, type SubagentEvent } from "./SubagentPanel.js";
 import { Icon } from "./Icon.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
@@ -51,10 +52,17 @@ interface WorkspacePanelProps {
   onBuildPlan?: () => void;
   /** Persist manual edits to the plan todo list (idle only). */
   onPlanTodosChange?: (todos: AgentTodoItem[]) => void;
+  /** Subagent runs in the active thread (Agent tab), oldest first. */
+  subagentRuns?: SubagentEvent[];
+  /** Which subagent run the Agent tab shows; null = the newest. */
+  selectedSubagentId?: string | null;
+  onSelectSubagent?: (id: string) => void;
 }
 
 /** Right-hand workspace panel: files, agent plan, latest diff, built-in browser. */
 export function WorkspacePanel(props: WorkspacePanelProps) {
+  const subagentRuns = props.subagentRuns ?? [];
+  const runningSubagents = subagentRuns.filter((r) => r.status === "running").length;
   return (
     <section className="wspanel">
       <div className="wspanel__tabs">
@@ -73,6 +81,13 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <TabButton label="Source Control" active={props.activeTab === "git"} onClick={() => props.onSelectTab("git")} />
         <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
         <TabButton label="Security" active={props.activeTab === "security"} onClick={() => props.onSelectTab("security")} />
+        <TabButton
+          label="Agent"
+          badge={runningSubagents > 0 ? String(runningSubagents) : undefined}
+          dot={runningSubagents > 0}
+          active={props.activeTab === "agent"}
+          onClick={() => props.onSelectTab("agent")}
+        />
       </div>
 
       {/* Keep tab bodies mounted so FilesTab (and others) retain editor/view state across switches. */}
@@ -124,6 +139,16 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           threadId={props.threadId ?? null}
           workspaceRoot={props.workspaceRoot}
           onOpenFile={props.onOpenFile ? (path: string) => props.onOpenFile?.(path) : undefined}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "agent"}>
+        <SubagentPanel
+          active={props.activeTab === "agent"}
+          runs={subagentRuns}
+          selectedId={props.selectedSubagentId ?? null}
+          onSelect={(id) => props.onSelectSubagent?.(id)}
+          codeDisplay={props.codeDisplay}
+          threadId={props.threadId ?? null}
         />
       </div>
     </section>

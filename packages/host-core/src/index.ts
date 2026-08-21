@@ -5,6 +5,8 @@ export * from "./stores.js";
 export * from "./memory.js";
 export * from "./host/files.js";
 export * from "./host/image-store.js";
+export * from "./host/image-bridge.js";
+export * from "./image-parts.js";
 export * from "./host/paths.js";
 export * from "./host/env.js";
 export * from "./host/wsl-path.js";

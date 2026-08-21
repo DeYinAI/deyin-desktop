@@ -285,6 +285,131 @@ End with a one-line verdict: safe to merge, needs fixes, or blocked — and say 
 `,
   },
   {
+    name: "review-bugbot",
+    description:
+      "Run the Bugbot subagent over the current changes and report its findings as a severity table. Use when the user asks for a bug review, runs /review-bugbot, or asks to review a PR or branch for bugs.",
+    content: `
+# Review with Bugbot
+
+Launch exactly one \`bugbot\` subagent with the task tool. Do **not** compute the diff yourself — the subagent does that from the repository path, and duplicating it just burns context.
+
+## 1. Resolve the target
+
+Default target: the current workspace, current branch.
+
+If the user named a PR link, PR number or branch ("review github.com/org/repo/pull/12", "review feat/x"), that branch must be checked out **before** you launch the subagent:
+
+1. Resolve the link or number to the head branch (\`gh pr view <n> --json headRefName\` when \`gh\` is available).
+2. If it is already the current branch, continue.
+3. Otherwise try \`git switch <branch>\`.
+4. If git refuses (local changes would be overwritten, conflicts, any other blocker), stop and explain the blocker, then ask whether to stash. Only stash after the user says yes, then retry the switch.
+
+## 2. Launch it
+
+~~~
+task(subagent: "bugbot", background: false, prompt: """
+Full Repository Path: <absolute repository path>
+Diff: branch changes
+Custom Instructions: <only when the user gave specific review focus>
+""")
+~~~
+
+- \`Diff: branch changes\` (the default) reviews the branch against its merge-base with the base branch — committed, staged and unstaged changes together.
+- \`Diff: uncommitted changes\` when the user asks for only the working tree / dirty / not-yet-committed changes.
+- \`Base Branch: <name>\` only when you know the comparison base is not the repository default (for example this branch was cut from another feature branch).
+- Run it in the background only when the user explicitly asks.
+
+## 3. Handle failure once
+
+- Called it wrong (missing \`Full Repository Path\`, missing \`Diff\`, wrong shape, wrong subagent name)? Fix the call and retry once immediately.
+- The subagent reports it could not compute the diff (empty diff, missing metadata)? Retry once with \`Diff: natural language\`, drop \`Base Branch\`, and add a \`Change Description\` — one block per changed file, a \`<path> (added|modified|deleted|renamed)\` header followed by bullets of what changed, with line ranges where you know them:
+
+  ~~~
+  Change Description:
+  src/auth/login.ts (modified):
+  - validateSession (L40-58) now checks token expiry before the DB lookup
+  - dropped the fallback that accepted empty tokens
+
+  src/auth/mfa.ts (added):
+  - verifyMfaCode() (L1-30) calls the TOTP service and rate-limits attempts
+  ~~~
+
+- Any other failure: retry once with the same prompt. If it fails the same way again, stop and tell the user in one line what blocked it. Do not keep retrying.
+
+## 4. Report
+
+- No diff: one sentence saying there was nothing to review.
+- No findings: one line — "Bugbot found no bugs."
+- Findings: print the subagent's table verbatim, sorted by severity, with exactly the columns Severity, Location (\`file:line\`), Finding. Add one line naming how many findings and whether any block merging.
+
+Do not fix the findings or run the review again unless the user asks for that as the next step.
+`,
+  },
+  {
+    name: "review-security",
+    description:
+      "Run the Security Review subagent over the current changes and report its findings as a severity table. Use when the user asks for a security review, runs /review-security, or asks whether a change is safe to ship.",
+    content: `
+# Review with Security Review
+
+Launch exactly one \`security-review\` subagent with the task tool. Do **not** compute the diff yourself — the subagent does that from the repository path.
+
+## 1. Resolve the target
+
+Default target: the current workspace, current branch. If the user named a PR link, PR number or branch, check that branch out first — same procedure as \`/review-bugbot\`: resolve to the head branch, \`git switch\`, and if git refuses, explain the blocker and ask before stashing.
+
+## 2. Launch it
+
+~~~
+task(subagent: "security-review", background: false, prompt: """
+Full Repository Path: <absolute repository path>
+Diff: branch changes
+Custom Instructions: <only when the user gave specific review focus>
+""")
+~~~
+
+Same \`Diff\` options as Bugbot: \`branch changes\` by default, \`uncommitted changes\` when the user asks for only the working tree. Add \`Base Branch: <name>\` only when the comparison base is not the repository default. Background only when explicitly requested.
+
+## 3. Handle failure once
+
+- Wrong invocation: fix and retry once.
+- Any other failure: retry once with the same prompt. If it fails again, stop and tell the user what blocked it in one line.
+
+## 4. Report
+
+- No diff: one sentence saying there was nothing to review.
+- No findings: one line — "Security review found no issues."
+- Findings: print the table verbatim, sorted by severity, columns Severity, Location (\`file:line\`), Finding. Then one line: how many findings, and whether any of them block shipping.
+
+A security finding is only worth reporting with a concrete attack path. If the subagent hedged on one, keep its hedge in your summary rather than presenting it as confirmed.
+
+Do not fix the findings unless the user asks.
+`,
+  },
+  {
+    name: "review",
+    description:
+      "Pick between the Bugbot and Security Review subagents, then run that review. Use when the user types /review without saying which kind.",
+    disableModelInvocation: true,
+    content: `
+# Review
+
+Ask which review to run with the \`ask_question\` tool — one single-select question with exactly two options:
+
+- **Bugbot** — hunts for correctness, state and contract bugs in the diff (\`/review-bugbot\`).
+- **Security Review** — audits the diff for exploitable vulnerabilities (\`/review-security\`).
+
+If \`ask_question\` is unavailable, ask in plain text and wait for the answer.
+
+Then run the matching review exactly once, following that skill's instructions:
+
+- Bugbot → \`/review-bugbot\`
+- Security Review → \`/review-security\`
+
+Do not run both unless the user asks for both.
+`,
+  },
+  {
     name: "generate-tests",
     description:
       "Write tests for a file, function or change set using the project's own test framework, then run them. Use when the user asks for tests or coverage of recent changes.",
@@ -583,11 +708,19 @@ Always define one before starting: "until the deploy status is success or failed
   {
     name: "generate-image",
     description:
-      "Create pictures with a text-to-image model (SDXL, FLUX, DALL·E) and embed them in the reply. Use when the user asks for an image, illustration, icon, logo, mockup, concept art, texture, or a picture of anything.",
+      "Create or edit pictures with an image model and embed them in the reply. Use when the user asks for an image, illustration, icon, logo, mockup, concept art, texture, a picture of anything, or a change to a picture already in the thread.",
     content: `
 # Generate an Image
 
-Deyin talks to text-to-image models through the \`generate_image\` tool. The tool stores the picture with the thread and hands back an embed directive; the chat only renders the picture once that directive is in your reply.
+Deyin reaches image models two ways, and the right one depends on the model the run is on:
+
+| Situation | What happens |
+| --- | --- |
+| The run's model draws by itself (Gemini flash-image / nano-banana, an image tool on the Responses API) | Just answer with the picture — it is captured and embedded for you. Nothing to call. |
+| The run's model is text-only | Call \`generate_image\`; it routes to a text-to-image model (FLUX, SDXL, DALL·E, gpt-image) or to a chat model that draws. |
+| The user picked a text-to-image model in the composer | Their message goes straight to the images endpoint — you are not in the loop. |
+
+If \`generate_image\` is not in your tool list, the signed-in plan has no image model at all. Say so and offer an SVG, an HTML mockup or a chart instead — do not pretend the picture is coming.
 
 ## 1. Decide whether to generate
 
@@ -595,7 +728,7 @@ Generate when the user asks to *see* something: illustration, icon, logo idea, c
 
 ## 2. Write the prompt
 
-The image model never sees the conversation, so the prompt must stand alone. Fold in what the user said, plus the details they implied:
+A text-to-image model never sees the conversation, so the prompt must stand alone. Fold in what the user said, plus the details they implied:
 
 - Subject and action: "a red fox curled asleep"
 - Setting: "on a mossy log in a foggy pine forest"
@@ -617,11 +750,36 @@ generate_image(
 )
 ~~~
 
-- \`model\` — omit it and the workspace's default text-to-image model is used. Name one when the user asks for a specific model, or when they want speed (a "lightning"/"turbo" variant) over fidelity (a full base model).
+- \`model\` — omit it and the best available image model is used. Name one when the user asks for a specific model, or when they want speed (a "lightning"/"turbo" variant) over fidelity.
 - \`size\` — "1024x1024" square by default; "1152x896" landscape, "896x1152" portrait. Match the use ("wallpaper" → landscape, "app icon" → square).
 - \`n\` — ask for 2-3 only when the user wants options; each image costs a generation.
 
-## 4. Embed the result in your reply
+## 4. Edit an existing picture
+
+To change a picture instead of drawing a new one, pass \`input_images\`:
+
+~~~
+generate_image(
+  prompt: "same composition at night: dark blue sky, lit windows, warm street lamps",
+  input_images: ["img-abc123.png"]
+)
+~~~
+
+- A picture the user attached to their message, or one you generated earlier, is stored with the thread — use the file name the message or the previous tool result gave you.
+- A picture in the repo is referenced by its workspace path ("assets/hero.png").
+- Describe the change *and* what must stay the same; an edit prompt that only names the change often re-draws the whole scene.
+
+## 5. Put it in the project when it belongs there
+
+For a picture the repo should keep — a README image, an icon, a test fixture — add \`save_to\`:
+
+~~~
+generate_image(prompt: "...", save_to: "assets/hero.png")
+~~~
+
+The file is written to the workspace as well as the thread, so \`read\`, \`bash\` and a commit can all see it. Without \`save_to\` the picture lives only in the chat.
+
+## 6. Embed the result in your reply
 
 The tool returns one or more directives. Copy each one onto its own line in your reply — unembedded, the picture never appears:
 
@@ -633,18 +791,20 @@ Here is the icon:
 
 Say one line about what you made, then let the picture speak. Do not describe the image back to the user in detail — they can see it.
 
-## 5. Iterate
+## 7. Iterate
 
-When the user asks for changes, generate again with a revised prompt rather than apologizing: carry over what worked, change only what they objected to, and say what you changed ("same composition, colder palette"). Keep the old directive out of the new reply so the thread shows the current version.
+When the user asks for changes, edit or regenerate rather than apologizing: carry over what worked, change only what they objected to, and say what you changed ("same composition, colder palette"). Keep the old directive out of the new reply so the thread shows the current version.
 
 ## Failure modes
 
-- "No text-to-image model is available" — the signed-in plan has none enabled. Tell the user to pick one under Settings → Models, and offer an SVG or HTML alternative meanwhile.
-- Generation errors mention the provider's message; a size the model rejects is the usual cause — retry once at "1024x1024" before reporting failure.
+- "No image model is available" — the plan has none enabled. Tell the user to pick one under Settings → Models, and offer an SVG or HTML alternative meanwhile.
+- "cannot edit images on this provider" — that model has no edit endpoint. Retry the edit naming a chat model that draws, or regenerate from a fuller prompt.
+- "returned text, not an image" — the model answered in words; usually the prompt read like a question. Rewrite it as a description of the picture.
+- Other generation errors quote the provider's message; a rejected size is the usual cause — retry once at "1024x1024" before reporting failure.
 
 ## Verify
 
-The reply contains one directive per image, each on its own line, and the file names match what the tool returned.
+The reply contains one directive per image, each on its own line, the file names match what the tool returned, and anything the user wanted kept in the repo was written with \`save_to\`.
 `,
   },
 ];

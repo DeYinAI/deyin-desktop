@@ -5,6 +5,7 @@ import {
   buildSystemPrompt,
   connectMcpServers,
   createBuiltinRegistry,
+  createRoleRouter,
   estimateTokens,
   loadContextFiles,
   resolveAgent,
@@ -61,6 +62,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 
   const agent = resolveAgent(ctx.config, ctx.config.agent) ?? BUILD_AGENT;
   const tools = createBuiltinRegistry();
+  // The CLI has no image store or picker, so nothing can render a generated
+  // picture: drop the tool rather than let the model promise one.
+  tools.unregister("generate_image");
   await registerCliSubagentTool(tools, {
     ctx,
     skipAll: opts.yes ?? false,
@@ -151,6 +155,17 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       apiBaseUrl: ctx.config.apiBaseUrl,
       getToken,
       model: ctx.config.model,
+      // Per-phase model routing. The CLI talks to one endpoint, so a role's
+      // "providerId::" prefix (if any) is ignored and only the model swaps.
+      router: createRoleRouter({
+        roleModels: ctx.config.roleModels,
+        base: {
+          model: ctx.config.model,
+          providerId: "cli",
+          apiBaseUrl: ctx.config.apiBaseUrl,
+          getToken,
+        },
+      }),
       messages,
       tools,
       permissions,
@@ -159,6 +174,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         return "deny";
       },
       toolContext: {
+        // The configured agent doubles as the composer mode, so role routing
+        // picks the plan/ask/delivery model when running under those agents.
+        sessionMeta: { mode: agent.name, model: ctx.config.model, cwd: ctx.cwd },
         resolveInteraction: async (request) => {
           if (request.type !== "ask-question") return "Interaction not supported.";
           if (opts.yes) {

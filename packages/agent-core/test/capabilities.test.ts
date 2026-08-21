@@ -117,6 +117,25 @@ test("subagents: frontmatter fields with built-in fallbacks", async () => {
   }
 });
 
+test("subagents: the review built-ins cannot write, and their prompts carry the invocation contract", async () => {
+  const found = await discoverSubagents([]);
+  for (const name of ["bugbot", "security-review"]) {
+    const def = found.find((s) => s.name === name);
+    assert.ok(def, `${name} should ship as a built-in`);
+    assert.equal(def.source, "built-in");
+    // The allowlist — not `readonly` — is what makes these runs non-destructive,
+    // so no mutating tool may leak into it.
+    assert.ok(def.tools && def.tools.length > 0, `${name} must pin a tool allowlist`);
+    for (const banned of ["write", "edit", "delete", "notebook_edit", "git_add", "git_commit", "git_push", "git_stash"]) {
+      assert.ok(!def.tools.includes(banned), `${name} must not be able to run ${banned}`);
+    }
+    // The review skills hand these the same labelled prompt block.
+    assert.match(def.prompt, /Full Repository Path/);
+    assert.match(def.prompt, /uncommitted changes/);
+    assert.match(def.prompt, /No diff to review\./);
+  }
+});
+
 test("subagents: invalid effort and max_steps fall back to undefined", async () => {
   const dir = tempDir();
   try {

@@ -1,19 +1,10 @@
 <svg width="320" height="96" viewBox="0 0 320 96" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- Deyin wordmark: mark + type. Original artwork. -->
-  <defs>
-    <linearGradient id="deyinWmBg" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#151b2e"/>
-      <stop offset="1" stop-color="#0a0e18"/>
-    </linearGradient>
-    <linearGradient id="deyinWmInk" x1="24" y1="20" x2="72" y2="76" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8fb4ff"/>
-      <stop offset="1" stop-color="#4f7cff"/>
-    </linearGradient>
-  </defs>
-  <rect width="96" height="96" rx="22" fill="url(#deyinWmBg)"/>
-  <rect x="1" y="1" width="94" height="94" rx="21" stroke="#2a3350" stroke-width="2" fill="none"/>
-  <circle cx="44" cy="57" r="15" stroke="url(#deyinWmInk)" stroke-width="8" fill="none"/>
-  <path d="M59 22V72" stroke="url(#deyinWmInk)" stroke-width="8" stroke-linecap="round"/>
-  <circle cx="74" cy="27" r="5" fill="#9fd2ff"/>
-  <text x="116" y="63" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="700" letter-spacing="0.5" fill="#e6e8ea">deyin</text>
+  <!-- Deyin wordmark: mark + type. Original artwork. Mark and type share the
+       one flat blue-grey, so the lockup reads on either theme ground. -->
+  <g transform="scale(0.1875)">
+    <circle cx="214" cy="328" r="96" stroke="#7488a0" stroke-width="58" fill="none"/>
+    <path d="M310 88V424" stroke="#7488a0" stroke-width="58" stroke-linecap="round"/>
+    <circle cx="390" cy="115" r="27" fill="#7488a0"/>
+  </g>
+  <text x="100" y="63" font-family="Inter, system-ui, sans-serif" font-size="42" font-weight="700" letter-spacing="0.5" fill="#7488a0">deyin</text>
 </svg>

@@ -60,6 +60,7 @@ import type {
   ServerMessage,
   TermAttachResult,
   TermCreateResult,
+  WebAgentProviderRouting,
 } from "@deyin/contract/web";
 
 const OAUTH_ISSUER = (import.meta.env.VITE_DEYIN_OAUTH_ISSUER as string) ?? "http://localhost:8788";
@@ -634,6 +635,30 @@ export function createBrowserTransport(): DeyinApi {
         if (!token && !primary && !provider?.local) {
           throw new Error(`No API key stored for ${provider?.name ?? options.providerId}.`);
         }
+        // Per-phase model routing: resolve an endpoint + key for every provider a
+        // role model targets, so the server can route a role to another provider.
+        const roleModels = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS).roleModels ?? {};
+        const roleProviders: Record<string, WebAgentProviderRouting> = {};
+        for (const ref of Object.values(roleModels)) {
+          const sep = typeof ref === "string" ? ref.indexOf("::") : -1;
+          if (sep < 0) continue;
+          const roleProviderId = ref.slice(0, sep).trim();
+          if (!roleProviderId || roleProviderId === options.providerId || roleProviders[roleProviderId]) continue;
+          const rp = readProviders().find((p) => p.id === roleProviderId);
+          const rolePrimary = !rp || rp.kind === "primary";
+          const roleToken = rolePrimary
+            ? ((await oauth.getAccessToken().catch(() => null)) ?? "")
+            : (keys[rp.id] ?? "");
+          // A provider with no usable key is skipped; that role falls back to the run's own endpoint.
+          if (!roleToken && !rolePrimary && !rp?.local) continue;
+          roleProviders[roleProviderId] = {
+            baseUrl: rolePrimary ? `${location.origin}/api` : (rp?.baseUrl ?? `${location.origin}/api`),
+            token: roleToken,
+            apiFormat: rolePrimary ? ("chat-completions" as const) : (rp?.apiFormat ?? "chat-completions"),
+            authHeader: rp?.authHeader,
+          };
+        }
+
         await host.invoke((id: number) => ({
           type: "agent.start",
           id,
@@ -648,12 +673,15 @@ export function createBrowserTransport(): DeyinApi {
           goalText: options.goalText,
           images: options.images,
           imageModels: options.imageModels,
+          imageChatModels: options.imageChatModels,
           provider: {
             baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
             token,
             apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
             authHeader: provider?.authHeader,
           },
+          roleModels,
+          roleProviders,
         }));
       },
       stop: (threadId) => host.fireAndForget({ type: "agent.stop", threadId }),

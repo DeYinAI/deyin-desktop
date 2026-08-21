@@ -85,9 +85,16 @@ export function ModelPicker(props: ModelPickerProps) {
                     Image
                   </span>
                 ) : (
-                  formatContext(model.contextLength) && (
-                    <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
-                  )
+                  <>
+                    {model.imageOutput && (
+                      <span className="badge badge--muted" title="Chat model that can draw pictures">
+                        Draws
+                      </span>
+                    )}
+                    {formatContext(model.contextLength) && (
+                      <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
+                    )}
+                  </>
                 )}
                 {model.id === props.selected && <Icon name="check" size={12} />}
               </button>

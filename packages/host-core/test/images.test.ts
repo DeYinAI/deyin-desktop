@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { classifyModelKinds, generateImages, isImageModel } from "../src/images.js";
+import { classifyModelKinds, generateImages, isImageModel, modelEmitsImages, modelImageCapability } from "../src/images.js";
 import { ImageStore, imageDataUrl } from "../src/host/image-store.js";
 
 /** 1x1 transparent PNG. */
@@ -12,9 +12,40 @@ const PNG =
 
 test("isImageModel: catalog metadata wins over the heuristic", () => {
   assert.equal(isImageModel("some-house-model", { type: "image" }), true);
-  assert.equal(isImageModel("some-house-model", { output_modalities: ["text", "image"] }), true);
+  assert.equal(isImageModel("some-house-model", { output_modalities: ["image"] }), true);
   assert.equal(isImageModel("some-house-model", { capabilities: ["text-to-image"] }), true);
   assert.equal(isImageModel("some-house-model", { type: "chat" }), false);
+  // Text *and* image output is a chat model that draws, not an endpoint model.
+  assert.equal(isImageModel("some-house-model", { output_modalities: ["text", "image"] }), false);
+  assert.equal(modelEmitsImages("some-house-model", { output_modalities: ["text", "image"] }), true);
+});
+
+test("modelImageCapability: reads OpenRouter architecture blocks", () => {
+  assert.equal(
+    modelImageCapability("house/model", { architecture: { output_modalities: ["text", "image"], input_modalities: ["text", "image"] } }),
+    "chat",
+  );
+  assert.equal(modelImageCapability("house/drawer", { architecture: { modality: "text->image" } }), "endpoint");
+  assert.equal(modelImageCapability("house/vision", { architecture: { modality: "text+image->text" } }), "none");
+  assert.equal(
+    modelImageCapability("house/both", { architecture: { modality: "text+image->text+image" } }),
+    "chat",
+  );
+});
+
+test("modelImageCapability: explicit text-only metadata beats a suggestive id", () => {
+  // A catalog that describes its outputs is trusted over the id heuristic.
+  assert.equal(modelImageCapability("acme-flux-chat", { output_modalities: ["text"] }), "none");
+  assert.equal(modelImageCapability("acme-flux-chat"), "endpoint");
+});
+
+test("modelImageCapability: chat models that draw are recognized by id", () => {
+  for (const id of ["gemini-2.5-flash-image", "google/nano-banana", "some-image-preview"]) {
+    assert.equal(modelImageCapability(id), "chat", `${id} should draw in chat`);
+  }
+  for (const id of ["gemini-2.5-flash", "gpt-5", "claude-sonnet-4"]) {
+    assert.equal(modelImageCapability(id), "none", `${id} should not draw`);
+  }
 });
 
 test("isImageModel: heuristic recognizes known text-to-image families", () => {
@@ -114,6 +145,8 @@ test("classifyModelKinds: backfills kind on catalogs cached before classificatio
     { id: "SDXL Lightning", name: "SDXL Lightning" },
     { id: "GLM-5.2", name: "GLM-5.2" },
     { id: "house-image-model", name: "house", kind: "image" as const },
+    { id: "gemini-2.5-flash-image", name: "flash image" },
   ]);
-  assert.deepEqual(classified.map((m) => m.kind), ["image", "chat", "image"]);
+  assert.deepEqual(classified.map((m) => m.kind), ["image", "chat", "image", "chat"]);
+  assert.deepEqual(classified.map((m) => m.imageOutput), [false, false, false, true]);
 });

@@ -41,6 +41,10 @@ export type ClientMessage =
       mode: "agent" | "plan" | "ask" | "delivery";
       history: { role: "user" | "assistant"; content: string }[];
       provider: WebAgentProviderRouting;
+      /** Per-phase model overrides: role -> "providerId::modelId". */
+      roleModels?: Record<string, string>;
+      /** Endpoints for every provider a role model targets, keyed by provider id. */
+      roleProviders?: Record<string, WebAgentProviderRouting>;
       /** Seed the loop's todo list (plan todos handed to Build). */
       initialTodos?: AgentTodoItem[];
       /** Active goal text; enables report_goal_met verification. */
@@ -49,6 +53,8 @@ export type ClientMessage =
       images?: AgentImageInput[];
       /** Text-to-image model ids from the client's catalog (generate_image). */
       imageModels?: string[];
+      /** Chat model ids that return pictures inside their completion. */
+      imageChatModels?: string[];
     }
   | { type: "agent.stop"; threadId: string }
   | { type: "agent.approve"; requestId: string; decision: "allow" | "allow-always" | "deny" }

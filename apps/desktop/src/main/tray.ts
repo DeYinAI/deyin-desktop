@@ -1,5 +1,5 @@
-import { Menu, Tray, app, nativeImage } from "electron";
-import { join } from "node:path";
+import { Menu, Tray, nativeImage } from "electron";
+import { loadAppIcon } from "./app-icon.js";
 import { requestQuit } from "./shutdown.js";
 
 let tray: Tray | null = null;
@@ -37,9 +37,9 @@ export function setTrayPendingReviewCount(count: number): void {
 export function ensureTray(onShow: () => void): Tray {
   if (tray) return tray;
   onShowHandler = onShow;
-  const icon = nativeImage.createFromPath(join(app.getAppPath(), "resources/icon.png"));
+  const icon = loadAppIcon();
   if (icon.isEmpty()) {
-    console.warn("[tray] resources/icon.png missing or empty — tray entry will be invisible");
+    console.warn("[tray] app icon missing — run `pnpm --filter @deyin/branding make-icons`");
   }
   // On Windows/Linux an empty image renders as a blank/missing tray entry that
   // users can't click to bring the window back. Only fall back to an empty image

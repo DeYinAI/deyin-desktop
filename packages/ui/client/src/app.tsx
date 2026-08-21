@@ -8,11 +8,9 @@ import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer, type ComposerImage } from "./components/Composer.js";
-import { ComposerHeader } from "./components/ComposerHeader.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
-import { GitBranchBadge } from "./components/GitBranchBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
-import { RepoChip } from "./components/RepoChip.js";
+import { WorkspaceBar } from "./components/WorkspaceBar.js";
 import { resolveVisionModel } from "./vision.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { PlansView } from "./components/PlansView.js";
@@ -48,6 +46,7 @@ import {
   hydrateProjects,
   newId,
   planFileNameFromTitle,
+  planPreviewFromMarkdown,
   planTitleFromMarkdown,
   toChatMessages,
   type Project,
@@ -145,6 +144,8 @@ export function App() {
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   const [question, setQuestion] = useState<PendingQuestion | null>(null);
   const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
+  /** Bumped to pull focus into the composer (declining a plan hands the turn back). */
+  const [composerFocus, setComposerFocus] = useState(0);
   const sessionTokenStats = useSessionTokenStats();
   const agentRunState = useAgentRunState(activeThreadId);
   const runningThreadId = useRunningThreadId();
@@ -187,6 +188,8 @@ export function App() {
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("plan");
+  /** Subagent run shown in the Agent panel; null follows the newest run. */
+  const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -420,7 +423,11 @@ export function App() {
     if (livePlanStream === null) return null;
     if (!livePlanStream.trim()) return null;
     const title = planTitleFromMarkdown(livePlanStream);
-    return { title, fileName: planFileNameFromTitle(title) };
+    return {
+      title,
+      fileName: planFileNameFromTitle(title),
+      preview: planPreviewFromMarkdown(livePlanStream),
+    };
   }, [livePlanStream]);
 
   // Restore the thread's composer mode when switching tasks.
@@ -724,7 +731,11 @@ export function App() {
             setProjects((cur) =>
               cur.map((project) => ({
                 ...project,
-                threads: project.threads.map((th) => (th.id === fold.threadId ? { ...th, planMarkdown: fold.planMarkdown! } : th)),
+                threads: project.threads.map((th) =>
+                  th.id === fold.threadId
+                    ? { ...th, planMarkdown: fold.planMarkdown!, ...(fold.planFinished ? { planApproved: false } : {}) }
+                    : th,
+                ),
               })),
             );
             if (fold.planFinished) {
@@ -939,6 +950,8 @@ export function App() {
         images?: AgentImageInput[];
         /** Text-to-image model ids from the catalog (generate_image tool). */
         imageModels?: string[];
+        /** Chat models from the catalog that draw inside their completion. */
+        imageChatModels?: string[];
         /** Model override (e.g. a vision-capable model routed at send time). */
         model?: string;
         /** Inline notice shown next to the sent message (e.g. vision routing). */
@@ -979,6 +992,7 @@ export function App() {
         goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
         images: meta?.images,
         imageModels: meta?.imageModels,
+        imageChatModels: meta?.imageChatModels,
       }).catch((err: unknown) => {
         // The host refused the run (e.g. web sandbox not connected): surface it
         // and unlock the composer instead of wedging the thread.
@@ -1121,12 +1135,14 @@ export function App() {
     if (activeThreadId) updateThread(activeThreadId, { planApproved: true });
   }, [activeThread, activeThreadId, streamText, selectMode, startAgentRun, updateThread]);
 
-  const rejectPlan = useCallback(() => {
-    setPlanApproval(null);
-    if (!activeThread || streamText !== null || runningThreadId !== null) return;
-    selectMode("plan");
-    startAgentRun(activeThread, "Please revise the plan based on my feedback.", "plan");
-  }, [activeThread, runningThreadId, streamText, selectMode, startAgentRun]);
+  /** The newest plan is written but not built, and no gate is on screen: the plan
+   *  card carries Build so dismissing the gate never strands the plan. */
+  const planCardBuildable =
+    Boolean(activeThread?.planMarkdown?.trim()) &&
+    activeThread?.planApproved !== true &&
+    !planApproval &&
+    streamText === null &&
+    runningThreadId !== activeThreadId;
 
   /** File card "Open": show that change in the Diff tab (when we still hold it). */
   const openFileDiff = useCallback((path: string) => {
@@ -1217,6 +1233,9 @@ export function App() {
     const modelList =
       selectedProviderId === "openference" ? models : (providers.find((p) => p.id === selectedProviderId)?.models ?? []);
     const imageModels = modelList.filter((m) => m.kind === "image").map((m) => m.id);
+    // Chat models that draw: usable by generate_image and able to answer with a
+    // picture directly, so they never count as "no image model available".
+    const imageChatModels = modelList.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => m.id);
     const isImageRun = modelList.find((m) => m.id === selectedModel)?.kind === "image";
 
     if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
@@ -1303,6 +1322,7 @@ export function App() {
         linkedThreadIds: composerLinked.map((l) => l.threadId),
         images,
         imageModels,
+        imageChatModels,
         model: runModel,
         notice: visionNotice,
       };
@@ -1433,6 +1453,8 @@ export function App() {
   // Same inputs ChatView uses for its empty branch — drives the centered
   // new-chat layout (logo hero + repo chip + composer).
   const chatEvents = [...(activeThread?.events ?? []), ...(agentRunState?.runEvents ?? [])];
+  // Subagent runs in this thread, oldest first — the Agent panel's source list.
+  const subagentRuns = chatEvents.filter((e): e is Extract<typeof e, { kind: "subagent" }> => e.kind === "subagent");
   const chatStreamText = agentRunState?.streamText ?? streamText;
   const isChatEmpty = chatEvents.length === 0 && chatStreamText === null;
 
@@ -1603,13 +1625,6 @@ export function App() {
                   env={env}
                   onPickShell={() => setTerminalOpen(true)}
                 />
-                <GitBranchBadge
-                  workspaceRoot={workspaceRoot}
-                  onOpenSourceControl={() => {
-                    setPanelOpen(true);
-                    setPanelTab("git");
-                  }}
-                />
                 {boot?.platform === "web" && (
                   <RepoBar
                     repoState={repoState}
@@ -1640,17 +1655,18 @@ export function App() {
                 onOpenFile={openFileDiff}
                 onUndo={undoFileChange}
                 onBuild={buildFromPlan}
-                onRevisePlan={rejectPlan}
-                onEditPlan={() => {
-                  if (planApproval?.filePath) void window.deyin.shell.showItem(planApproval.filePath);
-                  setPlanApproval(null);
-                }}
-                pendingPlan={planApproval && planApproval.threadId === activeThreadId ? planApproval : null}
+                canBuildPlan={planCardBuildable}
+                planMarkdown={activeThread?.planMarkdown ?? null}
                 onOpenPlan={() => {
                   setPanelOpen(true);
                   setPanelTab("plan");
                 }}
                 planArtifact={planArtifact}
+                onOpenSubagent={(id) => {
+                  setActiveSubagentId(id);
+                  setPanelOpen(true);
+                  setPanelTab("agent");
+                }}
                 onOpenAgentTerminal={
                   agentTerminals.some((t) => t.threadId === activeThreadId)
                     ? () => setTerminalOpen(true)
@@ -1702,16 +1718,21 @@ export function App() {
                     }}
                   />
                 )}
-                {planApproval && (
+                {planApproval && planApproval.threadId === activeThreadId && (
                   <PlanApprovalDialog
                     title={planApproval.title}
                     overview={planApproval.overview}
                     onApprove={buildFromPlan}
-                    onReject={rejectPlan}
-                    onEdit={() => {
-                      if (planApproval.filePath) void window.deyin.shell.showItem(planApproval.filePath);
+                    onRevise={() => {
                       setPlanApproval(null);
+                      setComposerFocus((n) => n + 1);
                     }}
+                    onDismiss={() => setPlanApproval(null)}
+                    onEdit={
+                      planApproval.filePath
+                        ? () => void window.deyin.shell.showItem(planApproval.filePath!)
+                        : undefined
+                    }
                   />
                 )}
                 {question && (
@@ -1730,28 +1751,23 @@ export function App() {
                     }}
                   />
                 )}
-                {isChatEmpty ? (
-                  <RepoChip
-                    workspaceRoot={workspaceRoot}
-                    homeDir={boot?.homeDir ?? null}
-                    projectName={projectName}
-                    platform={boot?.platform === "web" ? "web" : "desktop"}
-                    onPickFolder={() => void addProjectFolder()}
-                    onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
-                    onOpenSourceControl={() => {
-                      setPanelOpen(true);
-                      setPanelTab("git");
-                    }}
-                  />
-                ) : (
-                  <ComposerHeader
-                    platform={boot?.platform ?? "desktop"}
-                    projectName={projectName}
-                    workspaceRoot={workspaceRoot}
-                    onPickFolder={() => void addProjectFolder()}
-                  />
-                )}
+                <WorkspaceBar
+                  platform={boot?.platform === "web" ? "web" : "desktop"}
+                  projects={projects}
+                  activeProjectId={activeProjectId}
+                  projectName={projectName}
+                  workspaceRoot={workspaceRoot}
+                  homeDir={boot?.homeDir ?? null}
+                  onSelectProject={(projectId) => void selectProject(projectId)}
+                  onPickFolder={() => void addProjectFolder()}
+                  onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+                  onOpenSourceControl={() => {
+                    setPanelOpen(true);
+                    setPanelTab("git");
+                  }}
+                />
                 <Composer
+                  focusSignal={composerFocus}
                   value={input}
                   models={models}
                   selectedModel={selectedModel}
@@ -1848,6 +1864,9 @@ export function App() {
                 onApproveChange={approveReview}
                 onRejectChange={rejectReview}
                 threadId={activeThreadId}
+                subagentRuns={subagentRuns}
+                selectedSubagentId={activeSubagentId}
+                onSelectSubagent={setActiveSubagentId}
                 onOpenFile={(path) => {
                   void window.deyin.shell.showItem(path);
                   setPanelOpen(true);
@@ -1864,6 +1883,9 @@ export function App() {
               defaultShell={settings?.defaultShell ?? null}
               fontSize={settings?.terminalFontSize ?? 12}
               scrollback={settings?.terminalScrollback ?? 5000}
+              cursorStyle={settings?.terminalCursorStyle ?? "bar"}
+              copyOnSelect={settings?.terminalCopyOnSelect ?? true}
+              theme={themeVariant}
               attachSessions={agentTerminals
                 .filter((t) => t.threadId === activeThreadId)
                 .map((t) => ({ id: t.id, label: t.label }))}

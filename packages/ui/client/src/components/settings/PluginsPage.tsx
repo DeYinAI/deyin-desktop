@@ -1,22 +1,40 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Icon } from "../Icon.js";
-import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import {
+  EmptyState,
+  IconTile,
+  PageHeader,
+  Row,
+  RowList,
+  RowMenu,
+  SearchField,
+  SectionHeader,
+  Segmented,
+  Tag,
+} from "./controls.js";
 import type { KernelPluginStatus, PluginCatalogEntry, PluginInfo } from "@deyin/contract";
 
-const CATEGORIES = ["All", "Productivity", "Security", "Engineering"] as const;
+type Scope = "public" | "personal";
+
+/** Catalog grouping: a plugin's declared category, falling back to "Other". */
+const CATEGORY_ORDER = ["Developer Tools", "Productivity", "Security", "Engineering", "Guides", "Other", "Community catalog"];
 
 /**
  * Plugins: bundles of skills/commands/subagents/MCP servers/hooks installed
  * from GitHub or shipped as bundled first-party plugins.
  */
-export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: boolean) => void }) {
+export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled: boolean) => void; tabs?: ReactNode }) {
   const [installed, setInstalled] = useState<PluginInfo[]>([]);
   const [catalog, setCatalog] = useState<PluginCatalogEntry[]>([]);
+  const [kernel, setKernel] = useState<KernelPluginStatus[]>([]);
+  const [query, setQuery] = useState("");
+  const [scope, setScope] = useState<Scope>("public");
   const [source, setSource] = useState("");
+  const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>("All");
-  const [kernel, setKernel] = useState<KernelPluginStatus[]>([]);
+  const [secretsFor, setSecretsFor] = useState<string | null>(null);
+  const [showKernel, setShowKernel] = useState(false);
 
   const reload = useCallback(() => {
     void window.deyin.plugins.list().then(setInstalled).catch(() => setInstalled([]));
@@ -34,6 +52,7 @@ export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: bool
       setMessage(result.ok ? `Installed ${result.plugin?.name ?? repo}.` : `Install failed: ${result.message}`);
       if (result.ok) {
         setSource("");
+        setAdding(false);
         reload();
       }
     } finally {
@@ -51,171 +70,267 @@ export function PluginsPage({ onToggle }: { onToggle: (id: string, enabled: bool
     setInstalled((cur) => cur.map((p) => (p.name === plugin.name ? { ...p, enabled } : p)));
   };
 
-  const installedNames = new Set(installed.map((p) => p.name));
-  const filtered = useMemo(() => {
-    if (category === "All") return installed;
-    return installed.filter((p) => p.interface?.category === category);
-  }, [installed, category]);
+  const installedNames = useMemo(() => new Set(installed.map((p) => p.name)), [installed]);
+  const match = (text: string) => text.toLowerCase().includes(query.trim().toLowerCase());
+
+  /** Public = the curated catalog + bundled first-party; Personal = your own installs. */
+  const listed = useMemo(() => {
+    const entries: ListEntry[] = [];
+    for (const plugin of installed) {
+      if (scope === "public" ? !plugin.bundled : plugin.bundled) continue;
+      entries.push({
+        key: `installed:${plugin.name}`,
+        name: plugin.interface?.displayName ?? plugin.name,
+        description: plugin.interface?.shortDescription ?? plugin.description ?? componentSummary(plugin),
+        category: plugin.interface?.category ?? "Other",
+        color: plugin.interface?.brandColor,
+        plugin,
+      });
+    }
+    if (scope === "public") {
+      for (const entry of catalog) {
+        if (installedNames.has(entry.name)) continue;
+        entries.push({
+          key: `catalog:${entry.repo}`,
+          name: entry.name,
+          description: entry.description,
+          category: "Community catalog",
+          repo: entry.repo,
+        });
+      }
+    }
+    return entries.filter((e) => !query.trim() || match(e.name) || match(e.description));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installed, catalog, installedNames, scope, query]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, ListEntry[]>();
+    for (const entry of listed) {
+      const list = map.get(entry.category) ?? [];
+      list.push(entry);
+      map.set(entry.category, list);
+    }
+    return [...map.entries()].sort(
+      (a, b) => categoryRank(a[0]) - categoryRank(b[0]) || a[0].localeCompare(b[0]),
+    );
+  }, [listed]);
+
+  const secretPlugin = installed.find((p) => p.name === secretsFor);
+  const failedKernel = kernel.filter((p) => p.state !== "active").length;
 
   return (
     <div className="settings-page">
       <PageHeader
         title="Plugins"
-        description="First-party bundled plugins and community packs from GitHub. Each plugin contributes skills, MCP servers, and host tools."
+        description="Extend Deyin with skills, commands, subagents and MCP servers from plugins."
       >
         <button className="icon-btn" title="Refresh" onClick={reload}>
           <Icon name="refresh" size={14} />
         </button>
+        <button
+          className={`icon-btn${showKernel ? " icon-btn--active" : ""}`}
+          title="Kernel plugin status"
+          onClick={() => setShowKernel((v) => !v)}
+        >
+          <Icon name="gear" size={14} />
+        </button>
+        <button className="btn btn--outline btn--small" onClick={() => setAdding((v) => !v)}>
+          <Icon name="plus" size={12} />
+          Install
+          <Icon name="chevronDown" size={11} />
+        </button>
       </PageHeader>
 
-      <div className="plugin-filters">
-        {CATEGORIES.map((c) => (
-          <button
-            key={c}
-            className={`chip chip--small${category === c ? " chip--active" : ""}`}
-            onClick={() => setCategory(c)}
-          >
-            {c}
-          </button>
-        ))}
-      </div>
+      {tabs}
 
-      <SectionTitle>Kernel plugins</SectionTitle>
-      <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
-        Capability plugins composed by the kernel (bundle:base + desktop profile). A failed plugin is isolated — the rest keep running.
-      </p>
-      <div className="plugin-grid">
-        {kernel.map((plugin) => (
-          <div key={plugin.name} className="setting-card">
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span className={`chip chip--small${plugin.state === "active" ? " chip--active" : ""}`} title={plugin.source ?? ""}>
-                {plugin.state}
-              </span>
-              <strong style={{ fontSize: 13 }}>{plugin.name}</strong>
-            </div>
-            {plugin.error && <div className="hint hint--bad" style={{ marginTop: 6 }}>{plugin.error}</div>}
-          </div>
-        ))}
-      </div>
-      {kernel.length === 0 && <div className="hint">Kernel has not started yet.</div>}
-
-      <SectionTitle>Installed</SectionTitle>
-      <div className="plugin-grid">
-        {filtered.map((plugin) => (
-          <PluginCard
-            key={plugin.name}
-            plugin={plugin}
-            onToggle={(v) => toggle(plugin, v)}
-            onUninstall={() => void uninstall(plugin.name)}
+      {adding && (
+        <div className="inline-form">
+          <input
+            className="input"
+            autoFocus
+            placeholder="owner/repo, owner/repo@ref or a github.com URL"
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && source.trim()) void install(source.trim());
+              if (e.key === "Escape") setAdding(false);
+            }}
           />
-        ))}
-      </div>
-      {filtered.length === 0 && <div className="hint">No plugins in this category.</div>}
+          <button
+            className="btn btn--primary btn--small"
+            disabled={!source.trim() || busy !== null}
+            onClick={() => void install(source.trim())}
+          >
+            {busy === source.trim() ? "Installing…" : "Install"}
+          </button>
+          <button className="btn btn--ghost btn--small" onClick={() => setAdding(false)}>
+            Cancel
+          </button>
+        </div>
+      )}
+      {message && (
+        <div className={message.startsWith("Install failed") ? "hint hint--bad" : "hint hint--ok"}>{message}</div>
+      )}
 
-      {installed.some((p) => p.variables && p.variables.length > 0) && (
+      <SearchField value={query} onChange={setQuery} placeholder="Search plugins" />
+
+      {showKernel && (
         <>
-          <SectionTitle>Plugin secrets</SectionTitle>
-          {installed
-            .filter((p) => p.variables && p.variables.length > 0)
-            .map((plugin) => (
-              <div key={`vars-${plugin.name}`}>
-                <div className="plugin-vars__heading">{plugin.interface?.displayName ?? plugin.name}</div>
-                <PluginVariables plugin={plugin.name} names={plugin.variables!} />
-              </div>
+          <SectionHeader
+            title="Kernel plugins"
+            count={kernel.length}
+            note={failedKernel > 0 ? `${failedKernel} not active` : "all active"}
+          />
+          <RowList>
+            {kernel.map((plugin) => (
+              <Row
+                key={plugin.name}
+                icon={<IconTile name={plugin.name} id={plugin.name} icon="bolt" size="sm" />}
+                title={plugin.name}
+                tags={<Tag tone={plugin.state === "active" ? "ok" : "warn"}>{plugin.state}</Tag>}
+                description={plugin.error ?? plugin.source ?? "Composed by the kernel."}
+              />
             ))}
+          </RowList>
+          {kernel.length === 0 && <EmptyState icon="bolt" title="Kernel has not started yet." />}
         </>
       )}
 
-      <SectionTitle>Install from GitHub</SectionTitle>
-      <div className="field__row" style={{ marginBottom: 12 }}>
-        <input
-          className="input"
-          placeholder="owner/repo, owner/repo@ref or a github.com URL"
-          value={source}
-          onChange={(e) => setSource(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && source.trim()) void install(source.trim());
-          }}
-        />
-        <button
-          className="btn btn--outline"
-          disabled={!source.trim() || busy !== null}
-          onClick={() => void install(source.trim())}
-        >
-          {busy === source.trim() ? "Installing…" : "Install"}
-        </button>
+      <SectionHeader
+        title="Installed"
+        count={installed.length}
+        actions={
+          <span className="section-head__note">
+            {installed.filter((p) => p.enabled).length} enabled
+          </span>
+        }
+      />
+      <div className="tile-strip">
+        {installed.map((plugin) => (
+          <button
+            key={plugin.name}
+            className={`tile-strip__item${plugin.enabled ? "" : " tile-strip__item--off"}`}
+            title={`${plugin.interface?.displayName ?? plugin.name} — ${plugin.enabled ? "enabled" : "disabled"}`}
+            onClick={() => toggle(plugin, !plugin.enabled)}
+          >
+            <IconTile
+              name={plugin.interface?.displayName ?? plugin.name}
+              id={[plugin.hostModule, plugin.name]}
+              color={plugin.interface?.brandColor}
+              size="lg"
+            />
+          </button>
+        ))}
+        {installed.length === 0 && <span className="hint">Nothing installed yet.</span>}
       </div>
-      {message && <div className={message.startsWith("Install failed") ? "hint hint--bad" : "hint hint--ok"}>{message}</div>}
 
-      <SectionTitle>Catalog</SectionTitle>
-      <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
-        Curated by the official registry (DeYinAI/registry on GitHub).
-      </p>
-      {catalog.map((entry) => (
-        <SettingCard key={entry.repo} title={entry.name} description={`${entry.description} — ${entry.repo}`}>
-          {installedNames.has(entry.name) ? (
-            <span className="badge badge--ok">Installed</span>
-          ) : (
-            <button className="btn btn--outline" disabled={busy !== null} onClick={() => void install(entry.repo)}>
-              {busy === entry.repo ? "Installing…" : "Install"}
-            </button>
-          )}
-        </SettingCard>
+      <Segmented
+        options={[
+          { id: "public", label: "Public" },
+          { id: "personal", label: "Personal" },
+        ]}
+        value={scope}
+        onChange={setScope}
+      />
+
+      {groups.map(([category, entries]) => (
+        <div key={category}>
+          <SectionHeader title={category} count={entries.length} />
+          <RowList variant="grid">
+            {entries.map((entry) => (
+              <Row
+                key={entry.key}
+                icon={<IconTile name={entry.name} id={[entry.plugin?.hostModule, entry.plugin?.name]} color={entry.color} />}
+                title={entry.name}
+                tags={
+                  entry.plugin?.platform === "windows" ? <Tag tone="muted">Windows</Tag> : undefined
+                }
+                description={entry.description}
+                aside={entry.plugin && !entry.plugin.enabled ? <Tag tone="muted">Off</Tag> : undefined}
+                actions={
+                  entry.plugin ? (
+                    <>
+                      <RowMenu
+                        items={[
+                          {
+                            label: entry.plugin.enabled ? "Disable" : "Enable",
+                            icon: entry.plugin.enabled ? "close" : "check",
+                            onSelect: () => toggle(entry.plugin!, !entry.plugin!.enabled),
+                          },
+                          ...(entry.plugin.variables && entry.plugin.variables.length > 0
+                            ? [
+                                {
+                                  label: "Configure secrets",
+                                  icon: "shield" as const,
+                                  onSelect: () => setSecretsFor(entry.plugin!.name),
+                                },
+                              ]
+                            : []),
+                          ...(entry.plugin.bundled
+                            ? []
+                            : [
+                                {
+                                  label: "Uninstall",
+                                  icon: "trash" as const,
+                                  danger: true,
+                                  onSelect: () => void uninstall(entry.plugin!.name),
+                                },
+                              ]),
+                        ]}
+                      />
+                    </>
+                  ) : (
+                    <button
+                      className="btn btn--outline btn--small"
+                      disabled={busy !== null}
+                      onClick={() => void install(entry.repo!)}
+                    >
+                      {busy === entry.repo ? "Installing…" : "Install"}
+                    </button>
+                  )
+                }
+              />
+            ))}
+          </RowList>
+        </div>
       ))}
-      {catalog.length === 0 && <div className="hint">Catalog unavailable (offline?). Install from a GitHub URL above.</div>}
+
+      {groups.length === 0 && (
+        <EmptyState
+          icon="grid"
+          title={query ? "No plugins match your search." : "Nothing here yet."}
+          hint={
+            scope === "personal"
+              ? "Plugins you install from GitHub appear here."
+              : "The catalog is unavailable offline — install from a GitHub URL instead."
+          }
+        />
+      )}
+
+      {secretPlugin?.variables && (
+        <>
+          <SectionHeader title={`${secretPlugin.interface?.displayName ?? secretPlugin.name} secrets`} />
+          <PluginVariables plugin={secretPlugin.name} names={secretPlugin.variables} />
+        </>
+      )}
     </div>
   );
 }
 
-function PluginCard({
-  plugin,
-  onToggle,
-  onUninstall,
-}: {
-  plugin: PluginInfo;
-  onToggle: (enabled: boolean) => void;
-  onUninstall: () => void;
-}) {
-  const ui = plugin.interface;
-  const color = ui?.brandColor ?? "var(--accent)";
-  const caps = ui?.capabilities?.join(" · ") ?? componentSummary(plugin);
+interface ListEntry {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  color?: string;
+  /** Set for installed plugins; catalog-only entries carry `repo` instead. */
+  plugin?: PluginInfo;
+  repo?: string;
+}
 
-  return (
-    <div className="plugin-card">
-      <div className="plugin-card__accent" style={{ background: color }} />
-      <div className="plugin-card__body">
-        <div className="plugin-card__header">
-          <div>
-            <div className="plugin-card__title">{ui?.displayName ?? plugin.name}</div>
-            <div className="plugin-card__meta">
-              {plugin.bundled && <span className="badge">Bundled</span>}
-              {plugin.version && <span>v{plugin.version}</span>}
-              {plugin.platform === "windows" && <span className="badge">Windows</span>}
-            </div>
-          </div>
-          <Toggle checked={plugin.enabled} onChange={onToggle} />
-        </div>
-        <p className="plugin-card__desc">{ui?.shortDescription ?? plugin.description ?? "No description."}</p>
-        <div className="plugin-card__footer">
-          <span className="plugin-card__caps">{caps}</span>
-          {!plugin.bundled && (
-            <button className="icon-btn icon-btn--small" title="Uninstall" onClick={onUninstall}>
-              <Icon name="trash" size={12} />
-            </button>
-          )}
-        </div>
-        {ui?.defaultPrompt && ui.defaultPrompt.length > 0 && (
-          <div className="plugin-card__prompts">
-            {ui.defaultPrompt.slice(0, 2).map((p) => (
-              <span key={p} className="chip chip--small">
-                {p}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+function categoryRank(category: string): number {
+  const i = CATEGORY_ORDER.indexOf(category);
+  return i === -1 ? CATEGORY_ORDER.length : i;
 }
 
 function componentSummary(plugin: PluginInfo): string {
@@ -227,7 +342,7 @@ function componentSummary(plugin: PluginInfo): string {
     c.mcpServers > 0 ? `${c.mcpServers} MCP` : null,
     c.hooks > 0 ? `${c.hooks} hooks` : null,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : "no components";
+  return parts.length > 0 ? parts.join(" · ") : "No components";
 }
 
 /** Secret variables a plugin declares; values are stored encrypted, write-only. */
@@ -249,7 +364,7 @@ function PluginVariables({ plugin, names }: { plugin: string; names: string[] })
   return (
     <div className="plugin-vars">
       {names.map((name) => (
-        <div className="field__row" key={name} style={{ marginBottom: 6 }}>
+        <div className="inline-form" key={name}>
           <code className="plugin-vars__name">{name}</code>
           <input
             className="input"
@@ -261,7 +376,7 @@ function PluginVariables({ plugin, names }: { plugin: string; names: string[] })
               if (e.key === "Enter") void save(name);
             }}
           />
-          <button className="chip chip--small" onClick={() => void save(name)}>
+          <button className="btn btn--outline btn--small" onClick={() => void save(name)}>
             Save
           </button>
         </div>

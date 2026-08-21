@@ -184,13 +184,30 @@ without adopting its operator/lifestyle scope:
   image attachments, and text-to-image models are tagged **Image** in the picker.
 
 ## Image generation
-- Text-to-image models (SDXL, FLUX, DALL·E and friends) are detected from the catalog's
-  modality metadata, with a curated id heuristic as fallback (`host-core/src/images.ts`).
+- Image ability is read off the `/v1/models` catalog (`host-core/src/images.ts`,
+  `modelImageCapability`): OpenRouter-style `architecture.output_modalities` and
+  `modality: "text->image"` arrows, flat `output_modalities`/`type`/`capabilities` tags,
+  with a curated id heuristic only when the catalog says nothing. Three outcomes:
+  - **endpoint** — a text-to-image model (SDXL, FLUX, DALL·E, gpt-image) called on
+    `POST /images/generations`; tagged **Image** in the picker.
+  - **chat** — a chat model that draws inside its completion (Gemini flash-image /
+    nano-banana); tagged **Draws**, streams normally, and keeps conversation context.
+  - **none** — text-only.
 - Picking an image model in the composer sends the prompt straight to the provider's
   OpenAI-compatible `/images/generations` endpoint — no chat completion involved.
-- The agent can generate pictures mid-task with the `generate_image` tool (prompt, model,
-  size, `n`, negative prompt) and the built-in `/generate-image` skill covers prompt
-  craft, sizes and iteration.
+- Running on a model that draws sets `modalities: ["text","image"]` (chat completions) or
+  the built-in `image_generation` tool (Responses API). Pictures that come back attached
+  to the assistant message — `delta.images`, image content parts, Responses
+  `image_generation_call`, Anthropic image blocks — are detected in the stream
+  (`host-core/src/image-parts.ts`), stored, and embedded in the reply automatically.
+- The agent can also generate pictures mid-task with the `generate_image` tool: prompt,
+  model, size, `n`, negative prompt, plus `input_images` (edit an image from the thread or
+  a workspace path, via `/images/edits` or a drawing chat model) and `save_to` (write the
+  picture into the workspace, e.g. `assets/hero.png`). Images the user attaches are stored
+  too, so "make this darker" can reference them by file name.
+- The tool is only offered when the signed-in catalog actually has an image-capable model;
+  otherwise it is unregistered so the model cannot promise a picture it cannot draw. The
+  built-in `/generate-image` skill covers routing, prompt craft, editing and iteration.
 - Results are stored per thread (desktop: `userData/images/<thread>`, web: inside the
   session sandbox) and embedded in the reply as `::deyin-inline-image{file="…" alt="…"}`,
   which the chat renders as an inline picture, lazily decoded when it scrolls into view.

@@ -19,12 +19,23 @@ function formatTokens(n: number): string {
   return String(Math.round(n));
 }
 
-function formatWeeklyReset(iso: string): string {
+/** Quota consumption is fractional once per-model multipliers apply; the
+ *  meters read as call counts, so round before display. */
+function formatRequests(n: number): string {
+  return Math.round(n).toLocaleString();
+}
+
+/** Countdown to a quota reset. Weekly resets are days away and rolling-window
+ *  resets are minutes away, so the unit pair shifts with the distance. */
+function formatReset(iso: string): string {
   const ms = new Date(iso).getTime() - Date.now();
   if (ms <= 0) return "resets soon";
-  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor(ms / 60_000);
+  const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-  return days > 0 ? `resets in ${days}d ${hours % 24}h` : `resets in ${hours}h`;
+  if (days > 0) return `resets in ${days}d ${hours % 24}h`;
+  if (hours > 0) return `resets in ${hours}h ${minutes % 60}m`;
+  return `resets in ${minutes}m`;
 }
 
 export interface ContextUsageProps {
@@ -223,11 +234,24 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
                   {account.todayRequests.toLocaleString()} today
                 </span>
               </div>
+              {account.requestsPerWindow !== null && (
+                <PlanMeter
+                  label={
+                    account.windowHours
+                      ? `Requests this ${account.windowHours}h`
+                      : "Requests this window"
+                  }
+                  used={account.windowQuotaUsed}
+                  limit={account.requestsPerWindow}
+                  formatValue={formatRequests}
+                  resetAt={account.windowResetAt}
+                />
+              )}
               <PlanMeter
                 label="Requests this week"
-                used={account.weekRequests}
+                used={account.weekQuotaUsed}
                 limit={account.requestsPerWeek}
-                formatValue={(n) => n.toLocaleString()}
+                formatValue={formatRequests}
               />
               <PlanMeter
                 label="Tokens this week"
@@ -237,7 +261,7 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
               />
               {(account.weeklyResetAt || account.creditsUsd !== null) && (
                 <div className="context-usage__plan-foot">
-                  {account.weeklyResetAt && <span>{formatWeeklyReset(account.weeklyResetAt)}</span>}
+                  {account.weeklyResetAt && <span>{formatReset(account.weeklyResetAt)}</span>}
                   {account.creditsUsd !== null && <span>${account.creditsUsd.toFixed(2)} credits</span>}
                 </div>
               )}
@@ -267,17 +291,21 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
   );
 }
 
-/** One Openference weekly quota row: label, used/limit and a thin progress bar. */
+/** One Openference quota row: label, used/limit, a thin progress bar and an
+ *  optional reset countdown (rolling windows reset far more often than weekly
+ *  quotas, so their row carries its own). */
 function PlanMeter({
   label,
   used,
   limit,
   formatValue,
+  resetAt,
 }: {
   label: string;
   used: number;
   limit: number | null;
   formatValue: (n: number) => string;
+  resetAt?: string | null;
 }) {
   const percent = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
   const tone = percent === null ? "none" : percent >= 90 ? "critical" : percent >= 70 ? "warn" : "ok";
@@ -294,6 +322,7 @@ function PlanMeter({
           <div className={`context-usage__meter-fill context-usage__meter-fill--${tone}`} style={{ width: `${percent}%` }} />
         )}
       </div>
+      {resetAt && <div className="context-usage__meter-foot">{formatReset(resetAt)}</div>}
     </div>
   );
 }

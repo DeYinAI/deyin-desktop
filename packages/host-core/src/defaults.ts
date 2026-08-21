@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 11;
+export const SETTINGS_SCHEMA_VERSION = 12;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -12,6 +12,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   telemetry: false,
   browserControlEnabled: true,
   defaultModel: null,
+  roleModels: {},
   subagentModels: {},
   subagentEfforts: {},
   subagentMaxSteps: 20,
@@ -28,6 +29,8 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   defaultShell: null,
   terminalFontSize: 12,
   terminalScrollback: 5000,
+  terminalCursorStyle: "bar",
+  terminalCopyOnSelect: true,
   revealTerminalOnAgentCommand: true,
   indexingEnabled: true,
   onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
@@ -63,6 +66,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   merged.terminalScrollback = clamp(merged.terminalScrollback, 200, 100_000, DEFAULT_SETTINGS.terminalScrollback);
   merged.subagentMaxSteps = clamp(merged.subagentMaxSteps, 1, 200, DEFAULT_SETTINGS.subagentMaxSteps);
   merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
+  merged.roleModels = pickRoleRecord(merged.roleModels);
   merged.subagentModels = pickStringRecord(merged.subagentModels);
   merged.subagentEfforts = pickStringRecord(
     merged.subagentEfforts,
@@ -70,6 +74,12 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   );
   if (typeof merged.revealTerminalOnAgentCommand !== "boolean") {
     merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
+  }
+  if (!["bar", "block", "underline"].includes(merged.terminalCursorStyle)) {
+    merged.terminalCursorStyle = DEFAULT_SETTINGS.terminalCursorStyle;
+  }
+  if (typeof merged.terminalCopyOnSelect !== "boolean") {
+    merged.terminalCopyOnSelect = DEFAULT_SETTINGS.terminalCopyOnSelect;
   }
   if (typeof merged.optimizationPluginEnabled !== "boolean") {
     merged.optimizationPluginEnabled = DEFAULT_SETTINGS.optimizationPluginEnabled;
@@ -81,6 +91,18 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
   return merged;
+}
+
+/** Roles a model override may target; keys outside this set are dropped. */
+const MODEL_ROLE_KEYS = ["implement", "plan", "ask", "delivery", "tool"];
+
+/** Role -> model map from disk, keeping only known roles with non-blank values. */
+function pickRoleRecord(value: unknown): Record<string, string> {
+  const clean: Record<string, string> = {};
+  for (const [role, ref] of Object.entries(pickStringRecord(value))) {
+    if (MODEL_ROLE_KEYS.includes(role)) clean[role] = ref;
+  }
+  return clean;
 }
 
 function pickStringRecord(
@@ -238,6 +260,30 @@ export const DEFAULT_CAPABILITIES: CapabilityItem[] = [
     enabled: true,
     source: "built-in",
   },
+  {
+    id: "skill:review-bugbot",
+    kind: "skill",
+    name: "review-bugbot",
+    description: "Run the Bugbot subagent over the current changes and report its findings.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:review-security",
+    kind: "skill",
+    name: "review-security",
+    description: "Run the Security Review subagent over the current changes and report its findings.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "skill:review",
+    kind: "skill",
+    name: "review",
+    description: "Pick between Bugbot and Security Review, then run that review (/review).",
+    enabled: true,
+    source: "built-in",
+  },
   // Subagents
   {
     id: "explorer",
@@ -252,6 +298,22 @@ export const DEFAULT_CAPABILITIES: CapabilityItem[] = [
     kind: "subagent",
     name: "Reviewer",
     description: "Independent second pass that critiques the main agent's changes.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "bugbot",
+    kind: "subagent",
+    name: "Bugbot",
+    description: "Adversarial bug hunt over a diff: correctness, state, contract breaks and edge cases.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "security-review",
+    kind: "subagent",
+    name: "Security Review",
+    description: "Audits a diff for exploitable vulnerabilities: injection, authz gaps, secrets, SSRF.",
     enabled: true,
     source: "built-in",
   },

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { PermissionEngine } from "../src/permissions.js";
 import {
   READONLY_RULES,
   agentForMode,
   resolveSubagentModel,
   rulesForApprovalMode,
+  skipPromptsForApproval,
   subagentReadonlyRules,
 } from "../src/subagent-run.js";
 
@@ -59,4 +61,32 @@ test("plan mode denies bash so it stays read-only even under full access", () =>
   for (const tool of ["write", "edit", "delete", "notebook_edit"]) {
     assert.equal(plan.permissions?.find((r) => r.tool === tool)?.action, "deny");
   }
+});
+
+test("full access never prompts in build-style modes", () => {
+  assert.equal(skipPromptsForApproval("full-access", "agent"), true);
+  assert.equal(skipPromptsForApproval("full-access", "delivery"), true);
+});
+
+test("full access still leaves plan/ask prompting for tools their rules miss", () => {
+  assert.equal(skipPromptsForApproval("full-access", "plan"), false);
+  assert.equal(skipPromptsForApproval("full-access", "ask"), false);
+});
+
+test("ask-first and read-only always prompt", () => {
+  for (const mode of ["agent", "delivery", "plan", "ask"] as const) {
+    assert.equal(skipPromptsForApproval("ask-first", mode), false);
+    assert.equal(skipPromptsForApproval("read-only", mode), false);
+  }
+});
+
+test("full access allows a readonly subagent's bash instead of prompting", () => {
+  const engine = new PermissionEngine({
+    agentRules: rulesForApprovalMode("full-access"),
+    configRules: [...(agentForMode("agent").permissions ?? []), ...subagentReadonlyRules({ readonly: true })],
+    skipAll: skipPromptsForApproval("full-access", "agent"),
+  });
+  assert.equal(engine.actionFor({ name: "bash", tier: "execute" }), "allow");
+  // The definition's own denies still win over skipAll.
+  assert.equal(engine.actionFor({ name: "write", tier: "write" }), "deny");
 });

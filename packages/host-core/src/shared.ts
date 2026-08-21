@@ -12,6 +12,7 @@ export * from "./openference.js";
 export * from "./search.js";
 export * from "./models.js";
 export * from "./images.js";
+export * from "./image-parts.js";
 export * from "./account.js";
 export * from "./plans.js";
 export * from "./billing.js";

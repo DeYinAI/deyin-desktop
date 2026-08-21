@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CardGrid, PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "@deyin/contract";
 
 interface Props {
@@ -23,8 +23,8 @@ export function BrowserPage({ settings, onChange }: Props) {
     <div className="settings-page">
       <PageHeader title="Browser" description="The built-in browser used by agent sessions and previews." />
 
-      <SectionTitle>Browser control</SectionTitle>
-      <CardGrid>
+      <SectionHeader title="Browser control" />
+      <SettingGroup>
       <SettingCard
         title="Enable built-in browser control"
         description="Allow the Browser Use plugin to open, inspect and control pages in the built-in browser for new sessions."
@@ -34,10 +34,10 @@ export function BrowserPage({ settings, onChange }: Props) {
           onChange={(v) => onChange({ browserControlEnabled: v })}
         />
       </SettingCard>
-      </CardGrid>
+      </SettingGroup>
 
-      <SectionTitle>Browser data</SectionTitle>
-      <CardGrid>
+      <SectionHeader title="Browser data" />
+      <SettingGroup>
       <SettingCard
         title="Clear built-in browser cache"
         description="Clear the HTTP cache, Cache Storage and service workers while keeping cookies and local site data."
@@ -50,7 +50,7 @@ export function BrowserPage({ settings, onChange }: Props) {
       >
         <button className="btn btn--danger" onClick={clearAll}>Clear all</button>
       </SettingCard>
-      </CardGrid>
+      </SettingGroup>
 
       {note && <div className="hint" style={{ marginTop: 10 }}>{note}</div>}
     </div>

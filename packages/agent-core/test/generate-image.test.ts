@@ -46,6 +46,51 @@ test("generate_image: clamps n and defaults alt to the prompt", async () => {
   assert.ok(result.includes('alt="an icon"'));
 });
 
+test("generate_image: forwards edit inputs and workspace saves", async () => {
+  const seen: unknown[] = [];
+  const result = await generateImageTool.execute(
+    { prompt: "same scene at night", input_images: ["img-a.png"], save_to: "assets/night.png" },
+    ctx({
+      imageGen: {
+        generate: async (request) => {
+          seen.push(request);
+          return [{ file: "img-c.png", model: "gpt-image-1", mediaType: "image/png", savedTo: "/w/assets/night.png" }];
+        },
+      },
+    }),
+  );
+  assert.deepEqual(seen, [
+    {
+      prompt: "same scene at night",
+      model: undefined,
+      size: undefined,
+      negativePrompt: undefined,
+      n: 1,
+      inputImages: ["img-a.png"],
+      saveTo: "assets/night.png",
+    },
+  ]);
+  assert.match(result, /Edited 1 image with gpt-image-1/);
+  assert.match(result, /Written to the workspace: \/w\/assets\/night\.png/);
+  assert.equal(generateImageTool.summarize?.({ prompt: "x", input_images: ["a.png"] }), "edit image: x");
+});
+
+test("generate_image: accepts a single input image passed as a bare string", async () => {
+  let seen: string[] | undefined;
+  await generateImageTool.execute(
+    { prompt: "brighter", input_images: "img-a.png" },
+    ctx({
+      imageGen: {
+        generate: async (request) => {
+          seen = request.inputImages;
+          return [{ file: "img-d.png", mediaType: "image/png" }];
+        },
+      },
+    }),
+  );
+  assert.deepEqual(seen, ["img-a.png"]);
+});
+
 test("generate_image: explains itself when the host has no image bridge", async () => {
   const result = await generateImageTool.execute({ prompt: "x" }, ctx());
   assert.match(result, /not available in this host/);

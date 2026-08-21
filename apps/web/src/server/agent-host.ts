@@ -1,12 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { AgentShell, ImageStore, SessionEventJournal, TerminalManager, generateImages } from "@deyin/host-core";
+import {
+  AgentShell,
+  ImageStore,
+  SessionEventJournal,
+  TerminalManager,
+  createImageBridge,
+  storeAttachedImages,
+  type ImageModelChoice,
+} from "@deyin/host-core";
 import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
 import {
   BUILTIN_SUBAGENTS,
   PermissionEngine,
   agentForMode,
   buildSystemPrompt,
+  createRoleRouter,
   createTaskTool,
   expandCommand,
   matchCommand,
@@ -14,6 +23,7 @@ import {
   rulesForApprovalMode,
   runAgent,
   runSubagent,
+  skipPromptsForApproval,
   subagentReadonlyRules,
   type AgentEvent,
   type AgentMessage,
@@ -43,6 +53,10 @@ export interface WebAgentStartOptions {
   mode: ChatMode;
   history: { role: "user" | "assistant"; content: string }[];
   provider: WebAgentProviderRouting;
+  /** Per-phase model overrides: role -> "providerId::modelId". */
+  roleModels?: Record<string, string>;
+  /** Endpoints for every provider a role model targets, keyed by provider id. */
+  roleProviders?: Record<string, WebAgentProviderRouting>;
   /** Seed the loop's todo list (plan todos handed to Build). */
   initialTodos?: AgentTodoItem[];
   /** Active goal text; enables report_goal_met verification. */
@@ -51,6 +65,8 @@ export interface WebAgentStartOptions {
   images?: AgentImageInput[];
   /** Text-to-image model ids from the client's catalog (generate_image). */
   imageModels?: string[];
+  /** Chat model ids that return pictures inside their completion. */
+  imageChatModels?: string[];
 }
 
 interface ActiveRun {
@@ -213,11 +229,17 @@ export class WebAgentHost {
     const buildPermissions = (mode: ChatMode): PermissionEngineOptions => ({
       agentRules: rulesForApprovalMode(options.approvalMode),
       configRules: agentForMode(mode).permissions ?? [],
-      skipAll: options.approvalMode === "full-access" && mode === "agent",
+      skipAll: skipPromptsForApproval(options.approvalMode, mode),
     });
     const permissions = new PermissionEngine(buildPermissions(options.mode));
 
     const registry = await this.buildRegistry(options, subagents);
+    // Attached pictures also land in the session image store, so generate_image
+    // can edit them by file name instead of drawing something new.
+    const attachedImages =
+      options.images?.length && this.images
+        ? storeAttachedImages(this.images, options.threadId, options.images)
+        : { files: [], note: "" };
     const buildPrompt = (mode: ChatMode): string => {
       let prompt = buildSystemPrompt({ cwd: this.root, agent: agentForMode(mode), toolNames: registry.names() });
       const repo = this.repoInfo();
@@ -232,10 +254,35 @@ export class WebAgentHost {
       ...options.history,
       {
         role: "user",
-        content: prompt,
+        content: prompt + attachedImages.note,
         ...(options.images?.length ? { images: options.images } : {}),
       },
     ];
+
+    // Per-phase model routing. The client resolves each role's provider before
+    // sending, so a role can target a different endpoint than the run itself;
+    // roles whose provider is missing degrade to the run's own endpoint.
+    const router = createRoleRouter({
+      roleModels: options.roleModels ?? {},
+      base: {
+        model: options.model,
+        providerId: "__run__",
+        apiBaseUrl: options.provider.baseUrl,
+        getToken: async () => options.provider.token,
+        apiFormat: options.provider.apiFormat,
+        authHeader: options.provider.authHeader,
+      },
+      resolveProvider: (providerId) => {
+        const routing = options.roleProviders?.[providerId];
+        if (!routing) return undefined;
+        return {
+          apiBaseUrl: routing.baseUrl,
+          getToken: async () => routing.token,
+          apiFormat: routing.apiFormat,
+          authHeader: routing.authHeader,
+        };
+      },
+    });
 
     const result = await runAgent({
       apiBaseUrl: options.provider.baseUrl,
@@ -243,6 +290,7 @@ export class WebAgentHost {
       apiFormat: options.provider.apiFormat,
       authHeader: options.provider.authHeader,
       model: options.model,
+      router,
       thinking: options.thinking,
       messages,
       tools: registry,
@@ -254,6 +302,7 @@ export class WebAgentHost {
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
       onEvent: (event) => this.forwardEvent(options.threadId, event),
+      imageOutput: (options.imageChatModels ?? []).includes(options.model),
       toolContext: {
         sessionMeta,
         goalText: options.goalText,
@@ -319,6 +368,9 @@ export class WebAgentHost {
   private async buildRegistry(options: WebAgentStartOptions, subagents: SubagentDefinition[]): Promise<ToolRegistry> {
     const kernel = await this.ensureKernel();
     const registry = buildToolRegistry(kernel.get(Tools));
+    // No image model in the client's catalog: drop generate_image rather than
+    // advertising a tool whose every call would fail.
+    if (!this.images || imageModelChoices(options).length === 0) registry.unregister("generate_image");
     registry.register(
       createTaskTool({
         subagents,
@@ -348,7 +400,15 @@ export class WebAgentHost {
         apiFormat: options.provider.apiFormat,
         authHeader: options.provider.authHeader,
       },
-      permissionEngine: new PermissionEngine({ agentRules: subagentReadonlyRules(def) }),
+      // Children can draw too: same provider, same session image store.
+      imageGen: this.imageGenBridge(options, signal ?? new AbortController().signal),
+      // Same contract as the desktop host: subagents inherit the parent's access
+      // level and mode, so full access never prompts inside spawned work either.
+      permissionEngine: new PermissionEngine({
+        agentRules: rulesForApprovalMode(options.approvalMode),
+        configRules: [...(agentForMode(options.mode).permissions ?? []), ...subagentReadonlyRules(def)],
+        skipAll: skipPromptsForApproval(options.approvalMode, options.mode),
+      }),
       resolvePermission: (req) => this.askPermission(options.threadId, `${def.name} → ${req.toolName}`, req.summary),
       signal,
       onEvent: (event: AgentEvent) => {
@@ -368,6 +428,8 @@ export class WebAgentHost {
       ok: result.ok,
       ms: Date.now() - startedAt,
       summary: result.report.slice(0, 200),
+      // Full-ish body for the Agent panel; the card still shows `summary`.
+      report: result.report.slice(0, 20_000),
     });
     return result;
   }
@@ -380,30 +442,16 @@ export class WebAgentHost {
   private imageGenBridge(options: WebAgentStartOptions, signal: AbortSignal): ImageGenBridge | undefined {
     const store = this.images;
     if (!store) return undefined;
-    return {
-      generate: async (request) => {
-        const model = request.model ?? options.imageModels?.[0];
-        if (!model) {
-          throw new Error(
-            "No text-to-image model is available on this provider. Pick one in Settings → Models, or pass an explicit model id.",
-          );
-        }
-        const generated = await generateImages({
-          apiBaseUrl: options.provider.baseUrl,
-          token: options.provider.token,
-          model,
-          prompt: request.prompt,
-          size: request.size ?? "1024x1024",
-          n: request.n ?? 1,
-          ...(request.negativePrompt ? { extra: { negative_prompt: request.negativePrompt } } : {}),
-          signal,
-        });
-        return generated.map((image) => {
-          const saved = store.save(options.threadId, { base64: image.base64, mediaType: image.mediaType });
-          return { file: saved.file, model, mediaType: saved.mediaType };
-        });
-      },
-    };
+    return createImageBridge({
+      store,
+      threadId: options.threadId,
+      apiBaseUrl: options.provider.baseUrl,
+      getToken: async () => options.provider.token,
+      models: () => imageModelChoices(options),
+      // Generated pictures may be saved into the session sandbox on request.
+      cwd: this.root,
+      signal,
+    });
   }
 
   private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
@@ -474,6 +522,15 @@ export class WebAgentHost {
       case "reasoning-delta":
         this.emit(threadId, { type: "reasoning-delta", delta: event.delta });
         break;
+      case "model-routed":
+        this.emit(threadId, {
+          type: "model-routed",
+          step: event.step,
+          role: event.role,
+          model: event.model,
+          providerId: event.providerId,
+        });
+        break;
       case "tool-start":
         this.emit(threadId, { type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary, cwd: event.cwd });
         break;
@@ -516,4 +573,12 @@ export class WebAgentHost {
         break;
     }
   }
+}
+
+/** Image-capable models for this run, dedicated text-to-image models first. */
+function imageModelChoices(options: WebAgentStartOptions): ImageModelChoice[] {
+  return [
+    ...(options.imageModels ?? []).map((id) => ({ id, route: "endpoint" as const })),
+    ...(options.imageChatModels ?? []).map((id) => ({ id, route: "chat" as const })),
+  ];
 }

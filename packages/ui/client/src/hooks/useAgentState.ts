@@ -10,7 +10,13 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AgentEventEnvelope, ChatMode, ContextUsageSnapshot, DiffSnippetLine, ThreadEvent } from "@deyin/contract";
 import { TOOL_RESULT_UI_CAP, truncateToolResultUi } from "@deyin/contract";
-import { isBetterPlanDoc, looksLikePlan, planFileNameFromTitle, planTitleFromMarkdown } from "../threads.js";
+import {
+  isBetterPlanDoc,
+  looksLikePlan,
+  planFileNameFromTitle,
+  planPreviewFromMarkdown,
+  planTitleFromMarkdown,
+} from "../threads.js";
 import { diffSnippet, diffStats } from "../diff.js";
 
 /* -------------------------------------------------------------------------- */
@@ -27,6 +33,9 @@ export type AgentMessageItem =
   | { id: string; kind: "notice"; text: string; timestamp: number };
 
 export type RunPhase = "idle" | "thinking" | "streaming" | "tool" | "waiting";
+
+/** Max activity lines retained per subagent card (the Agent panel's log). */
+const SUBAGENT_LOG_CAP = 200;
 
 export interface RunStatus {
   phase: RunPhase;
@@ -69,7 +78,16 @@ export interface RunFoldResult {
 }
 
 export type AgentSideEffect =
-  | { type: "file-change"; threadId: string; path: string; before: string; after: string; renderable: boolean }
+  | {
+      type: "file-change";
+      threadId: string;
+      path: string;
+      before: string;
+      after: string;
+      renderable: boolean;
+      /** Run the edit belongs to — groups the change under one undo checkpoint. */
+      checkpointId: string;
+    }
   | { type: "pending-change"; threadId: string; change: import("@deyin/contract").PendingChange }
   | { type: "pending-change-resolved"; changeId: string }
   | { type: "goal-updated"; threadId: string; goal: import("@deyin/contract").ThreadGoal | null }
@@ -83,7 +101,7 @@ export type AgentSideEffect =
         id: string;
         prompt: string;
         allow_multiple?: boolean;
-        options: Array<{ id: string; label: string }>;
+        options: Array<{ id: string; label: string; description?: string; recommended?: boolean }>;
       }>;
     }
   | { type: "plan-created"; threadId: string; name: string; overview?: string; plan: string; filePath?: string }
@@ -122,6 +140,8 @@ export type AgentSideEffect =
 
 interface ThreadRunMutable {
   mode: ChatMode;
+  /** Identity of the current run: the undo checkpoint its file edits belong to. */
+  runId: string;
   runEvents: ThreadEvent[];
   streamText: string;
   streamReasoning: string;
@@ -154,9 +174,15 @@ function emptyStatus(): RunStatus {
   };
 }
 
+/** Unique id for a run's undo checkpoint (stamped on every file card it produces). */
+function newCheckpointId(): string {
+  return `cp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function freshThreadRun(mode: ChatMode = "agent"): ThreadRunMutable {
   return {
     mode,
+    runId: newCheckpointId(),
     runEvents: [],
     streamText: "",
     streamReasoning: "",
@@ -466,7 +492,15 @@ class AgentStateStore {
         const name = event.path.split(/[\\/]/).pop() ?? event.path;
         t.runEvents = [
           ...t.runEvents,
-          { kind: "file", name, subtitle: event.path, adds: stats.adds, dels: stats.dels, ...snippet },
+          {
+            kind: "file",
+            name,
+            subtitle: event.path,
+            adds: stats.adds,
+            dels: stats.dels,
+            checkpointId: t.runId,
+            ...snippet,
+          },
         ];
         this.notifyStructural();
         this.emit({
@@ -476,6 +510,7 @@ class AgentStateStore {
           before: event.before,
           after: event.after,
           renderable: stats.renderable,
+          checkpointId: t.runId,
         });
         break;
       }
@@ -634,6 +669,7 @@ class AgentStateStore {
             kind: "plan-ready",
             title: planTitle,
             fileName: planFileNameFromTitle(planTitle || "plan"),
+            preview: planPreviewFromMarkdown(event.plan),
           },
         ];
         this.notifyStructural();
@@ -645,7 +681,10 @@ class AgentStateStore {
       case "subagent-start":
         this.flushText(t);
         t.subagentIndex.set(event.id, t.runEvents.length);
-        t.runEvents = [...t.runEvents, { kind: "subagent", id: event.id, name: event.name, status: "running" }];
+        t.runEvents = [
+          ...t.runEvents,
+          { kind: "subagent", id: event.id, name: event.name, status: "running", prompt: event.prompt, lines: [] },
+        ];
         t.status = { ...t.status, phase: "tool", label: `${event.name} running…` };
         this.notifyStructural();
         break;
@@ -655,7 +694,10 @@ class AgentStateStore {
         const prev = t.runEvents[index];
         if (!prev || prev.kind !== "subagent") break;
         const next = [...t.runEvents];
-        next[index] = { ...prev, line: event.line };
+        // Keep the full activity log for the Agent panel, capped so a long run
+        // cannot grow the thread state without bound.
+        const lines = [...(prev.lines ?? []), event.line].slice(-SUBAGENT_LOG_CAP);
+        next[index] = { ...prev, line: event.line, lines };
         t.runEvents = next;
         this.notifyStructural();
         break;
@@ -676,6 +718,7 @@ class AgentStateStore {
             status: event.ok ? "done" : "failed",
             ms: event.ms,
             line: event.summary ?? prev.line,
+            report: event.report ?? event.summary ?? prev.report,
           };
           t.runEvents = next;
         }
@@ -713,6 +756,7 @@ class AgentStateStore {
             kind: "plan-ready",
             title: planTitle,
             fileName: planFileNameFromTitle(planTitle ?? "plan"),
+            preview: planPreviewFromMarkdown(planText),
           });
         }
         if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });

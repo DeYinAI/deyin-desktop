@@ -75,6 +75,22 @@ export function planTitleFromMarkdown(markdown: string): string {
   return title || "plan.md";
 }
 
+/** Opening slice of a plan, used for the preview body of the chat plan card.
+ *  Frontmatter and the title heading are dropped (the card shows the title
+ *  separately) and the text is cut on a line boundary so markdown stays valid. */
+export function planPreviewFromMarkdown(markdown: string, maxChars = 700): string {
+  let body = markdown.trim();
+  if (body.startsWith("---")) {
+    const end = body.indexOf("\n---", 3);
+    if (end >= 0) body = body.slice(end + 4).trimStart();
+  }
+  body = body.replace(/^#{1,3}\s+.+\n+/, "");
+  if (body.length <= maxChars) return body.trim();
+  const cut = body.slice(0, maxChars);
+  const lastBreak = cut.lastIndexOf("\n");
+  return (lastBreak > maxChars * 0.4 ? cut.slice(0, lastBreak) : cut).trim();
+}
+
 /** True when assistant text looks like a structured plan (not casual chat). */
 export function looksLikePlan(text: string): boolean {
   const trimmed = text.trim();

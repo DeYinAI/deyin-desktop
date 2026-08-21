@@ -6,15 +6,22 @@ interface MeResponse {
     todayRequests?: number;
     weekRequests?: number;
     weekTokens?: number;
+    windowRequests?: number;
+    weekQuotaUsed?: number;
+    windowQuotaUsed?: number;
     totalRequests?: number;
     totalTokens?: number;
   };
   credits?: { balanceUsd?: number };
-  plan?: { name?: string };
+  plan?: { name?: string; requestsPerWindow?: number | null; windowHours?: number | null };
   limits?: {
     requestsPerWeek?: number | null;
     tokensPerWeek?: number | null;
-    weeklyResetAt?: string | null;
+    /** { requests, hours } for the rolling window; null when the plan has none. */
+    windowLimit?: { requests?: number; hours?: number } | null;
+    /** Epoch milliseconds on the wire, despite the ISO-ish name. */
+    weeklyResetAt?: number | string | null;
+    windowResetAt?: number | string | null;
   };
   identity?: {
     tenant?: string | null;
@@ -22,6 +29,14 @@ interface MeResponse {
     role?: string | null;
     policies?: unknown;
   };
+}
+
+/** The reset timestamps arrive as epoch milliseconds; normalize to the ISO
+ *  string the AccountUsage contract advertises so callers can trust the type. */
+function toIso(raw: number | string | null | undefined): string | null {
+  if (raw == null) return null;
+  const ms = typeof raw === "number" ? raw : Date.parse(raw);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
 /** Parse the optional identity block; absent or malformed means "not reported". */
@@ -61,9 +76,20 @@ export async function fetchAccountUsage(
       weekTokens: body.usage?.weekTokens ?? 0,
       totalRequests: body.usage?.totalRequests ?? 0,
       totalTokens: body.usage?.totalTokens ?? 0,
+      windowRequests: body.usage?.windowRequests ?? 0,
+      // Servers predating the quota-used split report only the raw counts;
+      // falling back to those keeps the meters populated (if slightly low).
+      weekQuotaUsed: body.usage?.weekQuotaUsed ?? body.usage?.weekRequests ?? 0,
+      windowQuotaUsed: body.usage?.windowQuotaUsed ?? body.usage?.windowRequests ?? 0,
       requestsPerWeek: body.limits?.requestsPerWeek ?? null,
       tokensPerWeek: body.limits?.tokensPerWeek ?? null,
-      weeklyResetAt: body.limits?.weeklyResetAt ?? null,
+      // The enforced window limit lives under limits.windowLimit; plan.* carries
+      // the same pair as plan metadata and serves as the fallback.
+      requestsPerWindow:
+        body.limits?.windowLimit?.requests ?? body.plan?.requestsPerWindow ?? null,
+      windowHours: body.limits?.windowLimit?.hours ?? body.plan?.windowHours ?? null,
+      weeklyResetAt: toIso(body.limits?.weeklyResetAt),
+      windowResetAt: toIso(body.limits?.windowResetAt),
       creditsUsd: body.credits?.balanceUsd ?? null,
       identity: parseServerIdentity(body.identity),
     };

@@ -180,6 +180,12 @@ const PATHS: Record<string, JSX.Element> = {
     </>
   ),
   star: <path d="M8 2.2l1.6 3.2 3.5.5-2.5 2.5.6 3.5L8 10.2l-3.2 1.7.6-3.5-2.5-2.5 3.5-.5z" />,
+  home: (
+    <>
+      <path d="M2.5 7.2L8 2.6l5.5 4.6V13a.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5z" />
+      <path d="M6.4 13.5V9.4h3.2v4.1" />
+    </>
+  ),
   panelLeft: (
     <>
       <rect x="2" y="3" width="12" height="10" rx="1.8" />
@@ -212,6 +218,11 @@ const PATHS: Record<string, JSX.Element> = {
       <rect x="8.9" y="2.2" width="4.9" height="4.9" rx="1.3" />
       <rect x="2.2" y="8.9" width="4.9" height="4.9" rx="1.3" />
       <path d="M11.35 9v4.6M9.05 11.3h4.6" />
+    </>
+  ),
+  puzzle: (
+    <>
+      <path d="M6.2 2.4h3.6v1.3a1.5 1.5 0 003 0V2.4h.5a1 1 0 011 1v2.9h-1.2a1.5 1.5 0 000 3h1.2v3.3a1 1 0 01-1 1h-3.1v-1.2a1.5 1.5 0 00-3 0v1.2H5.2a1 1 0 01-1-1v-3.4H5.3a1.5 1.5 0 000-3H4.2V3.4a1 1 0 011-1z" />
     </>
   ),
 };

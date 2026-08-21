@@ -136,7 +136,7 @@ test("v11: dropped fields fall out and kept fields survive", () => {
     bogusFutureField: "x",
   } as unknown as Record<string, unknown>;
   const migrated = migrateSettings(v10);
-  assert.equal(migrated.schemaVersion, 11);
+  assert.equal(migrated.schemaVersion, SETTINGS_SCHEMA_VERSION);
   assert.equal(migrated.theme, "light");
   assert.equal(migrated.fontSize, 15);
   assert.equal(migrated.memoryEnabled, true);
@@ -150,4 +150,28 @@ test("v11: dropped fields fall out and kept fields survive", () => {
   assert.equal("cacheHitRateTarget" in migrated, false);
   assert.equal("agentOnboardComplete" in migrated, false);
   assert.equal("bogusFutureField" in migrated, false);
+});
+
+test("roleModels: keeps known roles, drops unknown keys and blank refs", () => {
+  const migrated = migrateSettings({
+    roleModels: {
+      plan: "openference::GLM-5.2",
+      implement: "  anthropic::claude-opus-5  ",
+      tool: "Kimi-K3",
+      ask: "   ",
+      coordinator: "openference::GLM-5.2",
+      delivery: 42,
+    },
+  } as unknown as Record<string, unknown>);
+  assert.deepEqual(migrated.roleModels, {
+    plan: "openference::GLM-5.2",
+    implement: "anthropic::claude-opus-5",
+    tool: "Kimi-K3",
+  });
+});
+
+test("roleModels: defaults to empty and survives garbage", () => {
+  assert.deepEqual(migrateSettings({}).roleModels, {});
+  assert.deepEqual(migrateSettings({ roleModels: ["plan"] }).roleModels, {});
+  assert.deepEqual(migrateSettings({ roleModels: null }).roleModels, {});
 });

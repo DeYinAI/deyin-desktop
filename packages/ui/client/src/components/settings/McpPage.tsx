@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Icon } from "../Icon.js";
-import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import {
+  EmptyState,
+  IconTile,
+  PageHeader,
+  Row,
+  RowList,
+  RowMenu,
+  SearchField,
+  SectionHeader,
+  Segmented,
+  Tag,
+  Toggle,
+  type MenuAction,
+} from "./controls.js";
 import type {
   McpAuthMode,
   McpAuthStatus,
@@ -26,15 +39,32 @@ const CATEGORY_LABELS: Record<McpCatalogCategory, string> = {
 
 const ALL_CATEGORIES = Object.keys(CATEGORY_LABELS) as McpCatalogCategory[];
 
+type View = "installed" | "catalog";
+
+/** Installed servers split by where their definition lives. */
+const GROUPS = [
+  { id: "own", title: "Your servers", note: "Installed in ~/.deyin/mcp-modules/ or defined in your config." },
+  { id: "plugin", title: "Plugin MCP servers", note: "Registered by a plugin. Edit it in the plugin." },
+  { id: "builtin", title: "Built-in", note: "Ships with Deyin and runs in-process." },
+] as const;
+
+function groupOf(server: McpServerEntry): (typeof GROUPS)[number]["id"] {
+  if (server.source.startsWith("plugin:")) return "plugin";
+  if (server.source === "built-in") return "builtin";
+  return "own";
+}
+
 /**
  * MCP servers from workspace config, per-module installs (~/.deyin/mcp-modules/<id>/),
  * plugins, and built-in in-process servers.
  */
-export function McpPage({ onToggle }: { onToggle: (id: string, enabled: boolean) => void }) {
+export function McpPage({ onToggle, tabs }: { onToggle: (id: string, enabled: boolean) => void; tabs?: ReactNode }) {
   const [servers, setServers] = useState<McpServerEntry[]>([]);
   const [modules, setModules] = useState<McpModuleManifest[]>([]);
   const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
+  const [view, setView] = useState<View>("installed");
   const [category, setCategory] = useState<McpCatalogCategory | "all" | "featured">("featured");
+  const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [installEntry, setInstallEntry] = useState<McpCatalogEntry | null>(null);
   const [installingId, setInstallingId] = useState<string | null>(null);
@@ -54,11 +84,28 @@ export function McpPage({ onToggle }: { onToggle: (id: string, enabled: boolean)
   const installedNames = useMemo(() => new Set(servers.map((s) => s.name)), [servers]);
   const moduleById = useMemo(() => new Map(modules.map((m) => [m.id, m])), [modules]);
 
+  const matches = useCallback(
+    (...fields: (string | undefined)[]) => {
+      const q = query.trim().toLowerCase();
+      return !q || fields.some((f) => (f ?? "").toLowerCase().includes(q));
+    },
+    [query],
+  );
+
+  const visibleServers = useMemo(
+    () => servers.filter((s) => matches(s.name, s.command, s.url, s.source)),
+    [servers, matches],
+  );
+
   const filteredCatalog = useMemo(() => {
-    if (category === "featured") return catalog.filter((e) => e.featured);
-    if (category === "all") return catalog;
-    return catalog.filter((e) => e.category === category);
-  }, [catalog, category]);
+    const scoped =
+      category === "featured"
+        ? catalog.filter((e) => e.featured)
+        : category === "all"
+          ? catalog
+          : catalog.filter((e) => e.category === category);
+    return scoped.filter((e) => matches(e.name, e.description, e.vendor));
+  }, [catalog, category, matches]);
 
   const test = async (name: string) => {
     setTests((cur) => ({ ...cur, [name]: "running" }));
@@ -128,139 +175,110 @@ export function McpPage({ onToggle }: { onToggle: (id: string, enabled: boolean)
   const moduleNeedsOAuth = (mod: McpModuleManifest | undefined): boolean =>
     mod?.authMode === "oauth" || Boolean(mod?.usesNativeOAuth);
 
+  const renderServer = (server: McpServerEntry) => {
+    const result = tests[server.name];
+    const mod = moduleById.get(server.name);
+    const removable = server.source.startsWith("module:") || server.source === "user";
+    const location = server.source.startsWith("module:")
+      ? `~/.deyin/mcp-modules/${server.name}/`
+      : server.path ?? server.source;
+    const needsOAuth = moduleNeedsOAuth(mod);
+    const status = authStatus[server.name];
+    const target =
+      server.transport === "stdio"
+        ? server.command
+          ? `${server.command} ${(server.args ?? []).join(" ")}`.trim()
+          : "Built-in (runs inside Deyin)."
+        : server.url ?? "";
+
+    const actions: MenuAction[] = [
+      {
+        label: result === "running" ? "Testing…" : "Test connection",
+        icon: "play",
+        onSelect: () => void test(server.name),
+      },
+    ];
+    if (needsOAuth && status !== "authenticated") {
+      actions.unshift({
+        label: authBusy === server.name ? "Opening browser…" : "Authenticate",
+        icon: "shield",
+        onSelect: () => void authenticate(server.name),
+      });
+    }
+    if (needsOAuth && status === "authenticated") {
+      actions.push({ label: "Disconnect", icon: "logout", onSelect: () => void revokeAuth(server.name) });
+    }
+    if (mod?.docsUrl) {
+      const url = mod.docsUrl;
+      actions.push({ label: "Documentation", icon: "external", onSelect: () => window.open(url, "_blank") });
+    }
+    if (removable) {
+      actions.push({ label: "Uninstall", icon: "trash", danger: true, onSelect: () => void uninstall(server) });
+    }
+
+    return (
+      <Row
+        key={server.id}
+        icon={<IconTile name={mod?.name ?? server.name} id={[server.name, mod?.vendor]} icon="plug" />}
+        title={mod?.name ?? server.name}
+        tags={
+          <>
+            {mod?.name && mod.name !== server.name && <Tag tone="muted">{server.name}</Tag>}
+            {server.transport !== "stdio" && <Tag tone="muted">{server.transport.toUpperCase()}</Tag>}
+            {!server.enabled && <Tag tone="warn">Disabled</Tag>}
+            {needsOAuth && status === "authenticated" && <Tag tone="ok">Connected</Tag>}
+            {needsOAuth && status === "none" && <Tag tone="warn">Not authenticated</Tag>}
+            {needsOAuth && status === "expired" && <Tag tone="warn">Session expired</Tag>}
+          </>
+        }
+        description={[target, mod?.vendor, server.source === "built-in" ? null : location]
+          .filter(Boolean)
+          .join(" — ")}
+        aside={
+          result === "running" ? (
+            <span className="row__note">Testing…</span>
+          ) : result ? (
+            <span className={`row__note ${result.ok ? "hint--ok" : "hint--bad"}`}>
+              {result.ok ? `${result.toolCount ?? 0} tools` : result.message ?? "failed"}
+            </span>
+          ) : undefined
+        }
+        actions={
+          <>
+            <Toggle checked={server.enabled} onChange={(v) => toggle(server, v)} />
+            <RowMenu items={actions} />
+          </>
+        }
+      />
+    );
+  };
+
   return (
     <div className="settings-page">
-      <PageHeader
-        title="MCP Servers"
-        description="Model Context Protocol servers exposing external tools to agent sessions. Installed modules live in ~/.deyin/mcp-modules/<id>/."
-      >
+      <PageHeader title="MCP Servers" description="Manage the Model Context Protocol servers used by the Deyin agent.">
         <button className="icon-btn" title="Reload" onClick={reload}>
           <Icon name="refresh" size={14} />
         </button>
+        <button className="btn btn--outline btn--small" onClick={() => setAdding((v) => !v)}>
+          <Icon name="plus" size={12} />
+          Add server
+        </button>
       </PageHeader>
 
-      <SectionTitle>Installed</SectionTitle>
-      {servers.map((server) => {
-        const result = tests[server.name];
-        const mod = moduleById.get(server.name);
-        const removable = server.source.startsWith("module:") || server.source === "user";
-        const location =
-          server.source.startsWith("module:") ? `~/.deyin/mcp-modules/${server.name}/` : server.path ?? server.source;
-        const needsOAuth = moduleNeedsOAuth(mod);
-        const status = authStatus[server.name];
-        return (
-          <SettingCard
-            key={server.id}
-            title={`${mod?.name ?? server.name}${server.transport !== "stdio" ? ` · ${server.transport.toUpperCase()}` : ""}`}
-            description={
-              (server.transport === "stdio"
-                ? server.command
-                  ? `${server.command} ${(server.args ?? []).join(" ")}`
-                  : "Built-in (runs inside Deyin)."
-                : server.url ?? "") +
-              ` — ${mod?.vendor ? `${mod.vendor} · ` : ""}${location}`
-            }
-          >
-            <div className="field__row">
-              {needsOAuth && status === "authenticated" && <span className="badge badge--ok">Connected</span>}
-              {needsOAuth && status === "none" && <span className="badge">Not authenticated</span>}
-              {needsOAuth && status === "expired" && <span className="badge">Session expired</span>}
-              {result && result !== "running" && (
-                <span className={result.ok ? "hint hint--ok" : "hint hint--bad"}>
-                  {result.ok ? `${result.toolCount ?? 0} tools` : result.message ?? "failed"}
-                </span>
-              )}
-              {needsOAuth && status !== "authenticated" && (
-                <button
-                  className="chip chip--small chip--active"
-                  disabled={authBusy === server.name}
-                  onClick={() => void authenticate(server.name)}
-                >
-                  {authBusy === server.name ? "Opening browser…" : "Authenticate"}
-                </button>
-              )}
-              {needsOAuth && status === "authenticated" && (
-                <button className="chip chip--small" onClick={() => void revokeAuth(server.name)}>
-                  Disconnect
-                </button>
-              )}
-              <button
-                className="chip chip--small"
-                disabled={result === "running"}
-                onClick={() => void test(server.name)}
-              >
-                {result === "running" ? "Testing…" : "Test"}
-              </button>
-              {removable && (
-                <button className="icon-btn icon-btn--small" title="Uninstall" onClick={() => void uninstall(server)}>
-                  <Icon name="trash" size={12} />
-                </button>
-              )}
-              <Toggle checked={server.enabled} onChange={(v) => toggle(server, v)} />
-            </div>
-          </SettingCard>
-        );
-      })}
-      {servers.length === 0 && <div className="hint">No MCP servers configured.</div>}
+      {tabs}
 
-      <SectionTitle>Browse catalog</SectionTitle>
-      <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
-        One-click install for popular MCP servers into <code>~/.deyin/mcp-modules/</code>. OAuth vendors open your
-        browser to sign in; tokens are stored encrypted on this device.
-      </p>
-      <div className="mcp-catalog__filters">
-        <button
-          className={`chip chip--small${category === "featured" ? " chip--active" : ""}`}
-          onClick={() => setCategory("featured")}
-        >
-          Featured
-        </button>
-        <button
-          className={`chip chip--small${category === "all" ? " chip--active" : ""}`}
-          onClick={() => setCategory("all")}
-        >
-          All
-        </button>
-        {ALL_CATEGORIES.map((cat) => (
-          <button
-            key={cat}
-            className={`chip chip--small${category === cat ? " chip--active" : ""}`}
-            onClick={() => setCategory(cat)}
-          >
-            {CATEGORY_LABELS[cat]}
-          </button>
-        ))}
-      </div>
-      {filteredCatalog.map((entry) => (
-        <SettingCard
-          key={entry.id}
-          title={`${entry.name} · ${entry.vendor}`}
-          description={`${entry.description} — ${CATEGORY_LABELS[entry.category]} · ${authLabel(entry.auth)}`}
-        >
-          <div className="field__row">
-            {installedNames.has(entry.id) ? (
-              <span className="badge badge--ok">Installed</span>
-            ) : (
-              <>
-                <button
-                  className="btn btn--outline"
-                  disabled={installingId !== null}
-                  onClick={() => void installCatalogEntry(entry)}
-                >
-                  {installingId === entry.id ? "Installing…" : "Install"}
-                </button>
-                <a className="hint" href={entry.docsUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
-                  Docs
-                </a>
-              </>
-            )}
-          </div>
-        </SettingCard>
-      ))}
-      {filteredCatalog.length === 0 && <div className="hint">No catalog entries in this filter.</div>}
+      <SearchField value={query} onChange={setQuery} placeholder="Search MCP servers">
+        <Segmented
+          options={[
+            { id: "installed", label: "Installed" },
+            { id: "catalog", label: "Catalog" },
+          ]}
+          value={view}
+          onChange={setView}
+        />
+      </SearchField>
 
-      <SectionTitle>Custom server</SectionTitle>
-      {adding ? (
+      {adding && (
         <AddServerForm
           onDone={(next) => {
             setAdding(false);
@@ -270,11 +288,97 @@ export function McpPage({ onToggle }: { onToggle: (id: string, enabled: boolean)
             }
           }}
         />
-      ) : (
-        <button className="providers__add" onClick={() => setAdding(true)}>
-          <Icon name="plus" size={13} />
-          Add custom MCP server
-        </button>
+      )}
+
+      {view === "installed" && (
+        <>
+          {GROUPS.map((group) => {
+            const rows = visibleServers.filter((s) => groupOf(s) === group.id);
+            if (rows.length === 0) return null;
+            return (
+              <div key={group.id}>
+                <SectionHeader title={group.title} count={rows.length} note={group.note} />
+                <RowList>{rows.map(renderServer)}</RowList>
+              </div>
+            );
+          })}
+          {visibleServers.length === 0 && (
+            <EmptyState
+              icon="plug"
+              title={query ? "No servers match your search." : "No MCP servers configured."}
+              hint="Install one from the catalog, or add a custom server."
+            />
+          )}
+        </>
+      )}
+
+      {view === "catalog" && (
+        <>
+          <div className="mcp-catalog__filters">
+            <button
+              className={`chip chip--small${category === "featured" ? " chip--active" : ""}`}
+              onClick={() => setCategory("featured")}
+            >
+              Featured
+            </button>
+            <button
+              className={`chip chip--small${category === "all" ? " chip--active" : ""}`}
+              onClick={() => setCategory("all")}
+            >
+              All
+            </button>
+            {ALL_CATEGORIES.map((cat) => (
+              <button
+                key={cat}
+                className={`chip chip--small${category === cat ? " chip--active" : ""}`}
+                onClick={() => setCategory(cat)}
+              >
+                {CATEGORY_LABELS[cat]}
+              </button>
+            ))}
+          </div>
+          <SectionHeader
+            title="Catalog"
+            count={filteredCatalog.length}
+            note="Installs into ~/.deyin/mcp-modules/. OAuth vendors open your browser; tokens stay encrypted on this device."
+          />
+          <RowList variant="grid">
+            {filteredCatalog.map((entry) => (
+              <Row
+                key={entry.id}
+                icon={<IconTile name={entry.name} id={[entry.id, entry.vendor]} />}
+                title={entry.name}
+                tags={<Tag tone="muted">{authLabel(entry.auth)}</Tag>}
+                description={`${entry.description} — ${entry.vendor} · ${CATEGORY_LABELS[entry.category]}`}
+                actions={
+                  installedNames.has(entry.id) ? (
+                    <Tag tone="ok">Installed</Tag>
+                  ) : (
+                    <>
+                      <button
+                        className="btn btn--outline btn--small"
+                        disabled={installingId !== null}
+                        onClick={() => void installCatalogEntry(entry)}
+                      >
+                        {installingId === entry.id ? "Installing…" : "Install"}
+                      </button>
+                      <a
+                        className="icon-btn icon-btn--small"
+                        href={entry.docsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Documentation"
+                      >
+                        <Icon name="external" size={12} />
+                      </a>
+                    </>
+                  )
+                }
+              />
+            ))}
+          </RowList>
+          {filteredCatalog.length === 0 && <EmptyState icon="zoom" title="No catalog entries in this filter." />}
+        </>
       )}
 
       {installEntry && (

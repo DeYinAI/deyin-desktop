@@ -1,4 +1,5 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
+import { addImage, imagesFromMessage, type StreamImage } from "@deyin/host-core";
 import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
 import {
   normalizeUsage,
@@ -45,10 +46,16 @@ export interface StreamChatEventsOptions {
  anthropicVersion?: string;
  /** Max auto-continuations for length-truncated responses (default 3, DeepSeek only). */
  maxContinuations?: number;
+ /**
+  * Ask the model for images alongside text (models whose catalog entry declares
+  * image output). Sends `modalities: ["text", "image"]` on chat-completions and
+  * enables the built-in image tool on the Responses API.
+  */
+ imageOutput?: boolean;
 }
 
 interface WireDelta {
-  content?: string | null;
+  content?: string | null | unknown[];
   reasoning_content?: string | null;
   reasoning?: string | null;
   tool_calls?: {
@@ -57,10 +64,12 @@ interface WireDelta {
     type?: string;
     function?: { name?: string; arguments?: string };
   }[];
+  /** Image-generating chat models attach pictures beside the text. */
+  images?: unknown;
 }
 
 interface WireChunk {
-  choices?: { delta?: WireDelta; finish_reason?: string | null }[];
+  choices?: { delta?: WireDelta; message?: unknown; finish_reason?: string | null }[];
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -108,6 +117,9 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
   let content = "";
   let reasoning = "";
   let usage: TokenUsage | null = null;
+  // Images survive a continuation round trip: the second call never re-sends them.
+  const images: StreamImage[] = [];
+  const seenImages = new Set<string>();
 
   while (true) {
     const isContinuation = continuations > 0;
@@ -117,6 +129,9 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       stream: true,
     };
     if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
+    // Image-capable chat models must be asked for pictures explicitly; gateways
+    // that do not know the field ignore it.
+    if (opts.imageOutput) body.modalities = ["text", "image"];
     if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
     if (opts.effort) body.reasoning_effort = opts.effort;
     if (opts.temperature !== undefined) body.temperature = opts.temperature;
@@ -181,6 +196,7 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       return;
     }
     usage = foldTokenUsage(usage, doneEvent.usage);
+    for (const image of doneEvent.images ?? []) addImage(images, seenImages, image);
 
     // Length-truncated text on a DeepSeek endpoint: continue via the beta prefix
     // endpoint instead of handing the loop a cut-off half answer.
@@ -203,6 +219,7 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       reasoning: reasoning || doneEvent.reasoning,
       usage,
       ...(continuations > 0 ? { continuations } : {}),
+      ...(images.length > 0 ? { images } : {}),
     };
     return;
   }
@@ -242,6 +259,8 @@ export class StreamAccumulator {
  private usage: TokenUsage | null = null;
  private calls = new Map<number, { id: string; name: string; arguments: string }>();
  private nextImplicitIndex = 0;
+ private readonly images: StreamImage[] = [];
+ private readonly seenImages = new Set<string>();
  private readonly compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
 
  constructor(compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] }) {
@@ -276,6 +295,14 @@ export class StreamAccumulator {
     if (!choice) return null;
     if (choice.finish_reason) this.finishReason = choice.finish_reason;
 
+    // Generated pictures ride along with the text: `delta.images` while
+    // streaming (OpenRouter), a whole `message` when a gateway sends the
+    // completion in one frame, or image parts inside an array `content`.
+    // Frames repeat, so every image is de-duplicated by payload.
+    for (const image of [...imagesFromMessage(choice.delta), ...imagesFromMessage(choice.message)]) {
+      addImage(this.images, this.seenImages, image);
+    }
+
     const delta = choice.delta;
     if (!delta) return null;
 
@@ -298,14 +325,20 @@ export class StreamAccumulator {
       this.reasoning += reasoningDelta;
       return { type: "reasoning", delta: reasoningDelta };
     }
-    if (delta.content) {
-      this.content += delta.content;
-      return { type: "text", delta: delta.content };
+    const textDelta = textFromContent(delta.content);
+    if (textDelta) {
+      this.content += textDelta;
+      return { type: "text", delta: textDelta };
     }
     return null;
   }
 
-finish(): StreamEvent {
+/** Images collected so far, for callers that fold across continuations. */
+ collectedImages(): StreamImage[] {
+ return [...this.images];
+ }
+
+ finish(): StreamEvent {
  const toolCalls: AgentToolCall[] = [...this.calls.entries()]
  .sort(([a], [b]) => a - b)
  .map(([i, c]) => ({
@@ -322,8 +355,27 @@ finish(): StreamEvent {
  finishReason: this.finishReason,
  usage: this.usage,
  ...(this.compression ? { compression: this.compression } : {}),
+ ...(this.images.length > 0 ? { images: [...this.images] } : {}),
  };
  }
+}
+
+/**
+ * Text out of a `content` field. Usually a plain string; image-capable models
+ * send an array of parts where only the text ones belong in the transcript.
+ */
+function textFromContent(content: string | null | unknown[] | undefined): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let text = "";
+  for (const part of content) {
+    if (typeof part === "string") text += part;
+    else if (part && typeof part === "object") {
+      const rec = part as Record<string, unknown>;
+      if (typeof rec.text === "string" && (rec.type === undefined || rec.type === "text")) text += rec.text;
+    }
+  }
+  return text;
 }
 
 /** Collect a non-streamed completion (used by /compact summarization). */

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n.js";
-import { Icon } from "./Icon.js";
+import { Icon, type IconName } from "./Icon.js";
 import { ProfileMenu } from "./ProfileMenu.js";
 import { formatThreadAge, type Project, type Thread } from "../threads.js";
 import type { DeyinSettings, UserProfile } from "@deyin/contract";
@@ -114,6 +114,7 @@ export function Sidebar(props: SidebarProps) {
       >
         {thread.unread && <span className="thread-row__unread" />}
         <span className="thread-row__title">{thread.title}</span>
+        <ThreadMark thread={thread} />
         <ThreadAge updatedAt={thread.updatedAt} now={now} />
       </button>
     );
@@ -124,6 +125,31 @@ export function Sidebar(props: SidebarProps) {
         <button className="icon-btn" title={t("nav.collapseSidebar")} onClick={props.onCollapse}>
           <Icon name="panelLeft" size={15} />
         </button>
+        {/* Project actions stay out of the way until the sidebar is hovered. */}
+        <div className="sidebar__head-actions">
+          <button
+            className={`icon-btn icon-btn--small ${filterOpen ? "icon-btn--active" : ""}`}
+            title="Search projects"
+            onClick={() => {
+              setFilterOpen((v) => !v);
+              setFilter("");
+            }}
+          >
+            <Icon name="filter" size={13} />
+          </button>
+          <button
+            className="icon-btn icon-btn--small"
+            title={
+              props.platform === "desktop"
+                ? "New project — pick a folder as your workspace"
+                : "Folder workspaces are available in the desktop app"
+            }
+            disabled={props.platform !== "desktop"}
+            onClick={props.onNewProject}
+          >
+            <Icon name="folderPlus" size={14} />
+          </button>
+        </div>
         <div className="sidebar__head-spacer" />
         <button className="icon-btn" title={t("nav.back")} disabled={!props.canBack} onClick={props.onBack}>
           <Icon name="arrowLeft" size={14} />
@@ -144,11 +170,11 @@ export function Sidebar(props: SidebarProps) {
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
         </button>
-        <button className="nav-item nav-item--accent" onClick={props.onOpenAutomations}>
+        <button className="nav-item nav-item--feature" onClick={props.onOpenAutomations}>
           <Icon name="automation" size={14} />
           <span>{t("nav.automations")}</span>
         </button>
-        <button className="nav-item nav-item--accent" onClick={props.onOpenCustomize}>
+        <button className="nav-item nav-item--feature" onClick={props.onOpenCustomize}>
           <Icon name="customize" size={14} />
           <span>{t("nav.customize")}</span>
         </button>
@@ -163,34 +189,6 @@ export function Sidebar(props: SidebarProps) {
             </div>
           </>
         )}
-
-        <div className="sidebar__section-row">
-          <div className="sidebar__section">{t("nav.projects")}</div>
-          <div className="sidebar__section-actions">
-            <button
-              className={`icon-btn icon-btn--small ${filterOpen ? "icon-btn--active" : ""}`}
-              title="Search projects"
-              onClick={() => {
-                setFilterOpen((v) => !v);
-                setFilter("");
-              }}
-            >
-              <Icon name="filter" size={13} />
-            </button>
-            <button
-              className="icon-btn icon-btn--small"
-              title={
-                props.platform === "desktop"
-                  ? "New project — pick a folder as your workspace"
-                  : "Folder workspaces are available in the desktop app"
-              }
-              disabled={props.platform !== "desktop"}
-              onClick={props.onNewProject}
-            >
-              <Icon name="folderPlus" size={14} />
-            </button>
-          </div>
-        </div>
 
         {filterOpen && (
           <input
@@ -211,7 +209,7 @@ export function Sidebar(props: SidebarProps) {
                 onClick={() => props.onSelectProject(project.id)}
                 title={project.root ?? project.name}
               >
-                <Icon name={active ? "folderOpen" : "folder"} size={14} />
+                <Icon name={project.root === null ? "home" : active ? "folderOpen" : "folder"} size={14} />
                 <span className="project__name">{project.name}</span>
               </button>
               {projectThreads(project.threads).map((thread) => renderThread(project.id, thread, true))}
@@ -250,6 +248,26 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
     </aside>
+  );
+}
+
+/** Small state glyph in the row's trailing slot: goal, plan, mode or open todos. */
+function ThreadMark({ thread }: { thread: Thread }) {
+  const mark: { icon: IconName; title: string } | null = thread.goal
+    ? { icon: "flag", title: `Goal: ${thread.goal.text}` }
+    : thread.planMarkdown
+      ? { icon: "book", title: "Has a plan" }
+      : thread.mode === "ask"
+        ? { icon: "message", title: "Ask mode" }
+        : thread.todos?.some((todo) => todo.status !== "completed" && todo.status !== "cancelled")
+          ? { icon: "list", title: "Open todos" }
+          : null;
+
+  if (!mark) return null;
+  return (
+    <span className="thread-row__mark" title={mark.title}>
+      <Icon name={mark.icon} size={11} />
+    </span>
   );
 }
 

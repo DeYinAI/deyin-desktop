@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CardGrid, PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings, EnvInfo } from "@deyin/contract";
 
 interface Props {
@@ -22,8 +22,8 @@ export function TerminalPage({ settings, onChange }: Props) {
     <div className="settings-page">
       <PageHeader title="Terminal" description="Defaults for integrated terminal sessions." />
 
-      <SectionTitle>Shell</SectionTitle>
-      <CardGrid>
+      <SectionHeader title="Shell" />
+      <SettingGroup>
       <SettingCard
         title="Default shell"
         description={
@@ -52,10 +52,10 @@ export function TerminalPage({ settings, onChange }: Props) {
           description={`Detected: ${env.wslDistros.join(", ")}. Pick one above to make it the default.`}
         />
       )}
-      </CardGrid>
+      </SettingGroup>
 
-      <SectionTitle>Display</SectionTitle>
-      <CardGrid>
+      <SectionHeader title="Display" />
+      <SettingGroup>
       <SettingCard title="Font size" description="Terminal text size; applies to open sessions immediately.">
         <div className="range-row">
           <input
@@ -67,6 +67,19 @@ export function TerminalPage({ settings, onChange }: Props) {
           />
           <span className="hint">{settings.terminalFontSize}px</span>
         </div>
+      </SettingCard>
+      <SettingCard title="Cursor" description="Shape of the caret in every terminal session.">
+        <select
+          className="select"
+          value={settings.terminalCursorStyle}
+          onChange={(e) =>
+            onChange({ terminalCursorStyle: e.target.value as DeyinSettings["terminalCursorStyle"] })
+          }
+        >
+          <option value="bar">Bar</option>
+          <option value="block">Block</option>
+          <option value="underline">Underline</option>
+        </select>
       </SettingCard>
       <SettingCard title="Scrollback" description="Lines of output kept per session.">
         <select
@@ -80,10 +93,45 @@ export function TerminalPage({ settings, onChange }: Props) {
           <option value="50000">50,000</option>
         </select>
       </SettingCard>
-      </CardGrid>
+      <SettingCard
+        title="Copy on selection"
+        description="Selecting terminal text puts it on the clipboard straight away."
+      >
+        <Toggle
+          checked={settings.terminalCopyOnSelect}
+          onChange={(v) => onChange({ terminalCopyOnSelect: v })}
+        />
+      </SettingCard>
+      </SettingGroup>
 
-      <SectionTitle>Agent</SectionTitle>
-      <CardGrid>
+      <SectionHeader title="Shortcuts" />
+      <SettingGroup>
+        <SettingCard
+          title="New terminal"
+          description="Opens another tab with the default shell."
+        >
+          <kbd className="kbd">Ctrl/Cmd + Shift + T</kbd>
+        </SettingCard>
+        <SettingCard title="Close terminal tab" description="Closes the focused session.">
+          <kbd className="kbd">Ctrl/Cmd + Shift + W</kbd>
+        </SettingCard>
+        <SettingCard title="Switch tab" description="Jump straight to the nth session.">
+          <kbd className="kbd">Alt + 1…9</kbd>
+        </SettingCard>
+        <SettingCard
+          title="Copy / paste"
+          description="Selecting text also copies it automatically."
+        >
+          <kbd className="kbd">Ctrl/Cmd + Shift + C / V</kbd>
+        </SettingCard>
+        <SettingCard
+          title="Resize the panel"
+          description="Drag its top edge, or double-click that edge to maximize and restore."
+        />
+      </SettingGroup>
+
+      <SectionHeader title="Agent" />
+      <SettingGroup>
       <SettingCard
         title="Reveal terminal on agent command"
         description="Open the terminal panel and focus the Agent tab when the chat agent first runs a shell command."
@@ -93,7 +141,7 @@ export function TerminalPage({ settings, onChange }: Props) {
           onChange={(v) => onChange({ revealTerminalOnAgentCommand: v })}
         />
       </SettingCard>
-      </CardGrid>
+      </SettingGroup>
     </div>
   );
 }
