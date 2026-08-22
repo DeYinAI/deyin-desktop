@@ -116,7 +116,20 @@ export default defineConfig({
     plugins: [react(), removeCrossOriginPlugin()],
     build: {
       outDir: resolve(root, "out/renderer"),
-      rollupOptions: { input: resolve(rendererRoot, "index.html") },
+      rollupOptions: {
+        input: resolve(rendererRoot, "index.html"),
+        output: {
+          manualChunks: (id) => {
+            if (id.includes("node_modules")) {
+              if (id.includes("@xterm")) return "xterm";
+              if (id.includes("react-markdown") || id.includes("remark") || id.includes("unified") || id.includes("micromark") || id.includes("mdast") || id.includes("hast")) return "markdown";
+              if (id.includes("react") || id.includes("scheduler")) return "react";
+              return "vendor";
+            }
+            return undefined;
+          },
+        },
+      },
     },
   },
 });

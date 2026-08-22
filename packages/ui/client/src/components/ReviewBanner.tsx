@@ -1,4 +1,5 @@
 import { Icon } from "./Icon.js";
+import { CodeTag, FindingRow } from "./ui/index.js";
 import type { PendingChange, SecurityFinding } from "@deyin/contract";
 
 interface ReviewBannerProps {
@@ -22,18 +23,17 @@ export function ReviewBanner(props: ReviewBannerProps) {
         {props.changes.length} change{props.changes.length === 1 ? "" : "s"} awaiting review
       </span>
       {hasSecurity && (
-        <div className="review-banner__security">
-          <Icon name="shield" size={14} />
-          <span>
-            {props.securityFindings!.length} high-severity security finding
-            {props.securityFindings!.length === 1 ? "" : "s"}
-          </span>
-          {props.onOpenSecurity && (
-            <button type="button" className="btn btn--ghost btn--sm" onClick={props.onOpenSecurity}>
-              View
-            </button>
-          )}
-        </div>
+        <FindingRow
+          severity={topSeverity(props.securityFindings!)}
+          title={`${props.securityFindings!.length} high-severity security finding${props.securityFindings!.length === 1 ? "" : "s"}`}
+          actions={
+            props.onOpenSecurity && (
+              <button type="button" className="btn btn--ghost btn--sm" onClick={props.onOpenSecurity}>
+                View
+              </button>
+            )
+          }
+        />
       )}
       {props.changes.length > 0 && (
         <>
@@ -53,15 +53,21 @@ export function ReviewBanner(props: ReviewBannerProps) {
           </div>
           <ul className="review-banner__list">
             {props.changes.map((c) => (
-              <li key={c.id} className="review-banner__item">
-                <span className="review-banner__path">{c.path.split(/[\\/]/).pop() ?? c.path}</span>
-                <span className="review-banner__tool">{c.tool}</span>
-                <button type="button" className="btn btn--primary btn--sm" onClick={() => props.onApprove(c.id)}>
-                  Accept
-                </button>
-                <button type="button" className="btn btn--ghost btn--sm" onClick={() => props.onReject(c.id)}>
-                  Reject
-                </button>
+              <li key={c.id}>
+                <FindingRow
+                  title={<CodeTag>{c.path.split(/[\\/]/).pop() ?? c.path}</CodeTag>}
+                  meta={[c.tool]}
+                  actions={
+                    <>
+                      <button type="button" className="btn btn--primary btn--sm" onClick={() => props.onApprove(c.id)}>
+                        Accept
+                      </button>
+                      <button type="button" className="btn btn--ghost btn--sm" onClick={() => props.onReject(c.id)}>
+                        Reject
+                      </button>
+                    </>
+                  }
+                />
               </li>
             ))}
           </ul>
@@ -69,4 +75,8 @@ export function ReviewBanner(props: ReviewBannerProps) {
       )}
     </div>
   );
+}
+
+function topSeverity(findings: SecurityFinding[]): "critical" | "high" {
+  return findings.some((f) => f.severity === "critical") ? "critical" : "high";
 }

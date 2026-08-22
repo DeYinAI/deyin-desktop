@@ -136,6 +136,31 @@ test("subagents: the review built-ins cannot write, and their prompts carry the 
   }
 });
 
+test("subagents: cursor-parity built-ins ship with expected tool allowlists", async () => {
+  const found = await discoverSubagents([]);
+  const shell = found.find((s) => s.name === "shell");
+  assert.ok(shell);
+  assert.deepEqual(shell?.tools, ["bash", "read", "grep", "glob", "ls", "todo_write", "todo_read"]);
+  assert.equal(shell?.maxSteps, 30);
+
+  const browser = found.find((s) => s.name === "browser");
+  assert.ok(browser?.readonly);
+  assert.ok(browser?.tools?.includes("browser_navigate"));
+  assert.ok(browser?.tools?.includes("browser_snapshot"));
+
+  const docs = found.find((s) => s.name === "docs-researcher");
+  assert.ok(docs?.readonly);
+  assert.deepEqual(docs?.tools, ["web_fetch", "websearch", "read", "grep", "glob"]);
+  assert.equal(docs?.effort, "medium");
+
+  const ci = found.find((s) => s.name === "ci-investigator");
+  assert.ok(ci?.readonly);
+  assert.ok(ci?.tools?.includes("bash"));
+  assert.ok(ci?.tools?.includes("git_diff"));
+  assert.equal(ci?.effort, "high");
+  assert.equal(ci?.maxSteps, 40);
+});
+
 test("subagents: invalid effort and max_steps fall back to undefined", async () => {
   const dir = tempDir();
   try {

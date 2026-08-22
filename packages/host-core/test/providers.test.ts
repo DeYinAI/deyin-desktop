@@ -6,12 +6,14 @@ test("DEFAULT_PROVIDERS: openference stays primary, presets are custom with base
   const ids = DEFAULT_PROVIDERS.map((p) => p.id);
   assert.equal(ids[0], "openference");
   assert.equal(DEFAULT_PROVIDERS[0]!.kind, "primary");
+  assert.equal(DEFAULT_PROVIDERS[0]!.enabled, true);
 
   for (const id of ["deepseek", "openai", "anthropic", "google", "openrouter", "groq", "xai", "mistral", "ollama"]) {
     assert.ok(ids.includes(id), `missing preset ${id}`);
     const p = DEFAULT_PROVIDERS.find((x) => x.id === id)!;
     assert.equal(p.kind, "custom");
     assert.equal(p.preset, true);
+    assert.equal(p.enabled, false, `${id} should be off by default`);
     assert.ok(p.baseUrl!.startsWith("http"), `${id} needs a baseUrl`);
   }
 

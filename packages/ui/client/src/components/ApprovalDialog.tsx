@@ -6,11 +6,13 @@ export type ApprovalDecision = "allow" | "allow-always" | "deny";
 interface Props {
   toolName: string;
   summary: string;
+  /** How many requests are waiting, including this one (parallel tool calls). */
+  pendingCount?: number;
   onDecision: (decision: ApprovalDecision) => void;
 }
 
 /** Permission prompt for agent tool calls in ask-first mode. */
-export function ApprovalDialog({ toolName, summary, onDecision }: Props) {
+export function ApprovalDialog({ toolName, summary, pendingCount = 1, onDecision }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Never hijack keys while the user is typing (composer / inputs).
@@ -29,6 +31,7 @@ export function ApprovalDialog({ toolName, summary, onDecision }: Props) {
       <div className="inline-card__text">
         <div className="inline-card__title">
           Allow <code>{toolName}</code>?
+          {pendingCount > 1 && <span className="inline-card__count"> · {pendingCount - 1} more waiting</span>}
         </div>
         <div className="inline-card__body inline-card__body--mono" title={summary}>
           {summary}

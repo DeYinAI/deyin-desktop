@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, createElement, useEffect, useMemo, useRef, useState } from "react";
 import { themeByName } from "../code.js";
 import { computeLineDiff, type FileDiff } from "../diff.js";
 import { useT } from "../i18n.js";
@@ -6,9 +6,12 @@ import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
 import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
 import { SubagentPanel, type SubagentEvent } from "./SubagentPanel.js";
-import { TerminalPanel, type AttachableTerminal } from "./TerminalPanel.js";
+import type { AttachableTerminal } from "./TerminalPanel.js";
+// xterm is large and only needed when the terminal tab opens; keep it out of the
+// initial chunk via a lazy boundary.
+const TerminalPanel = lazy(() => import("./TerminalPanel.js").then((m) => ({ default: m.TerminalPanel })));
 import { Icon } from "./Icon.js";
-import { PANEL_TABS } from "./panelTabs.js";
+import { panelTabDef } from "./panelTabs.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
 import type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
@@ -44,7 +47,6 @@ interface WorkspacePanelProps {
   browserPartition: string | null;
   codeDisplay: CodeDisplaySettings;
   browserControlEnabled: boolean;
-  onSelectTab: (tab: PanelTab) => void;
   /** Open a git file diff in the Diff tab. */
   onOpenGitDiff?: (diff: FileDiff) => void;
   onNavigate: (url: string) => void;
@@ -74,28 +76,25 @@ interface WorkspacePanelProps {
 export function WorkspacePanel(props: WorkspacePanelProps) {
   const subagentRuns = props.subagentRuns ?? [];
   const runningSubagents = subagentRuns.filter((r) => r.status === "running").length;
+  // The icon rail to the left is the tab switcher; the header only names the
+  // view that rail selected, so the tab list is not drawn twice.
+  const tab = panelTabDef(props.activeTab);
+  const title = props.activeTab === "diff" && props.diff ? props.diff.fileName : tab.label;
   return (
     <section className="wspanel">
       <div className="wspanel__tabs">
         <button className="icon-btn icon-btn--small" title="Collapse panel" onClick={props.onCollapse}>
           <Icon name="chevronsRight" size={13} />
         </button>
-        <div className="wspanel__tablist">
-          {PANEL_TABS.map((tab) => (
-            <TabButton
-              key={tab.id}
-              icon={tab.icon}
-              label={tab.id === "diff" && props.diff ? props.diff.fileName : tab.label}
-              badge={tab.id === "diff" && props.diff ? "Diff" : undefined}
-              dot={
-                (tab.id === "diff" && Boolean(props.diff)) ||
-                (tab.id === "agent" && runningSubagents > 0)
-              }
-              badgeCount={tab.id === "agent" && runningSubagents > 0 ? runningSubagents : undefined}
-              active={props.activeTab === tab.id}
-              onClick={() => props.onSelectTab(tab.id)}
-            />
-          ))}
+        <div className="wspanel__title">
+          <Icon name={tab.icon} size={13} className="wspanel__title-icon" />
+          <span className="wspanel__title-text" title={title}>
+            {title}
+          </span>
+          {props.activeTab === "diff" && props.diff && <span className="wstab__badge">Diff</span>}
+          {props.activeTab === "agent" && runningSubagents > 0 && (
+            <span className="wstab__badge">{runningSubagents}</span>
+          )}
         </div>
       </div>
 
@@ -111,6 +110,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "terminal"}>
+        <Suspense fallback={null}>
         <TerminalPanel
           embedded
           cwd={props.workspaceRoot}
@@ -123,6 +123,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           theme={props.terminalTheme ?? "dark"}
           attachSessions={props.terminalAttachSessions}
         />
+        </Suspense>
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "plan"}>
         <PlanTab
@@ -175,28 +176,6 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         />
       </div>
     </section>
-  );
-}
-
-function TabButton(props: {
-  icon: string;
-  label: string;
-  active: boolean;
-  badge?: string;
-  badgeCount?: number;
-  dot?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button className={`wstab ${props.active ? "wstab--active" : ""}`} onClick={props.onClick} title={props.label}>
-      <Icon name={props.icon} size={13} className="wstab__icon" />
-      {props.dot && <span className="wstab__dot" />}
-      <span className="wstab__label">{props.label}</span>
-      {props.badge && <span className="wstab__badge">{props.badge}</span>}
-      {props.badgeCount !== undefined && props.badgeCount > 0 && (
-        <span className="wstab__badge">{props.badgeCount}</span>
-      )}
-    </button>
   );
 }
 

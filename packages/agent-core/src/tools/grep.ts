@@ -2,11 +2,19 @@ import { spawn } from "node:child_process";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { ToolDefinition } from "../types.js";
+import { nativeAvailable, nativeGrep } from "../native.js";
 import { matchGlob } from "./globmatch.js";
 import { IGNORED_DIRS, asOptionalBoolean, asOptionalNumber, asOptionalString, asString, resolvePath, truncate } from "./util.js";
 
 const DEFAULT_MAX_RESULTS = 100;
 const MAX_FILE_BYTES = 1_000_000;
+
+/** Patterns the native subset engine handles; complex regex uses ripgrep. */
+function isNativeGrepPattern(pattern: string): boolean {
+  if (/[|()]/.test(pattern)) return false;
+  if (pattern.startsWith("^") || pattern.endsWith("$")) return false;
+  return true;
+}
 
 function runRipgrep(args: string[], cwd: string, signal?: AbortSignal): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolvePromise) => {
@@ -15,10 +23,10 @@ function runRipgrep(args: string[], cwd: string, signal?: AbortSignal): Promise<
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
-    child.on("error", () => resolvePromise({ ok: false, output: "" })); // rg not installed
+    child.on("error", () => resolvePromise({ ok: false, output: "" }));
     child.on("close", (code) => {
       if (code === 0) resolvePromise({ ok: true, output: stdout });
-      else if (code === 1) resolvePromise({ ok: true, output: "" }); // no matches
+      else if (code === 1) resolvePromise({ ok: true, output: "" });
       else resolvePromise({ ok: false, output: stderr });
     });
   });
@@ -55,7 +63,7 @@ async function jsGrep(
         const info = await stat(full);
         if (info.size > MAX_FILE_BYTES) continue;
         const buf = await readFile(full);
-        if (buf.includes(0)) continue; // binary
+        if (buf.includes(0)) continue;
         const lines = buf.toString("utf8").split("\n");
         for (let i = 0; i < lines.length && results.length < maxResults; i++) {
           if (pattern.test(lines[i]!)) results.push(`${rel}:${i + 1}:${lines[i]!.slice(0, 400)}`);
@@ -68,10 +76,19 @@ async function jsGrep(
   return results;
 }
 
+function formatNativeGrep(native: { matches: { file: string; lineNumber: number; lineText: string }[]; truncated: boolean }, maxResults: number): string {
+  let lines = native.matches.map((m) => `${m.file}:${m.lineNumber}:${m.lineText}`);
+  if (native.truncated || lines.length >= maxResults) {
+    lines = lines.slice(0, maxResults);
+    lines.push("… [results truncated]");
+  }
+  return truncate(lines.join("\n"));
+}
+
 export const grepTool: ToolDefinition = {
   name: "grep",
   description:
-    "Search file contents with a regular expression. Returns file:line:text matches. Uses ripgrep when available. Filter files with the glob parameter (e.g. \"*.ts\").",
+    "Search file contents with a regular expression. Returns file:line:text matches. Prefers the in-process native engine when available, then ripgrep, then a JS walk. Filter files with the glob parameter (e.g. \"*.ts\").",
   tier: "read",
   parameters: {
     type: "object",
@@ -92,6 +109,15 @@ export const grepTool: ToolDefinition = {
     const ignoreCase = asOptionalBoolean(args.ignore_case) ?? false;
     const maxResults = asOptionalNumber(args.max_results) ?? DEFAULT_MAX_RESULTS;
 
+    // Native fast path: only for patterns/globs the Rust engine handles reliably.
+    // Empty native results fall through to ripgrep (native may miss vs rg).
+    if (nativeAvailable() && isNativeGrepPattern(pattern)) {
+      const native = nativeGrep(root, pattern, glob, maxResults, ignoreCase);
+      if (native && native.matches.length > 0) {
+        return formatNativeGrep(native, maxResults);
+      }
+    }
+
     const rgArgs = ["--line-number", "--no-heading", "--color", "never", "--max-count", "20", "-e", pattern];
     if (ignoreCase) rgArgs.push("-i");
     if (glob) rgArgs.push("--glob", glob);
@@ -103,7 +129,6 @@ export const grepTool: ToolDefinition = {
       return lines.length > 0 ? truncate(lines.join("\n")) : "No matches found.";
     }
 
-    // Fallback: pure-JS walk (rg missing or errored).
     const re = new RegExp(pattern, ignoreCase ? "i" : undefined);
     const results = await jsGrep(re, root, glob, maxResults);
     return results.length > 0 ? truncate(results.join("\n")) : "No matches found.";

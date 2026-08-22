@@ -37,6 +37,7 @@ export type ClientMessage =
       prompt: string;
       model: string;
       thinking: boolean;
+      effort?: "low" | "medium" | "high";
       approvalMode: "full-access" | "ask-first" | "read-only";
       mode: "agent" | "plan" | "ask" | "delivery";
       history: { role: "user" | "assistant"; content: string }[];

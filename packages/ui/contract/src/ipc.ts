@@ -2,9 +2,17 @@ import type {
   AccountUsage,
   AgentEventEnvelope,
   AgentStartOptions,
+  AgentUiEvent,
+  Automation,
+  AutomationInfo,
+  AutomationRun,
   Bootstrap,
   CapabilityItem,
   CapabilityKind,
+  SshHostCredentials,
+  SshHostInfo,
+  SshHostInput,
+  SshTestResult,
   DeyinSettings,
   DiagnosticsResult,
   EnvInfo,
@@ -65,6 +73,12 @@ import type {
 
 /** Decision for an agent permission request (mirrors agent-core). */
 export type AgentPermissionDecision = "allow" | "allow-always" | "deny";
+
+/** Result of create/update — includes the mutated automation so UI can select by id. */
+export interface AutomationMutationResult {
+  automation: Automation;
+  list: AutomationInfo[];
+}
 
 /** One kernel-hosted plugin's lifecycle state, for the Plugins settings page. */
 export interface KernelPluginStatus {
@@ -172,6 +186,12 @@ export const CH = {
   browserEnsure: "deyin:browser:ensure",
   browserTabCommand: "deyin:browser:tabCommand",
   browserActive: "deyin:browser:active",
+  computerUseActive: "deyin:computerUse:active",
+  computerUseGetAllowlist: "deyin:computerUse:getAllowlist",
+  computerUseSetAllowlist: "deyin:computerUse:setAllowlist",
+  computerUseListApps: "deyin:computerUse:listApps",
+  computerUseAppApprovalRequest: "deyin:computerUse:appApproval-request",
+  computerUseAppApprovalRespond: "deyin:computerUse:appApproval-respond",
   visualizeRead: "deyin:visualize:read",
   imagesSave: "deyin:images:save",
   imagesRead: "deyin:images:read",
@@ -225,6 +245,25 @@ export const CH = {
   securityScanDiff: "deyin:security:scanDiff",
   securityFindingsChanged: "deyin:security:findingsChanged",
   betaFeedbackSubmit: "deyin:beta:feedback",
+  automationsList: "deyin:automations:list",
+  automationsCreate: "deyin:automations:create",
+  automationsUpdate: "deyin:automations:update",
+  automationsDelete: "deyin:automations:delete",
+  automationsToggle: "deyin:automations:toggle",
+  automationsRun: "deyin:automations:run",
+  automationsStop: "deyin:automations:stop",
+  automationsRuns: "deyin:automations:runs",
+  automationEvent: "deyin:automations:event",
+  automationRunFinished: "deyin:automations:runFinished",
+  sshHostsList: "deyin:ssh:list",
+  sshHostsAdd: "deyin:ssh:add",
+  sshHostsUpdate: "deyin:ssh:update",
+  sshHostsRemove: "deyin:ssh:remove",
+  sshHostsSetCredentials: "deyin:ssh:setCredentials",
+  sshHostsTest: "deyin:ssh:test",
+  sshHostsPinFingerprint: "deyin:ssh:pinFingerprint",
+  sshHostsImportKey: "deyin:ssh:importKey",
+  wslTestDistro: "deyin:automations:wslTest",
 } as const;
 
 /** The API the preload script exposes on `window.deyin`. */
@@ -252,7 +291,12 @@ export interface DeyinApi {
     write(path: string, content: string): Promise<void>;
   };
   workspace: {
-    openFolder(): Promise<string | null>;
+    /**
+     * Native folder picker. `startIn` opens it somewhere specific — Windows
+     * hosts pass a `\\wsl.localhost\<distro>` root so a WSL project is one
+     * click away instead of a path the user has to type.
+     */
+    openFolder(startIn?: string): Promise<string | null>;
     /** Point the host's workspace cwd at a folder (terminal/files/agent); persisted. */
     setRoot(root: string | null): Promise<void>;
     /** Current workspace / sandbox root (may change after a web host reconnect). */
@@ -304,6 +348,35 @@ export interface DeyinApi {
    * dedicated branch, ship via commit → push → merge). Optional: only the web
    * transport implements it; desktop uses workspace.openFolder + git.
    */
+  /**
+   * Scheduled + manual agent runs (desktop only — the web host has no scheduler,
+   * so it leaves this undefined rather than stubbing one).
+   */
+  automations?: {
+    list(): Promise<AutomationInfo[]>;
+    create(input: Omit<Automation, "id" | "createdAt" | "updatedAt">): Promise<AutomationMutationResult>;
+    update(id: string, patch: Partial<Omit<Automation, "id" | "createdAt">>): Promise<AutomationMutationResult>;
+    remove(id: string): Promise<AutomationInfo[]>;
+    toggle(id: string, enabled: boolean): Promise<AutomationInfo[]>;
+    run(id: string): Promise<AutomationRun>;
+    stop(runId: string): void;
+    runs(automationId?: string): Promise<AutomationRun[]>;
+    /** Probe a WSL distro for Node 20+ and the deyin CLI. */
+    testWsl(distro: string): Promise<{ ok: boolean; message: string; nodeVersion?: string; deyinVersion?: string }>;
+    onEvent(cb: (payload: { runId: string; automationId: string; event: AgentUiEvent }) => void): () => void;
+    onRunFinished(cb: (payload: { run: AutomationRun }) => void): () => void;
+  };
+  /** SSH targets for remote automation runs (desktop only). */
+  sshHosts?: {
+    list(): Promise<SshHostInfo[]>;
+    add(input: SshHostInput): Promise<SshHostInfo[]>;
+    update(id: string, patch: Partial<SshHostInput>): Promise<SshHostInfo[]>;
+    remove(id: string): Promise<SshHostInfo[]>;
+    setCredentials(id: string, creds: SshHostCredentials): Promise<SshHostInfo[]>;
+    test(hostId: string, acceptFingerprint?: string): Promise<SshTestResult>;
+    pinFingerprint(hostId: string, fingerprint: string): Promise<SshHostInfo[]>;
+    importKey(): Promise<string | null>;
+  };
   repo?: {
     connect(opts: RepoConnectRequest): Promise<RepoStateResult>;
     state(): Promise<RepoStateResult>;
@@ -404,6 +477,18 @@ export interface DeyinApi {
     onTabCommand(cb: (cmd: BrowserTabCommand) => void): () => void;
     /** True while browser_* agent tools are in flight. */
     onActive(cb: (active: boolean) => void): () => void;
+  };
+  /**
+   * OS desktop automation. Optional: only the desktop transport implements it,
+   * and the underlying plugin is Windows-only — the web host has no OS to drive.
+   */
+  computerUse?: {
+    getAllowlist(): Promise<string[]>;
+    setAllowlist(apps: string[]): Promise<string[]>;
+    listApps(): Promise<unknown>;
+    onActive(cb: (active: boolean) => void): () => void;
+    onAppApprovalRequest(cb: (req: { requestId: string; appId: string; action: string }) => void): () => void;
+    respondAppApproval(requestId: string, decision: "always" | "once" | "deny"): void;
   };
   visualize: {
     read(threadId: string, fileName: string): Promise<string>;

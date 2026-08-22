@@ -44,6 +44,21 @@ test("session grants allow without prompting until the process ends", () => {
   assert.deepEqual(engine.listSessionGrants(), ["bash"]);
 });
 
+test("a shared grant set carries \"allow always\" across runs and reconfigures", () => {
+  const grants = new Set<string>();
+  const firstRun = new PermissionEngine({ sessionGrants: grants });
+  firstRun.grantForSession("bash");
+  assert.deepEqual([...grants], ["bash"]);
+
+  // The next message builds a brand-new engine; the grant must still hold.
+  const secondRun = new PermissionEngine({ sessionGrants: grants });
+  assert.equal(secondRun.actionFor(bash), "allow");
+
+  // And a mid-run mode switch must not revoke it.
+  secondRun.reconfigure({ sessionGrants: grants });
+  assert.equal(secondRun.actionFor(bash), "allow");
+});
+
 test("session grants cannot override deny rules", () => {
   const engine = new PermissionEngine({
     agentRules: [{ tool: "write", action: "deny" }, { tool: "edit", action: "deny" }],

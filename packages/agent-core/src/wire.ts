@@ -1,8 +1,10 @@
 import { ContentCompressor, type CompressionMode, type CompressionResult } from "./compression.js";
 import { countTokens } from "./tokenizer.js";
+import type { AgentRunProviderHint } from "@deyin/host-core/shared";
 import type { AgentMessage } from "./types.js";
 
-export type PromptCacheProvider = "openai" | "anthropic" | "openference" | "deepseek" | "auto";
+/** Provider hint for wire cache markers (shared with host-core `resolveWireProvider`). */
+export type PromptCacheProvider = AgentRunProviderHint;
 
 export interface WireOptions {
  enableCompression?: boolean;

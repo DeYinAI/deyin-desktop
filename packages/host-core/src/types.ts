@@ -336,21 +336,7 @@ export interface Advanced agentCacheInvalidationEntry {
   hitRate?: number;
 }
 
-export interface Advanced agentCoordinatorEntry {
-  at: number;
-  threadId: string;
-  route: string;
-  reason: string;
-}
-
-export interface Advanced agentFleetEntry {
-  at: number;
-  threadId: string;
-  kind: "preflight" | "start" | "complete" | "conflict" | "background-job";
-  detail: string;
-  taskCount?: number;
-}
-
+/** Kept for cache invalidation history; coordinator/fleet entries removed with those features. */
 export interface Advanced agentEvidenceEntry {
   at: number;
   threadId: string;
@@ -372,8 +358,6 @@ export interface Advanced agentDiagnostics {
     sessionMiss: number;
     hitRate: number;
   };
-  coordinator: Advanced agentCoordinatorEntry[];
-  fleet: Advanced agentFleetEntry[];
   evidence: Advanced agentEvidenceEntry[];
 }
 
@@ -434,12 +418,18 @@ export interface OnboardProgress {
 export interface DeyinSettings {
   /** Bumped when the settings shape changes; SettingsStore migrates on load. */
   schemaVersion: number;
-  theme: "dark" | "light" | "system";
+  theme: "dark" | "light" | "system" | "warm";
+  /** Interface accent id (overrides --color-accent via :root[data-accent]). */
+  themeAccent: string;
   language: string;
   fontSize: number;
   autoUpdate: boolean;
   telemetry: boolean;
   browserControlEnabled: boolean;
+  /** OS-level computer use (Windows). */
+  computerUseEnabled: boolean;
+  /** Days to retain local computer-use screenshots (default 7). */
+  computerUseScreenshotRetentionDays: number;
   defaultModel: string | null;
   /**
    * Per-phase model overrides: role -> "providerId::modelId" (a bare "modelId"
@@ -451,6 +441,8 @@ export interface DeyinSettings {
   subagentModels: Record<string, string>;
   /** Per-subagent reasoning-effort overrides: name -> "low" | "medium" | "high". */
   subagentEfforts: Record<string, string>;
+  /** Per-model reasoning mode: "providerId::modelId" -> off | low | medium | high. */
+  modelEfforts: Record<string, string>;
   /** Default step cap for subagent runs (frontmatter max_steps overrides). */
   subagentMaxSteps: number;
   /** Max subagent runs executing in parallel (1-32). */
@@ -482,6 +474,8 @@ export interface DeyinSettings {
   onboard: OnboardProgress;
   /** Keep scheduler alive in the tray when all windows are closed. */
   keepRunningInBackground: boolean;
+  /** Run a missed cron slot once on startup when the app was closed for it. */
+  automationsCatchUp: boolean;
   /** Tier-2: load semantic optimization plugin. */
   optimizationPluginEnabled: boolean;
   /** Background memory (remember/forget + automatic recall). */
@@ -496,18 +490,30 @@ export interface DeyinSettings {
 
 export type AutomationTarget =
   | { kind: "local"; workspacePath: string }
+  /** `distro` is a WSL distro name as listed by `EnvInfo.wslDistros`. */
+  | { kind: "wsl"; distro: string; workspacePath: string }
   | { kind: "ssh"; hostId: string; workspacePath: string };
 
 export type AutomationTrigger =
   | { kind: "cron"; expression: string }
   | { kind: "manual" };
 
+/**
+ * What the run actually executes. A raw prompt, or a reference to a capability
+ * already discovered by the registry — skills and subagents resolve by name at
+ * run time, so editing the SKILL.md changes what the automation does.
+ */
+export type AutomationPayload =
+  | { kind: "prompt"; prompt: string }
+  | { kind: "skill"; skill: string; input?: string }
+  | { kind: "subagent"; subagent: string; input?: string };
+
 export interface Automation {
   id: string;
   name: string;
   description?: string;
   enabled: boolean;
-  prompt: string;
+  payload: AutomationPayload;
   trigger: AutomationTrigger;
   target: AutomationTarget;
   model: string;
@@ -792,7 +798,7 @@ export type AgentUiEvent =
   | { type: "tool-end"; callId: string; name: string; summary: string; result: string; ok: boolean; denied?: boolean; cwd?: string }
  | { type: "file-change"; path: string; before: string; after: string }
  | { type: "todos"; todos: AgentTodoItem[] }
- | { type: "usage"; totalTokens: number }
+ | { type: "usage"; totalTokens: number; promptTokens?: number; completionTokens?: number; cachedPromptTokens?: number }
  | { type: "context-snapshot"; snapshot: ContextUsageSnapshot }
  | {
      type: "optimization";
@@ -813,6 +819,13 @@ export type AgentUiEvent =
      changeReasons?: Array<"system" | "tools" | "log_rewrite">;
    }
  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+ | {
+     type: "mcp-auth-needed";
+     requestId: string;
+     moduleId: string;
+     serverName: string;
+     message?: string;
+   }
  | {
      type: "question-request";
      requestId: string;
@@ -879,6 +892,8 @@ export interface AgentStartOptions {
   providerId: string;
   model: string;
   thinking: boolean;
+  /** Reasoning effort when the model supports it; omitted when unset. */
+  effort?: "low" | "medium" | "high";
   approvalMode: ApprovalMode;
   /** Composer mode: agent (build), plan (read-only research) or ask (read-only Q&A). */
   mode: ChatMode;

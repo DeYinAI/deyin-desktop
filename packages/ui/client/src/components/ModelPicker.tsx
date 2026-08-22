@@ -1,4 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import {
+  MODEL_REASONING_MODES,
+  getModelReasoningMode,
+  modelEffortKey,
+  reasoningModeLabel,
+  type ModelReasoningMode,
+} from "@deyin/host-core/shared";
 import { Icon } from "./Icon.js";
 import type { ModelInfo, ProviderInfo, ProviderModel } from "@deyin/contract";
 
@@ -11,6 +18,11 @@ interface ModelPickerProps {
   selectedProviderId?: string;
   onSelectProviderModel?: (providerId: string, modelId: string) => void;
   onManageModels?: () => void;
+  /** Per-model reasoning mode overrides ("providerId::modelId" -> off | low | medium | high). */
+  modelEfforts?: Record<string, string>;
+  /** Global thinking default when a model has no explicit mode. */
+  thinkingDefault?: boolean;
+  onSetModelEffort?: (providerId: string, modelId: string, mode: ModelReasoningMode | undefined) => void;
 }
 
 export function formatContext(n?: number): string | null {
@@ -20,32 +32,49 @@ export function formatContext(n?: number): string | null {
   return String(n);
 }
 
-/** Two-level picker: providers on the right, the hovered provider's models on the left. */
+/** Two-level picker: click a provider on the left, pick a model on the right. */
 export function ModelPicker(props: ModelPickerProps) {
   const [open, setOpen] = useState(false);
-  const [hoverProviderId, setHoverProviderId] = useState<string | null>(null);
+  const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
+  const [modeMenuKey, setModeMenuKey] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setModeMenuKey(null);
+      }
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
+  useEffect(() => {
+    if (!open) {
+      setModeMenuKey(null);
+      return;
+    }
+    const fallback = props.selectedProviderId ?? props.providers?.find((p) => p.enabled)?.id ?? null;
+    setActiveProviderId(fallback);
+  }, [open, props.selectedProviderId, props.providers]);
+
   const providers = (props.providers ?? []).filter((p) => p.enabled);
-  const activeProviderId = props.selectedProviderId ?? providers[0]?.id;
-  const shownProviderId = hoverProviderId ?? activeProviderId;
+  const sessionProviderId = props.selectedProviderId ?? providers[0]?.id;
+  const shownProviderId = activeProviderId ?? sessionProviderId;
   const shownProvider = providers.find((p) => p.id === shownProviderId);
 
   const modelsOf = (provider: ProviderInfo | undefined): ProviderModel[] => {
     const primaryModels = () => props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength, kind: m.kind }));
     if (!provider) return primaryModels();
     const list = provider.kind === "primary" ? primaryModels() : provider.models;
-    // Models switched off in Settings stay out of the picker.
     const disabled = new Set(provider.disabledModels);
     return list.filter((m) => !disabled.has(m.id));
+  };
+
+  const effortSettings = {
+    modelEfforts: props.modelEfforts ?? {},
+    thinking: props.thinkingDefault ?? true,
   };
 
   const currentLabel =
@@ -54,81 +83,64 @@ export function ModelPicker(props: ModelPickerProps) {
     props.selected ??
     "Select model";
 
+  const currentModeLabel =
+    sessionProviderId && props.selected
+      ? reasoningModeLabel(effortSettings, sessionProviderId, props.selected)
+      : null;
+
   const pick = (providerId: string | undefined, modelId: string) => {
     if (providerId && props.onSelectProviderModel) props.onSelectProviderModel(providerId, modelId);
     else props.onSelect(modelId);
     setOpen(false);
+    setModeMenuKey(null);
+  };
+
+  const setMode = (providerId: string, modelId: string, mode: ModelReasoningMode) => {
+    props.onSetModelEffort?.(providerId, modelId, mode);
+    setModeMenuKey(null);
   };
 
   const shownModels = modelsOf(shownProvider);
+  const showProviderRail = providers.length > 1;
 
   return (
     <div className="menu" ref={rootRef}>
-      <button className="chip" onClick={() => setOpen((v) => !v)}>
+      <button className="chip chip--model" onClick={() => setOpen((v) => !v)} title={currentLabel}>
         <span className="chip__dot" />
-        <span>{currentLabel}</span>
+        <span className="chip--model__label">
+          {currentLabel}
+          {currentModeLabel && currentModeLabel !== "Auto" && (
+            <span className="chip--model__mode">{currentModeLabel}</span>
+          )}
+        </span>
         <Icon name="chevronDown" size={11} />
       </button>
 
       {open && (
-        <div className="menu__panel menu__panel--up modelmenu">
-          <div className="modelmenu__models">
-            {shownModels.map((model) => (
-              <button
-                key={model.id}
-                className={`menu__item ${model.id === props.selected ? "menu__item--active" : ""}`}
-                onClick={() => pick(shownProvider?.id, model.id)}
-              >
-                <span className="modelmenu__name">{model.name}</span>
-                {model.kind === "image" ? (
-                  <span className="badge badge--muted" title="Text-to-image model">
-                    Image
-                  </span>
-                ) : (
-                  <>
-                    {model.imageOutput && (
-                      <span className="badge badge--muted" title="Chat model that can draw pictures">
-                        Draws
-                      </span>
-                    )}
-                    {formatContext(model.contextLength) && (
-                      <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
-                    )}
-                  </>
-                )}
-                {model.id === props.selected && <Icon name="check" size={12} />}
-              </button>
-            ))}
-            {shownModels.length === 0 && (
-              <div className="menu__item hint">
-                {shownProvider && shownProvider.disabledModels.length > 0
-                  ? "All models are switched off - enable some under Manage models"
-                  : shownProvider?.kind === "custom"
-                    ? "No models added yet"
-                    : "No models available"}
-              </div>
-            )}
-          </div>
-
-          {providers.length > 0 && (
+        <div className={`menu__panel menu__panel--up modelmenu ${showProviderRail ? "" : "modelmenu--single"}`}>
+          {showProviderRail && (
             <div className="modelmenu__providers">
               {providers.map((provider) => (
                 <button
                   key={provider.id}
-                  className={`menu__item ${provider.id === shownProviderId ? "menu__item--hover" : ""}`}
-                  onMouseEnter={() => setHoverProviderId(provider.id)}
-                  onClick={() => setHoverProviderId(provider.id)}
+                  type="button"
+                  className={`menu__item modelmenu__provider ${provider.id === shownProviderId ? "menu__item--active" : ""}`}
+                  onClick={() => {
+                    setActiveProviderId(provider.id);
+                    setModeMenuKey(null);
+                  }}
                 >
                   <span
                     className={`provider-row__status ${provider.status === "connected" ? "provider-row__status--on" : ""}`}
                   />
                   <span className="modelmenu__name">{provider.name}</span>
-                  {provider.id === activeProviderId && <Icon name="check" size={12} />}
+                  {provider.id === sessionProviderId && <Icon name="check" size={12} />}
                   <Icon name="chevronRight" size={11} />
                 </button>
               ))}
               <div className="modelmenu__rule" />
               <button
+                type="button"
                 className="menu__item"
                 onClick={() => {
                   setOpen(false);
@@ -139,6 +151,128 @@ export function ModelPicker(props: ModelPickerProps) {
               </button>
             </div>
           )}
+
+          <div className="modelmenu__models">
+            {showProviderRail && shownProvider && (
+              <div className="modelmenu__header">{shownProvider.name}</div>
+            )}
+            {shownModels.map((model) => {
+              const providerId = shownProvider?.id ?? sessionProviderId ?? "openference";
+              const key = modelEffortKey(providerId, model.id);
+              const isSelected = model.id === props.selected && providerId === sessionProviderId;
+              const savedMode = getModelReasoningMode(effortSettings, providerId, model.id);
+              const effectiveMode =
+                savedMode ?? (effortSettings.thinking ? ("auto" as const) : ("off" as const));
+              const modeLabel = reasoningModeLabel(effortSettings, providerId, model.id);
+              const showMode = model.kind !== "image" && props.onSetModelEffort;
+
+              return (
+                <div
+                  key={model.id}
+                  className={`modelmenu__row ${isSelected ? "modelmenu__row--active" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="modelmenu__pick"
+                    onClick={() => pick(shownProvider?.id, model.id)}
+                  >
+                    <span className="modelmenu__name">{model.name}</span>
+                    {model.kind === "image" ? (
+                      <span className="badge badge--muted" title="Text-to-image model">
+                        Image
+                      </span>
+                    ) : (
+                      <>
+                        {model.imageOutput && (
+                          <span className="badge badge--muted" title="Chat model that can draw pictures">
+                            Draws
+                          </span>
+                        )}
+                        {formatContext(model.contextLength) && (
+                          <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
+                        )}
+                      </>
+                    )}
+                    {isSelected && <Icon name="check" size={12} />}
+                  </button>
+
+                  {showMode && (
+                    <div className="modelmenu__mode-wrap">
+                      <button
+                        type="button"
+                        className={`modelmenu__mode ${modeMenuKey === key ? "modelmenu__mode--open" : ""}`}
+                        title="Reasoning mode"
+                        aria-label={`Reasoning mode: ${modeLabel}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setModeMenuKey((cur) => (cur === key ? null : key));
+                        }}
+                      >
+                        <Icon name="sliders" size={11} />
+                        <span>{modeLabel}</span>
+                      </button>
+                      {modeMenuKey === key && (
+                        <div className="modelmenu__mode-panel">
+                          <button
+                            type="button"
+                            className={`menu__item ${!savedMode ? "menu__item--active" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              props.onSetModelEffort?.(providerId, model.id, undefined);
+                              setModeMenuKey(null);
+                            }}
+                          >
+                            Auto
+                          </button>
+                          {MODEL_REASONING_MODES.map((mode) => (
+                            <button
+                              key={mode.id}
+                              type="button"
+                              className={`menu__item ${
+                                savedMode === mode.id || (!savedMode && mode.id === "off" && effectiveMode === "off")
+                                  ? "menu__item--active"
+                                  : ""
+                              }`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setMode(providerId, model.id, mode.id);
+                              }}
+                            >
+                              {mode.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {shownModels.length === 0 && (
+              <div className="menu__item hint">
+                {shownProvider && shownProvider.disabledModels.length > 0
+                  ? "All models are switched off - enable some under Manage models"
+                  : shownProvider?.kind === "custom"
+                    ? "No models added yet"
+                    : "No models available"}
+              </div>
+            )}
+            {!showProviderRail && (
+              <>
+                <div className="modelmenu__rule" />
+                <button
+                  type="button"
+                  className="menu__item"
+                  onClick={() => {
+                    setOpen(false);
+                    props.onManageModels?.();
+                  }}
+                >
+                  Manage models
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

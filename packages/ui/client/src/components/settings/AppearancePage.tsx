@@ -1,3 +1,4 @@
+import { ACCENTS, ACCENT_IDS } from "@deyin/branding";
 import { CodeBlock, DARK_CODE_THEMES, LIGHT_CODE_THEMES, themeByName } from "../../code.js";
 import { useT } from "../../i18n.js";
 import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
@@ -34,9 +35,31 @@ export function AppearancePage({ settings, onChange }: Props) {
           onChange={(e) => onChange({ theme: e.target.value as DeyinSettings["theme"] })}
         >
           <option value="dark">{t("appearance.dark")}</option>
+          <option value="warm">{t("appearance.warm")}</option>
           <option value="light">{t("appearance.light")}</option>
           <option value="system">{t("appearance.system")}</option>
         </select>
+      </SettingCard>
+      <SettingCard title={t("appearance.accentColor")} description={t("appearance.accentColorDesc")}>
+        <div className="swatch-row">
+          {ACCENT_IDS.map((id) => {
+            const tokens = ACCENTS[id];
+            if (!tokens) return null;
+            const active = (settings.themeAccent ?? "blue") === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`swatch ${active ? "swatch--active" : ""}`}
+                title={id}
+                aria-label={id}
+                aria-pressed={active}
+                onClick={() => onChange({ themeAccent: id })}
+                style={{ background: tokens.accent }}
+              />
+            );
+          })}
+        </div>
       </SettingCard>
       <SettingCard title={t("appearance.fontSize")} description={t("appearance.fontSizeDesc")}>
         <div className="range-row">
@@ -114,7 +137,7 @@ export function AppearancePage({ settings, onChange }: Props) {
           title="Dark preview"
           themeName={settings.codeThemeDark}
           variant="dark"
-          active={settings.theme !== "light"}
+          active={settings.theme === "dark" || settings.theme === "warm" || settings.theme === "system"}
           settings={settings}
         />
       </div>

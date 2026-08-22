@@ -76,6 +76,27 @@ function MarkdownBlock({ text, theme, display }: MarkdownProps) {
               />
             );
           },
+          code({ className, children, ...rest }) {
+            const isBlock = /language-/.test(className ?? "");
+            if (isBlock) return <code className={className} {...rest}>{children}</code>;
+            return <code className="ui-code-tag" {...rest}>{children}</code>;
+          },
+          blockquote({ children }) {
+            return <div className="ui-callout markdown-callout">{children}</div>;
+          },
+          h2({ children }) {
+            return <h2 className="md-section-heading">{children}</h2>;
+          },
+          h3({ children }) {
+            return <h3 className="md-section-heading md-section-heading--sub">{children}</h3>;
+          },
+          table({ children }) {
+            return (
+              <div className="md-table-wrap">
+                <table className="ui-data-table md-data-table">{children}</table>
+              </div>
+            );
+          },
           a({ href, children }) {
             return (
               <a

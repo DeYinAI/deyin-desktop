@@ -24,7 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts src/cache/__tests__/*.test.ts",
+    "test": "tsx --test test/*.test.ts src/cache/__tests__/*.test.ts && tsx src/compression-parity.test.ts",
     "test:e2e": "tsx --test test/e2e/*.test.ts",
     "test:migration": "tsx --test test/migration.test.ts",
     "test:edge": "tsx --test test/edge-cases.test.ts",
@@ -34,6 +34,7 @@
   },
   "dependencies": {
     "@deyin/host-core": "workspace:*",
+    "@deyin/native-core": "workspace:*",
     "@modelcontextprotocol/client": "^2.0.0"
   },
   "devDependencies": {

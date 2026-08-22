@@ -109,7 +109,7 @@ export async function* streamChatEvents(opts: StreamChatEventsOptions): AsyncGen
 async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): AsyncGenerator<StreamEvent> {
   const built = buildWireMessages(opts.messages, opts.wire ?? {});
   const base = opts.apiBaseUrl.replace(/\/+$/, "");
-  const isDeepSeek = /deepseek\./i.test(base);
+  const isDeepSeek = /deepseek\./i.test(base) || /deepseek/i.test(opts.model);
   const maxContinuations = opts.maxContinuations ?? 3;
 
   let wireMessages = built.messages as unknown as Record<string, unknown>[];
@@ -135,6 +135,11 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
     if (opts.effort) body.reasoning_effort = opts.effort;
     if (opts.temperature !== undefined) body.temperature = opts.temperature;
+    // DeepSeek defaults max_tokens to ~4k, which forces length-truncations (and
+    // extra billable beta continuations) on long answers. Ask for its full
+    // output window unless the caller chose an explicit cap.
+    const maxTokens = opts.maxTokens ?? (isDeepSeek ? 8192 : undefined);
+    if (maxTokens !== undefined) body.max_tokens = maxTokens;
     // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
     if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
     if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;

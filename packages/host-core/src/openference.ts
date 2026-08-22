@@ -1,4 +1,5 @@
 import type { ChatMessage, ProviderApiFormat } from "./types.js";
+import { ssePayloads } from "./sse-core.js";
 
 /** Token usage reported by the provider on the final stream frame. */
 export interface StreamUsage {
@@ -16,6 +17,8 @@ export interface StreamChatOptions {
   messages: ChatMessage[];
   /** Request model reasoning ("thinking") when supported. */
   thinking?: boolean;
+  /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
+  effort?: "low" | "medium" | "high";
   /** Called once with the real token usage, when the provider reports it. */
   onUsage?: (usage: StreamUsage) => void;
   signal?: AbortSignal;
@@ -56,40 +59,10 @@ function toUsage(u: {
   };
 }
 
-/** Split SSE lines into parsed JSON payloads (ignores keep-alives and [DONE]). */
+/** Typed view of the shared SSE payload stream (previously a local copy). */
 async function* sseJson(res: Response): AsyncGenerator<Record<string, unknown>> {
-  if (!res.body) throw new Error(`Chat request failed (${res.status}). Empty response body.`);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const payload = sseJsonLine(line);
-      if (payload !== null) yield payload;
-    }
-  }
-  // Flush the trailing buffer: streams are not required to end with "\n".
-  if (buffer.length > 0) {
-    const payload = sseJsonLine(buffer);
-    if (payload !== null) yield payload;
-  }
-}
-
-/** Parse one SSE `data:` line; null for keep-alives, [DONE] and junk. */
-function sseJsonLine(line: string): Record<string, unknown> | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("data:")) return null;
-  const payload = trimmed.slice(5).trim();
-  if (payload === "[DONE]" || payload.length === 0) return null;
-  try {
-    return JSON.parse(payload) as Record<string, unknown>;
-  } catch {
-    return null;
+  for await (const payload of ssePayloads(res)) {
+    yield payload as Record<string, unknown>;
   }
 }
 
@@ -134,6 +107,7 @@ async function* streamChatCompletions(opts: StreamChatOptions): AsyncGenerator<s
         stream: true,
         ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
         ...(opts.thinking !== undefined ? { reasoning: { enabled: opts.thinking } } : {}),
+        ...(opts.effort ? { reasoning_effort: opts.effort } : {}),
         ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
       }),
       signal: opts.signal,

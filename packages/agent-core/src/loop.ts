@@ -1,5 +1,10 @@
 import { compactMessages } from "./compaction.js";
 import {
+  comparePrefixShapes,
+  computePrefixShape,
+  shouldBumpLogRewriteVersion,
+} from "./cache/prefix-tracker.js";
+import {
   estimateContextUsage,
   splitToolSchemaTokens,
   type ContextSnapshot,
@@ -156,8 +161,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const todos = opts.todos ?? [];
   const tracker = new OptimizationTracker();
   const promptCacheKey = opts.promptCacheKey ?? `deyin-agent:${opts.model}:${opts.cwd}`;
-  const cacheKeyFor = (model: string): string =>
-    model === opts.model ? promptCacheKey : `${promptCacheKey}:${model}`;
+  // Stable across role-routed model switches: provider-side prefix caches key on
+  // the byte prefix (system+tools+history), not the model id, so appending a
+  // model suffix only fragmented caches without any matching benefit.
+  const cacheKeyFor = (_model: string): string => promptCacheKey;
   const evidenceGates = opts.evidenceGatesEnabled === true;
   const ledger = opts.evidenceLedger ?? (evidenceGates ? new EvidenceLedgerClass() : undefined);
 
@@ -195,6 +202,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let previousStep: PreviousStep | undefined;
   /** Model used by the previous step, so `model-routed` only fires on a change. */
   let previousModel = "";
+  /** Prefix shape of the previous request; drives per-turn cache diagnostics. */
+  let previousPrefixShape: ReturnType<typeof computePrefixShape> | undefined;
+  /** Bumped when compaction mutates the transcript prefix (invalidates provider cache). */
+  let logRewriteVersion = 0;
 
   for (let step = 1; step <= maxSteps; step++) {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
@@ -216,6 +227,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
 
     const compaction = compactMessages(opts.messages, budgetFor(stepWindow));
     if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0 || compaction.truncatedToolArgs > 0) {
+      if (shouldBumpLogRewriteVersion(compaction)) logRewriteVersion += 1;
       emit({ type: "compaction", ...compaction });
     }
 
@@ -279,6 +291,19 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
  }
  emit({ type: "usage", usage: { ...usage } });
  }
+ // Prefix-cache diagnostics: attribute hit/miss tokens to system/tools/log_rewrite
+ // churn so the UI and telemetry reflect real provider cache behaviour.
+ const shape = computePrefixShape(
+ opts.messages.find((m) => m.role === "system"),
+ toolSchemas,
+ logRewriteVersion,
+ schemaTokens,
+ );
+ const cached = event.usage?.cachedPromptTokens ?? 0;
+ const prompt = event.usage?.promptTokens ?? 0;
+ const diag = comparePrefixShapes(previousPrefixShape, shape, cached, Math.max(0, prompt - cached));
+ previousPrefixShape = shape;
+ tracker.recordPrefixShape(shape, diag);
  if (event.compression) {
  tracker.recordCompression(event.compression.originalTokens, event.compression.compressedTokens);
  }

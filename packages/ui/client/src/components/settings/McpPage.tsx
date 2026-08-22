@@ -175,21 +175,65 @@ export function McpPage({ onToggle, tabs }: { onToggle: (id: string, enabled: bo
   const moduleNeedsOAuth = (mod: McpModuleManifest | undefined): boolean =>
     mod?.authMode === "oauth" || Boolean(mod?.usesNativeOAuth);
 
+  /** Who publishes the server. Falls back to where its definition lives. */
+  const originOf = (server: McpServerEntry, mod: McpModuleManifest | undefined): string => {
+    if (mod?.vendor) return mod.vendor;
+    if (server.source.startsWith("plugin:")) return server.source.slice("plugin:".length);
+    if (server.source === "built-in") return "Deyin";
+    return "Custom";
+  };
+
+  const transportOf = (server: McpServerEntry): string => {
+    if (server.transport !== "stdio") return server.transport.toUpperCase();
+    return server.source === "built-in" ? "In-process" : "Local command";
+  };
+
+  /**
+   * Exactly one status per row, so the column reads straight down the list: a
+   * test result outranks auth state, which outranks the resting case. Rows keep
+   * the same shape whatever a server's transport or auth mode is.
+   */
+  const statusOf = (
+    server: McpServerEntry,
+    needsOAuth: boolean,
+  ): { label: string; tone: "muted" | "ok" | "warn" | "bad" } => {
+    const result = tests[server.name];
+    const status = authStatus[server.name];
+    if (!server.enabled) return { label: "Off", tone: "muted" };
+    if (result === "running") return { label: "Testing…", tone: "muted" };
+    if (result && !result.ok) return { label: "Failed", tone: "bad" };
+    if (needsOAuth && status === "none") return { label: "Sign in", tone: "warn" };
+    if (needsOAuth && status === "expired") return { label: "Expired", tone: "warn" };
+    if (result?.ok) return { label: `${result.toolCount ?? 0} tools`, tone: "ok" };
+    if (needsOAuth && status === "authenticated") return { label: "Connected", tone: "ok" };
+    return { label: "Ready", tone: "muted" };
+  };
+
   const renderServer = (server: McpServerEntry) => {
     const result = tests[server.name];
     const mod = moduleById.get(server.name);
     const removable = server.source.startsWith("module:") || server.source === "user";
-    const location = server.source.startsWith("module:")
-      ? `~/.deyin/mcp-modules/${server.name}/`
-      : server.path ?? server.source;
     const needsOAuth = moduleNeedsOAuth(mod);
     const status = authStatus[server.name];
-    const target =
+    const title = mod?.name ?? server.name;
+    // The endpoint, install path and failure text are all detail: they made every
+    // row a different length. They live in the row's tooltip instead.
+    const detail = [
       server.transport === "stdio"
         ? server.command
           ? `${server.command} ${(server.args ?? []).join(" ")}`.trim()
-          : "Built-in (runs inside Deyin)."
-        : server.url ?? "";
+          : "Runs inside Deyin"
+        : server.url,
+      server.source.startsWith("module:") ? `~/.deyin/mcp-modules/${server.name}/` : server.path,
+      result && result !== "running" && !result.ok ? result.message : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    // Same three fields on every row, so the meta lines stack evenly. The id is
+    // dropped where it would only repeat the title.
+    const meta = [title === server.name ? null : server.name, originOf(server, mod), transportOf(server)]
+      .filter(Boolean)
+      .join(" · ");
 
     const actions: MenuAction[] = [
       {
@@ -216,32 +260,17 @@ export function McpPage({ onToggle, tabs }: { onToggle: (id: string, enabled: bo
       actions.push({ label: "Uninstall", icon: "trash", danger: true, onSelect: () => void uninstall(server) });
     }
 
+    const state = statusOf(server, needsOAuth);
     return (
       <Row
         key={server.id}
-        icon={<IconTile name={mod?.name ?? server.name} id={[server.name, mod?.vendor]} icon="plug" />}
-        title={mod?.name ?? server.name}
-        tags={
-          <>
-            {mod?.name && mod.name !== server.name && <Tag tone="muted">{server.name}</Tag>}
-            {server.transport !== "stdio" && <Tag tone="muted">{server.transport.toUpperCase()}</Tag>}
-            {!server.enabled && <Tag tone="warn">Disabled</Tag>}
-            {needsOAuth && status === "authenticated" && <Tag tone="ok">Connected</Tag>}
-            {needsOAuth && status === "none" && <Tag tone="warn">Not authenticated</Tag>}
-            {needsOAuth && status === "expired" && <Tag tone="warn">Session expired</Tag>}
-          </>
-        }
-        description={[target, mod?.vendor, server.source === "built-in" ? null : location]
-          .filter(Boolean)
-          .join(" — ")}
+        icon={<IconTile name={title} id={[server.name, mod?.vendor]} icon="plug" />}
+        title={title}
+        description={<span title={detail || undefined}>{meta}</span>}
         aside={
-          result === "running" ? (
-            <span className="row__note">Testing…</span>
-          ) : result ? (
-            <span className={`row__note ${result.ok ? "hint--ok" : "hint--bad"}`}>
-              {result.ok ? `${result.toolCount ?? 0} tools` : result.message ?? "failed"}
-            </span>
-          ) : undefined
+          <span className="row__status">
+            <Tag tone={state.tone}>{state.label}</Tag>
+          </span>
         }
         actions={
           <>

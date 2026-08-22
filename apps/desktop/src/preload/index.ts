@@ -1,6 +1,14 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { CH, type DeyinApi } from "@deyin/contract";
-import type { AgentEventEnvelope, IndexStatus, TerminalDataEvent, TerminalExitEvent, UpdatesState } from "@deyin/contract";
+import type {
+  AgentEventEnvelope,
+  AgentUiEvent,
+  AutomationRun,
+  IndexStatus,
+  TerminalDataEvent,
+  TerminalExitEvent,
+  UpdatesState,
+} from "@deyin/contract";
 
 const api: DeyinApi = {
   bootstrap: () => ipcRenderer.invoke(CH.bootstrap),
@@ -25,7 +33,7 @@ const api: DeyinApi = {
     write: (path, content) => ipcRenderer.invoke(CH.filesWrite, path, content),
   },
   workspace: {
-    openFolder: () => ipcRenderer.invoke(CH.workspaceOpen),
+    openFolder: (startIn?: string) => ipcRenderer.invoke(CH.workspaceOpen, startIn),
     setRoot: (root) => ipcRenderer.invoke(CH.workspaceSetRoot, root),
     getRoot: () => ipcRenderer.invoke(CH.workspaceGetRoot),
     onRootChanged: (cb) => {
@@ -178,6 +186,23 @@ agent: {
       return () => ipcRenderer.removeListener(CH.browserActive, listener);
     },
   },
+  computerUse: {
+    getAllowlist: () => ipcRenderer.invoke(CH.computerUseGetAllowlist),
+    setAllowlist: (apps) => ipcRenderer.invoke(CH.computerUseSetAllowlist, apps),
+    listApps: () => ipcRenderer.invoke(CH.computerUseListApps),
+    onActive: (cb) => {
+      const listener = (_e: unknown, active: boolean) => cb(active);
+      ipcRenderer.on(CH.computerUseActive, listener);
+      return () => ipcRenderer.removeListener(CH.computerUseActive, listener);
+    },
+    onAppApprovalRequest: (cb) => {
+      const listener = (_e: unknown, req: { requestId: string; appId: string; action: string }) => cb(req);
+      ipcRenderer.on(CH.computerUseAppApprovalRequest, listener);
+      return () => ipcRenderer.removeListener(CH.computerUseAppApprovalRequest, listener);
+    },
+    respondAppApproval: (requestId, decision) =>
+      ipcRenderer.send(CH.computerUseAppApprovalRespond, requestId, decision),
+  },
   visualize: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.visualizeRead, threadId, fileName),
   },
@@ -279,6 +304,37 @@ agent: {
   },
   beta: {
     submitFeedback: (payload) => ipcRenderer.invoke(CH.betaFeedbackSubmit, payload),
+  },
+  automations: {
+    list: () => ipcRenderer.invoke(CH.automationsList),
+    create: (input) => ipcRenderer.invoke(CH.automationsCreate, input),
+    update: (id, patch) => ipcRenderer.invoke(CH.automationsUpdate, id, patch),
+    remove: (id) => ipcRenderer.invoke(CH.automationsDelete, id),
+    toggle: (id, enabled) => ipcRenderer.invoke(CH.automationsToggle, id, enabled),
+    run: (id) => ipcRenderer.invoke(CH.automationsRun, id),
+    stop: (runId) => ipcRenderer.send(CH.automationsStop, runId),
+    runs: (automationId) => ipcRenderer.invoke(CH.automationsRuns, automationId),
+    testWsl: (distro) => ipcRenderer.invoke(CH.wslTestDistro, distro),
+    onEvent: (cb) => {
+      const listener = (_e: unknown, payload: { runId: string; automationId: string; event: AgentUiEvent }) => cb(payload);
+      ipcRenderer.on(CH.automationEvent, listener);
+      return () => ipcRenderer.removeListener(CH.automationEvent, listener);
+    },
+    onRunFinished: (cb) => {
+      const listener = (_e: unknown, payload: { run: AutomationRun }) => cb(payload);
+      ipcRenderer.on(CH.automationRunFinished, listener);
+      return () => ipcRenderer.removeListener(CH.automationRunFinished, listener);
+    },
+  },
+  sshHosts: {
+    list: () => ipcRenderer.invoke(CH.sshHostsList),
+    add: (input) => ipcRenderer.invoke(CH.sshHostsAdd, input),
+    update: (id, patch) => ipcRenderer.invoke(CH.sshHostsUpdate, id, patch),
+    remove: (id) => ipcRenderer.invoke(CH.sshHostsRemove, id),
+    setCredentials: (id, creds) => ipcRenderer.invoke(CH.sshHostsSetCredentials, id, creds),
+    test: (hostId, acceptFingerprint) => ipcRenderer.invoke(CH.sshHostsTest, hostId, acceptFingerprint),
+    pinFingerprint: (hostId, fingerprint) => ipcRenderer.invoke(CH.sshHostsPinFingerprint, hostId, fingerprint),
+    importKey: () => ipcRenderer.invoke(CH.sshHostsImportKey),
   },
 };
 

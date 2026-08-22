@@ -25,6 +25,18 @@ export function createWebProfile(options: WebProfileOptions): ConfigLayer {
           eager: true,
         },
       },
+      // Cache parity with desktop: semantic tool/response caches scoped to the
+      // session sandbox, activated on demand (optimization:activate).
+      {
+        id: "optimization",
+        plugin: "@deyin/plugin-optimization",
+        config: {
+          dataDir: `${options.sandboxRoot}/plugins/optimization`,
+          enableToolCache: true,
+          enableResponseCache: true,
+          similarityThreshold: 0.93,
+        },
+      },
     ],
   };
 }

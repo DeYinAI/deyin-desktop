@@ -6,19 +6,25 @@ import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCacheBenchmark } from "./cache-benchmark.js";
+import { runNativeBenchmark } from "./native-benchmark.js";
 import { runUiBenchmark } from "./ui-benchmark.js";
 
 export interface PerformanceReport {
   generatedAt: string;
   allPassed: boolean;
-  benchmarks: Array<ReturnType<typeof runCacheBenchmark> | ReturnType<typeof runUiBenchmark>>;
+  benchmarks: Array<
+    | ReturnType<typeof runCacheBenchmark>
+    | ReturnType<typeof runUiBenchmark>
+    | ReturnType<typeof runNativeBenchmark>
+  >;
 }
 
 export async function runAllBenchmarks(): Promise<PerformanceReport> {
   const cache = runCacheBenchmark();
   const ui = runUiBenchmark();
+  const native = runNativeBenchmark();
 
-  const benchmarks = [cache, ui];
+  const benchmarks = [cache, ui, native];
   return {
     generatedAt: new Date().toISOString(),
     allPassed: benchmarks.every((b) => b.passed),
@@ -45,10 +51,15 @@ function formatMarkdown(report: PerformanceReport): string {
     } else if (b.name === "ui-benchmark") {
       lines.push(`| UI | ${b.turnCount}-turn load | ${b.loadTimeMs.toFixed(1)}ms | <${b.loadTargetMs}ms | ${b.loadTimeMs < b.loadTargetMs ? "✅" : "❌"} |`);
       lines.push(`| UI | Streaming FPS (p95) | ${b.streamingFpsP95.toFixed(1)} | ≥${b.streamingTargetFps} | ${b.streamingFpsP95 >= b.streamingTargetFps ? "✅" : "❌"} |`);
+    } else if (b.name === "native-benchmark") {
+      lines.push(`| Native | Module loaded | ${b.nativeAvailable ? "yes" : "no (TS fallbacks)"} | — | ${b.passed ? "✅" : "❌"} |`);
+      for (const r of b.rows) {
+        lines.push(`| Native | ${r.path} | ${r.speedup.toFixed(1)}x (identical=${r.identical}) | identical | ${r.identical ? "✅" : "❌"} |`);
+      }
     }
   }
 
-  lines.push("", "## Targets", "", "- Cache hit rate: ≥80%", "- 1000-turn load: <2s", "- Streaming: ≥55fps (p95)", "");
+  lines.push("", "## Targets", "", "- Cache hit rate: ≥80%", "- 1000-turn load: <2s", "- Streaming: ≥55fps (p95)", "- Native outputs byte-identical to TS fallbacks", "");
   return lines.join("\n");
 }
 

@@ -117,55 +117,10 @@ function readError(res: Response): Promise<string> {
   return res.text().catch(() => "");
 }
 
-const SSE_DONE = Symbol("sse-done");
-
-/** Parse one SSE `data:` line. Returns SSE_DONE, a parsed payload, or null. */
-function parseDataLine(line: string): unknown | typeof SSE_DONE | null {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("data:")) return null;
-  const payload = trimmed.slice(5).trim();
-  if (payload === "[DONE]") return SSE_DONE;
-  if (payload.length === 0) return null;
-  try {
-    return JSON.parse(payload) as unknown;
-  } catch {
-    return null; // keep-alives / malformed lines
-  }
-}
-
-/** Split SSE lines into JSON payloads; ignores `event:`/`id:` lines and keep-alives. */
-export async function* ssePayloads(
-  res: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<unknown> {
-  if (!res.body) throw new Error(`Empty response body (${res.status}).`);
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    // The last element is an incomplete line (or "" when the chunk ends with \n).
-    buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const parsed = parseDataLine(line);
-      if (parsed === SSE_DONE) return;
-      if (parsed !== null) yield parsed;
-    }
-  }
-  // Flush the trailing buffer: SSE streams are not required to end with "\n",
-  // and a final `data:` line without one must not be dropped.
-  if (buffer.length > 0) {
-    const parsed = parseDataLine(buffer);
-    if (parsed === SSE_DONE) return;
-    if (parsed !== null) yield parsed;
-  }
-}
-
-/* Anthropic Messages API ---------------------------------------------------- */
+// Shared SSE framing lives in @deyin/host-core (single implementation for
+// host-core's plain chat and the agent transports).
+import { parseSseDataLine, ssePayloads, SSE_DONE } from "@deyin/host-core";
+export { parseSseDataLine, ssePayloads, SSE_DONE };/* Anthropic Messages API ---------------------------------------------------- */
 
 /** Map Anthropic stop reasons onto OpenAI-style finish reasons. */
 export function mapAnthropicStopReason(reason: string): string {

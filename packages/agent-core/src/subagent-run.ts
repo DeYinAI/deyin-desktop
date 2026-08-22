@@ -50,19 +50,15 @@ export function rulesForApprovalMode(mode: ApprovalMode): PermissionRule[] {
 }
 
 /**
- * Composer modes that do not restrict the workspace themselves. Plan/ask carry
- * their own deny rules, and those rules beat skipAll, but a tool they simply
- * forgot to list must still prompt there instead of silently running.
- */
-const UNRESTRICTED_MODES: ReadonlySet<ChatMode> = new Set<ChatMode>(["agent", "delivery"]);
-
-/**
  * Whether a run may skip every permission prompt. "Full access" means exactly
- * that: in a build-style mode nothing is ever put in front of the user. Shared
- * by the desktop host, the web host and their subagents so all three agree.
+ * that: whatever the composer mode, nothing is ever put in front of the user.
+ * The composer mode still restricts what may run — plan/ask deny rules (and any
+ * explicit user deny rule) beat skipAll — so read-only modes stay read-only;
+ * they just deny instead of prompting. Shared by the desktop host, the web host
+ * and their subagents so all three agree.
  */
-export function skipPromptsForApproval(approvalMode: ApprovalMode, mode: ChatMode): boolean {
-  return approvalMode === "full-access" && UNRESTRICTED_MODES.has(mode);
+export function skipPromptsForApproval(approvalMode: ApprovalMode, _mode: ChatMode): boolean {
+  return approvalMode === "full-access";
 }
 
 /** Built-in agent backing each composer mode. */
@@ -128,6 +124,12 @@ export interface SubagentRunRequest {
    * can draw; without it generate_image is dropped from the child's toolset.
    */
   imageGen?: ImageGenBridge;
+  /**
+   * Parent's wire options (compression + prompt caching). Passed on so child
+   * runs get the same token savings as the parent; hosts set this alongside
+   * their own runAgent call.
+   */
+  wire?: import("./wire.js").WireOptions;
 }
 
 export interface SubagentRunResult {
@@ -161,6 +163,13 @@ export function resolveSubagentModel(
 }
 
 /**
+ * Chat-continuity invariants (do not break when adding subagents or UI):
+ * 1. Subagent runs use a fresh messages[] — never append to the parent transcript.
+ * 2. Only the final report string returns to the parent (via the task tool result).
+ * 3. Foreground task calls await completion before the parent loop continues.
+ * 4. Subagents have no nested task tool (max delegation depth 2).
+ * 5. UI shows inline subagent cards; full activity lives in the Agent panel side channel.
+ *
  * Clean-context subagent run shared by every host (desktop, automations, CLI).
  * Builds the registry (builtins + host tools + `tools:` allowlist filter), the
  * system prompt from the definition, resolves the model + provider (settings
@@ -210,6 +219,7 @@ export async function runSubagent(
       maxSteps: def.maxSteps ?? req.maxStepsDefault,
       effort: req.effortOverride ?? def.effort,
       promptCacheKey: `deyin-subagent:${def.name}:${model}:${cwd}`,
+      ...(req.wire ? { wire: { ...req.wire, model } } : {}),
       messages,
       tools: registry,
       permissions: req.permissionEngine,

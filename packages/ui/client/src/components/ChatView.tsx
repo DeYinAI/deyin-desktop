@@ -6,6 +6,7 @@ import { Logo } from "./Logo.js";
 import { Markdown } from "./Markdown.js";
 import { subagentDisplayName, subagentStatusLine } from "./SubagentPanel.js";
 import { TodoRows, countVisibleTodos } from "./TodoChecklist.js";
+import { Callout, CodeTag, FlatCard, SectionLabel, SeverityBadge } from "./ui/index.js";
 import type { ThreadEvent } from "../threads.js";
 import { TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 
@@ -648,23 +649,23 @@ function PlanCard({
   const open = () => onOpenPlan?.();
 
   return (
-    <div
-      className={`plan-card${streaming ? " plan-card--streaming" : ""}${onOpenPlan ? " plan-card--clickable" : ""}`}
-      role={onOpenPlan ? "button" : undefined}
-      tabIndex={onOpenPlan ? 0 : undefined}
-      title={onOpenPlan ? t("chat.openPlan") : undefined}
-      onClick={onOpenPlan ? open : undefined}
-      onKeyDown={
-        onOpenPlan
-          ? (e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                open();
+    <FlatCard className={`plan-card${streaming ? " plan-card--streaming" : ""}${onOpenPlan ? " plan-card--clickable" : ""}`}>
+      <div
+        role={onOpenPlan ? "button" : undefined}
+        tabIndex={onOpenPlan ? 0 : undefined}
+        title={onOpenPlan ? t("chat.openPlan") : undefined}
+        onClick={onOpenPlan ? open : undefined}
+        onKeyDown={
+          onOpenPlan
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  open();
+                }
               }
-            }
-          : undefined
-      }
-    >
+            : undefined
+        }
+      >
       <div className="plan-card__head">
         <Icon name="sparkles" size={13} className="plan-card__glyph" />
         <span className="plan-card__kind">{t("chat.plan")}</span>
@@ -724,39 +725,39 @@ function PlanCard({
           )}
         </span>
       </div>
-    </div>
+      </div>
+    </FlatCard>
   );
 }
 
-/** Task list created by todo_write — "Created N tasks", expand for checklist. */
+/** Task list created by todo_write — collapsible checklist in a HYRAX card. */
 function TodoCard({ event }: { event: Extract<ThreadEvent, { kind: "plan" }> }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
+  const t = useT();
   const { visible: total, done } = countVisibleTodos(
     event.steps.map((s) => ({
       status: s.status ?? (s.done ? "completed" : "pending"),
     })),
   );
-  const allDone = total > 0 && done === total;
-  const label =
-    allDone && total > 0
-      ? `Completed ${total} task${total === 1 ? "" : "s"}`
-      : done > 0
-        ? `${done}/${total} tasks completed`
-        : `Created ${total} task${total === 1 ? "" : "s"}`;
   const items = event.steps.map((step, i) => ({
     id: `step-${i}`,
     content: step.text,
     status: (step.status ?? (step.done ? "completed" : "pending")) as AgentTodoStatus,
   }));
   return (
-    <div className="todo-block">
-      <StatusLine icon="list" label={label} onClick={() => setOpen((v) => !v)} open={open} />
+    <FlatCard>
+      <button type="button" className="todo-card__head" onClick={() => setOpen((v) => !v)}>
+        <SectionLabel trailing={`${done}/${total} ${t("tasks.completed")}`}>
+          <code className="todo-card__name">todo_write</code>
+        </SectionLabel>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} className="todo-card__chevron" />
+      </button>
       {open && (
-        <div className="todo-block__steps">
+        <div className="todo-card__steps">
           <TodoRows items={items} />
         </div>
       )}
-    </div>
+    </FlatCard>
   );
 }
 
@@ -846,7 +847,7 @@ function FileCard({
   const displayPath = event.subtitle ? `./${event.name}` : event.name;
   const isNew = event.adds > 0 && event.dels === 0;
   return (
-    <div className="file-card">
+    <FlatCard className="file-card">
       <div className="file-card__head">
         <span className={`file-card__icon ${isNew ? "file-card__icon--add" : "file-card__icon--edit"}`}>
           <Icon name={isNew ? "plus" : "pencil"} size={10} />
@@ -889,7 +890,7 @@ function FileCard({
           )}
         </div>
       )}
-    </div>
+    </FlatCard>
   );
 }
 
@@ -997,9 +998,9 @@ function ToolCard({
     >
       <button type="button" className="tool-card__row" onClick={() => setOpen((v) => !v)}>
         {!compact && <Icon name={running ? "clock" : failed ? "close" : "check"} size={12} />}
-        <code className="tool-card__name">{displayName}</code>
+        <CodeTag>{displayName}</CodeTag>
         <span className="tool-card__summary">{event.summary}</span>
-        {event.denied && <span className="badge badge--muted">denied</span>}
+        {event.denied && <SeverityBadge level="low">denied</SeverityBadge>}
         {event.durationMs !== undefined && !compact && (
           <span className="tool-card__duration">{formatDuration(event.durationMs)}</span>
         )}
@@ -1008,9 +1009,11 @@ function ToolCard({
         )}
       </button>
       {open && displayResult !== undefined && displayResult.length > 0 && (
-        <pre className="tool-card__result" ref={resultRef}>
-          {truncateToolCard(displayResult, TOOL_RESULT_UI_CAP)}
-        </pre>
+        <Callout mono className="tool-card__result-callout">
+          <pre className="tool-card__result" ref={resultRef}>
+            {truncateToolCard(displayResult, TOOL_RESULT_UI_CAP)}
+          </pre>
+        </Callout>
       )}
     </div>
   );

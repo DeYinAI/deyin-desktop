@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -51,6 +52,65 @@ function storedHeight(): number {
   return raw;
 }
 
+/** Portalled menu positioning — flip above/below based on viewport space. */
+function useAnchoredMenu(
+  open: boolean,
+  anchorRef: React.RefObject<HTMLElement | null>,
+  panelRef: React.RefObject<HTMLElement | null>,
+) {
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const GAP = 6;
+    const EDGE = 8;
+    const place = () => {
+      const anchor = anchorRef.current?.getBoundingClientRect();
+      const panel = panelRef.current?.getBoundingClientRect();
+      if (!anchor || !panel) return;
+      const fitsBelow = anchor.bottom + GAP + panel.height <= window.innerHeight - EDGE;
+      const fitsAbove = anchor.top - GAP - panel.height >= EDGE;
+      setPos({
+        top: fitsBelow || !fitsAbove ? anchor.bottom + GAP : anchor.top - GAP - panel.height,
+        left: Math.max(EDGE, Math.min(anchor.left, window.innerWidth - EDGE - panel.width)),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, anchorRef, panelRef]);
+
+  return pos;
+}
+
+function useMenuDismiss(
+  open: boolean,
+  onClose: () => void,
+  anchorRef: React.RefObject<HTMLElement | null>,
+  panelRef: React.RefObject<HTMLElement | null>,
+) {
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!anchorRef.current?.contains(target) && !panelRef.current?.contains(target)) onClose();
+    };
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open, onClose, anchorRef, panelRef]);
+}
+
 /** Bottom-docked terminal: tabbed PTY sessions with a shell picker (incl. WSL2). */
 export function TerminalPanel({
   cwd,
@@ -69,6 +129,18 @@ export function TerminalPanel({
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const knownAttachIdsRef = useRef<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerAnchorRef = useRef<HTMLButtonElement>(null);
+  const pickerPanelRef = useRef<HTMLDivElement>(null);
+  const [sessionMenuOpen, setSessionMenuOpen] = useState(false);
+  const sessionAnchorRef = useRef<HTMLButtonElement>(null);
+  const sessionPanelRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const pickerPos = useAnchoredMenu(pickerOpen, pickerAnchorRef, pickerPanelRef);
+  const sessionPos = useAnchoredMenu(sessionMenuOpen, sessionAnchorRef, sessionPanelRef);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
+  const closeSessionMenu = useCallback(() => setSessionMenuOpen(false), []);
+  useMenuDismiss(pickerOpen, closePicker, pickerAnchorRef, pickerPanelRef);
+  useMenuDismiss(sessionMenuOpen, closeSessionMenu, sessionAnchorRef, sessionPanelRef);
   const [height, setHeight] = useState(storedHeight);
   const [maximized, setMaximized] = useState(false);
   const clearRef = useRef<Map<string, () => void>>(new Map());
@@ -173,6 +245,12 @@ export function TerminalPanel({
     if (focus) requestAnimationFrame(focus);
   }, [activeKey, sessions.length]);
 
+  // Keep the active tab visible in the docked tab strip.
+  useEffect(() => {
+    if (embedded || !activeKey) return;
+    tabRefs.current.get(activeKey)?.scrollIntoView({ inline: "nearest", block: "nearest" });
+  }, [activeKey, embedded]);
+
   // Panel-level shortcuts. These never reach xterm's key handler because the
   // terminal only claims plain Ctrl combos, not the Ctrl+Shift ones used here.
   useEffect(() => {
@@ -203,17 +281,7 @@ export function TerminalPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [activeKey, addSession, closeSession, defaultShell, env, sessions]);
 
-  // Close the shell picker on any outside click.
-  useEffect(() => {
-    if (!pickerOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!(e.target as HTMLElement).closest(".termpicker, .terminal-panel__new")) setPickerOpen(false);
-    };
-    window.addEventListener("mousedown", onDown);
-    return () => window.removeEventListener("mousedown", onDown);
-  }, [pickerOpen]);
-
-  // Drag the top edge to resize. Pointer capture keeps the drag alive when the
+  // Drag the top edge to resize.
   // cursor outruns the 6px handle, and the height is persisted per install.
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
     if (maximized) return;
@@ -257,76 +325,164 @@ export function TerminalPanel({
       )}
 
       <div className="terminal-panel__bar">
-        <div className="terminal-panel__tabs">
-          {sessions.map((session) => (
+        {embedded ? (
+          <div className="terminal-panel__switch">
             <button
-              key={session.key}
+              ref={sessionAnchorRef}
               type="button"
-              className={`termtab ${session.key === activeKey ? "termtab--active" : ""}`}
-              onClick={() => setActiveKey(session.key)}
-              onAuxClick={(e) => {
-                // Middle-click closes, matching browser and editor tab strips.
-                if (e.button === 1) {
-                  e.preventDefault();
-                  closeSession(session.key);
-                }
+              className={`termswitch${sessionMenuOpen ? " termswitch--open" : ""}`}
+              title={cwd ? `${activeSession?.label ?? "Terminal"} · ${cwd}` : activeSession?.label ?? "Terminal"}
+              aria-haspopup="menu"
+              aria-expanded={sessionMenuOpen}
+              onClick={() => {
+                setSessionMenuOpen((v) => !v);
               }}
-              title={session.label}
             >
-              <Icon name={session.agent ? "sparkles" : "terminal"} size={12} />
-              <span className="termtab__label">{session.label}</span>
-              <span
-                className="termtab__close"
-                role="button"
-                aria-label="Close session"
-                title="Close session (Ctrl+Shift+W)"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeSession(session.key);
-                }}
-              >
-                <Icon name="close" size={9} />
-              </span>
+              <Icon name={activeSession?.agent ? "sparkles" : "terminal"} size={12} />
+              <span className="termswitch__label">{activeSession?.label ?? "Terminal"}</span>
+              {sessions.length > 1 && <span className="termswitch__count">{sessions.length}</span>}
+              <Icon name="chevronDown" size={10} className="termswitch__caret" />
             </button>
-          ))}
-
-        </div>
+            {sessionMenuOpen &&
+              createPortal(
+                <div
+                  ref={sessionPanelRef}
+                  role="menu"
+                  className="termswitch__panel termpicker termpicker--anchored"
+                  style={{
+                    top: sessionPos?.top ?? 0,
+                    left: sessionPos?.left ?? 0,
+                    visibility: sessionPos ? "visible" : "hidden",
+                  }}
+                >
+                  <div className="termpicker__title">Terminals</div>
+                  {sessions.map((session) => {
+                    const shell = env?.shells.find((s) => s.id === session.shellId);
+                    return (
+                      <button
+                        key={session.key}
+                        role="menuitem"
+                        type="button"
+                        className={`termpicker__item termswitch__item${session.key === activeKey ? " termswitch__item--active" : ""}`}
+                        onClick={() => {
+                          setActiveKey(session.key);
+                          setSessionMenuOpen(false);
+                        }}
+                      >
+                        <Icon name={session.agent ? "sparkles" : "terminal"} size={13} />
+                        <span className="termpicker__name">{session.label}</span>
+                        {session.agent && <span className="termpicker__tag">Agent</span>}
+                        {shell?.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
+                        {session.key === activeKey && <Icon name="check" size={12} className="termswitch__check" />}
+                        <span
+                          className="termswitch__close"
+                          role="button"
+                          aria-label="Close session"
+                          title="Close session (Ctrl+Shift+W)"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            closeSession(session.key);
+                          }}
+                        >
+                          <Icon name="close" size={9} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>,
+                document.body,
+              )}
+          </div>
+        ) : (
+          <div className="terminal-panel__tabs">
+            {sessions.map((session) => (
+              <button
+                key={session.key}
+                ref={(el) => {
+                  if (el) tabRefs.current.set(session.key, el);
+                  else tabRefs.current.delete(session.key);
+                }}
+                type="button"
+                className={`termtab ${session.key === activeKey ? "termtab--active" : ""}`}
+                onClick={() => setActiveKey(session.key)}
+                onAuxClick={(e) => {
+                  // Middle-click closes, matching browser and editor tab strips.
+                  if (e.button === 1) {
+                    e.preventDefault();
+                    closeSession(session.key);
+                  }
+                }}
+                title={session.label}
+              >
+                <Icon name={session.agent ? "sparkles" : "terminal"} size={12} />
+                <span className="termtab__label">{session.label}</span>
+                <span
+                  className="termtab__close"
+                  role="button"
+                  aria-label="Close session"
+                  title="Close session (Ctrl+Shift+W)"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeSession(session.key);
+                  }}
+                >
+                  <Icon name="close" size={9} />
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="terminal-panel__new">
           <button
-            className="termbtn"
+            ref={pickerAnchorRef}
+            className={`termbtn${pickerOpen ? " termbtn--active" : ""}`}
             title="New terminal (Ctrl+Shift+T)"
+            aria-haspopup="menu"
+            aria-expanded={pickerOpen}
             onClick={() => setPickerOpen((v) => !v)}
           >
             <Icon name="plus" size={13} />
           </button>
-          {pickerOpen && (
-            <div className="termpicker">
-              <div className="termpicker__title">New terminal</div>
-              {(env?.shells ?? []).map((shell) => (
-                <button
-                  key={shell.id}
-                  className="termpicker__item"
-                  onClick={() => addSession(shell.id, shell.label)}
-                >
-                  <Icon name="terminal" size={13} />
-                  <span className="termpicker__name">{shell.label}</span>
-                  {shell.id === (defaultShell ?? env?.defaultShell) && (
-                    <span className="termpicker__tag">default</span>
-                  )}
-                  {shell.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
-                </button>
-              ))}
-              {(env?.shells ?? []).length === 0 && (
-                <div className="termpicker__item termpicker__item--empty">No shells detected</div>
-              )}
-            </div>
-          )}
+          {pickerOpen &&
+            createPortal(
+              <div
+                ref={pickerPanelRef}
+                role="menu"
+                className="termpicker termpicker--anchored"
+                style={{
+                  top: pickerPos?.top ?? 0,
+                  left: pickerPos?.left ?? 0,
+                  visibility: pickerPos ? "visible" : "hidden",
+                }}
+              >
+                <div className="termpicker__title">New terminal</div>
+                {(env?.shells ?? []).map((shell) => (
+                  <button
+                    key={shell.id}
+                    role="menuitem"
+                    className="termpicker__item"
+                    onClick={() => addSession(shell.id, shell.label)}
+                  >
+                    <Icon name="terminal" size={13} />
+                    <span className="termpicker__name">{shell.label}</span>
+                    {shell.id === (defaultShell ?? env?.defaultShell) && (
+                      <span className="termpicker__tag">default</span>
+                    )}
+                    {shell.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
+                  </button>
+                ))}
+                {(env?.shells ?? []).length === 0 && (
+                  <div className="termpicker__item termpicker__item--empty">No shells detected</div>
+                )}
+              </div>,
+              document.body,
+            )}
         </div>
 
         <div className="terminal-panel__spacer" />
 
-        {cwd && (
+        {cwd && !embedded && (
           <span className="terminal-panel__cwd" title={cwd}>
             {shortPath(cwd)}
           </span>

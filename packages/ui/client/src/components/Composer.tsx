@@ -14,6 +14,7 @@ import type {
   ModelInfo,
   Thread,
 } from "@deyin/contract";
+import type { ModelReasoningMode } from "@deyin/host-core/shared";
 
 /** An image attached to the next message, read as base64 (works on web + desktop). */
 export interface ComposerImage {
@@ -56,7 +57,10 @@ interface ComposerProps {
   mode?: ChatMode;
   /** When false, Delivery mode is hidden from the mode switcher. */
   deliveryModeEnabled?: boolean;
-  thinking: boolean;
+  /** Global thinking default when the selected model has no explicit mode. */
+  thinkingDefault?: boolean;
+  modelEfforts?: Record<string, string>;
+  onSetModelEffort?: (providerId: string, modelId: string, mode: ModelReasoningMode | undefined) => void;
   canSend: boolean;
   streaming: boolean;
   /** Follow-up queued while a run is active. */
@@ -72,7 +76,6 @@ interface ComposerProps {
   onSelectModel: (id: string) => void;
   onSelectApproval: (mode: ApprovalMode) => void;
   onSelectMode?: (mode: ChatMode) => void;
-  onToggleThinking: (on: boolean) => void;
   onManageModels?: () => void;
   providers?: import("@deyin/contract").ProviderInfo[];
   selectedProviderId?: string;
@@ -690,16 +693,10 @@ export function Composer(props: ComposerProps) {
           selectedProviderId={props.selectedProviderId}
           onSelectProviderModel={props.onSelectProviderModel}
           onManageModels={props.onManageModels}
+          modelEfforts={props.modelEfforts}
+          thinkingDefault={props.thinkingDefault}
+          onSetModelEffort={props.onSetModelEffort}
         />
-
-        <button
-          className={`chip ${props.thinking ? "chip--on" : ""}`}
-          title={props.thinking ? "Thinking enabled" : "Thinking disabled"}
-          onClick={() => props.onToggleThinking(!props.thinking)}
-        >
-          <Icon name="brain" size={12} />
-          <span>{props.thinking ? "On" : "Off"}</span>
-        </button>
 
         <div className="composer__actions">
           {showStop && (

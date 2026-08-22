@@ -7,6 +7,13 @@ cd "$(dirname "$0")/.."
 echo "==> Building shared packages (needed for app type resolution)"
 pnpm --filter "./packages/**" build
 
+echo "==> Building native-core (Rust; skipped gracefully if cargo is missing — TS fallbacks cover it)"
+if command -v cargo >/dev/null 2>&1; then
+  pnpm --filter @deyin/native-core build
+else
+  echo "    cargo not found; using TS fallbacks"
+fi
+
 echo "==> Building computer-use-host"
 pnpm --filter @deyin/computer-use-host build
 

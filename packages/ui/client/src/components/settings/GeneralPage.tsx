@@ -40,6 +40,9 @@ export function GeneralPage({ settings, version, onChange }: Props) {
         <SettingCard title={t("general.keepRunningInBackground")} description={t("general.keepRunningInBackgroundDesc")}>
           <Toggle checked={settings.keepRunningInBackground} onChange={(v) => onChange({ keepRunningInBackground: v })} />
         </SettingCard>
+        <SettingCard title={t("general.automationsCatchUp")} description={t("general.automationsCatchUpDesc")}>
+          <Toggle checked={settings.automationsCatchUp} onChange={(v) => onChange({ automationsCatchUp: v })} />
+        </SettingCard>
         <SettingCard
           title="Change review"
           description="Queue file edits for review before applying to disk. Also enabled automatically in Ask before changes mode."

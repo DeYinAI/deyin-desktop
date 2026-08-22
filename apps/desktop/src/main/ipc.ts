@@ -36,6 +36,7 @@ import type { PermissionDecision } from "@deyin/agent-core";
 import { CH } from "@deyin/contract";
 import type {
   AgentStartOptions,
+  Automation,
   Bootstrap,
   CapabilityKind,
   DeyinSettings,
@@ -47,13 +48,19 @@ import type {
   McpServerInput,
   ProjectsState,
   ProviderPatch,
+  SshHostCredentials,
+  SshHostInput,
   TerminalCreateOptions,
   UsageEvent,
 } from "@deyin/contract";
 import type { DeyinConfig } from "@deyin/contract";
 import { DesktopAgentHost } from "./agent.js";
+import { AutomationService } from "./automations/service.js";
+import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
+import { testWslDistro } from "./automations/wsl-executor.js";
 import type { AuthManager } from "./auth.js";
 import { BrowserControlService, workspacePartition } from "./browser.js";
+import { ComputerUseService } from "./computer-use.js";
 import { CapabilityService } from "./capabilities.js";
 import { DiagnosticsService } from "./diagnostics.js";
 import { IdentityService } from "./identity.js";
@@ -62,6 +69,7 @@ import { PluginService } from "./plugins.js";
 import { createDesktopStorage } from "./storage.js";
 import { createUpdateController } from "./updater.js";
 import { McpCatalogService } from "./mcp-catalog.js";
+import { createMcpAuthBridge } from "./mcp-auth-bridge.js";
 import { McpModuleService } from "./mcp-modules.js";
 import { McpOAuthService } from "./mcp-oauth.js";
 import { SecurityService } from "./security.js";
@@ -173,7 +181,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.on(CH.updatesInstall, () => updates.install());
   // Always poll on launch so users with auto-update off still see the banner;
   // download stays gated by settings.autoUpdate / explicit Download click.
-  void updates.check();
+  // Deferred past first paint so the network round-trip never blocks startup.
+  setTimeout(() => void updates.check(), 10_000);
 
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
@@ -197,6 +206,27 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     : join(app.getAppPath(), "bundled-plugins");
   const plugins = new PluginService(pluginsDir, storage, agents, capabilities, existsSync(bundledSrcDir) ? bundledSrcDir : undefined);
   const browser = new BrowserControlService(opts.getWorkspaceRoot, () => settings.get().browserControlEnabled);
+
+  const computerUse = new ComputerUseService(
+    () => settings.get().computerUseEnabled,
+    () => process.platform === "win32",
+    () => settings.get().computerUseScreenshotRetentionDays,
+  );
+  const pendingAppApprovals = new Map<
+    string,
+    { resolve: (decision: "always" | "once" | "deny") => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+  computerUse.setAppApprovalResolver(async (req) => {
+    return new Promise<"always" | "once" | "deny">((resolve, reject) => {
+      const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const timer = setTimeout(() => {
+        pendingAppApprovals.delete(requestId);
+        reject(new Error(`App approval timed out for "${req.appId}".`));
+      }, 5 * 60 * 1000);
+      pendingAppApprovals.set(requestId, { resolve, reject, timer });
+      broadcast(CH.computerUseAppApprovalRequest, { requestId, appId: req.appId, action: req.action });
+    });
+  });
 
   const index = new IndexManager({
     indexRoot: join(app.getPath("userData"), "index"),
@@ -268,6 +298,30 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     }
   };
 
+  const getContextLength = (providerId: string, modelId: string): number | undefined => {
+    const provider = agents.listProviders(true).find((p) => p.id === providerId);
+    const fromProvider = provider?.models.find((m) => m.id === modelId)?.contextLength;
+    if (fromProvider) return fromProvider;
+    // Primary Openference catalog lives in ModelsCache (provider.models is often empty).
+    return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
+  };
+
+  /** Shared by the interactive host and the unattended automation executors. */
+  const agentDeps: AgentRunContextDeps = {
+    config,
+    auth,
+    agents,
+    settings,
+    capabilities,
+    browser,
+    memory,
+    trust,
+    getWorkspaceRoot: opts.getWorkspaceRoot,
+    searchIndex: (query, topK) => index.search(query, topK),
+    getContextLength,
+    mcpAuth: createMcpAuthBridge(mcpModules, mcpOAuth),
+  };
+
   const agentHost = new DesktopAgentHost({
     config,
     auth,
@@ -275,22 +329,17 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     settings,
     capabilities,
     browser,
+    computerUse,
     visualize,
     images,
     terminals,
     memory,
     review,
-    mcpAuth: { getProvider: (name) => mcpOAuth.getProvider(name) },
+    mcpAuth: createMcpAuthBridge(mcpModules, mcpOAuth),
     trust,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
-    getContextLength: (providerId, modelId) => {
-      const provider = agents.listProviders(true).find((p) => p.id === providerId);
-      const fromProvider = provider?.models.find((m) => m.id === modelId)?.contextLength;
-      if (fromProvider) return fromProvider;
-      // Primary Openference catalog lives in ModelsCache (provider.models is often empty).
-      return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
-    },
+    getContextLength,
     getImageModels: (providerId) => {
       const provider = agents.listProviders(true).find((p) => p.id === providerId);
       const list = provider && provider.kind !== "primary" ? provider.models : modelsCache.listCached();
@@ -301,6 +350,13 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
         ...list.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => ({ id: m.id, route: "chat" as const })),
       ];
     },
+  });
+
+  const automations = new AutomationService({
+    storage,
+    deps: agentDeps,
+    auth,
+    isCatchUpEnabled: () => settings.get().automationsCatchUp,
   });
 
   // Watches .git for external changes (terminal/agent) and pings the renderer.
@@ -420,8 +476,11 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.gitRemotes, () => gitRead((r) => git.remotes(r), []));
   ipcMain.handle(CH.gitStashList, () => gitRead((r) => git.stashList(r), []));
 
-  ipcMain.handle(CH.workspaceOpen, async () => {
-    const result = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+  ipcMain.handle(CH.workspaceOpen, async (_e, startIn?: string) => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openDirectory"],
+      ...(startIn ? { defaultPath: startIn } : {}),
+    });
     if (result.canceled || result.filePaths.length === 0) return null;
     const root = result.filePaths[0]!;
     applyWorkspaceRoot(root);
@@ -455,7 +514,24 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.settingsSet, (_e, patch: Partial<DeyinSettings>) => {
     const next = settings.set(patch);
     if ("indexingEnabled" in patch) void index.refresh();
+    if ("automationsCatchUp" in patch || "keepRunningInBackground" in patch) {
+      automations.refreshScheduler();
+    }
     return next;
+  });
+
+  ipcMain.handle(CH.computerUseGetAllowlist, () => computerUse.getAllowlist());
+  ipcMain.handle(CH.computerUseSetAllowlist, (_e, apps: string[]) => {
+    computerUse.setAllowlist(apps);
+    return computerUse.getAllowlist();
+  });
+  ipcMain.handle(CH.computerUseListApps, () => computerUse.listAppsPreview());
+  ipcMain.on(CH.computerUseAppApprovalRespond, (_e, requestId: string, decision: "always" | "once" | "deny") => {
+    const pending = pendingAppApprovals.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingAppApprovals.delete(requestId);
+    pending.resolve(decision);
   });
 
   /* Capabilities: live registry + persisted disabled set. */
@@ -706,6 +782,46 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     if (typeof message === "string" && message.length > 0) logLine(level, `[renderer] ${message.slice(0, 4000)}`);
   });
 
+  /* Automations ----------------------------------------------------------- */
+  ipcMain.handle(CH.automationsList, () => automations.list());
+  ipcMain.handle(CH.automationsCreate, (_e, input: Omit<Automation, "id" | "createdAt" | "updatedAt">) =>
+    automations.create(input),
+  );
+  ipcMain.handle(CH.automationsUpdate, (_e, id: string, patch: Partial<Omit<Automation, "id" | "createdAt">>) =>
+    automations.update(id, patch),
+  );
+  ipcMain.handle(CH.automationsDelete, (_e, id: string) => automations.remove(id));
+  ipcMain.handle(CH.automationsToggle, (_e, id: string, enabled: boolean) => automations.toggle(id, enabled));
+  ipcMain.handle(CH.automationsRun, (_e, id: string) => automations.run(id));
+  ipcMain.on(CH.automationsStop, (_e, runId: string) => automations.stopRun(runId));
+  ipcMain.handle(CH.automationsRuns, (_e, automationId?: string) => automations.listRuns(automationId));
+  ipcMain.handle(CH.wslTestDistro, (_e, distro: string) => testWslDistro(distro));
+
+  /* SSH hosts (remote automation targets) --------------------------------- */
+  ipcMain.handle(CH.sshHostsList, () => automations.listSshHosts());
+  ipcMain.handle(CH.sshHostsAdd, (_e, input: SshHostInput) => automations.addSshHost(input));
+  ipcMain.handle(CH.sshHostsUpdate, (_e, id: string, patch: Partial<SshHostInput>) =>
+    automations.updateSshHost(id, patch),
+  );
+  ipcMain.handle(CH.sshHostsRemove, (_e, id: string) => automations.removeSshHost(id));
+  ipcMain.handle(CH.sshHostsSetCredentials, (_e, id: string, creds: SshHostCredentials) =>
+    automations.setSshCredentials(id, creds),
+  );
+  ipcMain.handle(CH.sshHostsTest, (_e, hostId: string, acceptFingerprint?: string) =>
+    automations.testSshHost(hostId, acceptFingerprint),
+  );
+  ipcMain.handle(CH.sshHostsPinFingerprint, (_e, hostId: string, fingerprint: string) =>
+    automations.pinSshFingerprint(hostId, fingerprint),
+  );
+  ipcMain.handle(CH.sshHostsImportKey, async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ["openFile"],
+      filters: [{ name: "Private key", extensions: ["pem", "key", ""] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return readFileSync(result.filePaths[0]!, "utf8");
+  });
+
   return {
     terminals,
     shouldKeepRunningInBackground: () => settings.get().keepRunningInBackground,
@@ -721,6 +837,7 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     shutdown: async () => {
       // Abort in-flight agent runs first so MCP children observe the signal.
       agentHost.stopAll();
+      automations.dispose();
       agentHost.disposeAllShells();
       telemetry.stop();
       await Promise.race([

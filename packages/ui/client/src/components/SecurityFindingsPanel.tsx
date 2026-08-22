@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "./Icon.js";
+import { CodeTag, FindingRow } from "./ui/index.js";
 import type { SecurityFinding, SecurityFindingsReport, SecuritySeverity } from "@deyin/contract";
 
 const SEVERITY_ORDER: Record<SecuritySeverity, number> = {
@@ -124,19 +125,20 @@ export function SecurityFindingsPanel(props: SecurityFindingsPanelProps) {
         ) : (
           <ul className="security-findings">
             {findings.map((f) => (
-              <li key={f.id} className={`security-finding security-finding--${f.severity}`}>
-                <div className="security-finding__head">
-                  <span className={`security-finding__sev security-finding__sev--${f.severity}`}>{f.severity}</span>
-                  <span className="security-finding__rule">{f.ruleId}</span>
-                  <span className="security-finding__source">{f.source}</span>
-                </div>
-                <p className="security-finding__message">{f.message}</p>
-                {f.location?.file && f.location.file !== "<diff>" ? (
-                  <button type="button" className="security-finding__link" onClick={() => openFinding(f)}>
-                    {f.location.file}
-                    {f.location.line ? `:${f.location.line}` : ""}
-                  </button>
-                ) : null}
+              <li key={f.id}>
+                <FindingRow
+                  severity={f.severity}
+                  title={f.ruleId}
+                  tags={f.source ? <CodeTag>{f.source}</CodeTag> : undefined}
+                  meta={
+                    f.location?.file && f.location.file !== "<diff>"
+                      ? [`${f.location.file}${f.location.line ? `:${f.location.line}` : ""}`]
+                      : undefined
+                  }
+                  onClick={f.location?.file && f.location.file !== "<diff>" ? () => openFinding(f) : undefined}
+                >
+                  {f.message}
+                </FindingRow>
               </li>
             ))}
           </ul>

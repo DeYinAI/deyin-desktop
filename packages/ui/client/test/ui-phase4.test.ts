@@ -146,6 +146,23 @@ test("useAgentState: tool events carry duration and subagent cards progress", as
   assert.equal(failed.line, "read b.ts");
 });
 
+test("useAgentState: model-routed updates status label for tool role", () => {
+  __testResetAgentStore();
+  const threadId = "route-thread";
+  agentStateStore.startRun(threadId, "agent");
+
+  __testDispatch({
+    threadId,
+    event: { type: "model-routed", step: 2, role: "tool", model: "claude-haiku-4-5" },
+  });
+
+  const state = __testGetThreadState(threadId);
+  assert.equal(state.status.label, "Reading (claude-haiku-4-5)");
+  const thought = state.runEvents.find((e) => e.kind === "thought");
+  assert.ok(thought && thought.kind === "thought");
+  assert.match(thought.label, /tool model/);
+});
+
 test("useAgentState: subagent cards keep the prompt, the full activity log and the report", async () => {
   __testResetAgentStore();
   const threadId = "subagent-panel-thread";
@@ -166,4 +183,29 @@ test("useAgentState: subagent cards keep the prompt, the full activity log and t
   assert.deepEqual(run.lines, ["bash git diff", "read src/auth.ts"]);
   assert.equal(run.line, "1 finding");
   assert.equal(run.report, "| Severity |");
+});
+
+test("useAgentState: mcp-auth-needed emits side effect for inline auth card", () => {
+  __testResetAgentStore();
+  const threadId = "mcp-auth-thread";
+  const effects: import("../src/hooks/useAgentState.js").AgentSideEffect[] = [];
+  const off = agentStateStore.onSideEffect((effect) => effects.push(effect));
+
+  agentStateStore.startRun(threadId, "agent");
+  __testDispatch({
+    threadId,
+    event: {
+      type: "mcp-auth-needed",
+      requestId: "req-1",
+      moduleId: "cloudflare-observability",
+      serverName: "Cloudflare Observability",
+      message: "Sign in to continue.",
+    },
+  });
+
+  off();
+  const authEffect = effects.find((e) => e.type === "mcp-auth-needed");
+  assert.ok(authEffect && authEffect.type === "mcp-auth-needed");
+  assert.equal(authEffect.moduleId, "cloudflare-observability");
+  assert.equal(authEffect.serverName, "Cloudflare Observability");
 });

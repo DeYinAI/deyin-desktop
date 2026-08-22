@@ -35,6 +35,7 @@
     "@deyin/branding": "workspace:*",
     "@deyin/bundle-base": "workspace:*",
     "@deyin/bundle-desktop-app": "workspace:*",
+    "@deyin/computer-use-host": "workspace:*",
     "@deyin/contract": "workspace:*",
     "@deyin/extension-api": "workspace:*",
     "@deyin/host-core": "workspace:*",

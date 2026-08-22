@@ -38,6 +38,12 @@ export interface PermissionEngineOptions {
   neverSkipTools?: Iterable<string>;
   /** Prefix patterns (e.g. "computer_") that must never be auto-allowed by skipAll. */
   neverSkipPrefixes?: Iterable<string>;
+  /**
+   * Backing store for "always allow" grants. Hosts pass the thread's own set so
+   * a grant outlives the single run whose engine recorded it — otherwise
+   * "Allow for session" is really "allow for this one turn".
+   */
+  sessionGrants?: Set<string>;
 }
 
 function matchesNeverSkip(
@@ -58,13 +64,14 @@ export class PermissionEngine {
   private skipAll: boolean;
   private readonly neverSkipTools: Set<string>;
   private readonly neverSkipPrefixes: string[];
-  private readonly sessionGrants = new Set<string>();
+  private sessionGrants: Set<string>;
 
   constructor(opts: PermissionEngineOptions = {}) {
     this.rules = [...(opts.agentRules ?? []), ...(opts.configRules ?? [])];
     this.skipAll = opts.skipAll ?? false;
     this.neverSkipTools = new Set(opts.neverSkipTools ?? []);
     this.neverSkipPrefixes = [...(opts.neverSkipPrefixes ?? [])];
+    this.sessionGrants = opts.sessionGrants ?? new Set<string>();
   }
 
   actionFor(tool: Pick<ToolDefinition, "name" | "tier">): PermissionAction {
@@ -86,6 +93,8 @@ export class PermissionEngine {
     for (const t of opts.neverSkipTools ?? []) this.neverSkipTools.add(t);
     this.neverSkipPrefixes.length = 0;
     this.neverSkipPrefixes.push(...(opts.neverSkipPrefixes ?? []));
+    // A mode switch mid-run must not revoke what the user already allowed.
+    if (opts.sessionGrants) this.sessionGrants = opts.sessionGrants;
   }
 
   /** Session-scoped "always allow" (the "don't ask again" choice in the prompt). */
