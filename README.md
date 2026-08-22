@@ -93,8 +93,8 @@ Contact: `hello@deyin.ai`. The local OAuth dev server uses a fictional demo user
 
 ## License
 
-Source is available under the **PolyForm Noncommercial License 1.0.0** — you may use,
+Source is available under the **[PolyForm Noncommercial License 1.0.0](LICENSE)** — you may use,
 modify, and share it for noncommercial purposes. **Commercial use, resale, and paid
-hosting of this codebase require a separate license from Deyin** (`hello@deyin.ai`).
+hosting require a separate license from Deyin** (`hello@deyin.ai`).
 
-See [LICENSE](LICENSE).
+The **Deyin** name and logos are protected separately — see [TRADEMARK.md](TRADEMARK.md).
