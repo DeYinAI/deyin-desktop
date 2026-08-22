@@ -76,7 +76,7 @@ export function migrateSessionMeta(raw: unknown): SessionMetaRecord {
 
   const forkedFrom = typeof input.forkedFrom === "string" ? input.forkedFrom : undefined;
 
-  // Legacy snake_case from early Advanced agent experiments.
+  // Legacy snake_case from early agent experiments.
   const prefixHash =
     typeof input.prefixHash === "string"
       ? input.prefixHash

@@ -84,7 +84,7 @@ await runAgent({
 
 ## Settings (Phase 7)
 
-Configure in **Settings → Advanced agent integration → Delivery & evidence**:
+Configure in **Settings → Advanced agent features → Delivery & evidence**:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
@@ -116,4 +116,4 @@ Step-by-step walkthrough: [guides/evidence-workflow-tutorial.md](./guides/eviden
 ## Related
 
 - Agent profile: `DELIVERY_AGENT` in `packages/agent-core/src/agents.ts`
-- Integration status: `docs/AGENT_INTEGRATION_STATUS.md` Phase 5
+- Architecture: [CACHE_ARCHITECTURE.md](./CACHE_ARCHITECTURE.md)

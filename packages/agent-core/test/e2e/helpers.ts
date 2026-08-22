@@ -1,5 +1,5 @@
 /**
- * Shared helpers for Advanced agent E2E integration tests.
+ * Shared helpers for agent E2E integration tests.
  */
 
 import { writeFileSync, mkdirSync } from "node:fs";

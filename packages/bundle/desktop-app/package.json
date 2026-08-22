@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Desktop profile layer \u2014 patches the base bundle for the Electron host (lazy optimization row with userData paths).",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

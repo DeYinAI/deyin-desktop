@@ -7,7 +7,7 @@ interface WelcomeProps {
   onUseApiKey: () => void;
 }
 
-/** First-run sign-in screen shown while signed out (legacy UI-style centered card). */
+/** First-run sign-in screen shown while signed out (centered card). */
 export function Welcome({ busy, connecting, onConnect, onUseApiKey }: WelcomeProps) {
   return (
     <div className="welcome">

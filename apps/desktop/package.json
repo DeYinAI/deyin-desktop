@@ -2,7 +2,7 @@
   "name": "@deyin/desktop",
   "version": "2.1.11",
   "description": "Deyin desktop app (Electron). Agentic development environment with native computer use, billing, MCP servers, and plugin system.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Deyin <hello@deyin.ai>",
   "homepage": "https://deyin.ai",
   "type": "module",

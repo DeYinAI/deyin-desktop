@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** Inline help icon with hover tooltip for Advanced agent settings. */
+/** Inline help icon with hover tooltip for advanced agent settings. */
 export function HelpTooltip(props: { text: string; children?: ReactNode }) {
   return (
     <span className="help-tooltip" title={props.text}>

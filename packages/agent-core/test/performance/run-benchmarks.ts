@@ -1,5 +1,5 @@
 /**
- * Run all Advanced agent performance benchmarks and emit a combined report.
+ * Run all agent performance benchmarks and emit a combined report.
  */
 
 import { writeFileSync } from "node:fs";

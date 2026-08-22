@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Advanced semantic caching with DeYinAI Embedding for 50-70% additional token savings on redundant tool calls and repeated queries.",
   "author": "Deyin",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "main": "./dist/index.js",
   "category": "optimization",
   "downloadSize": 639000000,

@@ -325,9 +325,9 @@ export interface McpAuthResult {
   toolCount?: number;
 }
 
-/* Advanced agent diagnostics (main-process ring buffers, surfaced in Settings) ------- */
+/* Agent diagnostics (main-process ring buffers, surfaced in Settings) ------- */
 
-export interface Advanced agentCacheInvalidationEntry {
+export interface AgentCacheInvalidationEntry {
   at: number;
   threadId: string;
   reasons: string[];
@@ -337,14 +337,14 @@ export interface Advanced agentCacheInvalidationEntry {
 }
 
 /** Kept for cache invalidation history; coordinator/fleet entries removed with those features. */
-export interface Advanced agentEvidenceEntry {
+export interface AgentEvidenceEntry {
   at: number;
   threadId: string;
   code: string;
   message: string;
 }
 
-export interface Advanced agentDiagnostics {
+export interface AgentDiagnostics {
   cache: {
     prefixShape: {
       prefixHash: string;
@@ -353,12 +353,12 @@ export interface Advanced agentDiagnostics {
       logRewriteVersion: number;
       toolSchemaTokens: number;
     } | null;
-    invalidationHistory: Advanced agentCacheInvalidationEntry[];
+    invalidationHistory: AgentCacheInvalidationEntry[];
     sessionHit: number;
     sessionMiss: number;
     hitRate: number;
   };
-  evidence: Advanced agentEvidenceEntry[];
+  evidence: AgentEvidenceEntry[];
 }
 
 export interface Project {

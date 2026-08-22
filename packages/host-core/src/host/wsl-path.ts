@@ -48,3 +48,27 @@ export function windowsSpawnCwd(p: string): string {
   }
   return p;
 }
+
+/** Resolved cwd for spawning `wsl.exe` via node-pty on Windows. */
+export interface WslTerminalSpawn {
+  /** Directory handed to CreateProcess (must be a real Windows path). */
+  spawnCwd: string;
+  /** Distro-local path to `cd` into after the shell starts, or null when unnecessary. */
+  initialCd: string | null;
+}
+
+/**
+ * node-pty cannot use WSL UNC or POSIX working directories (CreateProcess error
+ * 267). Launch from a Windows directory and optionally cd inside the distro.
+ */
+export function wslTerminalSpawn(rawCwd: string): WslTerminalSpawn {
+  const spawnCwd = windowsSpawnCwd(rawCwd);
+  const linuxPath = toWslPath(rawCwd);
+  const initialCd = linuxPath !== spawnCwd ? linuxPath : null;
+  return { spawnCwd, initialCd };
+}
+
+/** Escape a path for a single-quoted bash `cd` argument. */
+export function bashSingleQuote(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}

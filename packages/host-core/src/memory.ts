@@ -8,7 +8,7 @@ import { join } from "node:path";
  * file per fact with frontmatter metadata, stored under `<dir>/memory/`;
  * forgotten facts move to `<dir>/memory/.archive/` and can be recovered.
  *
- * Modeled on Advanced agent's Context Engine v2 fact model: immutable `id`, monotonic
+ * Modeled on Deyin's context memory fact model: immutable `id`, monotonic
  * `revision`, independent `type` and `scope`, and BM25-lite recall ranking with
  * a project preference and staleness down-ranking.
  */

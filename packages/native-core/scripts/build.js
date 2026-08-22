@@ -23,6 +23,12 @@ const res = spawnSync(cargo, ["build", ...args], {
   env: {
     ...process.env,
     PATH: `${join(require("node:os").homedir(), ".cargo", "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
+    RUSTFLAGS: [
+      process.env.RUSTFLAGS,
+      `--remap-path-prefix=${require("node:os").homedir()}=/build`,
+    ]
+      .filter(Boolean)
+      .join(" "),
   },
 });
 if (res.error || res.status !== 0) {
@@ -43,4 +49,10 @@ if (!existsSync(src)) {
 }
 mkdirSync(pkgDir, { recursive: true });
 copyFileSync(src, join(pkgDir, "deyin-native.node"));
-console.log(`Copied ${src} -> packages/native-core/deyin-native.node`);
+const out = join(pkgDir, "deyin-native.node");
+try {
+  execSync(`strip "${out}"`, { stdio: "ignore" });
+} catch {
+  // strip is optional (e.g. some Windows toolchains)
+}
+console.log(`Copied ${src} -> ${out}`);

@@ -1,4 +1,4 @@
-# Advanced agent Metrics — Baseline Report
+# Agent Metrics — Baseline Report
 
 **Generated**: August 2, 2026  
 **Release**: Deyin 2.0.0 beta  
@@ -41,7 +41,7 @@ Source: [CACHE_PERFORMANCE_REPORT.md](./CACHE_PERFORMANCE_REPORT.md), `cache-gua
 
 | Metric | Baseline | Target |
 |--------|----------|--------|
-| Settings Advanced agent pages load | &lt;120ms | &lt;200ms |
+| Settings advanced agent pages load | &lt;120ms | &lt;200ms |
 | Diagnostics refresh (IPC) | &lt;50ms | &lt;100ms |
 | 1000-turn session initial render | TBD Phase 4 | &lt;2s |
 
@@ -60,7 +60,7 @@ When telemetry is enabled, the desktop host:
 2. Every 7 days writes `agent-weekly-YYYY-Www.json`
 3. Logs summary line to `deyin.log`
 
-View current snapshot: Settings → any Advanced agent page (stats cards) or IPC `agent.metrics()`.
+View current snapshot: Settings → any advanced agent page (stats cards) or IPC `agent.metrics()`.
 
 ## Next review
 

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "description": "Deyin's runtime-agnostic core: shared domain types, Openference chat/model clients, web search, usage stats, JSON storage with secret ciphers, and host services (files, env, PTY). Consumed by the desktop app, the web host-server, and the CLI.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

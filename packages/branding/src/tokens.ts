@@ -6,8 +6,8 @@ export const brand = {
   tagline: "Agentic development, with Openference.",
 } as const;
 
-/** Dark theme palette (default). Mirrors the legacy UI dark palette: Tailwind v4
- * neutrals for surfaces and text, sky for the accent, alpha-based borders. */
+/** Dark theme palette (default). Tailwind v4 neutrals for surfaces and text, sky
+ * for the accent, alpha-based borders. */
 export const colors = {
   // Surfaces. Flat editor-grade greys: the window/sidebar ground sits a shade
   // below the content card, so the card reads as raised without a hard border.
@@ -20,19 +20,19 @@ export const colors = {
   /** Ultra-subtle internal separator (rows inside cards). */
   hairline: "rgba(255, 255, 255, 0.05)",
 
-  // Text (neutral-200, alpha steps for muted/faint as in legacy UI)
+  // Text (neutral-200, alpha steps for muted/faint)
   text: "#e0e0e0",
   textMuted: "rgba(224, 224, 224, 0.62)",
   textFaint: "rgba(224, 224, 224, 0.34)",
 
-  // Accent (legacy UI brand: sky-500/sky-400, soft fill from sky-950)
+  // Accent (sky-500/sky-400, soft fill from sky-950)
   accent: "#00a5ea",
   accentHover: "#00bbfd",
   accentSoft: "#052f4a80",
   /** Warm counter-accent: the "new chat" mark and other create affordances. */
   accentWarm: "#e2a45c",
 
-  // Send button (legacy UI primary: neutral-50 fill, neutral-950 text)
+  // Send button (neutral-50 fill, neutral-950 text)
   sendBg: "#fafafa",
   sendFg: "#0a0a0a",
 

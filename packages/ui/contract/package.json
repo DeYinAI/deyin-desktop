@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "description": "Typed RPC contract shared by the Deyin desktop app, web client, and host servers: IPC channel map, domain type re-exports, and the web WebSocket protocol.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

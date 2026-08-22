@@ -10,8 +10,8 @@ export function WhatsNewModal({ version, onDismiss }: Props) {
       <div className="modal whats-new-modal">
         <h2 id="whats-new-title">What&apos;s new in Deyin {version}</h2>
         <p className="whats-new-modal__lead">
-          Deyin agent integration brings cache-first architecture, two-model coordination, fleet orchestration,
-          and delivery mode with evidence gates.
+          Cache-first agent architecture, two-model coordination, fleet orchestration, and
+          delivery mode with evidence gates.
         </p>
         <ul className="whats-new-modal__list">
           <li>
@@ -25,7 +25,7 @@ export function WhatsNewModal({ version, onDismiss }: Props) {
           </li>
         </ul>
         <p className="hint">
-          New features are off by default during beta. Enable them in Settings → Advanced agent integration.
+          New features are off by default during beta. Enable them in Settings → Advanced agent features.
         </p>
         <div className="modal__actions">
           <button type="button" className="btn btn--primary" onClick={onDismiss}>

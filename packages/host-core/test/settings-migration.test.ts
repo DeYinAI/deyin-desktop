@@ -133,7 +133,7 @@ test("v11: dropped fields fall out and kept fields survive", () => {
     automationsCatchUp: false,
     optimizationCompression: false,
     cacheHitRateTarget: 0.9,
-    agentOnboardComplete: true,
+    legacyOnboardComplete: true,
     bogusFutureField: "x",
   } as unknown as Record<string, unknown>;
   const migrated = migrateSettings(v10);
@@ -150,7 +150,7 @@ test("v11: dropped fields fall out and kept fields survive", () => {
   assert.equal(migrated.automationsCatchUp, false);
   assert.equal("optimizationCompression" in migrated, false);
   assert.equal("cacheHitRateTarget" in migrated, false);
-  assert.equal("agentOnboardComplete" in migrated, false);
+  assert.equal("legacyOnboardComplete" in migrated, false);
   assert.equal("bogusFutureField" in migrated, false);
 });
 

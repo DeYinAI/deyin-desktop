@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { platform } from "node:os";
 import type { TerminalCreateOptions } from "../types.js";
-import { resolveShell } from "./env.js";
+import { resolveShellInfo } from "./env.js";
+import { bashSingleQuote, wslTerminalSpawn } from "./wsl-path.js";
 
 interface IPty {
   onData(cb: (data: string) => void): void;
@@ -67,14 +69,27 @@ export class TerminalManager {
     if (!pty) throw new Error("Terminal support is unavailable (node-pty not built).");
 
     const id = randomUUID();
-    const shell = await resolveShell(opts.shell);
-    const term = pty.spawn(shell.path, shell.args, {
+    const shellInfo = await resolveShellInfo(opts.shell);
+    const rawCwd = opts.cwd ?? this.options.defaultCwd?.() ?? process.env.HOME ?? process.cwd();
+    let spawnCwd = rawCwd;
+    let wslInitialCd: string | null = null;
+    if (shellInfo.kind === "wsl" && platform() === "win32") {
+      const wsl = wslTerminalSpawn(rawCwd);
+      spawnCwd = wsl.spawnCwd;
+      wslInitialCd = wsl.initialCd;
+    }
+
+    const term = pty.spawn(shellInfo.path, shellInfo.args ?? [], {
       name: "xterm-color",
       cols: opts.cols ?? 80,
       rows: opts.rows ?? 24,
-      cwd: opts.cwd ?? this.options.defaultCwd?.() ?? process.env.HOME ?? process.cwd(),
+      cwd: spawnCwd,
       env: process.env,
     });
+
+    if (wslInitialCd) {
+      term.write(`cd ${bashSingleQuote(wslInitialCd)}\n`);
+    }
 
     term.onData((data) => this.events.onData(id, data));
     term.onExit(({ exitCode }) => {

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "description": "Deyin in your terminal: an agentic coding CLI (chat TUI + headless mode) with the same Openference account, models, agents and web search as the Deyin desktop app.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Deyin <hello@deyin.ai>",
   "homepage": "https://deyin.ai",
   "repository": {

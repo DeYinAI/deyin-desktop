@@ -30,9 +30,7 @@ export function BetaFeedbackForm({ onClose }: Props) {
         {sent ? (
           <>
             <p>Thank you — your feedback was saved locally and queued for telemetry (if enabled).</p>
-            <p className="hint">
-              Join the Discord #agent-beta channel for live discussion (see docs/BETA_ROLLOUT.md).
-            </p>
+            <p className="hint">Join the Deyin Discord for live discussion and support.</p>
             <div className="modal__actions">
               <button type="button" className="btn btn--primary" onClick={onClose}>
                 Close

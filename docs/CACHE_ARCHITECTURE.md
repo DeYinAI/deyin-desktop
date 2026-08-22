@@ -1,7 +1,7 @@
 # Cache Architecture Guide
 
 **Status**: Phase 1 Production Ready  
-**Reference**: Deyin agent prefix-cache patterns
+**Reference**: Deyin prefix-cache architecture
 
 ## Overview
 

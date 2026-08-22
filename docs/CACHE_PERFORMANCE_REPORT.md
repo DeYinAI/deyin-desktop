@@ -1,7 +1,7 @@
 # Cache Performance Validation Report
 
 **Date**: August 2, 2026  
-**Phase**: Advanced agent Integration — Phase 1  
+**Phase**: Advanced Agent Features — Phase 1  
 **Method**: Simulated multi-turn sessions via `packages/agent-core/src/testing/cache-guard.ts`
 
 ## Summary

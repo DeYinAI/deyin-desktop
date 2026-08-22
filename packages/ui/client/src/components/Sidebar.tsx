@@ -29,6 +29,7 @@ interface SidebarProps {
   onSelectThread: (projectId: string, threadId: string) => void;
   onOpenSearch: () => void;
   onThreadContext: (threadId: string, x: number, y: number) => void;
+  onProjectContext: (projectId: string, x: number, y: number) => void;
   onRenameSubmit: (threadId: string, title: string) => void;
   onConnect: () => void;
   onLogout: () => void;
@@ -255,7 +256,13 @@ export function Sidebar(props: SidebarProps) {
             project.root === null ? "home" : expanded ? "folderOpen" : "folder";
           return (
             <div className="project" key={project.id}>
-              <div className={`project__row ${active ? "project__row--active" : ""}`}>
+              <div
+                className={`project__row ${active ? "project__row--active" : ""}`}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  props.onProjectContext(project.id, e.clientX, e.clientY);
+                }}
+              >
                 <button
                   type="button"
                   className="project__toggle"

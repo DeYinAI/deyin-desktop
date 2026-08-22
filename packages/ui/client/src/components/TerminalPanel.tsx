@@ -36,6 +36,10 @@ interface TerminalPanelProps {
   attachSessions?: AttachableTerminal[];
   /** When true, fills the workspace panel tab instead of bottom-docking. */
   embedded?: boolean;
+  /** Workspace panel has the Terminal tab selected (pane may still be hidden during layout). */
+  active?: boolean;
+  /** Right panel width in px — refit when the drag handle moves the split. */
+  panelWidth?: number | null;
   onClose?: () => void;
 }
 
@@ -123,6 +127,8 @@ export function TerminalPanel({
   theme,
   attachSessions,
   embedded = false,
+  active = true,
+  panelWidth,
   onClose,
 }: TerminalPanelProps) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
@@ -145,6 +151,7 @@ export function TerminalPanel({
   const [maximized, setMaximized] = useState(false);
   const clearRef = useRef<Map<string, () => void>>(new Map());
   const focusRef = useRef<Map<string, () => void>>(new Map());
+  const refitRef = useRef<Map<string, () => void>>(new Map());
 
   const addSession = useCallback(
     (shellId?: string, label?: string) => {
@@ -213,6 +220,7 @@ export function TerminalPanel({
     (key: string) => {
       clearRef.current.delete(key);
       focusRef.current.delete(key);
+      refitRef.current.delete(key);
       setSessions((cur) => {
         const next = cur.filter((s) => s.key !== key);
         if (next.length === 0) {
@@ -237,6 +245,25 @@ export function TerminalPanel({
     },
     [activeKey, defaultShell, embedded, env, onClose],
   );
+
+  const refitAll = useCallback(() => {
+    for (const refit of refitRef.current.values()) refit();
+  }, []);
+
+  // Refit after the workspace tab or panel width changes — hidden panes skip
+  // ResizeObserver refits (0×0), so sync xterm + PTY once layout settles.
+  useEffect(() => {
+    if (!active) return;
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      refitAll();
+      inner = requestAnimationFrame(refitAll);
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
+  }, [active, panelWidth, refitAll]);
 
   // Focus the active terminal on tab switch so typing lands where the eye is.
   useEffect(() => {
@@ -326,159 +353,219 @@ export function TerminalPanel({
 
       <div className="terminal-panel__bar">
         {embedded ? (
-          <div className="terminal-panel__switch">
-            <button
-              ref={sessionAnchorRef}
-              type="button"
-              className={`termswitch${sessionMenuOpen ? " termswitch--open" : ""}`}
-              title={cwd ? `${activeSession?.label ?? "Terminal"} · ${cwd}` : activeSession?.label ?? "Terminal"}
-              aria-haspopup="menu"
-              aria-expanded={sessionMenuOpen}
-              onClick={() => {
-                setSessionMenuOpen((v) => !v);
-              }}
-            >
-              <Icon name={activeSession?.agent ? "sparkles" : "terminal"} size={12} />
-              <span className="termswitch__label">{activeSession?.label ?? "Terminal"}</span>
-              {sessions.length > 1 && <span className="termswitch__count">{sessions.length}</span>}
-              <Icon name="chevronDown" size={10} className="termswitch__caret" />
-            </button>
-            {sessionMenuOpen &&
-              createPortal(
-                <div
-                  ref={sessionPanelRef}
-                  role="menu"
-                  className="termswitch__panel termpicker termpicker--anchored"
-                  style={{
-                    top: sessionPos?.top ?? 0,
-                    left: sessionPos?.left ?? 0,
-                    visibility: sessionPos ? "visible" : "hidden",
-                  }}
-                >
-                  <div className="termpicker__title">Terminals</div>
-                  {sessions.map((session) => {
-                    const shell = env?.shells.find((s) => s.id === session.shellId);
-                    return (
-                      <button
-                        key={session.key}
-                        role="menuitem"
-                        type="button"
-                        className={`termpicker__item termswitch__item${session.key === activeKey ? " termswitch__item--active" : ""}`}
-                        onClick={() => {
-                          setActiveKey(session.key);
-                          setSessionMenuOpen(false);
-                        }}
-                      >
-                        <Icon name={session.agent ? "sparkles" : "terminal"} size={13} />
-                        <span className="termpicker__name">{session.label}</span>
-                        {session.agent && <span className="termpicker__tag">Agent</span>}
-                        {shell?.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
-                        {session.key === activeKey && <Icon name="check" size={12} className="termswitch__check" />}
-                        <span
-                          className="termswitch__close"
-                          role="button"
-                          aria-label="Close session"
-                          title="Close session (Ctrl+Shift+W)"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            closeSession(session.key);
+          <div className="terminal-panel__leading">
+            <div className="terminal-panel__switch">
+              <button
+                ref={sessionAnchorRef}
+                type="button"
+                className={`termswitch${sessionMenuOpen ? " termswitch--open" : ""}`}
+                title={cwd ? `${activeSession?.label ?? "Terminal"} · ${cwd}` : activeSession?.label ?? "Terminal"}
+                aria-haspopup="menu"
+                aria-expanded={sessionMenuOpen}
+                onClick={() => {
+                  setSessionMenuOpen((v) => !v);
+                }}
+              >
+                <Icon name={activeSession?.agent ? "sparkles" : "terminal"} size={12} />
+                <span className="termswitch__label">{activeSession?.label ?? "Terminal"}</span>
+                {sessions.length > 1 && <span className="termswitch__count">{sessions.length}</span>}
+                <Icon name="chevronDown" size={10} className="termswitch__caret" />
+              </button>
+              {sessionMenuOpen &&
+                createPortal(
+                  <div
+                    ref={sessionPanelRef}
+                    role="menu"
+                    className="termswitch__panel termpicker termpicker--anchored"
+                    style={{
+                      top: sessionPos?.top ?? 0,
+                      left: sessionPos?.left ?? 0,
+                      visibility: sessionPos ? "visible" : "hidden",
+                    }}
+                  >
+                    <div className="termpicker__title">Terminals</div>
+                    {sessions.map((session) => {
+                      const shell = env?.shells.find((s) => s.id === session.shellId);
+                      return (
+                        <div
+                          key={session.key}
+                          role="menuitem"
+                          tabIndex={0}
+                          className={`termpicker__item termswitch__item${session.key === activeKey ? " termswitch__item--active" : ""}`}
+                          onClick={() => {
+                            setActiveKey(session.key);
+                            setSessionMenuOpen(false);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setActiveKey(session.key);
+                              setSessionMenuOpen(false);
+                            }
                           }}
                         >
-                          <Icon name="close" size={9} />
-                        </span>
+                          <Icon name={session.agent ? "sparkles" : "terminal"} size={13} />
+                          <span className="termpicker__name">{session.label}</span>
+                          {session.agent && <span className="termpicker__tag">Agent</span>}
+                          {shell?.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
+                          <button
+                            type="button"
+                            className="termswitch__close"
+                            aria-label="Close session"
+                            title="Close session (Ctrl+Shift+W)"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeSession(session.key);
+                            }}
+                          >
+                            <Icon name="close" size={9} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>,
+                  document.body,
+                )}
+            </div>
+            <div className="terminal-panel__new">
+              <button
+                ref={pickerAnchorRef}
+                type="button"
+                className={`termbtn${pickerOpen ? " termbtn--active" : ""}`}
+                title="New terminal (Ctrl+Shift+T)"
+                aria-haspopup="menu"
+                aria-expanded={pickerOpen}
+                onClick={() => setPickerOpen((v) => !v)}
+              >
+                <Icon name="plus" size={13} />
+              </button>
+              {pickerOpen &&
+                createPortal(
+                  <div
+                    ref={pickerPanelRef}
+                    role="menu"
+                    className="termpicker termpicker--anchored"
+                    style={{
+                      top: pickerPos?.top ?? 0,
+                      left: pickerPos?.left ?? 0,
+                      visibility: pickerPos ? "visible" : "hidden",
+                    }}
+                  >
+                    <div className="termpicker__title">New terminal</div>
+                    {(env?.shells ?? []).map((shell) => (
+                      <button
+                        key={shell.id}
+                        type="button"
+                        role="menuitem"
+                        className="termpicker__item"
+                        onClick={() => addSession(shell.id, shell.label)}
+                      >
+                        <Icon name="terminal" size={13} />
+                        <span className="termpicker__name">{shell.label}</span>
+                        {shell.id === (defaultShell ?? env?.defaultShell) && (
+                          <span className="termpicker__tag">default</span>
+                        )}
+                        {shell.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
                       </button>
-                    );
-                  })}
-                </div>,
-                document.body,
-              )}
+                    ))}
+                    {(env?.shells ?? []).length === 0 && (
+                      <div className="termpicker__item termpicker__item--empty">No shells detected</div>
+                    )}
+                  </div>,
+                  document.body,
+                )}
+            </div>
           </div>
         ) : (
-          <div className="terminal-panel__tabs">
-            {sessions.map((session) => (
-              <button
-                key={session.key}
-                ref={(el) => {
-                  if (el) tabRefs.current.set(session.key, el);
-                  else tabRefs.current.delete(session.key);
-                }}
-                type="button"
-                className={`termtab ${session.key === activeKey ? "termtab--active" : ""}`}
-                onClick={() => setActiveKey(session.key)}
-                onAuxClick={(e) => {
-                  // Middle-click closes, matching browser and editor tab strips.
-                  if (e.button === 1) {
-                    e.preventDefault();
-                    closeSession(session.key);
-                  }
-                }}
-                title={session.label}
-              >
-                <Icon name={session.agent ? "sparkles" : "terminal"} size={12} />
-                <span className="termtab__label">{session.label}</span>
-                <span
-                  className="termtab__close"
-                  role="button"
-                  aria-label="Close session"
-                  title="Close session (Ctrl+Shift+W)"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    closeSession(session.key);
+          <>
+            <div className="terminal-panel__tabs">
+              {sessions.map((session) => (
+                <button
+                  key={session.key}
+                  ref={(el) => {
+                    if (el) tabRefs.current.set(session.key, el);
+                    else tabRefs.current.delete(session.key);
                   }}
+                  type="button"
+                  className={`termtab ${session.key === activeKey ? "termtab--active" : ""}`}
+                  onClick={() => setActiveKey(session.key)}
+                  onAuxClick={(e) => {
+                    // Middle-click closes, matching browser and editor tab strips.
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      closeSession(session.key);
+                    }
+                  }}
+                  title={session.label}
                 >
-                  <Icon name="close" size={9} />
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        <div className="terminal-panel__new">
-          <button
-            ref={pickerAnchorRef}
-            className={`termbtn${pickerOpen ? " termbtn--active" : ""}`}
-            title="New terminal (Ctrl+Shift+T)"
-            aria-haspopup="menu"
-            aria-expanded={pickerOpen}
-            onClick={() => setPickerOpen((v) => !v)}
-          >
-            <Icon name="plus" size={13} />
-          </button>
-          {pickerOpen &&
-            createPortal(
-              <div
-                ref={pickerPanelRef}
-                role="menu"
-                className="termpicker termpicker--anchored"
-                style={{
-                  top: pickerPos?.top ?? 0,
-                  left: pickerPos?.left ?? 0,
-                  visibility: pickerPos ? "visible" : "hidden",
-                }}
-              >
-                <div className="termpicker__title">New terminal</div>
-                {(env?.shells ?? []).map((shell) => (
-                  <button
-                    key={shell.id}
-                    role="menuitem"
-                    className="termpicker__item"
-                    onClick={() => addSession(shell.id, shell.label)}
+                  <Icon name={session.agent ? "sparkles" : "terminal"} size={12} />
+                  <span className="termtab__label">{session.label}</span>
+                  <span
+                    className="termtab__close"
+                    role="button"
+                    aria-label="Close session"
+                    title="Close session (Ctrl+Shift+W)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      closeSession(session.key);
+                    }}
                   >
-                    <Icon name="terminal" size={13} />
-                    <span className="termpicker__name">{shell.label}</span>
-                    {shell.id === (defaultShell ?? env?.defaultShell) && (
-                      <span className="termpicker__tag">default</span>
+                    <Icon name="close" size={9} />
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="terminal-panel__new">
+              <button
+                ref={pickerAnchorRef}
+                type="button"
+                className={`termbtn${pickerOpen ? " termbtn--active" : ""}`}
+                title="New terminal (Ctrl+Shift+T)"
+                aria-haspopup="menu"
+                aria-expanded={pickerOpen}
+                onClick={() => setPickerOpen((v) => !v)}
+              >
+                <Icon name="plus" size={13} />
+              </button>
+              {pickerOpen &&
+                createPortal(
+                  <div
+                    ref={pickerPanelRef}
+                    role="menu"
+                    className="termpicker termpicker--anchored"
+                    style={{
+                      top: pickerPos?.top ?? 0,
+                      left: pickerPos?.left ?? 0,
+                      visibility: pickerPos ? "visible" : "hidden",
+                    }}
+                  >
+                    <div className="termpicker__title">New terminal</div>
+                    {(env?.shells ?? []).map((shell) => (
+                      <button
+                        key={shell.id}
+                        type="button"
+                        role="menuitem"
+                        className="termpicker__item"
+                        onClick={() => addSession(shell.id, shell.label)}
+                      >
+                        <Icon name="terminal" size={13} />
+                        <span className="termpicker__name">{shell.label}</span>
+                        {shell.id === (defaultShell ?? env?.defaultShell) && (
+                          <span className="termpicker__tag">default</span>
+                        )}
+                        {shell.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
+                      </button>
+                    ))}
+                    {(env?.shells ?? []).length === 0 && (
+                      <div className="termpicker__item termpicker__item--empty">No shells detected</div>
                     )}
-                    {shell.kind === "wsl" && <span className="termpicker__tag">WSL2</span>}
-                  </button>
-                ))}
-                {(env?.shells ?? []).length === 0 && (
-                  <div className="termpicker__item termpicker__item--empty">No shells detected</div>
+                  </div>,
+                  document.body,
                 )}
-              </div>,
-              document.body,
-            )}
-        </div>
+            </div>
+          </>
+        )}
 
         <div className="terminal-panel__spacer" />
 
@@ -489,6 +576,7 @@ export function TerminalPanel({
         )}
 
         <button
+          type="button"
           className="termbtn"
           title="Clear terminal"
           disabled={!activeSession}
@@ -517,6 +605,7 @@ export function TerminalPanel({
           <TerminalInstance
             key={session.key}
             visible={session.key === activeKey}
+            paneActive={active}
             cwd={cwd}
             shellId={session.shellId}
             attachId={session.attachId}
@@ -529,9 +618,11 @@ export function TerminalPanel({
               if (actions) {
                 clearRef.current.set(session.key, actions.clear);
                 focusRef.current.set(session.key, actions.focus);
+                refitRef.current.set(session.key, actions.refit);
               } else {
                 clearRef.current.delete(session.key);
                 focusRef.current.delete(session.key);
+                refitRef.current.delete(session.key);
               }
             }}
           />
@@ -547,7 +638,7 @@ function shellLabel(env: EnvInfo | null, shellId?: string): string | undefined {
   return env.shells.find((s: ShellInfo) => s.id === id)?.label;
 }
 
-/** `/home/user/github/deyin-desktop` → `~/github/deyin-desktop`, tail-trimmed. */
+/** `/home/user/github/my-project` → `~/github/my-project`, tail-trimmed. */
 function shortPath(path: string): string {
   const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
   if (parts.length <= 2) return path;
@@ -559,10 +650,12 @@ const URL_RE = /(https?:\/\/|www\.)[^\s"'`<>()[\]{}]+[^\s"'`<>()[\]{}.,;:!?]/g;
 interface TerminalActions {
   clear: () => void;
   focus: () => void;
+  refit: () => void;
 }
 
 function TerminalInstance({
   visible,
+  paneActive,
   cwd,
   shellId,
   attachId,
@@ -574,6 +667,7 @@ function TerminalInstance({
   registerActions,
 }: {
   visible: boolean;
+  paneActive: boolean;
   cwd: string | null;
   shellId?: string;
   attachId?: string;
@@ -628,6 +722,19 @@ function TerminalInstance({
     term.loadAddon(fit);
     term.open(host);
 
+    let disposed = false;
+    let termId: string | null = null;
+    let pendingSize: { cols: number; rows: number } | null = null;
+
+    const syncPtySize = (cols: number, rows: number) => {
+      if (termId) window.deyin.terminal.resize(termId, cols, rows);
+      else pendingSize = { cols, rows };
+    };
+
+    // Wire PTY resize before the first fit so early layout passes cannot
+    // desync xterm cols/rows from the shell behind node-pty.
+    term.onResize(({ cols, rows }) => syncPtySize(cols, rows));
+
     // Fitting while hidden (display:none) or before layout measures 0x0 cells
     // and corrupts cols/rows, so every refit path is guarded and hidden tabs
     // are refit by the visibility effect below instead.
@@ -635,6 +742,7 @@ function TerminalInstance({
       if (host.offsetWidth === 0 || host.offsetHeight === 0) return;
       try {
         fit.fit();
+        if (termId) syncPtySize(term.cols, term.rows);
       } catch {
         // xterm can throw while the renderer is mid-teardown; a later refit wins.
       }
@@ -645,6 +753,7 @@ function TerminalInstance({
     registerActions({
       clear: () => term.clear(),
       focus: () => term.focus(),
+      refit: safeFit,
     });
 
     // JetBrains Mono usually loads after the first synchronous fit; cell
@@ -709,8 +818,6 @@ function TerminalInstance({
       },
     });
 
-    let disposed = false;
-    let termId: string | null = null;
     const offData = window.deyin.terminal.onData((e) => {
       if (e.id === termId) term.write(e.data);
     });
@@ -727,8 +834,9 @@ function TerminalInstance({
       }
       termId = id;
       term.onData((data) => window.deyin.terminal.write(id, data));
-      term.onResize(({ cols, rows }) => window.deyin.terminal.resize(id, cols, rows));
-      window.deyin.terminal.resize(id, term.cols, term.rows);
+      const size = pendingSize ?? { cols: term.cols, rows: term.rows };
+      pendingSize = null;
+      syncPtySize(size.cols, size.rows);
     };
 
     if (attachId) {
@@ -746,14 +854,16 @@ function TerminalInstance({
         .catch((err) => setError(err instanceof Error ? err.message : String(err)));
     }
 
-    // Refit on any host-size change (window resize, side panel toggling,
-    // layout shifts), debounced to one fit per frame.
+    // Refit on host or flex-body size changes (panel drag, window resize),
+    // debounced to one fit per frame.
     let raf = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(safeFit);
     });
     observer.observe(host);
+    const body = host.parentElement;
+    if (body) observer.observe(body);
 
     return () => {
       disposed = true;
@@ -772,10 +882,16 @@ function TerminalInstance({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shellId, attachId]);
 
-  // Refit when this tab becomes visible again (hidden tabs measure 0x0).
+  // Refit when this tab or workspace pane becomes visible again (hidden tabs measure 0×0).
   useEffect(() => {
-    if (visible) fitRef.current?.();
-  }, [visible]);
+    if (!visible || !paneActive) return;
+    let raf = 0;
+    raf = requestAnimationFrame(() => {
+      fitRef.current?.();
+      raf = requestAnimationFrame(() => fitRef.current?.());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [visible, paneActive]);
 
   // Apply settings changes to live sessions without restarting the shell.
   useEffect(() => {

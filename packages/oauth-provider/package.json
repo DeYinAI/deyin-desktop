@@ -2,7 +2,7 @@
   "name": "@deyin/oauth-provider",
   "version": "0.1.1",
   "description": "Standalone OAuth 2.0 / OIDC provider for Openference. Authorization Code + PKCE, refresh, device flow, introspection, revocation, discovery.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

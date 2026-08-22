@@ -20,7 +20,7 @@ function processAlive(pid: number): boolean {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 test("parseWslPath routes WSL2 project dirs to their distro (any platform)", () => {
-  assert.deepEqual(parseWslPath("\\\\wsl$\\Ubuntu\\home\\anh\\proj"), {
+  assert.deepEqual(parseWslPath("\\\\wsl$\\Ubuntu\\home\\user\\proj"), {
     distro: "Ubuntu",
     linuxPath: "/home/user/proj",
   });

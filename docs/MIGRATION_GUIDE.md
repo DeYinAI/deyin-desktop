@@ -1,6 +1,6 @@
-# Migration Guide — Deyin 2.0 (Advanced agent Integration)
+# Migration Guide — Deyin 2.0 (Advanced Agent Features)
 
-Upgrade from Deyin 0.x/1.x to **2.0.0** with the Deyin agent integration.
+Upgrade from Deyin 0.x/1.x to **2.0.0** with the advanced agent architecture.
 
 ## Before you upgrade
 
@@ -8,7 +8,7 @@ Upgrade from Deyin 0.x/1.x to **2.0.0** with the Deyin agent integration.
    - **Desktop app**: `~/.config/Deyin/` on Linux, `~/Library/Application Support/Deyin/` on macOS, `%APPDATA%\Deyin\` on Windows
    - **CLI**: `~/.deyin/` (sessions at `~/.deyin/sessions/`)
 2. Note your current `plannerModel`, concurrency, and optimization settings.
-3. Review [BETA_ROLLOUT.md](./BETA_ROLLOUT.md) if joining the beta program.
+3. Review the release notes for the version you are upgrading to.
 
 ## Automatic migrations
 
@@ -60,7 +60,7 @@ Recommended gradual rollout:
 3. **Week 3** — Enable `enableFleet` for parallel exploration tasks.
 4. **Week 4** — Enable `enableDeliveryMode` for production shipping workflows.
 
-All toggles: **Settings → Advanced agent integration**.
+All toggles: **Settings → Advanced agent features**.
 
 ## Breaking changes
 
@@ -71,11 +71,9 @@ All toggles: **Settings → Advanced agent integration**.
 
 ## Rollback
 
-1. Disable all Advanced agent feature flags in Settings.
+1. Disable all advanced agent feature flags in Settings.
 2. Restore previous `settings.json` from backup if needed.
-3. Reinstall prior app version from GitHub Releases if critical.
-
-See [BETA_ROLLOUT.md](./BETA_ROLLOUT.md) rollback section for production incidents.
+3. Reinstall the prior app version from GitHub Releases if critical.
 
 ## Verification checklist
 
@@ -87,5 +85,4 @@ See [BETA_ROLLOUT.md](./BETA_ROLLOUT.md) rollback section for production inciden
 
 ## Support
 
-- Integration status: [AGENT_INTEGRATION_STATUS.md](./AGENT_INTEGRATION_STATUS.md)
-- Technical guides: [CACHE_ARCHITECTURE.md](./CACHE_ARCHITECTURE.md), [COORDINATOR.md](./COORDINATOR.md), [FLEET_ORCHESTRATION.md](./FLEET_ORCHESTRATION.md)
+- Technical guides: [CACHE_ARCHITECTURE.md](./CACHE_ARCHITECTURE.md), [EVIDENCE_DELIVERY.md](./EVIDENCE_DELIVERY.md)

@@ -1,7 +1,7 @@
 # Release
 
 Packaging and distributing the Deyin desktop app. All build tooling is standard
-electron-builder; nothing here depends on third-party proprietary artifacts.
+electron-builder; all bundled assets are built from this repository or declared dependencies.
 
 ## Prerequisites
 

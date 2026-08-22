@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Local capability-scan loader plugin (skills, commands, subagents, hooks, MCP, plugins from disk) providing the capabilities seam; scope it to a sandbox root for web sessions.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

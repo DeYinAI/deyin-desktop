@@ -2,7 +2,7 @@
   "name": "@deyin/web",
   "version": "0.1.1",
   "description": "Deyin on the web: the same renderer, served as an SPA, backed by a per-session WebSocket host-server.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

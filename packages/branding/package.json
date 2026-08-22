@@ -2,7 +2,7 @@
   "name": "@deyin/branding",
   "version": "0.1.1",
   "description": "Deyin brand assets: logo, icons, and theme tokens.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
