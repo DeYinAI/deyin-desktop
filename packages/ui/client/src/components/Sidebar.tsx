@@ -7,6 +7,8 @@ import type { DeyinSettings, UserProfile } from "@deyin/contract";
 
 interface SidebarProps {
   platform: "desktop" | "web";
+  /** Which top-level view is showing, so its nav row reads as selected. */
+  activeView?: "workspace" | "settings" | "upgrade" | "automations";
   projects: Project[];
   activeProjectId: string | null;
   activeThreadId: string | null;
@@ -213,7 +215,10 @@ export function Sidebar(props: SidebarProps) {
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
         </button>
-        <button className="nav-item nav-item--feature" onClick={props.onOpenAutomations}>
+        <button
+          className={`nav-item nav-item--feature${props.activeView === "automations" ? " nav-item--active" : ""}`}
+          onClick={props.onOpenAutomations}
+        >
           <Icon name="automation" size={14} />
           <span>{t("nav.automations")}</span>
         </button>

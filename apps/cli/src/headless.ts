@@ -15,6 +15,7 @@ import {
   type AgentMessage,
   type McpConnection,
 } from "@deyin/agent-core";
+import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import type { CliContext } from "./context.js";
 import { tokenSource } from "./context.js";
 import { dim, red } from "./output.js";
@@ -194,6 +195,24 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       thinking: ctx.config.thinking,
       maxSteps: opts.maxSteps ?? ctx.config.maxSteps,
       signal: opts.signal,
+      // Cache parity with desktop: compression + prompt caching + stable key.
+      wire: {
+        enableCompression: true,
+        compressionMode: "balanced",
+        enablePromptCaching: true,
+        provider: resolveWireProvider({
+          providerId: "cli",
+          model: ctx.config.model,
+          cwd: ctx.cwd,
+          apiFormat: "chat-completions",
+        }),
+        model: ctx.config.model,
+      },
+      promptCacheKey: buildPromptCacheKeyFor({
+        providerId: "cli",
+        model: ctx.config.model,
+        cwd: ctx.cwd,
+      }),
     });
 
     const tokens = result.usage.totalTokens || estimateTokens(messages.slice(before));

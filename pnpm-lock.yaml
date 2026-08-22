@@ -85,6 +85,9 @@ importers:
       '@deyin/bundle-desktop-app':
         specifier: workspace:*
         version: link:../../packages/bundle/desktop-app
+      '@deyin/computer-use-host':
+        specifier: workspace:*
+        version: link:../../native/computer-use-host
       '@deyin/contract':
         specifier: workspace:*
         version: link:../../packages/ui/contract
@@ -170,6 +173,9 @@ importers:
       '@deyin/oauth-client':
         specifier: workspace:*
         version: link:../../packages/openference/oauth-client
+      '@deyin/optimization-plugin':
+        specifier: workspace:*
+        version: link:../../packages/plugins/optimization
       '@deyin/plugin-caps-local':
         specifier: workspace:*
         version: link:../../packages/caps/caps-local
@@ -179,24 +185,12 @@ importers:
       '@deyin/ui':
         specifier: workspace:*
         version: link:../../packages/ui/client
-      '@xterm/addon-fit':
-        specifier: ^0.10.0
-        version: 0.10.0(@xterm/xterm@5.5.0)
-      '@xterm/xterm':
-        specifier: ^5.5.0
-        version: 5.5.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
-      react-markdown:
-        specifier: ^10.1.0
-        version: 10.1.0(@types/react@18.3.31)(react@18.3.1)
-      remark-gfm:
-        specifier: ^4.0.1
-        version: 4.0.1
       ws:
         specifier: ^8.18.0
         version: 8.21.1
@@ -247,6 +241,9 @@ importers:
       '@deyin/host-core':
         specifier: workspace:*
         version: link:../host-core
+      '@deyin/native-core':
+        specifier: workspace:*
+        version: link:../native-core
       '@modelcontextprotocol/client':
         specifier: ^2.0.0
         version: 2.0.0
@@ -461,6 +458,9 @@ importers:
       '@deyin/llm':
         specifier: workspace:*
         version: link:../../llm/llm
+      '@deyin/optimization-plugin':
+        specifier: workspace:*
+        version: link:../../plugins/optimization
       '@deyin/plugin-caps-local':
         specifier: workspace:*
         version: link:../../caps/caps-local
@@ -539,6 +539,9 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
     optionalDependencies:
+      '@deyin/native-core':
+        specifier: workspace:*
+        version: link:../native-core
       node-pty:
         specifier: ^1.0.0
         version: 1.1.0
@@ -667,6 +670,8 @@ importers:
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
+
+  packages/native-core: {}
 
   packages/oauth-provider:
     dependencies:

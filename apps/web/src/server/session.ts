@@ -126,6 +126,7 @@ export class Session {
             prompt: options.prompt,
             model: options.model,
             thinking: options.thinking,
+            effort: options.effort,
             approvalMode: options.approvalMode,
             mode: options.mode,
             history: options.history,

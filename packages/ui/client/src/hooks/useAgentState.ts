@@ -37,6 +37,29 @@ export type RunPhase = "idle" | "thinking" | "streaming" | "tool" | "waiting";
 /** Max activity lines retained per subagent card (the Agent panel's log). */
 const SUBAGENT_LOG_CAP = 200;
 
+/** Short model name for status labels. */
+function shortModelName(model: string): string {
+  const slash = model.lastIndexOf("/");
+  return slash >= 0 ? model.slice(slash + 1) : model;
+}
+
+/** Status label when the run routes to a different model role. */
+function roleRoutingLabel(role: string, model: string): string {
+  const name = shortModelName(model);
+  switch (role) {
+    case "tool":
+      return `Reading (${name})`;
+    case "plan":
+      return `Planning (${name})`;
+    case "ask":
+      return `Asking (${name})`;
+    case "delivery":
+      return `Verifying (${name})`;
+    default:
+      return `Implementing (${name})`;
+  }
+}
+
 export interface RunStatus {
   phase: RunPhase;
   label: string;
@@ -93,6 +116,13 @@ export type AgentSideEffect =
   | { type: "goal-updated"; threadId: string; goal: import("@deyin/contract").ThreadGoal | null }
   | { type: "todos"; threadId: string; todos: import("@deyin/contract").AgentTodoItem[] }
   | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+  | {
+      type: "mcp-auth-needed";
+      requestId: string;
+      moduleId: string;
+      serverName: string;
+      message?: string;
+    }
   | {
       type: "question-request";
       requestId: string;
@@ -567,6 +597,14 @@ class AgentStateStore {
         this.sessionStats.sessionTotal += event.totalTokens;
         this.notifyStructural();
         break;
+      case "model-routed":
+        t.status = { ...t.status, label: roleRoutingLabel(event.role, event.model) };
+        t.runEvents = [
+          ...t.runEvents,
+          { kind: "thought", label: `Routed to ${event.role} model: ${shortModelName(event.model)}` },
+        ];
+        this.notifyStructural();
+        break;
       case "optimization": {
         t.optimization = {
           kind: "optimization",
@@ -648,6 +686,15 @@ class AgentStateStore {
       }
       case "permission-request":
         this.emit({ type: "permission-request", requestId: event.requestId, toolName: event.toolName, summary: event.summary });
+        break;
+      case "mcp-auth-needed":
+        this.emit({
+          type: "mcp-auth-needed",
+          requestId: event.requestId,
+          moduleId: event.moduleId,
+          serverName: event.serverName,
+          message: event.message,
+        });
         break;
       case "question-request":
         this.emit({

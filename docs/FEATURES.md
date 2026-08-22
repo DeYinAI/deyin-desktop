@@ -117,14 +117,18 @@ without adopting its operator/lifestyle scope:
 - Settings → MCP shows auth status (none / authenticated / expired) and supports revoke + re-auth.
 
 ## Automations
-- Scheduled or manual agent runs with saved prompts, model selection, and workspace targets.
-- **Local**: runs in the desktop app main process with full tool access (unattended).
-- **Remote (SSH)**: connects to a Linux server and runs `deyin run --json -y` with the Openference account token via `DEYIN_TOKEN` (ephemeral per-run; never stored on the server). Custom providers are not supported for SSH targets.
+- Scheduled or manual agent runs with model selection and workspace targets.
+- Each automation runs one of three payloads: a **prompt** you write, a **skill**, or a **subagent**. Skills and subagents are resolved by name on every run, so editing the `SKILL.md` changes what the automation does without touching the automation.
+- **Local**: runs in the desktop app main process with full tool access (unattended). A subagent payload delegates in-process through the shared subagent runner.
+- **WSL2**: runs `deyin run --json -y` inside a distro via `wsl.exe -d <distro>`. Distros come from the same detection the terminal uses; workspace paths are translated from Windows/UNC form to the distro's Linux form. Needs Node 20+ and the `deyin` CLI installed inside the distro.
+- **Remote (SSH)**: connects to a Linux server and runs `deyin run --json -y` with the Openference account token via `DEYIN_TOKEN` (ephemeral per-run; never stored on the server). Custom providers are not supported for SSH or WSL targets.
 - Triggers: cron schedules (hourly, daily, weekdays, custom) or manual **Run now**.
 - SSH host credentials (private keys, passphrases, passwords) are encrypted at rest via OS keychain (`safeStorage`). Host keys are pinned on first connect.
 - Configure SSH hosts under Settings → SSH hosts; manage automations from the sidebar **Automations** view (desktop only).
 - Optional **Keep running in background** (General settings) keeps the scheduler alive in the system tray when windows are closed.
-- Note: the token and prompt are streamed over the SSH channel's stdin, so they never appear in the remote command line (`/proc/<pid>/cmdline`) or in the login shell's environment. `DEYIN_TOKEN` is still present in the `deyin` child process environment while a run is active, so treat the SSH host as a trusted machine.
+- Scheduling is in-process, so runs only fire while Deyin is running and the machine is awake. **Catch up missed automations** re-evaluates on launch and on system resume, and starts **exactly one** run for the most recently missed slot within the last seven days — a daily automation that missed six days runs once, not six times. If timing matters, put guardrails in the prompt itself.
+- Unattended runs skip permission prompts, but not unconditionally: OS input synthesis (`computer_*`) and browser navigation are denied rather than auto-allowed, because there is no user present to answer. `deny` always beats skip-all in the permission engine. Workspace-provided `hooks.json` and `mcp.json` are ignored unless that workspace was already trusted through an interactive session, since an unattended run cannot show the trust dialog.
+- Note: for both SSH and WSL targets the token and prompt are streamed over the child's stdin, so they never appear in the command line (`/proc/<pid>/cmdline`) or in the login shell's environment. `DEYIN_TOKEN` is still present in the `deyin` child process environment while a run is active, so treat the SSH host — or the distro — as a trusted machine. The remote command runs under a job-control shell that traps `EXIT`/`HUP` and kills its whole process group, so a dropped connection or a stopped run leaves no orphaned `deyin` process.
 
 ## MCP
 - Connect Model Context Protocol servers; discover and call their tools from chat.
@@ -137,7 +141,7 @@ without adopting its operator/lifestyle scope:
   GitHub, Supabase, Linear, Sentry, etc.) with one-click install into isolated module dirs.
   OAuth servers use native browser consent (PKCE); tokens are stored encrypted on device.
   Token-only servers accept API keys during install.
-- Catalog source of truth: `docs/mcp-catalog.json` and `apps/desktop/src/main/mcp-catalog/*.json`.
+- Catalog source of truth: `apps/desktop/src/main/mcp-catalog/*.json` (one file per server).
 
 ## Indexing
 - Live local semantic index: chunked workspace files embedded on-device (hash n-gram

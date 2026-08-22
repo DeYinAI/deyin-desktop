@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import { GitBranchBadge } from "./GitBranchBadge.js";
 import type { Project } from "../threads.js";
@@ -13,8 +14,13 @@ interface WorkspaceBarProps {
   /** User home dir (Bootstrap.homeDir) for `~`-shortening absolute paths. */
   homeDir?: string | null;
   onSelectProject: (projectId: string) => void;
-  onPickFolder: () => void;
+  /** `startIn` seeds the native picker's starting directory (used for WSL roots). */
+  onPickFolder: (startIn?: string) => void;
   onOpenSourceControl: () => void;
+  /** WSL distros detected on this machine; each becomes an "open in WSL" entry. */
+  wslDistros?: string[];
+  /** Opens Settings › SSH hosts — SSH is where remote *automation* targets live. */
+  onOpenSshHosts?: () => void;
   /** Web: open the "Connect repository" dialog (clone into the session sandbox). */
   onConnectRepo?: () => void;
 }
@@ -32,7 +38,10 @@ export function WorkspaceBar({
   onPickFolder,
   onOpenSourceControl,
   onConnectRepo,
+  wslDistros = [],
+  onOpenSshHosts,
 }: WorkspaceBarProps) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -87,8 +96,40 @@ export function WorkspaceBar({
                 }}
               >
                 <Icon name="folderPlus" size={13} />
-                Open folder…
+                {wslDistros.length > 0 ? t("workspace.openLocal") : t("workspace.openFolder")}
               </button>
+              {wslDistros.map((distro) => (
+                <button
+                  key={distro}
+                  className="menu__item"
+                  title={wslRoot(distro)}
+                  onClick={() => {
+                    // A WSL folder is just a UNC path, so the same picker works —
+                    // it only needs to start inside the distro's filesystem.
+                    onPickFolder(wslRoot(distro));
+                    setOpen(false);
+                  }}
+                >
+                  <Icon name="terminal" size={13} />
+                  {t("workspace.openWsl")} · {distro}
+                </button>
+              ))}
+              {onOpenSshHosts && (
+                <>
+                  <div className="menu__sep" />
+                  <div className="menu__info">{t("workspace.remoteNote")}</div>
+                  <button
+                    className="menu__item"
+                    onClick={() => {
+                      onOpenSshHosts();
+                      setOpen(false);
+                    }}
+                  >
+                    <Icon name="server" size={13} />
+                    {t("workspace.manageSsh")}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -112,6 +153,11 @@ export function WorkspaceBar({
       />
     </div>
   );
+}
+
+/** UNC root of a WSL distro's filesystem, as Explorer and Node both see it. */
+function wslRoot(distro: string): string {
+  return `\\\\wsl.localhost\\${distro}\\home`;
 }
 
 /** Just the workspace folder itself — the full path lives in the tooltip. */

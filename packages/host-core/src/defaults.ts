@@ -1,20 +1,25 @@
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 12;
+export const SETTINGS_SCHEMA_VERSION = 15;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
   theme: "dark",
+  themeAccent: "blue",
   language: "en",
   fontSize: 14,
   autoUpdate: true,
   telemetry: false,
   browserControlEnabled: true,
+  /** OS-level computer use (Windows); opt-in for safety. */
+  computerUseEnabled: false,
+  computerUseScreenshotRetentionDays: 7,
   defaultModel: null,
   roleModels: {},
   subagentModels: {},
   subagentEfforts: {},
+  modelEfforts: {},
   subagentMaxSteps: 20,
   subagentConcurrency: 6,
   approvalMode: "full-access",
@@ -35,6 +40,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   indexingEnabled: true,
   onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
   keepRunningInBackground: false,
+  automationsCatchUp: true,
   optimizationPluginEnabled: false,
   memoryEnabled: true,
   reviewMode: "off",
@@ -48,8 +54,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
  */
 export function migrateSettings(raw: unknown): DeyinSettings {
   const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  // Pick only known keys: fields removed in v11 (Advanced agent knobs, computer-use,
-  // chrome, automations, per-knob optimization toggles) drop out here.
+  // Pick only known keys: legacy Advanced agent knobs and removed fields drop out here.
   const merged: DeyinSettings = { ...DEFAULT_SETTINGS };
   for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof DeyinSettings>) {
     if (key === "schemaVersion") continue;
@@ -72,6 +77,22 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     merged.subagentEfforts,
     (v): v is string => v === "low" || v === "medium" || v === "high",
   );
+  merged.modelEfforts = pickStringRecord(
+    merged.modelEfforts,
+    (v): v is string => v === "off" || v === "low" || v === "medium" || v === "high",
+  );
+  if (typeof merged.browserControlEnabled !== "boolean") {
+    merged.browserControlEnabled = DEFAULT_SETTINGS.browserControlEnabled;
+  }
+  if (typeof merged.computerUseEnabled !== "boolean") {
+    merged.computerUseEnabled = DEFAULT_SETTINGS.computerUseEnabled;
+  }
+  merged.computerUseScreenshotRetentionDays = clamp(
+    merged.computerUseScreenshotRetentionDays,
+    1,
+    90,
+    DEFAULT_SETTINGS.computerUseScreenshotRetentionDays,
+  );
   if (typeof merged.revealTerminalOnAgentCommand !== "boolean") {
     merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
   }
@@ -84,11 +105,17 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   if (typeof merged.optimizationPluginEnabled !== "boolean") {
     merged.optimizationPluginEnabled = DEFAULT_SETTINGS.optimizationPluginEnabled;
   }
+  if (typeof merged.automationsCatchUp !== "boolean") {
+    merged.automationsCatchUp = DEFAULT_SETTINGS.automationsCatchUp;
+  }
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
-  if (!["dark", "light", "system"].includes(merged.theme)) merged.theme = "dark";
+  if (!["dark", "light", "system", "warm"].includes(merged.theme)) merged.theme = "dark";
+  if (typeof merged.themeAccent !== "string" || !merged.themeAccent.trim()) {
+    merged.themeAccent = DEFAULT_SETTINGS.themeAccent;
+  }
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
   return merged;
 }
@@ -322,7 +349,39 @@ export const DEFAULT_CAPABILITIES: CapabilityItem[] = [
     kind: "subagent",
     name: "Test Runner",
     description: "Runs the test suite and reports failures back to the main agent.",
-    enabled: false,
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "shell",
+    kind: "subagent",
+    name: "Shell",
+    description: "Run shell command sequences and return trimmed output for long builds and installs.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "browser",
+    kind: "subagent",
+    name: "Browser",
+    description: "Browser automation for UI verification with DOM noise kept out of main chat.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "docs-researcher",
+    kind: "subagent",
+    name: "Docs Researcher",
+    description: "Fetch current library documentation and API references.",
+    enabled: true,
+    source: "built-in",
+  },
+  {
+    id: "ci-investigator",
+    kind: "subagent",
+    name: "CI Investigator",
+    description: "Diagnose a failing CI check and recommend a fix.",
+    enabled: true,
     source: "built-in",
   },
   // MCP servers
@@ -401,7 +460,7 @@ export type StoredProviderBase = Omit<ProviderInfo, "status" | "hasKey">;
  * Bump when DEFAULT_PROVIDERS gains entries; existing agents.json / web
  * localStorage records merge in preset providers they are missing, once.
  */
-export const PROVIDER_SEED_VERSION = 2;
+export const PROVIDER_SEED_VERSION = 3;
 
 function preset(
   id: string,
@@ -415,7 +474,7 @@ function preset(
     name,
     kind: "custom",
     preset: true,
-    enabled: true,
+    enabled: false,
     baseUrl,
     apiFormat,
     connectionModes: ["API key"],

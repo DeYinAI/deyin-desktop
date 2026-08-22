@@ -2,6 +2,7 @@
  * Lightweight, dependency-free content compression for LLM payloads.
  * Strips noise from code, tool outputs, JSON and prose before wire serialization.
  */
+import { fastCompressToolOutput } from "./native.js";
 
 export type CompressionMode = "aggressive" | "balanced" | "conservative";
 export type ContentType = "code" | "log" | "json" | "text";
@@ -143,6 +144,13 @@ function stripNulls(value: unknown): unknown {
 
 export function compressToolOutput(output: string, toolName: string, options: CompressionOptions = {}): CompressionResult {
   const mode = options.mode ?? "balanced";
+  // Native fast path (byte-identical port); silently falls back to TS below.
+  const native = fastCompressToolOutput(output, mode, toolName, options.preserveErrors === true);
+  if (native !== null) {
+    const isNoisy = /bash|shell|exec|terminal|npm|pnpm|yarn|pytest|jest/i.test(toolName) || detectContentType(output) === "log";
+    return result(output, native, isNoisy ? "log" : detectContentType(output), mode);
+  }
+
   const caps = capsFor(mode);
   let text = output.replace(ANSI_RE, "");
   text = text.replace(TIMESTAMP_RE, "").replace(ISO_PREFIX_RE, "");

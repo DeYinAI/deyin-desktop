@@ -1,0 +1,18 @@
+[package]
+name = "deyin-native"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Deyin's in-house native hot path: SSE framing, BPE token counting, wire compression, parallel grep."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3.0.0-beta", default-features = false, features = ["napi8"] }
+napi-derive = "3.0.0-beta"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1

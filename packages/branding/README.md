@@ -2,7 +2,7 @@
 
 Deyin brand assets and design tokens. All original artwork.
 
-- `assets/logo-mark.svg` — the icon-only mark (soundwave / echo motif; "deyin" = sound).
+- `assets/logo-mark.svg` — the icon-only mark (devil mascot; Deyin palette).
 - `assets/logo-wordmark.svg` — mark + wordmark.
 - `src/tokens.ts` — colors, radii, spacing, typography, and a `cssVariables()` helper.
 

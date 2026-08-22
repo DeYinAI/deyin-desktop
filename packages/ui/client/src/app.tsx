@@ -1,11 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_SETTINGS, buildLinkedThreadContext, dedupeContextRefs, formatUserMessageWithContext } from "@deyin/host-core/shared";
+import {
+  DEFAULT_SETTINGS,
+  buildLinkedThreadContext,
+  dedupeContextRefs,
+  formatUserMessageWithContext,
+  modelEffortKey,
+  resolveModelReasoning,
+} from "@deyin/host-core/shared";
+import type { ModelReasoningMode } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { I18nProvider } from "./i18n.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
+import { AppApprovalDialog } from "./components/AppApprovalDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
 import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
+import { McpAuthCard } from "./components/McpAuthCard.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
+import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer, type ComposerImage } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
@@ -13,6 +24,7 @@ import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
 import { resolveVisionModel } from "./vision.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
+import { AutomationsView } from "./components/AutomationsView.js";
 import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -23,6 +35,7 @@ import { UpdateBanner } from "./components/UpdateBanner.js";
 import { WhatsNewModal } from "./components/WhatsNewModal.js";
 import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
+import { NavRail } from "./components/NavRail.js";
 import { PanelRail } from "./components/PanelRail.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
 import { ReviewBanner } from "./components/ReviewBanner.js";
@@ -73,6 +86,22 @@ import type {
  SecurityFindingsReport,
 } from "@deyin/contract";
 
+/** Right workspace panel sizing. The panel is measured against the content
+ *  area (chat + panel, sidebar excluded) and defaults to half of it; the drag
+ *  handle stores the chosen fraction so it survives window resizes. */
+/* Key is versioned: the first cut allowed dragging down to a 420px chat, and
+   widths stored under the old key stick at a width the new floor disallows. */
+const PANEL_FRACTION_KEY = "deyin.panelWidthFraction.v2";
+const PANEL_DEFAULT_FRACTION = 0.5;
+const PANEL_MIN_PX = 320;
+/** Floor for the chat column: the chat measure (820px) plus its 40px of side
+ *  padding, less the slack the composer can absorb before its row overflows. */
+const CHAT_MIN_PX = 560;
+
+function clampFraction(value: number): number {
+  return Math.min(0.7, Math.max(0.25, value));
+}
+
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
 /** Parse the /goal command. Returns the goal text, null for "/goal" with no
@@ -84,7 +113,7 @@ export function matchGoalCommand(raw: string): string | null | undefined {
   return text.length > 0 ? text : null;
 }
 
-type View = "workspace" | "settings" | "upgrade";
+type View = "workspace" | "settings" | "upgrade" | "automations";
 
 interface PendingApproval {
   requestId: string;
@@ -96,6 +125,13 @@ interface PendingQuestion {
   requestId: string;
   title?: string;
   questions: QuestionItem[];
+}
+
+interface PendingMcpAuth {
+  requestId: string;
+  moduleId: string;
+  serverName: string;
+  message?: string;
 }
 
 interface PendingPlanApproval {
@@ -141,7 +177,11 @@ export function App() {
   const [showWhatsNew, setShowWhatsNew] = useState(false);
   const [showBetaFeedback, setShowBetaFeedback] = useState(false);
 
-  const [approval, setApproval] = useState<PendingApproval | null>(null);
+  // A queue, not a slot: parallel tool calls raise several permission requests
+  // at once, and dropping any of them leaves its tool call awaiting a decision
+  // that can never arrive (the run then hangs until the main-process timeout).
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [mcpAuthRequests, setMcpAuthRequests] = useState<PendingMcpAuth[]>([]);
   const [question, setQuestion] = useState<PendingQuestion | null>(null);
   const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
   /** Bumped to pull focus into the composer (declining a plan hands the turn back). */
@@ -216,6 +256,65 @@ export function App() {
 
   const terminalVisible = panelOpen && panelTab === "terminal";
   const panelVisible = panelOpen || panelRail;
+
+  /* Panel width. The wrap (rail + panel) is laid out in pixels derived from the
+     content area's measured width, so the chat column always keeps CHAT_MIN_PX
+     no matter how far the handle is dragged or how narrow the window gets. */
+  const [panelFraction, setPanelFraction] = useState(() => {
+    const stored = Number(localStorage.getItem(PANEL_FRACTION_KEY));
+    return Number.isFinite(stored) && stored > 0 ? clampFraction(stored) : PANEL_DEFAULT_FRACTION;
+  });
+  const columnsRef = useRef<HTMLDivElement | null>(null);
+  const [columnsWidth, setColumnsWidth] = useState(0);
+  // Callback ref: the columns element unmounts whenever Settings takes over the
+  // view, so the observer has to re-attach rather than run once on mount.
+  const columnsObserver = useRef<ResizeObserver | null>(null);
+  const attachColumns = useCallback((el: HTMLDivElement | null) => {
+    columnsObserver.current?.disconnect();
+    columnsRef.current = el;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setColumnsWidth(el.clientWidth));
+    observer.observe(el);
+    columnsObserver.current = observer;
+    setColumnsWidth(el.clientWidth);
+  }, []);
+  useEffect(() => () => columnsObserver.current?.disconnect(), []);
+
+  const panelWidthPx = useMemo(() => {
+    if (columnsWidth <= 0) return null;
+    const max = Math.max(PANEL_MIN_PX, columnsWidth - CHAT_MIN_PX);
+    return Math.round(Math.min(max, Math.max(PANEL_MIN_PX, panelFraction * columnsWidth)));
+  }, [columnsWidth, panelFraction]);
+
+  const storePanelFraction = (fraction: number) => {
+    localStorage.setItem(PANEL_FRACTION_KEY, fraction.toFixed(4));
+  };
+
+  const startPanelResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    const columns = columnsRef.current;
+    if (!columns) return;
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const rect = columns.getBoundingClientRect();
+    const max = Math.max(PANEL_MIN_PX, rect.width - CHAT_MIN_PX);
+    let latest = panelFraction;
+    const onMove = (ev: PointerEvent) => {
+      const width = Math.min(max, Math.max(PANEL_MIN_PX, rect.right - ev.clientX));
+      latest = clampFraction(width / rect.width);
+      setPanelFraction(latest);
+    };
+    const onUp = () => {
+      handle.releasePointerCapture(e.pointerId);
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      document.body.classList.remove("is-resizing-ew");
+      storePanelFraction(latest);
+    };
+    document.body.classList.add("is-resizing-ew");
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  };
 
  const [searchOpen, setSearchOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
@@ -549,8 +648,9 @@ export function App() {
   );
 
   /** "+" / TopBar folder button: pick a folder; it becomes the active project. */
-  const addProjectFolder = useCallback(async () => {
-    const root = await window.deyin.workspace.openFolder();
+  /** `startIn` seeds the native picker (WSL entries pass the distro's UNC root). */
+  const addProjectFolder = useCallback(async (startIn?: string) => {
+    const root = await window.deyin.workspace.openFolder(startIn);
     if (!root) return;
     const project = ensureFolderProject(root);
     setActiveProjectId(project.id);
@@ -700,7 +800,26 @@ export function App() {
           break;
         }
         case "permission-request":
-          setApproval({ requestId: effect.requestId, toolName: effect.toolName, summary: effect.summary });
+          setApprovals((cur) =>
+            cur.some((a) => a.requestId === effect.requestId)
+              ? cur
+              : [...cur, { requestId: effect.requestId, toolName: effect.toolName, summary: effect.summary }],
+          );
+          break;
+        case "mcp-auth-needed":
+          setMcpAuthRequests((cur) =>
+            cur.some((r) => r.moduleId === effect.moduleId)
+              ? cur
+              : [
+                  ...cur,
+                  {
+                    requestId: effect.requestId,
+                    moduleId: effect.moduleId,
+                    serverName: effect.serverName,
+                    message: effect.message,
+                  },
+                ],
+          );
           break;
         case "question-request":
           setQuestion({ requestId: effect.requestId, title: effect.title, questions: effect.questions });
@@ -760,7 +879,8 @@ export function App() {
               openPanelTab("plan");
             }
           }
-          setApproval(null);
+          setApprovals([]);
+          setMcpAuthRequests([]);
           setQuestion(null);
           markOnboard("taskRun");
           void window.deyin.usage.record({ model: selectedModel, tokens: fold.tokens, newSession: false });
@@ -936,9 +1056,14 @@ export function App() {
     const pref = settings?.theme ?? "dark";
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const variant = pref === "system" ? (mql.matches ? "dark" : "light") : pref;
-      document.documentElement.dataset.theme = variant;
-      setThemeVariant(variant);
+      let resolved: "light" | "dark" | "warm" = pref === "system" ? (mql.matches ? "dark" : "light") : pref;
+      if (resolved === "warm") {
+        document.documentElement.dataset.theme = "warm";
+        setThemeVariant("dark");
+        return;
+      }
+      document.documentElement.dataset.theme = resolved;
+      setThemeVariant(resolved);
     };
     apply();
     if (pref === "system") {
@@ -946,6 +1071,12 @@ export function App() {
       return () => mql.removeEventListener("change", apply);
     }
   }, [settings?.theme]);
+
+  useEffect(() => {
+    const accent = settings?.themeAccent ?? "blue";
+    if (accent && accent !== "blue") document.documentElement.dataset.accent = accent;
+    else delete document.documentElement.dataset.accent;
+  }, [settings?.themeAccent]);
 
   // Interface font size: chat and panels scale off this CSS variable.
   useEffect(() => {
@@ -999,7 +1130,7 @@ export function App() {
         prompt: agentPrompt,
         providerId: selectedProviderId,
         model: runModel,
-        thinking: settings?.thinking ?? true,
+        ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, selectedProviderId, runModel),
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
         history: toChatMessages(thread.events),
@@ -1082,7 +1213,8 @@ export function App() {
     }
 
     window.deyin.agent?.stop(threadId);
-    setApproval(null);
+    setApprovals([]);
+    setMcpAuthRequests([]);
     // Unlock the composer immediately; fold + clear still happen on `done`.
     setStreamText(null);
 
@@ -1094,7 +1226,8 @@ export function App() {
       agentStateStore.setIgnoreNextDone(threadId, true);
       const finished = agentStateStore.forceStop(threadId);
       appendEvents(threadId, finished);
-      setApproval(null);
+      setApprovals([]);
+      setMcpAuthRequests([]);
 
       const sendNow = pendingSendNowRef.current;
       pendingSendNowRef.current = null;
@@ -1378,7 +1511,7 @@ export function App() {
         token: token ?? "",
         model: selectedModel,
         messages: history,
-        thinking: settings?.thinking,
+        ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, selectedProviderId, selectedModel),
         apiFormat: provider?.apiFormat ?? "chat-completions",
         authHeader: provider?.authHeader,
         signal: abort.signal,
@@ -1553,13 +1686,11 @@ export function App() {
         workspaceRoot={workspaceRoot}
         panelOpen={panelVisible}
         terminalOpen={terminalVisible}
-        sidebarOpen={sidebarOpen}
         cacheHitRate={activeCacheMetrics?.hitRate ?? null}
         sessionCacheHit={activeCacheMetrics?.sessionHit}
         sessionCacheMiss={activeCacheMetrics?.sessionMiss}
         tokenStats={sessionTokenStats}
         onOpenFolder={() => void addProjectFolder()}
-        onToggleSidebar={() => setSidebarOpen((v) => !v)}
         onTogglePanel={() => {
           if (panelOpen) collapsePanel();
           else openPanelTab(panelTab);
@@ -1574,9 +1705,28 @@ export function App() {
       {boot?.platform === "desktop" ? <UpdateBanner /> : null}
 
       <div className={`app__body${sidebarOpen ? "" : " app__body--nosidebar"}`}>
+        {!sidebarOpen && (
+          <NavRail
+            activeView={view}
+            onExpand={() => setSidebarOpen(true)}
+            onNewTask={newTask}
+            onOpenSearch={() => setSearchOpen(true)}
+            onOpenAutomations={() => setView("automations")}
+            onOpenCustomize={() => {
+              setSettingsPage("general");
+              setView("settings");
+            }}
+            onOpenSettings={() => {
+              setSettingsPage("general");
+              setView("settings");
+              window.deyin.telemetry?.record("settings-opened");
+            }}
+          />
+        )}
         {sidebarOpen && (
         <Sidebar
           platform={boot?.platform ?? "desktop"}
+          activeView={view}
           projects={projects}
           activeProjectId={activeProjectId}
           activeThreadId={activeThreadId}
@@ -1618,11 +1768,7 @@ export function App() {
             setView("settings");
             window.deyin.telemetry?.record("settings-opened");
           }}
-          onOpenAutomations={() => {
-            // Scheduled agent runs live under Settings → Data (Fleet & scheduler).
-            setSettingsPage("data");
-            setView("settings");
-          }}
+          onOpenAutomations={() => setView("automations")}
           onOpenCustomize={() => {
             // Appearance/theme controls live on the General page.
             setSettingsPage("general");
@@ -1632,8 +1778,22 @@ export function App() {
         )}
 
         <div className="app__center">
-          {<>
-          <div className="app__columns">
+          {view === "automations" ? (
+            <AutomationsView
+              workspaceRoot={workspaceRoot}
+              providers={providers}
+              models={models}
+              selectedModel={selectedModel}
+              selectedProviderId={selectedProviderId}
+              env={env}
+              onBack={() => setView("workspace")}
+              onOpenSshSettings={() => {
+                setSettingsPage("sshHosts");
+                setView("settings");
+              }}
+            />
+          ) : (<>
+          <div className="app__columns" ref={attachColumns}>
             <main className={`chat-column${isChatEmpty ? " chat-column--empty" : ""}`}>
               <div className="chat-column__bar">
                 <EnvironmentBadge
@@ -1720,13 +1880,36 @@ export function App() {
                     openPanelTab("security");
                   }}
                 />
-                {approval && (
+                {mcpAuthRequests[0] && (
+                  <McpAuthCard
+                    key={mcpAuthRequests[0].requestId}
+                    moduleId={mcpAuthRequests[0].moduleId}
+                    serverName={mcpAuthRequests[0].serverName}
+                    message={mcpAuthRequests[0].message}
+                    onSkip={() =>
+                      setMcpAuthRequests((cur) => cur.filter((r) => r.requestId !== mcpAuthRequests[0]!.requestId))
+                    }
+                  />
+                )}
+                {approvals[0] && (
                   <ApprovalDialog
-                    toolName={approval.toolName}
-                    summary={approval.summary}
+                    key={approvals[0].requestId}
+                    toolName={approvals[0].toolName}
+                    summary={approvals[0].summary}
+                    pendingCount={approvals.length}
                     onDecision={(decision) => {
-                      window.deyin.agent?.approve(approval.requestId, decision);
-                      setApproval(null);
+                      const answered = approvals[0]!;
+                      window.deyin.agent?.approve(answered.requestId, decision);
+                      // "Allow for session" covers every queued request for the
+                      // same tool, so the user is not asked N times in a row.
+                      const covered =
+                        decision === "allow-always"
+                          ? approvals.filter((a) => a !== answered && a.toolName === answered.toolName)
+                          : [];
+                      for (const a of covered) window.deyin.agent?.approve(a.requestId, "allow");
+                      setApprovals((cur) =>
+                        cur.filter((a) => a.requestId !== answered.requestId && !covered.includes(a)),
+                      );
                     }}
                   />
                 )}
@@ -1771,7 +1954,16 @@ export function App() {
                   workspaceRoot={workspaceRoot}
                   homeDir={boot?.homeDir ?? null}
                   onSelectProject={(projectId) => void selectProject(projectId)}
-                  onPickFolder={() => void addProjectFolder()}
+                  onPickFolder={(startIn) => void addProjectFolder(startIn)}
+                  wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
+                  onOpenSshHosts={
+                    boot?.platform === "desktop"
+                      ? () => {
+                          setSettingsPage("sshHosts");
+                          setView("settings");
+                        }
+                      : undefined
+                  }
                   onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
                   onOpenSourceControl={() => {
                     openPanelTab("git");
@@ -1785,7 +1977,8 @@ export function App() {
                   approvalMode={settings?.approvalMode ?? "full-access"}
                   mode={(settings?.agentMode ?? "agent") === "agent" ? composerMode : undefined}
                   deliveryModeEnabled={false}
-                  thinking={settings?.thinking ?? true}
+                  thinkingDefault={settings?.thinking ?? true}
+                  modelEfforts={settings?.modelEfforts}
                   canSend={input.trim().length > 0}
                   streaming={streamText !== null || runningThreadId !== null}
                   runStatus={runningThreadId === activeThreadId ? agentRunState?.status ?? null : null}
@@ -1813,7 +2006,13 @@ export function App() {
                   }}
                   onSelectApproval={(mode: ApprovalMode) => patchSettings({ approvalMode: mode })}
                   onSelectMode={selectMode}
-                  onToggleThinking={(on) => patchSettings({ thinking: on })}
+                  onSetModelEffort={(providerId, modelId, mode: ModelReasoningMode | undefined) => {
+                    const key = modelEffortKey(providerId, modelId);
+                    const next = { ...(settings?.modelEfforts ?? {}) };
+                    if (mode) next[key] = mode;
+                    else delete next[key];
+                    patchSettings({ modelEfforts: next });
+                  }}
                   contextSnapshot={activeContextSnapshot}
                   contextLength={selectedContextLength}
                   threadKey={activeThreadId}
@@ -1832,7 +2031,27 @@ export function App() {
             </main>
 
             {panelVisible && (
-              <div className="wspanel-wrap">
+              <div
+                className="wspanel-wrap"
+                style={
+                  panelOpen && panelWidthPx !== null
+                    ? { flex: `0 0 ${panelWidthPx}px`, width: panelWidthPx }
+                    : undefined
+                }
+              >
+                {panelOpen && (
+                  <div
+                    className="wspanel-wrap__resize"
+                    onPointerDown={startPanelResize}
+                    onDoubleClick={() => {
+                      setPanelFraction(PANEL_DEFAULT_FRACTION);
+                      storePanelFraction(PANEL_DEFAULT_FRACTION);
+                    }}
+                    role="separator"
+                    aria-orientation="vertical"
+                    title="Drag to resize (double-click to reset)"
+                  />
+                )}
                 <PanelRail
                   activeTab={panelTab}
                   collapsed={!panelOpen}
@@ -1866,7 +2085,6 @@ export function App() {
                   variant: themeVariant,
                 }}
                 browserControlEnabled={settings?.browserControlEnabled ?? true}
-                onSelectTab={setPanelTab}
                 onOpenGitDiff={(d) => {
                   setDiff(d);
                   openPanelTab("diff");
@@ -1906,7 +2124,7 @@ export function App() {
               </div>
             )}
           </div>
-          </>}
+          </>)}
         </div>
       </div>
 
@@ -1950,6 +2168,8 @@ export function App() {
       {showBetaFeedback && <BetaFeedbackForm onClose={() => setShowBetaFeedback(false)} />}
 
       <BrowserOverlay />
+      <ComputerUseOverlay />
+      <AppApprovalDialog />
     </div>
     </I18nProvider>
   );

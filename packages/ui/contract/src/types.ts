@@ -4,6 +4,18 @@
  * `shared/types.js` import path.
  */
 export type {
+  Automation,
+  AutomationInfo,
+  AutomationPayload,
+  AutomationRun,
+  AutomationRunStatus,
+  AutomationTarget,
+  AutomationTrigger,
+  SshAuthMethod,
+  SshHostCredentials,
+  SshHostInfo,
+  SshHostInput,
+  SshTestResult,
   UserProfile,
   ModelInfo,
   FileNode,

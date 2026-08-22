@@ -43,6 +43,31 @@ export const colors = {
   running: "#00a5ea",
 } as const;
 
+/** Warm theme palette (HYRAX-inspired): charcoal-brown surfaces, cream text,
+ * tan accent, cream CTAs. Dark-only — selected via data-theme="warm". */
+export const colorsWarm = {
+  bg: "#121110",
+  surface: "#1a1816",
+  surfaceRaised: "#221e1a",
+  surfaceOverlay: "#2a2622",
+  border: "#3a3530",
+  borderStrong: "#4a443c",
+  hairline: "rgba(232, 230, 209, 0.06)",
+  text: "#ece6d9",
+  textMuted: "#a8a090",
+  textFaint: "#6e6558",
+  accent: "#c4a072",
+  accentHover: "#d4b082",
+  accentSoft: "rgba(196, 160, 114, 0.14)",
+  accentWarm: "#e2a45c",
+  sendBg: "#f2efe8",
+  sendFg: "#1a1208",
+  success: "#7a9a6a",
+  warning: "#c8ad7f",
+  danger: "#d14d28",
+  running: "#c4a072",
+} as const;
+
 /** Light theme palette. */
 export const colorsLight = {
   bg: "#f4f4f3",
@@ -70,6 +95,28 @@ export const colorsLight = {
   danger: "#cf222e",
   running: "#3f66e0",
 } as const;
+
+export interface AccentTokens {
+  accent: string;
+  accentHover: string;
+  accentSoft: string;
+}
+
+export const ACCENTS: Record<string, AccentTokens> = {
+  blue: { accent: "#00a5ea", accentHover: "#00bbfd", accentSoft: "#052f4a80" },
+  violet: { accent: "#8b5cf6", accentHover: "#a78bfa", accentSoft: "rgba(139, 92, 246, 0.16)" },
+  green: { accent: "#00c65a", accentHover: "#34d87a", accentSoft: "rgba(0, 198, 90, 0.16)" },
+  amber: { accent: "#eab300", accentHover: "#f5c842", accentSoft: "rgba(234, 179, 0, 0.16)" },
+  rose: { accent: "#fb2c36", accentHover: "#ff5a62", accentSoft: "rgba(251, 44, 54, 0.16)" },
+  cyan: { accent: "#22d3ee", accentHover: "#39e0f5", accentSoft: "rgba(34, 211, 238, 0.16)" },
+  orange: { accent: "#fb923c", accentHover: "#fda85a", accentSoft: "rgba(251, 146, 60, 0.16)" },
+  teal: { accent: "#14b8a6", accentHover: "#2dd4bf", accentSoft: "rgba(20, 184, 166, 0.16)" },
+  indigo: { accent: "#6366f1", accentHover: "#818cf8", accentSoft: "rgba(99, 102, 241, 0.16)" },
+  slate: { accent: "#94a3b8", accentHover: "#b8c1d1", accentSoft: "rgba(148, 163, 184, 0.16)" },
+  tan: { accent: "#c4a072", accentHover: "#d4b082", accentSoft: "rgba(196, 160, 114, 0.14)" },
+};
+
+export const ACCENT_IDS = Object.keys(ACCENTS);
 
 export const radii = {
   sm: "8px",
@@ -135,6 +182,20 @@ export function cssVariables(): string {
   lines.push(...colorLines(colorsLight));
   lines.push(...terminalLines(terminalLight));
   lines.push("}");
+
+  lines.push(':root[data-theme="warm"] {');
+  lines.push("  color-scheme: dark;");
+  lines.push(...colorLines(colorsWarm));
+  lines.push(...terminalLines(terminalDark));
+  lines.push("}");
+
+  for (const [id, tokens] of Object.entries(ACCENTS)) {
+    lines.push(`:root[data-accent="${id}"] {`);
+    lines.push(`  --color-accent: ${tokens.accent};`);
+    lines.push(`  --color-accent-hover: ${tokens.accentHover};`);
+    lines.push(`  --color-accent-soft: ${tokens.accentSoft};`);
+    lines.push("}");
+  }
 
   return lines.join("\n");
 }

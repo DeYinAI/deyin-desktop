@@ -236,6 +236,13 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M11.35 9v4.6M9.05 11.3h4.6" />
     </>
   ),
+  server: (
+    <>
+      <rect x="2.5" y="2.8" width="11" height="4.2" rx="1.2" />
+      <rect x="2.5" y="9" width="11" height="4.2" rx="1.2" />
+      <path d="M5 4.9h.01M5 11.1h.01" />
+    </>
+  ),
   puzzle: (
     <>
       <path d="M6.2 2.4h3.6v1.3a1.5 1.5 0 003 0V2.4h.5a1 1 0 011 1v2.9h-1.2a1.5 1.5 0 000 3h1.2v3.3a1 1 0 01-1 1h-3.1v-1.2a1.5 1.5 0 00-3 0v1.2H5.2a1 1 0 01-1-1v-3.4H5.3a1.5 1.5 0 000-3H4.2V3.4a1 1 0 011-1z" />

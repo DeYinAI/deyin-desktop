@@ -25,6 +25,10 @@ export const TASK_SUBAGENT_CATALOG_MARKER = "Available subagents:\n";
  * The Task tool: lets the model delegate work to a named subagent. Subagents
  * get a clean context window, so the description tells the model to embed all
  * necessary context in the prompt. Background subagents return immediately.
+ *
+ * Continuity: foreground calls block until the subagent finishes; only
+ * {@link TaskRunResult.report} is injected as the tool result — the parent's
+ * chat thread never forks.
  */
 export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
   const catalog = opts.subagents

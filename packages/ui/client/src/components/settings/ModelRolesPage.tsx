@@ -117,6 +117,13 @@ export function ModelRolesPage(props: Props) {
         description="Route each phase of a run to its own model. Roles left on “Inherit” use the model selected in the composer."
       />
 
+      <p className="ui-callout">
+        <strong>Model roles</strong> route steps inside your chat (same conversation). Use{" "}
+        <strong>Tool calling</strong> for a cheap fast model on read-only grep/read steps.{" "}
+        <strong>Subagents</strong> (below) are separate workers the main agent delegates whole jobs to — only a
+        summary returns to chat.
+      </p>
+
       {options.length === 0 ? (
         <EmptyState
           icon="cpu"
@@ -153,7 +160,7 @@ export function ModelRolesPage(props: Props) {
           <SectionHeader
             title="Subagents"
             count={props.subagents.length}
-            note="Delegated runs; frontmatter model: is the fallback"
+            note="Delegated runs; only a summary returns to the main chat"
           />
           {props.subagents.length === 0 ? (
             <EmptyState icon="brain" title="No subagents installed" />
@@ -168,7 +175,7 @@ export function ModelRolesPage(props: Props) {
                   aside={
                     <ModelSelect
                       label={`Model for ${item.name}`}
-                      value={item.model ?? ""}
+                      value={props.subagentModels[item.name] ?? ""}
                       options={options}
                       placeholder={item.effectiveModel ? `Auto · ${item.effectiveModel}` : "Inherit main model"}
                       onChange={(value) => props.onSetSubagentModel(item.name, value)}

@@ -127,6 +127,38 @@ For each candidate finding, state the attack: who the attacker is, what they sen
 
 ${REVIEW_OUTPUT_CONTRACT}`;
 
+const SHELL_PROMPT = `You are a shell subagent. Run the shell commands described in the prompt and return trimmed, actionable output.
+
+- Combine related commands with && when order matters; run independent checks in parallel where possible.
+- Trim verbose output to what matters: exit codes, errors, and the lines that answer the question.
+- Do not start background dev servers unless the prompt explicitly asks.
+- Report every command's exit code when non-zero.
+- Do not stop early: run every command requested and summarize results.`;
+
+const BROWSER_PROMPT = `You are a browser subagent. Verify or explore web UIs using the browser_* tools.
+
+1. browser_navigate to the target URL.
+2. browser_snapshot to inspect structure — use returned selectors; do not guess.
+3. Interact with browser_click, browser_type, browser_press, browser_scroll as needed.
+4. browser_screenshot at meaningful states; read saved screenshots when visual proof matters.
+5. Check browser_console and browser_network for invisible failures.
+
+Report what was verified (URL, interactions), screenshot paths, and any console/network issues. Never modify workspace files.`;
+
+const DOCS_RESEARCHER_PROMPT = `You are a docs-researcher subagent. Fetch current library, framework, or CLI documentation.
+
+- Use websearch and web_fetch to find official docs; prefer primary sources over blog posts.
+- Return concise API examples with version notes when the docs specify them.
+- Never fabricate API shapes, parameters, or behavior you did not read in the fetched docs.
+- If docs are ambiguous or unavailable, say so explicitly.`;
+
+const CI_INVESTIGATOR_PROMPT = `You are a ci-investigator subagent. Diagnose a single failing CI check.
+
+- Use read-only bash (gh, git log, git diff) and read/grep to inspect logs and the failing change.
+- Never modify the repository: no checkout, stash, commit, reset, or writes.
+- Output a root-cause summary in at most 10 lines, then one concrete fix recommendation.
+- If you cannot access logs or the repo, report exactly what blocked you.`;
+
 /** Subagents shipped with Deyin. */
 export const BUILTIN_SUBAGENTS: SubagentDefinition[] = [  {
     name: "explorer",
@@ -182,6 +214,61 @@ export const BUILTIN_SUBAGENTS: SubagentDefinition[] = [  {
       "You are a test-runner subagent. Figure out how this project runs its tests (package.json scripts, Makefile, CI config), run the requested tests with bash, and report pass/fail with the failing output trimmed to what matters. Do not stop early: keep working until the requested tests have run and results are reported.",
     readonly: false,
     isBackground: false,
+    source: "built-in",
+  },
+  {
+    name: "shell",
+    description:
+      "Run shell command sequences and return trimmed output. Use for long builds, installs, or multi-step shell work that would clutter the main context.",
+    prompt: SHELL_PROMPT,
+    tools: ["bash", "read", "grep", "glob", "ls", "todo_write", "todo_read"],
+    readonly: false,
+    isBackground: false,
+    maxSteps: 30,
+    source: "built-in",
+  },
+  {
+    name: "browser",
+    description:
+      "Browser automation for UI verification, scraping, or interaction that produces noisy DOM output. Use when browser tools are enabled.",
+    prompt: BROWSER_PROMPT,
+    tools: [
+      "browser_navigate",
+      "browser_click",
+      "browser_type",
+      "browser_press",
+      "browser_scroll",
+      "browser_snapshot",
+      "browser_screenshot",
+      "browser_console",
+      "browser_network",
+      "read",
+    ],
+    readonly: true,
+    isBackground: false,
+    source: "built-in",
+  },
+  {
+    name: "docs-researcher",
+    description:
+      "Fetch current library documentation and API references. Use when the task depends on up-to-date docs for a framework, SDK, or CLI.",
+    prompt: DOCS_RESEARCHER_PROMPT,
+    tools: ["web_fetch", "websearch", "read", "grep", "glob"],
+    readonly: true,
+    isBackground: false,
+    effort: "medium",
+    source: "built-in",
+  },
+  {
+    name: "ci-investigator",
+    description:
+      "Investigate a failing CI check: fetch logs, identify root cause, return a short fix recommendation. Use when the user asks about a red CI check or PR failure.",
+    prompt: CI_INVESTIGATOR_PROMPT,
+    tools: ["bash", "read", "grep", "glob", "git_log", "git_diff", "git_status"],
+    readonly: true,
+    isBackground: false,
+    effort: "high",
+    maxSteps: 40,
     source: "built-in",
   },
 ];

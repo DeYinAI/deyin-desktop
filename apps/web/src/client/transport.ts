@@ -437,7 +437,7 @@ export function createBrowserTransport(): DeyinApi {
         host.invoke<FilesWriteResult>((id) => ({ type: "files.write", id, path, content })).then(() => undefined),
     },
     workspace: {
-      openFolder: async () => null, // web sessions use the server-provisioned sandbox root
+      openFolder: async (_startIn?: string) => null, // web sessions use the server-provisioned sandbox root
       setRoot: async () => undefined, // sandbox root is server-owned; nothing to switch
       getRoot: async () => {
         try {
@@ -666,6 +666,7 @@ export function createBrowserTransport(): DeyinApi {
           prompt: options.prompt,
           model: options.model,
           thinking: options.thinking,
+          effort: options.effort,
           approvalMode: options.approvalMode,
           mode: options.mode,
           history: options.history,

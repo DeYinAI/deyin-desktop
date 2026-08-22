@@ -32,6 +32,33 @@ test("resolveSubagentModel treats a bare override as an Openference model", () =
   assert.deepEqual(r, { model: "glm-5.2", providerId: "openference" });
 });
 
+test("task tool: foreground subagent returns report as tool result only", async () => {
+  const { createTaskTool } = await import("../src/tools/task.js");
+  let capturedPrompt = "";
+  const tool = createTaskTool({
+    subagents: [
+      {
+        name: "explorer",
+        description: "explore",
+        prompt: "explore",
+        readonly: true,
+        isBackground: false,
+        source: "built-in",
+      },
+    ],
+    runSubagent: async (_def, prompt) => {
+      capturedPrompt = prompt;
+      return { ok: true, report: "summary-only" };
+    },
+  });
+  const result = await tool.execute(
+    { subagent: "explorer", prompt: "find auth" },
+    { signal: new AbortController().signal } as Parameters<typeof tool.execute>[1],
+  );
+  assert.equal(result, "summary-only");
+  assert.equal(capturedPrompt, "find auth");
+});
+
 test("subagentReadonlyRules denies write/edit and asks bash only for readonly agents", () => {
   assert.deepEqual(subagentReadonlyRules({ readonly: true }), [
     { tool: "write", action: "deny" },
@@ -63,14 +90,22 @@ test("plan mode denies bash so it stays read-only even under full access", () =>
   }
 });
 
-test("full access never prompts in build-style modes", () => {
-  assert.equal(skipPromptsForApproval("full-access", "agent"), true);
-  assert.equal(skipPromptsForApproval("full-access", "delivery"), true);
+test("full access never prompts, whatever the composer mode", () => {
+  for (const mode of ["agent", "delivery", "plan", "ask"] as const) {
+    assert.equal(skipPromptsForApproval("full-access", mode), true);
+  }
 });
 
-test("full access still leaves plan/ask prompting for tools their rules miss", () => {
-  assert.equal(skipPromptsForApproval("full-access", "plan"), false);
-  assert.equal(skipPromptsForApproval("full-access", "ask"), false);
+test("full access keeps plan mode read-only by denying rather than prompting", () => {
+  const engine = new PermissionEngine({
+    agentRules: rulesForApprovalMode("full-access"),
+    configRules: agentForMode("plan").permissions ?? [],
+    skipAll: skipPromptsForApproval("full-access", "plan"),
+  });
+  assert.equal(engine.actionFor({ name: "write", tier: "write" }), "deny");
+  assert.equal(engine.actionFor({ name: "bash", tier: "execute" }), "deny");
+  // Tools plan mode does not deny (e.g. MCP) run instead of stalling on a prompt.
+  assert.equal(engine.actionFor({ name: "mcp__docs__search", tier: "execute" }), "allow");
 });
 
 test("ask-first and read-only always prompt", () => {

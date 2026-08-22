@@ -29,7 +29,8 @@
     "test": "tsx --test test/*.test.ts"
   },
   "optionalDependencies": {
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.0.0",
+    "@deyin/native-core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

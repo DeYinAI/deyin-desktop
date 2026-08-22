@@ -23,6 +23,7 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   // Subagent settings default.
   assert.deepEqual(migrated.subagentModels, {});
   assert.deepEqual(migrated.subagentEfforts, {});
+  assert.deepEqual(migrated.modelEfforts, {});
   assert.equal(migrated.subagentMaxSteps, DEFAULT_SETTINGS.subagentMaxSteps);
   assert.equal(migrated.subagentConcurrency, DEFAULT_SETTINGS.subagentConcurrency);
 });
@@ -144,8 +145,9 @@ test("v11: dropped fields fall out and kept fields survive", () => {
   assert.equal("enableCoordinator" in migrated, false);
   assert.equal("plannerModel" in migrated, false);
   assert.equal("enableFleet" in migrated, false);
-  assert.equal("computerUseEnabled" in migrated, false);
-  assert.equal("automationsCatchUp" in migrated, false);
+  assert.equal(migrated.computerUseEnabled, true);
+  // Re-added in v14 (automations revival): a v10 file's value survives.
+  assert.equal(migrated.automationsCatchUp, false);
   assert.equal("optimizationCompression" in migrated, false);
   assert.equal("cacheHitRateTarget" in migrated, false);
   assert.equal("agentOnboardComplete" in migrated, false);

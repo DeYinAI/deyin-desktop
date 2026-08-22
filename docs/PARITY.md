@@ -44,7 +44,7 @@ full UX is not yet fleshed out. Nothing here reuses any proprietary code.
 | Settings: Skills / Subagents / Commands / Hooks (live `.deyin` registry) | Done | `settings/CapabilityPage.tsx`, `agent-core/src/capabilities/*`, `main/capabilities.ts` |
 | Built-in default skills (13, materialized + overridable) | Done | `agent-core/src/capabilities/builtin-skills.ts` |
 | Settings: MCP servers (list/add/remove/test, stdio+SSE+HTTP) | Done | `settings/McpPage.tsx`, `agent-core/src/mcp.ts` |
-| Settings: MCP catalog (browse, install, secrets, native OAuth) | Done | `settings/McpPage.tsx`, `main/mcp-catalog.ts`, `main/mcp-modules.ts`, `main/mcp-oauth.ts`, `docs/mcp-catalog.json` |
+| Settings: MCP catalog (browse, install, secrets, native OAuth) | Done | `settings/McpPage.tsx`, `main/mcp-catalog.ts`, `main/mcp-modules.ts`, `main/mcp-oauth.ts`, `main/mcp-catalog/*.json` |
 | MCP per-module install (`~/.deyin/mcp-modules/<id>/`) | Done | `main/mcp-modules.ts`, `agent-core/capabilities/mcp-config.ts` |
 | Goal modal + clear goal | Done | `components/Composer.tsx` |
 | Context attachment budget warning | Done | `components/Composer.tsx`, `components/ContextUsage.tsx` |

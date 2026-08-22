@@ -1,19 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
-import { CapabilityPage } from "./settings/CapabilityPage.js";
-import { GeneralPage } from "./settings/GeneralPage.js";
-import { AppearancePage } from "./settings/AppearancePage.js";
-import { IdentityPage } from "./settings/IdentityPage.js";
-import { IndexingPage } from "./settings/IndexingPage.js";
-import { McpPage } from "./settings/McpPage.js";
-import { ModelRolesPage } from "./settings/ModelRolesPage.js";
-import { ModelSettingsPage } from "./settings/ModelSettingsPage.js";
-import { PluginsPage } from "./settings/PluginsPage.js";
-import { TerminalPage } from "./settings/TerminalPage.js";
-import { BrowserPage } from "./settings/BrowserPage.js";
-import { UsageStatsPage } from "./settings/UsageStatsPage.js";
 import { SectionHeader, SettingCard, SettingGroup, TabBar, Toggle } from "./settings/controls.js";
+
+// Settings pages are heavy (MCP catalog, indexing UI, usage charts) and only one
+// is visible at a time; lazy chunks keep them out of the initial renderer bundle.
+const CapabilityPage = lazy(() => import("./settings/CapabilityPage.js").then((m) => ({ default: m.CapabilityPage })));
+const GeneralPage = lazy(() => import("./settings/GeneralPage.js").then((m) => ({ default: m.GeneralPage })));
+const AppearancePage = lazy(() => import("./settings/AppearancePage.js").then((m) => ({ default: m.AppearancePage })));
+const SshHostsPage = lazy(() => import("./settings/SshHostsPage.js").then((m) => ({ default: m.SshHostsPage })));
+const IdentityPage = lazy(() => import("./settings/IdentityPage.js").then((m) => ({ default: m.IdentityPage })));
+const IndexingPage = lazy(() => import("./settings/IndexingPage.js").then((m) => ({ default: m.IndexingPage })));
+const McpPage = lazy(() => import("./settings/McpPage.js").then((m) => ({ default: m.McpPage })));
+const ModelRolesPage = lazy(() => import("./settings/ModelRolesPage.js").then((m) => ({ default: m.ModelRolesPage })));
+const ModelSettingsPage = lazy(() => import("./settings/ModelSettingsPage.js").then((m) => ({ default: m.ModelSettingsPage })));
+const PluginsPage = lazy(() => import("./settings/PluginsPage.js").then((m) => ({ default: m.PluginsPage })));
+const TerminalPage = lazy(() => import("./settings/TerminalPage.js").then((m) => ({ default: m.TerminalPage })));
+const BrowserPage = lazy(() => import("./settings/BrowserPage.js").then((m) => ({ default: m.BrowserPage })));
+const ComputerUsePage = lazy(() => import("./settings/ComputerUsePage.js").then((m) => ({ default: m.ComputerUsePage })));
+const UsageStatsPage = lazy(() => import("./settings/UsageStatsPage.js").then((m) => ({ default: m.UsageStatsPage })));
 import type { MessageKey } from "@deyin/host-core/shared";
 import type {
   AccountUsage,
@@ -34,6 +39,7 @@ export type SettingsPage =
   | "workspace"
   | "data"
   | "indexing"
+  | "sshHosts"
   | "account";
 
 /** Legacy page ids kept valid so stale deep-links (e.g. stored settings pages) route somewhere sane. */
@@ -53,7 +59,7 @@ const LEGACY_PAGE_ROUTES: Partial<Record<string, SettingsPage>> = {
   indexing: "indexing",
   usage: "data",
   optimization: "data",
-  sshHosts: "account",
+  sshHosts: "sshHosts",
   identity: "account",
   onboard: "account",
   cache: "data",
@@ -108,7 +114,10 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
   },
   {
     sectionKey: "settings.section.deyin",
-    entries: [{ page: "account", labelKey: "settings.nav.account", icon: "shield" }],
+    entries: [
+      { page: "account", labelKey: "settings.nav.account", icon: "shield" },
+      { page: "sshHosts", labelKey: "settings.nav.sshHosts", icon: "server" },
+    ],
   },
 ];
 
@@ -185,6 +194,13 @@ export function SettingsView(props: SettingsViewProps) {
     props.onChangeSettings({ subagentModels: next });
   };
 
+  const setSubagentEffort = (name: string, effort: string | undefined) => {
+    const next = { ...(props.settings.subagentEfforts ?? {}) };
+    if (effort) next[name] = effort;
+    else delete next[name];
+    props.onChangeSettings({ subagentEfforts: next });
+  };
+
   const integrationTabs = (
     <TabBar
       tabs={INTEGRATION_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
@@ -201,15 +217,14 @@ export function SettingsView(props: SettingsViewProps) {
     />
   );
 
-  const visibleNav = NAV.filter((group) => {
-    if (isWeb) {
-      // Integrations, Skills and Workspace manage desktop-local resources.
-      return !group.entries.some(
-        (e) => e.page === "integrations" || e.page === "skills" || e.page === "workspace",
-      );
-    }
-    return true;
-  });
+  // Integrations, Skills, Workspace and SSH hosts manage desktop-local
+  // resources, so the web build hides them entry by entry (a group can mix
+  // shared and desktop-only pages, as Account and SSH hosts do).
+  const DESKTOP_ONLY: SettingsPage[] = ["integrations", "skills", "workspace", "sshHosts"];
+  const visibleNav = NAV.map((group) => ({
+    ...group,
+    entries: isWeb ? group.entries.filter((e) => !DESKTOP_ONLY.includes(e.page)) : group.entries,
+  })).filter((group) => group.entries.length > 0);
 
   return (
     <div className="settings">
@@ -236,6 +251,7 @@ export function SettingsView(props: SettingsViewProps) {
       </aside>
 
       <div className="settings__content">
+        <Suspense fallback={<div className="settings-page" />}>
         {page === "general" && (
           <>
             <GeneralPage settings={props.settings} version={props.version} onChange={props.onChangeSettings} />
@@ -277,13 +293,17 @@ export function SettingsView(props: SettingsViewProps) {
             tabs={skillTabs}
             providers={providers}
             liveModels={props.liveModels}
+            subagentModels={props.settings.subagentModels ?? {}}
+            subagentEfforts={props.settings.subagentEfforts ?? {}}
             onSetSubagentModel={skillTab === "subagent" ? setSubagentModel : undefined}
+            onSetSubagentEffort={skillTab === "subagent" ? setSubagentEffort : undefined}
           />
         )}
         {page === "workspace" && (
           <>
             <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />
             <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />
+            <ComputerUsePage settings={props.settings} onChange={props.onChangeSettings} />
           </>
         )}
         {page === "data" && (
@@ -323,12 +343,11 @@ export function SettingsView(props: SettingsViewProps) {
           <IndexingPage workspaceRoot={props.workspaceRoot} settings={props.settings} onChange={props.onChangeSettings} />
         )}
         {page === "account" && (
-          <IdentityPage
-            user={props.user}
-            onConnect={props.onConnect}
-            onOpenUsage={() => setPage("data")}
-          />
+          <IdentityPage user={props.user} onConnect={props.onConnect} onOpenUsage={() => setPage("data")} />
         )}
+        {/* SSH targets for remote automation runs; its own page, desktop-only. */}
+        {page === "sshHosts" && <SshHostsPage />}
+        </Suspense>
       </div>
     </div>
   );

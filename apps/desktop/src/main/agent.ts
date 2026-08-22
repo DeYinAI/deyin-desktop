@@ -1,10 +1,12 @@
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { BrowserWindow, app } from "electron";
+import { BrowserWindow, app, dialog } from "electron";
 import {
   AgentShell,
   ShellUnavailableError,
+  buildPromptCacheKeyFor,
+  resolveWireProvider,
   createImageBridge,
   storeAttachedImages,
   type AgentsStore,
@@ -46,6 +48,7 @@ import {
   type PlanArtifact,
   type SubagentDefinition,
   subagentEffort,
+  hostToolsForSubagent,
   type SystemPromptSections,
   type ToolSessionMeta,
   type ToolShell,
@@ -60,13 +63,14 @@ import { PluginKernel } from "@deyin/kernel";
 import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
 import { createDesktopProfile } from "@deyin/bundle-desktop-app";
 import { buildToolRegistry, Tools } from "@deyin/tools";
-import type { OAuthClientProvider, PermissionEngineOptions, PermissionRule, ProviderApiFormat } from "@deyin/agent-core";
+import type { PermissionEngineOptions, PermissionRule, ProviderApiFormat } from "@deyin/agent-core";
 import type { AgentEventEnvelope, AgentStartOptions, AgentUiEvent, ChatMode, IndexSearchHit } from "@deyin/contract";
 import { truncateToolResultUi } from "@deyin/contract";
 import { CH } from "@deyin/contract";
 import type { DeyinConfig } from "@deyin/contract";
 import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
+import type { ComputerUseService } from "./computer-use.js";
 import type { CapabilityService } from "./capabilities.js";
 import type { VisualizeService } from "./visualize.js";
 import type { ImageService } from "./images.js";
@@ -74,7 +78,8 @@ import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
-import { dialog } from "electron";
+import type { McpAuthBridge, McpOAuthTarget } from "./mcp-auth-bridge.js";
+import { createMcpAuthenticateTool, isMcpUnauthorized } from "./mcp-auth-bridge.js";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Files bigger than this ship to the renderer without diff content. */
@@ -113,6 +118,8 @@ interface ThreadSession {
   shellAnnounced?: boolean;
   /** True after the 50% context soft warning fired for this session. */
   softWarningSent?: boolean;
+  /** "Allow for session" grants; shared with every run's PermissionEngine so they stick. */
+  permissionGrants: Set<string>;
 }
 
 interface ActiveRun {
@@ -128,6 +135,7 @@ export interface AgentHostOptions {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
+  computerUse: ComputerUseService;
   visualize?: VisualizeService;
   /** Generated-image store (generate_image tool + direct image-model runs). */
   images?: ImageService;
@@ -137,7 +145,7 @@ export interface AgentHostOptions {
   /** Shared change-review queue (review mode) — also surfaced over IPC. */
   review: PendingReviewQueue;
   /** Native OAuth provider store for MCP modules (token-backed connections). */
-  mcpAuth?: { getProvider(serverName: string): OAuthClientProvider | undefined };
+  mcpAuth?: McpAuthBridge;
   /** Workspace trust decisions (gates hooks.json / mcp.json execution). */
   trust: WorkspaceTrust;
   getWorkspaceRoot: () => string | null;
@@ -595,6 +603,7 @@ export class DesktopAgentHost {
     // extra ask-tier permission rules (e.g. computer-use confirmation).
     const hostRules = await registerBundledHostTools(registry, this.opts.agents, this.opts.settings, {
       browser: this.opts.browser,
+      computerUse: this.opts.computerUse,
       visualize: this.opts.visualize,
     }).catch((err) => {
       console.warn("[deyin] bundled host tools failed to register:", err);
@@ -613,8 +622,35 @@ export class DesktopAgentHost {
     // Connected lazily inside the run's try/finally so a failure between here
     // and the finally cannot leak spawned MCP child processes.
     const mcpConnections: McpConnection[] = [];
-    // OAuth-backed MCP modules use the stored native-OAuth tokens.
     const mcpAuth = this.opts.mcpAuth;
+    const mcpDefs = caps.mcpServers.map((def) => this.opts.capabilities.resolvePluginVariables(def));
+    const pendingMcpAuth = new Set<string>();
+
+    const emitMcpAuthNeeded = (target: McpOAuthTarget, message?: string) => {
+      if (pendingMcpAuth.has(target.moduleId)) return;
+      pendingMcpAuth.add(target.moduleId);
+      this.send(options.threadId, {
+        type: "mcp-auth-needed",
+        requestId: randomUUID(),
+        moduleId: target.moduleId,
+        serverName: target.displayName,
+        message: message ?? "Enables the agent to use custom tools and third-party integrations.",
+      });
+    };
+
+    if (mcpAuth) {
+      registry.register(
+        createMcpAuthenticateTool(mcpAuth, (target) => emitMcpAuthNeeded(target)),
+      );
+      for (const def of mcpDefs) {
+        const target = mcpAuth.oauthTargetFor(def);
+        if (target && !mcpAuth.isAuthenticated(target.moduleId)) {
+          emitMcpAuthNeeded(target);
+        }
+      }
+    }
+
+    // OAuth-backed MCP modules use the stored native-OAuth tokens.
 
     // Hooks (custom only, from hooks.json files).
     const hooks = caps.hooks;
@@ -659,6 +695,9 @@ export class DesktopAgentHost {
       skipAll: skipPromptsForApproval(options.approvalMode, mode),
       neverSkipTools: NEVER_SKIP_TOOLS,
       neverSkipPrefixes: NEVER_SKIP_PREFIXES,
+      // Thread-scoped, so "Allow for session" survives the next message instead
+      // of dying with this run's engine.
+      sessionGrants: session.permissionGrants,
     });
     const permissions = new PermissionEngine(buildPermissionOptions(options.mode));
 
@@ -685,10 +724,18 @@ export class DesktopAgentHost {
     try {
  mcpConnections.push(
    ...(await connectMcpDefinitions(
-     caps.mcpServers.map((def) => this.opts.capabilities.resolvePluginVariables(def)),
+     mcpDefs,
      registry,
      {
-       onError: () => undefined,
+       onError: (serverName, err) => {
+         const def = mcpDefs.find((d) => d.name === serverName);
+         const target = def && mcpAuth ? mcpAuth.oauthTargetFor(def) : null;
+         if (target && isMcpUnauthorized(err)) {
+           emitMcpAuthNeeded(target);
+           return;
+         }
+         console.warn(`[deyin] MCP server "${serverName}" failed to connect:`, err);
+       },
        ...(mcpAuth ? { getAuthProvider: (name) => mcpAuth.getProvider(name) } : {}),
      },
    )),
@@ -753,7 +800,12 @@ const optPlugin = await this.ensureOptimizationPlugin();
           enableCompression: true,
           compressionMode: "balanced",
           enablePromptCaching: true,
-          provider: provider?.kind === "custom" ? "openai" : "openference",
+          provider: resolveWireProvider({
+            providerId: options.providerId,
+            model: options.model,
+            cwd,
+            apiFormat: provider?.apiFormat,
+          }),
           model: options.model,
         },
      cached: true,
@@ -829,6 +881,7 @@ return;
         resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
         cwd,
         thinking: options.thinking,
+        effort: options.effort,
         signal,
         imageOutput: this.modelEmitsImages(options),
         todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
@@ -897,10 +950,19 @@ return;
           enableCompression: true,
           compressionMode: "balanced",
           enablePromptCaching: true,
-          provider: provider?.kind === "custom" ? "openai" : "openference",
+          provider: resolveWireProvider({
+            providerId: options.providerId,
+            model: options.model,
+            cwd,
+            apiFormat: provider?.apiFormat,
+          }),
           model: options.model,
         },
-        promptCacheKey: `deyin:${options.providerId}:${options.model}:${cwd}`,
+        promptCacheKey: buildPromptCacheKeyFor({
+          providerId: options.providerId,
+          model: options.model,
+          cwd,
+        }),
         lookupToolCache: cacheHooks?.lookupToolCache,
         storeToolCache: cacheHooks?.storeToolCache,
         onMessage: (message) => this.store.append(session.sessionId, message),
@@ -999,7 +1061,13 @@ return;
               });
               break;
 case "usage":
- this.send(options.threadId, { type: "usage", totalTokens: event.usage.totalTokens });
+ this.send(options.threadId, {
+   type: "usage",
+   totalTokens: event.usage.totalTokens,
+   promptTokens: event.usage.promptTokens,
+   completionTokens: event.usage.completionTokens,
+   cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
+ });
  break;
  case "context-snapshot": {
  this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
@@ -1077,6 +1145,7 @@ if (optPlugin && result.finalText) {
     const startedAt = Date.now();
     this.send(parent.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
     const cwd = this.opts.getWorkspaceRoot() ?? process.cwd();
+    const parentGrants = this.sessions.get(parent.threadId)?.permissionGrants;
     const parentProvider = this.opts.agents.listProviders(true).find((p) => p.id === parent.providerId);
     const parentProviderWire: { apiFormat: ProviderApiFormat; authHeader?: boolean } = {
       apiFormat: parentProvider?.apiFormat ?? "chat-completions",
@@ -1089,6 +1158,14 @@ if (optPlugin && result.finalText) {
       effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
       maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
       parentRouting: { apiBaseUrl, getToken, apiFormat: parentProviderWire.apiFormat, authHeader: parentProviderWire.authHeader },
+      // Children inherit the parent's wire compression + prompt caching.
+      wire: {
+        enableCompression: true,
+        compressionMode: "balanced",
+        enablePromptCaching: true,
+        provider: parentProvider?.kind === "custom" ? "openai" : "openference",
+        model: parent.model,
+      },
       // Children can draw too: same provider, same thread image store.
       imageGen: this.imageGenBridge(parent, apiBaseUrl, getToken, cwd, signal ?? new AbortController().signal),
       // Surface the child's tool activity as one-line progress updates.
@@ -1106,11 +1183,21 @@ if (optPlugin && result.finalText) {
         // Full access covers spawned work too: a readonly definition still has
         // write/edit denied, but its bash rule must not turn into a prompt.
         skipAll: skipPromptsForApproval(parent.approvalMode, parent.mode),
+        // Spawned work shares the thread's grants both ways: what the user
+        // already allowed is not asked again, and a grant made inside a
+        // subagent sticks for the rest of the thread.
+        ...(parentGrants ? { sessionGrants: parentGrants } : {}),
       }),
       resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
-      extraTools: this.opts.settings.get().indexingEnabled
-        ? [createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK))]
-        : [],
+      extraTools: [
+        ...(this.opts.settings.get().indexingEnabled
+          ? [createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK))]
+          : []),
+        ...hostToolsForSubagent(def, { browser: this.opts.browser, computerUse: this.opts.computerUse }, {
+          browserEnabled: this.opts.settings.get().browserControlEnabled,
+          computerUseEnabled: this.opts.settings.get().computerUseEnabled,
+        }),
+      ],
       signal,
     });
     this.send(parent.threadId, {
@@ -1178,6 +1265,7 @@ if (optPlugin && result.finalText) {
       mode: options.mode,
       systemSections: { system: parts.system, skills: parts.skills, rules: parts.rules },
       shellEpoch: 0,
+      permissionGrants: new Set<string>(),
     };
     this.sessions.set(options.threadId, session);
     return session;

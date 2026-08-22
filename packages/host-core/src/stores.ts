@@ -112,11 +112,23 @@ export class AgentsStore {
       delete this.state.caps;
       this.persist();
     }
-    // One-time merge of newly shipped provider presets.
+    // One-time merge of newly shipped provider presets + v3 preset disable pass.
+    const prevSeed = this.state.providerSeedVersion ?? 0;
+    const beforeProviders = this.state.providers;
     const merged = mergePresetProviders(this.state.providers, this.state.providerSeedVersion);
-    if (merged.providers !== this.state.providers) {
-      this.state.providers = merged.providers;
-      this.state.providerSeedVersion = merged.seedVersion;
+    this.state.providers = merged.providers;
+    let changed = merged.providers !== beforeProviders;
+    if (prevSeed < 3) {
+      for (const p of this.state.providers) {
+        if (p.kind !== "custom" || !p.preset || p.keyCipher || p.local) continue;
+        if (p.enabled) {
+          p.enabled = false;
+          changed = true;
+        }
+      }
+    }
+    if (changed || prevSeed < PROVIDER_SEED_VERSION) {
+      this.state.providerSeedVersion = PROVIDER_SEED_VERSION;
       this.persist();
     }
     this.state.providers = this.state.providers.map((p) => ({

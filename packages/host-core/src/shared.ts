@@ -4,13 +4,16 @@
  * and the web client. Node-only pieces (storage, stores, host services) live in the
  * package root export.
  */
+export { parseSseDataLine as sseJsonLine, ssePayloads as sseJson } from "./sse-core.js";
 export * from "./types.js";
 export * from "./config.js";
 export * from "./defaults.js";
+export * from "./agent-run.js";
 export * from "./usage.js";
 export * from "./openference.js";
 export * from "./search.js";
 export * from "./models.js";
+export * from "./model-reasoning.js";
 export * from "./images.js";
 export * from "./image-parts.js";
 export * from "./account.js";

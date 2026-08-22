@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   AgentShell,
@@ -37,6 +37,13 @@ import {
 import { PluginKernel } from "@deyin/kernel";
 import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
 import { createWebProfile } from "@deyin/bundle-web-app";
+import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
+import {
+  Optimization,
+  bindAgentCacheHooks,
+  optimizationPluginDef,
+  type OptimizationPlugin,
+} from "@deyin/optimization-plugin";
 import { Capabilities, capsLocalPlugin } from "@deyin/plugin-caps-local";
 import { buildToolRegistry, Tools } from "@deyin/tools";
 import type { WebAgentProviderRouting } from "@deyin/contract/web";
@@ -44,11 +51,16 @@ import type { WebAgentProviderRouting } from "@deyin/contract/web";
 /** Mirrors the desktop's prompt bridge timeout: unanswered prompts deny after 5 minutes. */
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
 
+function shortHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
 export interface WebAgentStartOptions {
   threadId: string;
   prompt: string;
   model: string;
   thinking: boolean;
+  effort?: "low" | "medium" | "high";
   approvalMode: "full-access" | "ask-first" | "read-only";
   mode: ChatMode;
   history: { role: "user" | "assistant"; content: string }[];
@@ -88,10 +100,15 @@ interface PendingPrompt<T> {
 export class WebAgentHost {
   private active = new Map<string, ActiveRun>();
   private shells = new Map<string, AgentShell>();
+  /** Per-thread "allow for session" grants, so they outlive a single run. */
+  private permissionGrants = new Map<string, Set<string>>();
   private pendingPermissions = new Map<string, PendingPrompt<PermissionDecision>>();
   private pendingQuestions = new Map<string, PendingPrompt<Record<string, string | string[]>>>();
   /** Per-session plugin kernel: base bundle + sandbox-scoped capabilities. */
   private kernelPromise: Promise<PluginKernel> | null = null;
+  /** Lazily activated optimization plugin (semantic caches); null when off/failed. */
+  private optimizationPlugin: OptimizationPlugin | null = null;
+  private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   /** Append-only event journal inside the sandbox (session-event-log spine). */
   private readonly journal: SessionEventJournal;
 
@@ -131,6 +148,34 @@ export class WebAgentHost {
     return this.kernelPromise;
   }
 
+  /**
+   * Lazily activate the optimization plugin (semantic tool/response caches).
+   * Web sessions enable it by default — the sandbox keeps its data isolated.
+   */
+  private async ensureOptimizationPlugin(): Promise<OptimizationPlugin | null> {
+    if (this.optimizationPlugin) return this.optimizationPlugin;
+    if (!this.optimizationPluginLoading) {
+      this.optimizationPluginLoading = (async () => {
+        try {
+          const kernel = await this.ensureKernel();
+          const status = await kernel.activatePlugin(optimizationPluginDef.name);
+          if (status.state === "failed") {
+            throw new Error(status.error ?? "optimization plugin failed to activate");
+          }
+          const plugin = kernel.get(Optimization);
+          this.optimizationPlugin = plugin;
+          return plugin;
+        } catch (err) {
+          console.warn("[deyin:web] optimization plugin failed to load:", err);
+          return null;
+        } finally {
+          this.optimizationPluginLoading = null;
+        }
+      })();
+    }
+    return this.optimizationPluginLoading;
+  }
+
   start(options: WebAgentStartOptions): void {
     void this.startRun(options).catch((err) => {
       this.emit(options.threadId, { type: "error", message: err instanceof Error ? err.message : String(err) });
@@ -167,6 +212,7 @@ export class WebAgentHost {
       shell.dispose();
     }
     this.shells.clear();
+    this.permissionGrants.clear();
     void this.kernelPromise?.then((kernel) => kernel.dispose());
     this.kernelPromise = null;
   }
@@ -226,10 +272,12 @@ export class WebAgentHost {
     // system prompt and the UI follow mid-run mode switches (same contract as
     // the desktop host).
     const sessionMeta: ToolSessionMeta = { threadId: options.threadId, mode: options.mode };
+    const grants = this.grantsFor(options.threadId);
     const buildPermissions = (mode: ChatMode): PermissionEngineOptions => ({
       agentRules: rulesForApprovalMode(options.approvalMode),
       configRules: agentForMode(mode).permissions ?? [],
       skipAll: skipPromptsForApproval(options.approvalMode, mode),
+      sessionGrants: grants,
     });
     const permissions = new PermissionEngine(buildPermissions(options.mode));
 
@@ -284,6 +332,67 @@ export class WebAgentHost {
       },
     });
 
+    const optPlugin = await this.ensureOptimizationPlugin();
+    const cacheHooks = optPlugin ? bindAgentCacheHooks(optPlugin) : null;
+
+    const wireProvider = resolveWireProvider({
+      providerId: "web-session",
+      model: options.model,
+      cwd: this.root,
+      apiFormat: options.provider.apiFormat,
+    });
+
+    const responseCacheContext = {
+      model: options.model,
+      mode: options.mode,
+      systemPromptHash: shortHash(messages[0]?.content ?? ""),
+      historyHash: shortHash(
+        messages
+          .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
+          .slice(-8)
+          .map((m) => {
+            if (m.role === "tool") {
+              const body = typeof m.content === "string" ? m.content : "";
+              return `tool:${m.toolName ?? ""}:${body.slice(0, 200)}`;
+            }
+            return `${m.role}:${typeof m.content === "string" ? m.content : ""}`;
+          })
+          .join("\n"),
+      ),
+    };
+    const responseCacheWorkspace = `${this.root}|${options.threadId}`;
+
+    if (optPlugin) {
+      const cached = await optPlugin.beforeAgentRun(
+        optPlugin.runtime,
+        prompt,
+        responseCacheWorkspace,
+        responseCacheContext,
+      );
+      if (cached.hit) {
+        if (state.abort.signal.aborted || state.doneEmitted) return;
+        state.doneEmitted = true;
+        this.emit(options.threadId, { type: "text-delta", delta: cached.response });
+        this.emit(options.threadId, { type: "usage", totalTokens: 0 });
+        this.emit(options.threadId, {
+          type: "optimization",
+          originalInputTokens: 0,
+          compressedInputTokens: 0,
+          compressionRatio: 1,
+          cachedPromptTokens: 0,
+          toolCacheHits: 0,
+          toolCacheMisses: 0,
+          responseCacheHits: 1,
+          responseCacheMisses: 0,
+          estimatedCostSavingsUsd: 0,
+          sessionCacheHit: 0,
+          sessionCacheMiss: 0,
+        });
+        this.emit(options.threadId, { type: "done", reason: "completed", finalText: cached.response });
+        return;
+      }
+    }
+
     const result = await runAgent({
       apiBaseUrl: options.provider.baseUrl,
       getToken: async () => options.provider.token,
@@ -292,6 +401,7 @@ export class WebAgentHost {
       model: options.model,
       router,
       thinking: options.thinking,
+      effort: options.effort,
       messages,
       tools: registry,
       permissions,
@@ -302,6 +412,21 @@ export class WebAgentHost {
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
       onEvent: (event) => this.forwardEvent(options.threadId, event),
+      // Cache parity with desktop: compression + prompt caching + stable cache key.
+      wire: {
+        enableCompression: true,
+        compressionMode: "balanced",
+        enablePromptCaching: true,
+        provider: wireProvider,
+        model: options.model,
+      },
+      promptCacheKey: buildPromptCacheKeyFor({
+        providerId: "web-session",
+        model: options.model,
+        cwd: this.root,
+      }),
+      lookupToolCache: cacheHooks?.lookupToolCache,
+      storeToolCache: cacheHooks?.storeToolCache,
       imageOutput: (options.imageChatModels ?? []).includes(options.model),
       toolContext: {
         sessionMeta,
@@ -358,6 +483,12 @@ export class WebAgentHost {
       },
     });
 
+    if (optPlugin && result.finalText) {
+      await optPlugin
+        .afterAgentRun(optPlugin.runtime, prompt, result.finalText, responseCacheWorkspace, responseCacheContext)
+        .catch(() => undefined);
+    }
+
     if (!state.doneEmitted) {
       state.doneEmitted = true;
       this.emit(options.threadId, { type: "done", reason: result.reason, finalText: result.finalText });
@@ -408,6 +539,7 @@ export class WebAgentHost {
         agentRules: rulesForApprovalMode(options.approvalMode),
         configRules: [...(agentForMode(options.mode).permissions ?? []), ...subagentReadonlyRules(def)],
         skipAll: skipPromptsForApproval(options.approvalMode, options.mode),
+        sessionGrants: this.grantsFor(options.threadId),
       }),
       resolvePermission: (req) => this.askPermission(options.threadId, `${def.name} → ${req.toolName}`, req.summary),
       signal,
@@ -452,6 +584,16 @@ export class WebAgentHost {
       cwd: this.root,
       signal,
     });
+  }
+
+  /** The thread's shared "allow for session" set, created on first use. */
+  private grantsFor(threadId: string): Set<string> {
+    let grants = this.permissionGrants.get(threadId);
+    if (!grants) {
+      grants = new Set<string>();
+      this.permissionGrants.set(threadId, grants);
+    }
+    return grants;
   }
 
   private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
@@ -553,10 +695,35 @@ export class WebAgentHost {
         this.emit(threadId, { type: "todos", todos: event.todos });
         break;
       case "usage":
-        this.emit(threadId, { type: "usage", totalTokens: event.usage.totalTokens });
+        this.emit(threadId, {
+          type: "usage",
+          totalTokens: event.usage.totalTokens,
+          promptTokens: event.usage.promptTokens,
+          completionTokens: event.usage.completionTokens,
+          cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
+        });
         break;
       case "context-snapshot":
         this.emit(threadId, { type: "context-snapshot", snapshot: event.snapshot });
+        break;
+      case "optimization":
+        this.emit(threadId, {
+          type: "optimization",
+          originalInputTokens: event.metrics.originalInputTokens,
+          compressedInputTokens: event.metrics.compressedInputTokens,
+          compressionRatio: event.metrics.compressionRatio,
+          cachedPromptTokens: event.metrics.cachedPromptTokens,
+          toolCacheHits: event.metrics.toolCacheHits,
+          toolCacheMisses: event.metrics.toolCacheMisses,
+          responseCacheHits: event.metrics.responseCacheHits,
+          responseCacheMisses: event.metrics.responseCacheMisses,
+          estimatedCostSavingsUsd: event.metrics.estimatedCostSavingsUsd,
+          sessionCacheHit: event.metrics.sessionCacheHit,
+          sessionCacheMiss: event.metrics.sessionCacheMiss,
+          cacheHitRate: event.metrics.cacheDiagnostics?.hitRate,
+          prefixChanged: event.metrics.cacheDiagnostics?.prefixChanged,
+          changeReasons: event.metrics.cacheDiagnostics?.changeReasons,
+        });
         break;
       case "compaction":
         this.emit(threadId, {

@@ -30,7 +30,7 @@ const COPY: Record<CapabilityKind, { title: string; description: string; empty: 
   subagent: {
     title: "Subagents",
     description:
-      "Specialized helper agents the main agent delegates to via the task tool. Pick a model per subagent; effort, step caps and tool allowlists come from its .md file.",
+      "Pick a model per subagent. The main agent delegates via the task tool; only a summary returns to chat. Effort and step caps come from the subagent definition or settings below.",
     empty: "No subagents configured.",
     icon: "brain",
   },
@@ -77,9 +77,21 @@ interface Props {
   /** Subagent model picker support (enabled providers + live primary models). */
   providers?: ProviderInfo[];
   liveModels?: ModelInfo[];
+  /** Saved per-subagent model overrides; drives the dropdown value (not item.model from caps). */
+  subagentModels?: Record<string, string>;
+  /** Saved per-subagent effort overrides (low | medium | high). */
+  subagentEfforts?: Record<string, string>;
   /** Persist a per-subagent model override ("providerId::modelId", undefined = inherit). */
   onSetSubagentModel?: (name: string, model: string | undefined) => void;
+  /** Persist a per-subagent effort override. */
+  onSetSubagentEffort?: (name: string, effort: string | undefined) => void;
 }
+
+const EFFORT_OPTIONS = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+] as const;
 
 /** Flatten enabled providers' models into "providerId::modelId" options. */
 function modelOptions(
@@ -92,14 +104,26 @@ function modelOptions(
     const list = p.kind === "primary" ? (liveModels ?? []) : p.models;
     const disabled = new Set(p.disabledModels);
     for (const m of list) {
-      if (disabled.has(m.id)) continue;
+      // Image models take a prompt, not a conversation: never offer them here.
+      if (disabled.has(m.id) || m.kind === "image") continue;
       out.push({ value: `${p.id}::${m.id}`, label: `${p.name} · ${m.name}` });
     }
   }
   return out;
 }
 
-export function CapabilityPage({ kind, items, onToggle, tabs, providers, liveModels, onSetSubagentModel }: Props) {
+export function CapabilityPage({
+  kind,
+  items,
+  onToggle,
+  tabs,
+  providers,
+  liveModels,
+  subagentModels,
+  subagentEfforts,
+  onSetSubagentModel,
+  onSetSubagentEffort,
+}: Props) {
   const copy = COPY[kind];
   const isSubagents = kind === "subagent";
   const options = isSubagents ? modelOptions(providers, liveModels) : [];
@@ -141,7 +165,10 @@ export function CapabilityPage({ kind, items, onToggle, tabs, providers, liveMod
         </select>
       </SearchField>
 
-      <SectionHeader title={`Workspace and personal ${copy.title.toLowerCase()}`} count={filtered.length} />
+      <SectionHeader
+        title={isSubagents ? "Installed subagents" : `Workspace and personal ${copy.title.toLowerCase()}`}
+        count={filtered.length}
+      />
 
       {filtered.length === 0 ? (
         <EmptyState icon={copy.icon} title={query || scope !== "All" ? "Nothing matches this filter." : copy.empty} />
@@ -160,11 +187,26 @@ export function CapabilityPage({ kind, items, onToggle, tabs, providers, liveMod
                     <select
                       className="select select--small"
                       aria-label={`Model for ${item.name}`}
-                      value={item.model ?? ""}
+                      value={subagentModels?.[item.name] ?? ""}
                       onChange={(e) => onSetSubagentModel(item.name, e.target.value || undefined)}
                     >
                       <option value="">{item.effectiveModel ? `Auto · ${item.effectiveModel}` : "Inherit main model"}</option>
                       {options.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {isSubagents && onSetSubagentEffort && (
+                    <select
+                      className="select select--small"
+                      aria-label={`Effort for ${item.name}`}
+                      value={subagentEfforts?.[item.name] ?? ""}
+                      onChange={(e) => onSetSubagentEffort(item.name, e.target.value || undefined)}
+                    >
+                      <option value="">Inherit effort</option>
+                      {EFFORT_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
                           {o.label}
                         </option>

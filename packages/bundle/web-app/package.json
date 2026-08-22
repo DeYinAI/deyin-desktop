@@ -31,6 +31,7 @@
     "@deyin/extension-api": "workspace:*",
     "@deyin/kernel": "workspace:*",
     "@deyin/llm": "workspace:*",
+    "@deyin/optimization-plugin": "workspace:*",
     "@deyin/plugin-caps-local": "workspace:*",
     "@deyin/plugin-llm-anthropic": "workspace:*",
     "@deyin/plugin-llm-openai": "workspace:*",

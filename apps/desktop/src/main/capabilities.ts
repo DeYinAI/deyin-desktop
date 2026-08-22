@@ -27,6 +27,8 @@ export class CapabilityService {
   private cache: CapabilitySnapshot | null = null;
   private cacheKey = "";
   private cacheAt = 0;
+  /** Built-in skills are written on first scan, not at startup (lazy). */
+  private skillsMaterialized = false;
 
   constructor(
     private readonly agents: AgentsStore,
@@ -35,14 +37,7 @@ export class CapabilityService {
     private readonly builtinSkillsDir: string,
     private readonly getSettings: () => DeyinSettings,
     private readonly isWorkspaceTrusted: () => boolean = () => false,
-  ) {
-    // Ship the default skills as real files so they read/override like any other.
-    try {
-      materializeBuiltinSkills(builtinSkillsDir);
-    } catch {
-      // A read-only data dir must not break startup; built-ins just stay absent.
-    }
-  }
+  ) {}
 
   invalidate(): void {
     this.cache = null;
@@ -51,6 +46,16 @@ export class CapabilityService {
   async snapshot(): Promise<CapabilitySnapshot> {
     const key = this.getWorkspaceRoot() ?? "";
     if (this.cache && this.cacheKey === key && Date.now() - this.cacheAt < SCAN_TTL_MS) return this.cache;
+    if (!this.skillsMaterialized) {
+      // Ship the default skills as real files so they read/override like any other.
+      // First scan only — keeps app launch free of ~13 file writes.
+      try {
+        materializeBuiltinSkills(this.builtinSkillsDir);
+      } catch {
+        // A read-only data dir must not break startup; built-ins just stay absent.
+      }
+      this.skillsMaterialized = true;
+    }
     this.cache = await scanCapabilities({
       cwd: this.getWorkspaceRoot(),
       trustedWorkspace: this.isWorkspaceTrusted(),

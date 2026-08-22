@@ -152,6 +152,46 @@ export function SettingCard(props: { title: ReactNode; description?: ReactNode; 
   );
 }
 
+/**
+ * Stacked form field: label (+ hint) above a full-width control. Used where the
+ * control is a text input, textarea or long select — `SettingCard`'s left/right
+ * split squeezes those into a sliver at the far right of a wide page.
+ */
+export function Field(props: {
+  label: ReactNode;
+  hint?: ReactNode;
+  /** Rendered under the control in the danger color; also marks the field invalid. */
+  error?: ReactNode;
+  /** Trailing controls shown on the label row (Browse…, Test, Import file…). */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`field${props.error ? " field--error" : ""}`}>
+      <div className="field__head">
+        <span className="field__label">{props.label}</span>
+        {props.action && <span className="field__action">{props.action}</span>}
+      </div>
+      {props.hint && <div className="field__hint">{props.hint}</div>}
+      <div className="field__control">{props.children}</div>
+      {props.error && <div className="field__error">{props.error}</div>}
+    </div>
+  );
+}
+
+/** Card wrapping a titled block of `Field`s / rows. */
+export function FormSection(props: { title: ReactNode; note?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="form-section">
+      <div className="form-section__head">
+        <span className="form-section__title">{props.title}</span>
+        {props.note && <span className="form-section__note">{props.note}</span>}
+      </div>
+      <div className="form-section__body">{props.children}</div>
+    </section>
+  );
+}
+
 export function PageHeader(props: { title: string; description?: ReactNode; children?: ReactNode }) {
   return (
     <>
