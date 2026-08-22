@@ -6,11 +6,13 @@ import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
 import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
 import { SubagentPanel, type SubagentEvent } from "./SubagentPanel.js";
+import { TerminalPanel, type AttachableTerminal } from "./TerminalPanel.js";
 import { Icon } from "./Icon.js";
+import { PANEL_TABS } from "./panelTabs.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
 import type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
-import type { AgentTodoItem } from "@deyin/contract";
+import type { AgentTodoItem, EnvInfo } from "@deyin/contract";
 
 export type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
 
@@ -57,6 +59,15 @@ interface WorkspacePanelProps {
   /** Which subagent run the Agent tab shows; null = the newest. */
   selectedSubagentId?: string | null;
   onSelectSubagent?: (id: string) => void;
+  /** Terminal tab (desktop/web with PTY support). */
+  terminalEnv?: EnvInfo | null;
+  terminalDefaultShell?: string | null;
+  terminalFontSize?: number;
+  terminalScrollback?: number;
+  terminalCursorStyle?: "bar" | "block" | "underline";
+  terminalCopyOnSelect?: boolean;
+  terminalTheme?: "light" | "dark";
+  terminalAttachSessions?: AttachableTerminal[];
 }
 
 /** Right-hand workspace panel: files, agent plan, latest diff, built-in browser. */
@@ -69,25 +80,23 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <button className="icon-btn icon-btn--small" title="Collapse panel" onClick={props.onCollapse}>
           <Icon name="chevronsRight" size={13} />
         </button>
-        <TabButton label="Files" active={props.activeTab === "files"} onClick={() => props.onSelectTab("files")} />
-        <TabButton label="Plan" active={props.activeTab === "plan"} onClick={() => props.onSelectTab("plan")} />
-        <TabButton
-          label={props.diff ? props.diff.fileName : "Diff"}
-          badge={props.diff ? "Diff" : undefined}
-          dot={Boolean(props.diff)}
-          active={props.activeTab === "diff"}
-          onClick={() => props.onSelectTab("diff")}
-        />
-        <TabButton label="Source Control" active={props.activeTab === "git"} onClick={() => props.onSelectTab("git")} />
-        <TabButton label="Browser" active={props.activeTab === "browser"} onClick={() => props.onSelectTab("browser")} />
-        <TabButton label="Security" active={props.activeTab === "security"} onClick={() => props.onSelectTab("security")} />
-        <TabButton
-          label="Agent"
-          badge={runningSubagents > 0 ? String(runningSubagents) : undefined}
-          dot={runningSubagents > 0}
-          active={props.activeTab === "agent"}
-          onClick={() => props.onSelectTab("agent")}
-        />
+        <div className="wspanel__tablist">
+          {PANEL_TABS.map((tab) => (
+            <TabButton
+              key={tab.id}
+              icon={tab.icon}
+              label={tab.id === "diff" && props.diff ? props.diff.fileName : tab.label}
+              badge={tab.id === "diff" && props.diff ? "Diff" : undefined}
+              dot={
+                (tab.id === "diff" && Boolean(props.diff)) ||
+                (tab.id === "agent" && runningSubagents > 0)
+              }
+              badgeCount={tab.id === "agent" && runningSubagents > 0 ? runningSubagents : undefined}
+              active={props.activeTab === tab.id}
+              onClick={() => props.onSelectTab(tab.id)}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Keep tab bodies mounted so FilesTab (and others) retain editor/view state across switches. */}
@@ -99,6 +108,20 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           refreshKey={props.filesRefreshKey}
           codeDisplay={props.codeDisplay}
           onOpenFolder={props.onOpenFolder}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "terminal"}>
+        <TerminalPanel
+          embedded
+          cwd={props.workspaceRoot}
+          env={props.terminalEnv ?? null}
+          defaultShell={props.terminalDefaultShell ?? null}
+          fontSize={props.terminalFontSize ?? 12}
+          scrollback={props.terminalScrollback ?? 5000}
+          cursorStyle={props.terminalCursorStyle ?? "bar"}
+          copyOnSelect={props.terminalCopyOnSelect ?? true}
+          theme={props.terminalTheme ?? "dark"}
+          attachSessions={props.terminalAttachSessions}
         />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "plan"}>
@@ -155,12 +178,24 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
   );
 }
 
-function TabButton(props: { label: string; active: boolean; badge?: string; dot?: boolean; onClick: () => void }) {
+function TabButton(props: {
+  icon: string;
+  label: string;
+  active: boolean;
+  badge?: string;
+  badgeCount?: number;
+  dot?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <button className={`wstab ${props.active ? "wstab--active" : ""}`} onClick={props.onClick}>
+    <button className={`wstab ${props.active ? "wstab--active" : ""}`} onClick={props.onClick} title={props.label}>
+      <Icon name={props.icon} size={13} className="wstab__icon" />
       {props.dot && <span className="wstab__dot" />}
       <span className="wstab__label">{props.label}</span>
       {props.badge && <span className="wstab__badge">{props.badge}</span>}
+      {props.badgeCount !== undefined && props.badgeCount > 0 && (
+        <span className="wstab__badge">{props.badgeCount}</span>
+      )}
     </button>
   );
 }

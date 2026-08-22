@@ -33,7 +33,9 @@ interface TerminalPanelProps {
   theme: "light" | "dark";
   /** Agent PTYs for the active thread — shown as attachable Agent tabs. */
   attachSessions?: AttachableTerminal[];
-  onClose: () => void;
+  /** When true, fills the workspace panel tab instead of bottom-docking. */
+  embedded?: boolean;
+  onClose?: () => void;
 }
 
 let sessionCounter = 0;
@@ -60,6 +62,7 @@ export function TerminalPanel({
   copyOnSelect,
   theme,
   attachSessions,
+  embedded = false,
   onClose,
 }: TerminalPanelProps) {
   const [sessions, setSessions] = useState<TerminalSession[]>([]);
@@ -140,12 +143,27 @@ export function TerminalPanel({
       focusRef.current.delete(key);
       setSessions((cur) => {
         const next = cur.filter((s) => s.key !== key);
-        if (next.length === 0) onClose();
-        else if (activeKey === key) setActiveKey(next[next.length - 1]!.key);
+        if (next.length === 0) {
+          if (embedded) {
+            sessionCounter += 1;
+            const preferred =
+              defaultShell && env?.shells.some((s) => s.id === defaultShell) ? defaultShell : undefined;
+            const session: TerminalSession = {
+              key: `term-${sessionCounter}`,
+              label: shellLabel(env, preferred ?? env?.defaultShell) ?? `Terminal ${sessionCounter}`,
+              shellId: preferred,
+            };
+            setActiveKey(session.key);
+            return [session];
+          }
+          onClose?.();
+        } else if (activeKey === key) {
+          setActiveKey(next[next.length - 1]!.key);
+        }
         return next;
       });
     },
-    [activeKey, onClose],
+    [activeKey, defaultShell, embedded, env, onClose],
   );
 
   // Focus the active terminal on tab switch so typing lands where the eye is.
@@ -226,15 +244,17 @@ export function TerminalPanel({
 
   return (
     <div
-      className={`terminal-panel ${maximized ? "terminal-panel--max" : ""}`}
-      style={maximized ? undefined : { height }}
+      className={`terminal-panel ${embedded ? "terminal-panel--embedded" : ""} ${maximized ? "terminal-panel--max" : ""}`}
+      style={embedded || maximized ? undefined : { height }}
     >
-      <div
-        className="terminal-panel__resize"
-        onPointerDown={startResize}
-        onDoubleClick={() => setMaximized((v) => !v)}
-        title="Drag to resize"
-      />
+      {!embedded && (
+        <div
+          className="terminal-panel__resize"
+          onPointerDown={startResize}
+          onDoubleClick={() => setMaximized((v) => !v)}
+          title="Drag to resize"
+        />
+      )}
 
       <div className="terminal-panel__bar">
         <div className="terminal-panel__tabs">
@@ -320,16 +340,20 @@ export function TerminalPanel({
         >
           <Icon name="trash" size={13} />
         </button>
-        <button
-          className="termbtn"
-          title={maximized ? "Restore panel" : "Maximize panel"}
-          onClick={() => setMaximized((v) => !v)}
-        >
-          <Icon name={maximized ? "minimize" : "maximize"} size={13} />
-        </button>
-        <button className="termbtn" title="Close terminal" onClick={onClose}>
-          <Icon name="close" size={13} />
-        </button>
+        {!embedded && (
+          <>
+            <button
+              className="termbtn"
+              title={maximized ? "Restore panel" : "Maximize panel"}
+              onClick={() => setMaximized((v) => !v)}
+            >
+              <Icon name={maximized ? "minimize" : "maximize"} size={13} />
+            </button>
+            <button className="termbtn" title="Close terminal" onClick={onClose}>
+              <Icon name="close" size={13} />
+            </button>
+          </>
+        )}
       </div>
 
       <div className="terminal-panel__body">
