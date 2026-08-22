@@ -132,6 +132,8 @@ interface SettingsViewProps {
   platform?: "desktop" | "web";
   /** Live models for the primary provider, passed through to Model settings. */
   liveModels: import("@deyin/contract").ModelInfo[];
+  providers: ProviderInfo[];
+  onProvidersChanged: (providers: ProviderInfo[]) => void;
   onChangeSettings: (patch: Partial<DeyinSettings>) => void;
   onConnect: () => void;
   onBack: () => void;
@@ -148,14 +150,13 @@ export function SettingsView(props: SettingsViewProps) {
   const [integrationTab, setIntegrationTab] = useState<IntegrationTab>("mcp");
   const [skillTab, setSkillTab] = useState<CapabilityKind>("skill");
   const [caps, setCaps] = useState<CapabilityItem[]>([]);
-  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const providers = props.providers;
   const [usage, setUsage] = useState<UsageStats | null>(null);
   const [accountUsage, setAccountUsage] = useState<AccountUsage | null>(null);
   const [accountRefreshing, setAccountRefreshing] = useState(false);
 
   useEffect(() => {
     void window.deyin.caps.list().then(setCaps).catch(() => setCaps([]));
-    void window.deyin.providers.list().then(setProviders);
   }, []);
 
   useEffect(() => {
@@ -264,7 +265,7 @@ export function SettingsView(props: SettingsViewProps) {
             liveModels={props.liveModels}
             busy={props.busy}
             onConnect={props.onConnect}
-            onProvidersChanged={setProviders}
+            onProvidersChanged={props.onProvidersChanged}
             onRefreshLiveModels={props.onRefreshLiveModels ?? (() => Promise.resolve())}
           />
         )}

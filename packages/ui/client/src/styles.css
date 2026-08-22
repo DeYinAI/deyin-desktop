@@ -842,7 +842,7 @@ code {
 .modelmenu {
   display: flex;
   gap: 0;
-  min-width: 460px;
+  min-width: 500px;
   padding: 6px;
 }
 .modelmenu__providers {

@@ -58,9 +58,11 @@ interface ComposerProps {
   /** When false, Delivery mode is hidden from the mode switcher. */
   deliveryModeEnabled?: boolean;
   /** Global thinking default when the selected model has no explicit mode. */
+  thinking?: boolean;
   thinkingDefault?: boolean;
   modelEfforts?: Record<string, string>;
   onSetModelEffort?: (providerId: string, modelId: string, mode: ModelReasoningMode | undefined) => void;
+  onToggleThinking?: (on: boolean) => void;
   canSend: boolean;
   streaming: boolean;
   /** Follow-up queued while a run is active. */
@@ -697,6 +699,17 @@ export function Composer(props: ComposerProps) {
           thinkingDefault={props.thinkingDefault}
           onSetModelEffort={props.onSetModelEffort}
         />
+
+        {props.onToggleThinking && (
+          <button
+            className={`chip ${(props.thinking ?? props.thinkingDefault ?? true) ? "chip--on" : ""}`}
+            title={(props.thinking ?? props.thinkingDefault ?? true) ? "Thinking enabled" : "Thinking disabled"}
+            onClick={() => props.onToggleThinking?.(!(props.thinking ?? props.thinkingDefault ?? true))}
+          >
+            <Icon name="brain" size={12} />
+            <span>{(props.thinking ?? props.thinkingDefault ?? true) ? "On" : "Off"}</span>
+          </button>
+        )}
 
         <div className="composer__actions">
           {showStop && (
