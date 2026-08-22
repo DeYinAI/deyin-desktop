@@ -352,9 +352,11 @@ export function App() {
       const [savedProvider, savedModel] = s.defaultModel?.includes("::")
         ? (s.defaultModel.split("::") as [string, string])
         : ["openference", s.defaultModel ?? ""];
+      const savedProviderRecord = provs.find((p) => p.id === savedProvider);
       const disabledFor = (providerId: string) =>
         new Set(provs.find((p) => p.id === providerId)?.disabledModels ?? []);
       const savedUsable =
+        Boolean(savedProviderRecord?.enabled) &&
         Boolean(savedModel) &&
         !disabledFor(savedProvider).has(savedModel) &&
         (savedProvider !== "openference" || list.some((m) => m.id === savedModel));
@@ -561,6 +563,29 @@ export function App() {
     setSettings((cur) => (cur ? { ...cur, ...patch } : cur));
     void window.deyin.settings.set(patch).then(setSettings);
   }, []);
+
+  const fallbackToPrimaryModel = useCallback(
+    (provs: ProviderInfo[], liveModels: ModelInfo[]) => {
+      const primaryDisabled = new Set(provs.find((p) => p.id === "openference")?.disabledModels ?? []);
+      const enabled = liveModels.filter((m) => !primaryDisabled.has(m.id));
+      setSelectedProviderId("openference");
+      if (enabled[0]) {
+        const nextId = enabled.some((m) => m.id === selectedModel) ? selectedModel : enabled[0]!.id;
+        setSelectedModel(nextId);
+        patchSettings({ defaultModel: `openference::${nextId}` });
+      }
+    },
+    [patchSettings, selectedModel],
+  );
+
+  const handleProvidersChanged = useCallback(
+    (next: ProviderInfo[]) => {
+      setProviders(next);
+      const current = next.find((p) => p.id === selectedProviderId);
+      if (!current?.enabled) fallbackToPrimaryModel(next, models);
+    },
+    [selectedProviderId, models, fallbackToPrimaryModel],
+  );
 
   /** Mark one onboarding step done (no-op when already done). */
   const markOnboard = useCallback(
@@ -1645,9 +1670,14 @@ export function App() {
             workspaceRoot={workspaceRoot}
             activeThreadId={activeThreadId}
             liveModels={models}
+            providers={providers}
+            onProvidersChanged={handleProvidersChanged}
             onChangeSettings={patchSettings}
             onConnect={connect}
-            onBack={() => setView("workspace")}
+            onBack={() => {
+              void window.deyin.providers.list().then(handleProvidersChanged);
+              setView("workspace");
+            }}
             onRefreshLiveModels={async () => {
               setModels(await window.deyin.models.refresh());
             }}
@@ -1977,6 +2007,7 @@ export function App() {
                   approvalMode={settings?.approvalMode ?? "full-access"}
                   mode={(settings?.agentMode ?? "agent") === "agent" ? composerMode : undefined}
                   deliveryModeEnabled={false}
+                  thinking={settings?.thinking ?? true}
                   thinkingDefault={settings?.thinking ?? true}
                   modelEfforts={settings?.modelEfforts}
                   canSend={input.trim().length > 0}
@@ -2006,6 +2037,7 @@ export function App() {
                   }}
                   onSelectApproval={(mode: ApprovalMode) => patchSettings({ approvalMode: mode })}
                   onSelectMode={selectMode}
+                  onToggleThinking={(on) => patchSettings({ thinking: on })}
                   onSetModelEffort={(providerId, modelId, mode: ModelReasoningMode | undefined) => {
                     const key = modelEffortKey(providerId, modelId);
                     const next = { ...(settings?.modelEfforts ?? {}) };
