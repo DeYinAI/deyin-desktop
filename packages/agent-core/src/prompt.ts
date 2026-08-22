@@ -8,7 +8,7 @@ import { effectiveShell } from "./tools/bash.js";
 
 const MAX_CONTEXT_FILE_CHARS = 20_000;
 const MAX_PARENT_LEVELS = 5;
-/** Nested @import expansion depth cap (Advanced agent-style instruction imports). */
+/** Nested @import expansion depth cap (Deyin-style instruction imports). */
 const MAX_IMPORT_DEPTH = 5;
 
 /** Instruction files recognized in a directory, normal first then .local variants (local wins). */
@@ -38,7 +38,7 @@ export interface LoadContextFilesResult {
 }
 
 /**
- * Load project + user instructions with Advanced agent-style layering and precedence
+ * Load project + user instructions with Deyin-style layering and precedence
  * (later entries win):
  *
  *   1. user-global instruction files from `~/.deyin/` (lowest priority);

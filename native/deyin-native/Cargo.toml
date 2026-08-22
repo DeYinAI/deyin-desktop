@@ -2,7 +2,7 @@
 name = "deyin-native"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 description = "Deyin's in-house native hot path: SSE framing, BPE token counting, wire compression, parallel grep."
 
 [lib]
@@ -16,3 +16,4 @@ napi-derive = "3.0.0-beta"
 lto = true
 opt-level = 3
 codegen-units = 1
+strip = true

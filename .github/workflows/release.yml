@@ -24,8 +24,7 @@ jobs:
           draft: true
           generate_release_notes: true
 
-      # Mirror draft in the public releases-only repo: this is the feed
-      # electron-updater polls, since the source repo is private. Needs a PAT
+      # Mirror draft in the public releases repo (electron-updater feed). Needs a PAT
       # with contents:write on DeYinAI/deyin-releases stored as RELEASES_TOKEN.
       # Non-fatal: a missing/invalid token must not block the installer builds
       # (the source-repo draft above is still created either way).

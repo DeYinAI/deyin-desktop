@@ -4,7 +4,7 @@
   "description": "Deyin's in-house native hot path: SSE framing, token counting, wire compression, parallel grep. Pure Rust, napi glue only.",
   "main": "index.js",
   "types": "index.d.ts",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "files": ["index.js", "index.d.ts", "*.node"],
   "scripts": {
     "build": "node scripts/build.js",

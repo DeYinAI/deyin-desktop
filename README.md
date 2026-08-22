@@ -7,9 +7,6 @@ Electron desktop shell and behind a web server. Privileged work (terminal, files
 process exec) happens in a host process the renderer talks to over a typed RPC channel.
 Identity and model access use Openference via OAuth 2.0 + PKCE.
 
-> This repository contains only original code and permissively licensed open-source
-> dependencies. It is not a fork or repackaging of any proprietary application.
-
 ## Monorepo layout
 
 ```
@@ -79,6 +76,25 @@ OIDC server that issues tokens usable as Bearer credentials against
 
 See [docs/OAUTH.md](docs/OAUTH.md).
 
+## Public endpoints (`deyin.ai`)
+
+Deyin-operated domains used by the apps (no secrets in the repo):
+
+| URL | Purpose |
+| --- | --- |
+| `https://deyin.ai` | Product homepage |
+| `https://docs.deyin.ai` | User documentation |
+| `https://cdn.deyin.ai/cli/install.sh` | CLI one-line installer |
+| `https://cdn.deyin.ai/desktop/releases` | Desktop auto-update feed (installers + manifests) |
+| `https://cdn.deyin.ai/desktop/config/default.json` | Remote feature flags / defaults |
+
+Contact: `hello@deyin.ai`. The local OAuth dev server uses a fictional demo user
+`demo@deyin.ai` only for testing.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Source is available under the **PolyForm Noncommercial License 1.0.0** — you may use,
+modify, and share it for noncommercial purposes. **Commercial use, resale, and paid
+hosting of this codebase require a separate license from Deyin** (`hello@deyin.ai`).
+
+See [LICENSE](LICENSE).

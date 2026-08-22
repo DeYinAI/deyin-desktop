@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "description": "Deyin's shared renderer SPA \u2014 the one UI that runs unchanged inside Electron (desktop) and in the browser (web). Consumed as source by each app's bundler; the app entry injects the transport.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

@@ -13,7 +13,7 @@ import type { UserProfile } from "@deyin/contract";
 /**
  * Owns the Openference session for the desktop app.
  *
- * Default sign-in is the legacy UI-style deep-link flow: open the browser to the
+ * Default sign-in uses the deep-link flow: open the browser to the hosted
  * hosted Openference authorize page, which (after login + consent) fires
  * `deyin://oauth/callback?code&state` back to the app; the OS routes that URL
  * here and we exchange the code with zero clicks in the app. When the custom

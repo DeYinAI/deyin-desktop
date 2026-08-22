@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.1",
   "description": "Deyin's agentic runtime: OpenAI-compatible streaming with tool_calls accumulation, the agent loop, built-in tools (bash, read, write, edit, grep, glob, ls, websearch, todo), the permission engine, session persistence, layered config, prompts/compaction, and an MCP client. Consumed by the desktop app and CLI.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
@@ -29,7 +29,7 @@
     "test:migration": "tsx --test test/migration.test.ts",
     "test:edge": "tsx --test test/edge-cases.test.ts",
     "test:load": "tsx --test test/load.test.ts",
-    "test:agent": "tsx --test test/*.test.ts test/e2e/*.test.ts src/cache/__tests__/*.test.ts",
+    "test:agent-suite": "tsx --test test/*.test.ts test/e2e/*.test.ts src/cache/__tests__/*.test.ts",
     "benchmark": "tsx test/performance/run-benchmarks.ts"
   },
   "dependencies": {

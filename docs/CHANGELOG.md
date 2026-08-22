@@ -2,7 +2,7 @@
 
 ## 2.0.0 — 2026-08-02
 
-### Major: Deyin agent integration
+### Major: advanced agent architecture
 
 Production-ready integration of cache-first architecture, two-model coordination, fleet orchestration, and delivery mode with evidence gates.
 
@@ -32,8 +32,8 @@ Production-ready integration of cache-first architecture, two-model coordination
 
 #### Settings & UX (Phase 7)
 
-- New settings section: Advanced agent integration (cache, coordinator, scheduler, evidence)
-- What's New modal, Advanced agent onboard flow, beta feedback form
+- New settings section: Advanced agent features (cache, coordinator, scheduler, evidence)
+- What's New modal, advanced agent onboard flow, beta feedback form
 - Developer diagnostics: cache prefix, coordinator log, fleet timeline
 
 #### Observability

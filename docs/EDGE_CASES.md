@@ -1,4 +1,4 @@
-# Edge Case Behaviors — Advanced agent Integration
+# Edge Case Behaviors — Advanced Agent Features
 
 This document describes graceful degradation paths validated in Phase 6.
 

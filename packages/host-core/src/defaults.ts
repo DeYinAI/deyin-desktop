@@ -54,7 +54,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
  */
 export function migrateSettings(raw: unknown): DeyinSettings {
   const input = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  // Pick only known keys: legacy Advanced agent knobs and removed fields drop out here.
+  // Pick only known keys: legacy advanced-agent knobs and removed fields drop out here.
   const merged: DeyinSettings = { ...DEFAULT_SETTINGS };
   for (const key of Object.keys(DEFAULT_SETTINGS) as Array<keyof DeyinSettings>) {
     if (key === "schemaVersion") continue;

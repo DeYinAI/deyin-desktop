@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Web profile layer \u2014 sandbox-scoped capabilities scan for per-session web hosts.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

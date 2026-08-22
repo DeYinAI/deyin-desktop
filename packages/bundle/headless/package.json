@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Headless profile layer \u2014 the minimal composition for CLI/headless runs (no interactive caps, no caches).",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

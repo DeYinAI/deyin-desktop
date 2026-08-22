@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Base plugin layer \u2014 every Deyin host starts from these rows (tools catalog + families, llm seam + adapters, lazy optimization).",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

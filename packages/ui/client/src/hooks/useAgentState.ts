@@ -1,5 +1,5 @@
 /**
- * Event-sourced agent state inspired by Deyin agent useController.
+ * Event-sourced agent state with incremental event application.
  *
  * - Agent emits facts, UI renders them
  * - Per-tab state preservation (background tabs keep streaming)

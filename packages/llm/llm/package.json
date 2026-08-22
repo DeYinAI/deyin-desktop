@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "The llm seam: a plugin-provided adapter registry keyed by provider wire format, falling back to the agent-core built-in dispatch.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/DeYinAI/deyin-desktop.git",

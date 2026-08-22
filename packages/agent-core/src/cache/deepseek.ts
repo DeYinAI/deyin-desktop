@@ -1,7 +1,7 @@
 /**
  * DeepSeek-specific optimizations for cache performance.
  * 
- * Key insights from Deyin agent:
+ * Key DeepSeek API behaviors for prefix caching:
  * - DeepSeek manages prefix caching automatically (no cache_control markers needed)
  * - reasoning_content must round-trip on tool-call turns
  * - Beta endpoint supports prefix continuation for truncated responses

@@ -880,7 +880,7 @@ code {
 }
 .modelmenu__pick {
   flex: 1;
-  min-width: 0;
+  min-width: 180px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1380,8 +1380,8 @@ code {
   justify-content: center;
 }
 
-/* New-chat screen (legacy UI-style): logo hero + greeting + repo chip + composer,
- * centered as one cluster instead of composer pinned to the bottom. */
+/* New-chat screen: logo hero + greeting + repo chip + composer, centered as
+ * one cluster instead of composer pinned to the bottom. */
 .chat-column--empty {
   justify-content: center;
 }
@@ -5058,13 +5058,19 @@ body.is-resizing-ns {
   position: relative;
   display: flex;
   align-items: center;
-  margin-left: 2px;
+  flex-shrink: 0;
+}
+.terminal-panel__leading {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 .terminal-panel__switch {
   display: flex;
   align-items: center;
   min-width: 0;
-  flex: 1;
 }
 .termswitch {
   display: inline-flex;
@@ -5120,9 +5126,9 @@ body.is-resizing-ns {
 .termswitch__item--active {
   background: var(--color-accent-soft);
 }
-.termswitch__check {
-  flex-shrink: 0;
+.termswitch__item--active .termpicker__name {
   color: var(--color-accent);
+  font-weight: 500;
 }
 .termswitch__close {
   position: absolute;
@@ -5134,9 +5140,13 @@ body.is-resizing-ns {
   justify-content: center;
   width: 18px;
   height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
   border-radius: 4px;
   color: inherit;
   opacity: 0;
+  cursor: pointer;
   transition: opacity 120ms ease, background 120ms ease;
 }
 .termswitch__item:hover .termswitch__close,
@@ -7887,7 +7897,7 @@ body.is-resizing-ns {
   gap: 2px;
 }
 
-/* Advanced agent integration -------------------------------------------------------- */
+/* Advanced agent features ----------------------------------------------------- */
 .help-tooltip {
   display: inline-flex;
   align-items: center;
@@ -7907,33 +7917,33 @@ body.is-resizing-ns {
   color: var(--text-muted, #8b949e);
   cursor: help;
 }
-.agent-devtools__toolbar {
+.agent-advanced-devtools__toolbar {
   display: flex;
   gap: 8px;
   margin-bottom: 12px;
 }
-.agent-devtools__panel {
+.agent-advanced-devtools__panel {
   margin-bottom: 16px;
   padding: 12px;
   border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
   border-radius: 8px;
 }
-.agent-devtools__panel h3,
-.agent-devtools__panel h4 {
+.agent-advanced-devtools__panel h3,
+.agent-advanced-devtools__panel h4 {
   margin: 0 0 8px;
   font-size: 13px;
 }
-.agent-kv {
+.agent-advanced-kv {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 4px 12px;
   font-size: 12px;
   font-family: var(--font-mono, monospace);
 }
-.agent-kv dt {
+.agent-advanced-kv dt {
   color: var(--text-muted, #8b949e);
 }
-.agent-log {
+.agent-advanced-log {
   margin: 0;
   padding-left: 18px;
   font-size: 12px;
@@ -7946,7 +7956,7 @@ body.is-resizing-ns {
   margin: 0 0 16px;
   padding-left: 20px;
 }
-.agent-onboard-modal__steps {
+.agent-advanced-onboard-modal__steps {
   margin: 12px 0;
   padding-left: 20px;
 }

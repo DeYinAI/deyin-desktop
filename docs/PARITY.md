@@ -2,7 +2,7 @@
 
 An honest map of Deyin's original implementation against the agentic-development-environment
 capability surface. "Foundation" means the plumbing exists and is wired end to end but the
-full UX is not yet fleshed out. Nothing here reuses any proprietary code.
+full UX is not yet fleshed out. All implementation here is original Deyin code.
 
 | Capability | Status | Where |
 | --- | --- | --- |
@@ -101,7 +101,5 @@ OAuth unit + integration tests, and builds both apps. CI runs the same script.
 ## What "1:1" means here
 
 Deyin targets **functional and visual parity** with a modern ADE, implemented as original
-code Deyin owns and can host on the web. It is intentionally **not** a byte-for-byte copy of
-any proprietary desktop bundle: that could not be legally redistributed, would break on
-every upstream release, and could not be adapted to run in a browser. The planned items
-above are product work on this foundation, not blocked by any missing third-party artifact.
+code Deyin owns and can host on the web. The planned items above are product work on this
+foundation.

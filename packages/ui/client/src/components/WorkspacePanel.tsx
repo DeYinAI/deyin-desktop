@@ -70,6 +70,8 @@ interface WorkspacePanelProps {
   terminalCopyOnSelect?: boolean;
   terminalTheme?: "light" | "dark";
   terminalAttachSessions?: AttachableTerminal[];
+  /** Right panel width in px (terminal refit on drag). */
+  panelWidth?: number | null;
 }
 
 /** Right-hand workspace panel: files, agent plan, latest diff, built-in browser. */
@@ -113,6 +115,8 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         <Suspense fallback={null}>
         <TerminalPanel
           embedded
+          active={props.activeTab === "terminal"}
+          panelWidth={props.panelWidth}
           cwd={props.workspaceRoot}
           env={props.terminalEnv ?? null}
           defaultShell={props.terminalDefaultShell ?? null}

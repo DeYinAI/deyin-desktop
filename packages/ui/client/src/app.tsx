@@ -29,6 +29,7 @@ import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
+import { ProjectMenu, type ProjectAction } from "./components/ProjectMenu.js";
 import { TopBar } from "./components/TopBar.js";
 import { Icon } from "./components/Icon.js";
 import { UpdateBanner } from "./components/UpdateBanner.js";
@@ -319,6 +320,7 @@ export function App() {
  const [searchOpen, setSearchOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
+  const [projectMenu, setProjectMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
 
   // Bootstrap: config, profile, models, settings, environment, providers, projects.
   useEffect(() => {
@@ -693,6 +695,43 @@ export function App() {
       }
     },
     [projects],
+  );
+
+  const removeProject = useCallback(
+    async (projectId: string) => {
+      const project = projects.find((p) => p.id === projectId);
+      if (!project) return;
+
+      for (const thread of project.threads) {
+        window.deyin.agent.disposeShell(thread.id);
+      }
+      const threadIds = new Set(project.threads.map((t) => t.id));
+      setAgentTerminals((cur) => cur.filter((t) => !threadIds.has(t.threadId)));
+
+      const remaining = projects.filter((p) => p.id !== projectId);
+      setProjects(remaining);
+
+      if (project.threads.some((t) => t.id === activeThreadId)) {
+        const next = remaining.flatMap((p) => p.threads).find((t) => !t.archived);
+        setActiveThreadId(next?.id ?? null);
+      }
+
+      if (activeProjectId === projectId) {
+        const next = remaining[0] ?? null;
+        setActiveProjectId(next?.id ?? null);
+        const nextRoot = next?.root ?? null;
+        await window.deyin.workspace.setRoot(nextRoot);
+        setWorkspaceRoot(nextRoot);
+      }
+    },
+    [projects, activeProjectId, activeThreadId],
+  );
+
+  const handleProjectAction = useCallback(
+    (projectId: string, action: ProjectAction) => {
+      if (action === "remove") void removeProject(projectId);
+    },
+    [removeProject],
   );
 
   const appendEvents = useCallback((threadId: string, events: ThreadEvent[]) => {
@@ -1779,6 +1818,7 @@ export function App() {
           onSelectThread={(pid, tid) => selectThread(tid, pid)}
           onOpenSearch={() => setSearchOpen(true)}
           onThreadContext={(threadId, x, y) => setThreadMenu({ threadId, x, y })}
+          onProjectContext={(projectId, x, y) => setProjectMenu({ projectId, x, y })}
           onRenameSubmit={(threadId, title) => {
             updateThread(threadId, { title });
             setRenamingThreadId(null);
@@ -2151,6 +2191,7 @@ export function App() {
                 terminalAttachSessions={agentTerminals
                   .filter((t) => t.threadId === activeThreadId)
                   .map((t) => ({ id: t.id, label: t.label }))}
+                panelWidth={panelWidthPx}
               />
                 )}
               </div>
@@ -2171,6 +2212,24 @@ export function App() {
           onClose={() => setThreadMenu(null)}
         />
       )}
+
+      {projectMenu && (() => {
+        const project = projects.find((p) => p.id === projectMenu.projectId);
+        if (!project) {
+          return null;
+        }
+        return (
+          <ProjectMenu
+            projectName={project.name}
+            chatCount={project.threads.filter((t) => !t.archived).length}
+            platform={boot?.platform ?? "desktop"}
+            workspaceRoot={project.root}
+            position={{ x: projectMenu.x, y: projectMenu.y }}
+            onAction={(action) => handleProjectAction(projectMenu.projectId, action)}
+            onClose={() => setProjectMenu(null)}
+          />
+        );
+      })()}
 
       {searchOpen && (
         <SearchOverlay

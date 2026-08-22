@@ -1,5 +1,5 @@
 /**
- * CLI config v9 — planner model and scheduler settings for Advanced agent integration.
+ * CLI config v9 — planner model and scheduler settings for advanced agent features.
  */
 
 import type { DeyinCliConfigFile, ResolvedCliConfig } from "../config.js";

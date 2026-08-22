@@ -1,9 +1,8 @@
 # Deyin Architecture
 
-Deyin is an original agentic development environment (ADE). It is not a fork of any
-proprietary application; every component in this repository is written from scratch.
-Where third-party code is used, it is a permissively licensed open-source dependency
-declared in the relevant `package.json`.
+Deyin is an original agentic development environment (ADE). Every component in this
+repository is written from scratch. Where third-party code is used, it is a permissively
+licensed open-source dependency declared in the relevant `package.json`.
 
 ## Design goals
 
@@ -129,9 +128,7 @@ sequenceDiagram
     M-->>R: streamed completion
 ```
 
-## Why original code instead of forking a proprietary bundle
+## Why original code
 
-A rebranded copy of a third-party compiled application is legally and technically
-unsound: it reproduces copyrighted software, breaks on every upstream release, and
-cannot be legitimately redistributed. Building original components means Deyin can be
-open-sourced, self-hosted, deployed to the web, and extended without those constraints.
+Building from scratch keeps Deyin self-hostable, web-deployable, and extensible without
+depending on third-party compiled bundles or upstream release cycles.
