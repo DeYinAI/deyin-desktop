@@ -198,6 +198,22 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M2.2 12.6l1.7-4a1 1 0 01.92-.6h9.06a.8.8 0 01.74 1.1l-1.4 3.5a1 1 0 01-.93.63H3.5a1.3 1.3 0 01-1.3-1.3z" />
     </>
   ),
+  /** Folded map — plan / roadmap views. */
+  map: (
+    <>
+      <path d="M2.5 4.2l4.5-1.4 4.5 1.4 4.5-1.4v8.6l-4.5 1.4-4.5-1.4-4.5 1.4z" />
+      <path d="M7 2.8v8.6M11.5 4.2v8.6" />
+    </>
+  ),
+  /** Spec / settings sliders. */
+  sliders: (
+    <>
+      <path d="M3 5.5h10M3 8.5h10M3 11.5h10" />
+      <circle cx="6" cy="5.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="10" cy="8.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="7.5" cy="11.5" r="1.1" fill="currentColor" stroke="none" />
+    </>
+  ),
   folderPlus: (
     <>
       <path d="M14 9V6.5A1.5 1.5 0 0012.5 5H8L6.5 3h-3A1.5 1.5 0 002 4.5v7A1.5 1.5 0 003.5 13H8" />

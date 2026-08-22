@@ -46,3 +46,4 @@ coverage/
 
 # Local agent-session artifacts
 .agent/
+.legacy/

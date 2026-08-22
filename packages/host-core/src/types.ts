@@ -119,7 +119,7 @@ export type ThreadEvent =
   | { kind: "goal-set"; text: string | null }
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string }
-  | { kind: "worked"; seconds: number }
+  | { kind: "worked"; actions: number; seconds?: number }
   | {
       kind: "tool";
       name: string;

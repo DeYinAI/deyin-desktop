@@ -705,7 +705,6 @@ class AgentStateStore {
       case "subagent-end": {
         const index = t.subagentIndex.get(event.id);
         if (index === undefined) {
-          // End without a matching start (e.g. very old events): keep as a line.
           t.runEvents = [...t.runEvents, { kind: "thought", label: `Subagent ${event.name} ${event.ok ? "finished" : "failed"}` }];
           this.notifyStructural();
           break;
@@ -720,6 +719,8 @@ class AgentStateStore {
             line: event.summary ?? prev.line,
             report: event.report ?? event.summary ?? prev.report,
           };
+          const actionCount = Math.max(1, (prev.lines ?? []).length);
+          next.splice(index + 1, 0, { kind: "worked", actions: actionCount });
           t.runEvents = next;
         }
         this.notifyStructural();

@@ -140,7 +140,7 @@ export function ChatView(props: ChatViewProps) {
       <div className="chat__timeline" ref={timelineRef}>
         {groupTimelineEvents(props.events).map((group, i) =>
           group.kind === "tools" ? (
-            <div key={i} className="tool-stack">
+            <div key={i} className="activity-group">
               {renderToolStack(group.events, props.onOpenAgentTerminal)}
             </div>
           ) : (
@@ -271,31 +271,34 @@ function renderToolStack(
 ) {
   return partitionToolStack(events).map((item, j) =>
     item.kind === "tool" ? (
-      <ToolCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
+      item.event.name === "bash" ? (
+        <ShellCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
+      ) : (
+        <ToolCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
+      )
     ) : (
       <QuietToolsRow key={j} events={item.events} />
     ),
   );
 }
 
-/** "N lookups" row expanding to the individual collapsed tool cards. */
+/** Collapsed read-tier tools: one muted line, expand for detail. */
 function QuietToolsRow({ events }: { events: Extract<ThreadEvent, { kind: "tool" }>[] }) {
   const [open, setOpen] = useState(false);
-  const totalMs = events.reduce((sum, e) => sum + (e.durationMs ?? 0), 0);
+  const label =
+    events.length === 1
+      ? `Explored ${events[0]!.summary || events[0]!.name}`
+      : `Explored ${events.length} files`;
   return (
     <div className="quiet-tools">
-      <button className="quiet-tools__row" onClick={() => setOpen((v) => !v)}>
-        <Icon name="search" size={12} />
-        <span className="quiet-tools__label">
-          {events.length} lookup{events.length === 1 ? "" : "s"}
-        </span>
-        {totalMs > 0 && <span className="tool-card__duration">{formatDuration(totalMs)}</span>}
+      <button type="button" className="quiet-tools__row" onClick={() => setOpen((v) => !v)}>
+        <span className="quiet-tools__label">{label}</span>
         <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
       </button>
       {open && (
         <div className="quiet-tools__list">
           {events.map((event, i) => (
-            <ToolCard key={i} event={event} />
+            <ToolCard key={i} event={event} compact />
           ))}
         </div>
       )}
@@ -303,24 +306,20 @@ function QuietToolsRow({ events }: { events: Extract<ThreadEvent, { kind: "tool"
   );
 }
 
-/** Reasoning stream of the current step: expanded while it arrives, with a live timer. */
+/** Reasoning stream of the current step — minimal header, expand for detail. */
 function LiveReasoning({ text }: { text: string }) {
-  const t = useT();
+  const [open, setOpen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const sinceRef = useRef(Date.now());
   useEffect(() => {
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - sinceRef.current) / 1000)), 1000);
     return () => clearInterval(timer);
   }, []);
+  const label = elapsed > 0 ? `Thought · ${elapsed}s` : "Thought";
   return (
     <div className="thinking thinking--live">
-      <div className="thinking__head">
-        <Icon name="brain" size={13} />
-        <span>
-          {t("chat.thinking")} {elapsed > 0 && <span className="muted">{elapsed}s</span>}
-        </span>
-      </div>
-      <div className="thinking__body">{text}</div>
+      <StatusLine icon="brain" label={label} onClick={() => setOpen((v) => !v)} open={open} />
+      {open && <div className="thinking__body">{text}</div>}
     </div>
   );
 }
@@ -461,19 +460,14 @@ function EventRow({
       );
 
     case "thought":
-      return (
-        <div className="activity-line">
-          <Icon name="clock" size={13} />
-          <span>{event.label}</span>
-        </div>
-      );
+      return <StatusLine icon={statusIconForLabel(event.label)} label={event.label} />;
 
     case "worked":
       return (
-        <div className="worked-line">
-          <span>Worked for {event.seconds} s</span>
-          <Icon name="chevronRight" size={12} />
-        </div>
+        <StatusLine
+          icon="bolt"
+          label={`Worked on it · ${event.actions ?? 1} action${(event.actions ?? 1) === 1 ? "" : "s"}`}
+        />
       );
 
     case "optimization":
@@ -510,26 +504,55 @@ function EventRow({
   }
 }
 
-/** Collapsed reasoning block: "Thought for Ns", expandable to the full text. */
+/** Muted timeline status (Thought · 3s, Created 6 tasks, Worked on it · 1 action). */
+function StatusLine({
+  icon,
+  label,
+  onClick,
+  open,
+}: {
+  icon: string;
+  label: string;
+  onClick?: () => void;
+  open?: boolean;
+}) {
+  const Tag = onClick ? "button" : "div";
+  return (
+    <Tag
+      type={onClick ? "button" : undefined}
+      className={`status-line${onClick ? " status-line--clickable" : ""}`}
+      onClick={onClick}
+    >
+      <Icon name={icon} size={13} />
+      <span>{label}</span>
+      {onClick && <Icon name={open ? "chevronDown" : "chevronRight"} size={10} />}
+    </Tag>
+  );
+}
+
+function statusIconForLabel(label: string): string {
+  if (/created \d+ task/i.test(label)) return "list";
+  if (/worked on it/i.test(label)) return "bolt";
+  if (/run stopped|step limit|compacted/i.test(label)) return "clock";
+  if (/finished|failed/i.test(label)) return "check";
+  return "clock";
+}
+
+/** Collapsed reasoning block: minimal "Thought · Ns" disclosure row. */
 function ThinkingCard({ text, seconds }: { text: string; seconds?: number }) {
   const [open, setOpen] = useState(false);
-  const t = useT();
-  const label =
-    seconds !== undefined && seconds > 0 ? `${t("chat.thoughtFor")} ${seconds}s` : t("chat.thought");
+  const label = seconds !== undefined && seconds > 0 ? `Thought · ${seconds}s` : "Thought";
   return (
     <div className="thinking">
-      <button className="thinking__head" onClick={() => setOpen((v) => !v)}>
-        <Icon name="brain" size={13} />
-        <span>{label}</span>
-        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
-      </button>
+      <StatusLine icon="brain" label={label} onClick={() => setOpen((v) => !v)} open={open} />
       {open && <div className="thinking__body">{text}</div>}
     </div>
   );
 }
 
-/** Per-run token-optimization summary: compression ratio, prompt-cache + tool/response cache hits. */
+/** Per-run token-optimization summary — collapsed by default. */
 function OptimizationCard({ event }: { event: Extract<ThreadEvent, { kind: "optimization" }> }) {
+  const [open, setOpen] = useState(false);
   const tokensSaved = Math.max(0, event.originalInputTokens - event.compressedInputTokens);
   const rows: { label: string; value: string }[] = [];
   if (tokensSaved > 0) {
@@ -549,17 +572,22 @@ function OptimizationCard({ event }: { event: Extract<ThreadEvent, { kind: "opti
   }
   if (rows.length === 0) return null;
   return (
-    <div className="activity-line activity-line--optimization">
-      <Icon name="sparkles" size={13} />
-      <span className="optimization-card__title">Optimization</span>
-      <span className="optimization-card__rows">
-        {rows.map((r) => (
-          <span key={r.label} className="optimization-card__row">
-            <span className="optimization-card__row-label">{r.label}</span>
-            <span className="optimization-card__row-value">{r.value}</span>
-          </span>
-        ))}
-      </span>
+    <div className="optimization-card">
+      <button type="button" className="optimization-card__head" onClick={() => setOpen((v) => !v)}>
+        <Icon name="sparkles" size={12} />
+        <span>Optimization</span>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />
+      </button>
+      {open && (
+        <div className="optimization-card__rows">
+          {rows.map((r) => (
+            <div key={r.label} className="optimization-card__row">
+              <span className="optimization-card__row-label">{r.label}</span>
+              <span className="optimization-card__row-value">{r.value}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -700,115 +728,154 @@ function PlanCard({
   );
 }
 
-/** Cursor-style todo checklist: collapsible "todo_write N/M completed" header
- *  over circular status rows. Updated in place as the agent reports progress. */
+/** Task list created by todo_write — "Created N tasks", expand for checklist. */
 function TodoCard({ event }: { event: Extract<ThreadEvent, { kind: "plan" }> }) {
-  const [open, setOpen] = useState(true);
-  const t = useT();
-  // Match TaskList's semantics: cancelled steps are excluded from the total and
-  // the done count, so the progress bar doesn't show "3/3" when one step was
-  // cancelled while TaskList shows "2/3".
+  const [open, setOpen] = useState(false);
   const { visible: total, done } = countVisibleTodos(
     event.steps.map((s) => ({
       status: s.status ?? (s.done ? "completed" : "pending"),
     })),
   );
   const allDone = total > 0 && done === total;
+  const label =
+    allDone && total > 0
+      ? `Completed ${total} task${total === 1 ? "" : "s"}`
+      : done > 0
+        ? `${done}/${total} tasks completed`
+        : `Created ${total} task${total === 1 ? "" : "s"}`;
   const items = event.steps.map((step, i) => ({
     id: `step-${i}`,
     content: step.text,
     status: (step.status ?? (step.done ? "completed" : "pending")) as AgentTodoStatus,
   }));
   return (
-    <div className="todo-card">
-      <button type="button" className="todo-card__head" onClick={() => setOpen((v) => !v)}>
-        <span className={`todo-card__status ${allDone ? "todo-card__status--done" : ""}`}>
-          <Icon name={allDone ? "check" : "clock"} size={11} />
-        </span>
-        <code className="todo-card__name">todo_write</code>
-        <span className="todo-card__summary">
-          {done}/{total} {t("tasks.completed")}
-        </span>
-        <Icon name={open ? "chevronDown" : "chevronRight"} size={11} className="todo-card__chevron" />
-      </button>
+    <div className="todo-block">
+      <StatusLine icon="list" label={label} onClick={() => setOpen((v) => !v)} open={open} />
       {open && (
-        <div className="todo-card__steps">
+        <div className="todo-block__steps">
           <TodoRows items={items} />
         </div>
-      )}
-      {event.badge && (
-        <span className="todo-card__badge">
-          <Icon name="check" size={12} />
-          {event.badge}
-        </span>
       )}
     </div>
   );
 }
 
-/** File extension badge label ("TS", "CSS", …) for the chat file card. */
-function extBadge(name: string): string {
-  const dot = name.lastIndexOf(".");
-  if (dot === name.length - 1) return "TXT"; // trailing dot, no extension
-  if (dot <= 0) {
-    // Dotfile (`.gitignore`, `.env`): badge with the stem so "ENV" / "GIT" is
-    // more informative than a generic "TXT".
-    return name.slice(1).toUpperCase().slice(0, 4) || "TXT";
-  }
-  return name.slice(dot + 1).toUpperCase().slice(0, 4);
+/** Compact a path for display: ~/… when under /home/user or C:\Users\user. */
+function formatDisplayPath(path: string): string {
+  const unix = path.match(/^\/home\/[^/]+(\/.*)?$/);
+  if (unix) return `~${unix[1] ?? ""}`;
+  const win = path.match(/^[A-Za-z]:\\Users\\[^\\]+(\\.*)?$/);
+  if (win) return `~${(win[1] ?? "").replace(/\\/g, "/")}`;
+  return path;
 }
 
-/** One file mutation: Cursor-style header (badge, name, +adds -dels, actions)
- *  over a collapsible color-coded diff snippet. */
+/** Shell command card: cwd header + monospace command, expand for output. */
+function ShellCard({
+  event,
+  onOpenAgentTerminal,
+}: {
+  event: Extract<ThreadEvent, { kind: "tool" }>;
+  onOpenAgentTerminal?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const resultRef = useRef<HTMLPreElement>(null);
+  const running = event.ok === undefined;
+  const hasOutput = event.result !== undefined && event.result.length > 0;
+  const exitCode = shellExitCode(event.result, !running);
+  const failed = event.ok === false || (exitCode !== undefined && exitCode !== 0);
+  const displayResult =
+    event.result === undefined ? undefined : stripExitNote(stripAnsi(event.result));
+  const cwd = event.cwd ? formatDisplayPath(event.cwd) : undefined;
+
+  useLayoutEffect(() => {
+    if (running && hasOutput) {
+      setOpen(true);
+      const el = resultRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+  }, [running, hasOutput, event.result]);
+
+  return (
+    <div className={`shell-card ${failed ? "shell-card--failed" : ""} ${running ? "shell-card--running" : ""}`}>
+      {cwd && (
+        <div className="shell-card__meta">
+          <Icon name="terminal" size={13} />
+          <span className="shell-card__cwd">{cwd}</span>
+          {onOpenAgentTerminal && (
+            <button
+              type="button"
+              className="shell-card__open-term"
+              title="Open in terminal"
+              onClick={onOpenAgentTerminal}
+            >
+              <Icon name="terminal" size={11} />
+            </button>
+          )}
+        </div>
+      )}
+      <button type="button" className="shell-card__cmd" onClick={() => setOpen((v) => !v)}>
+        <code>{event.summary}</code>
+        {exitCode !== undefined && exitCode !== 0 && <span className="shell-card__exit">exit {exitCode}</span>}
+        {(hasOutput || !running) && event.result !== undefined && (
+          <Icon name={open ? "chevronDown" : "chevronRight"} size={11} className="shell-card__chevron" />
+        )}
+      </button>
+      {open && displayResult !== undefined && displayResult.length > 0 && (
+        <pre className="shell-card__output" ref={resultRef}>
+          {truncateToolCard(displayResult, TOOL_RESULT_UI_CAP)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/** One file mutation: icon, path, diff stats, and Review action. */
 function FileCard({
   event,
-  codeDisplay,
   onOpenFile,
-  onUndo,
 }: {
   event: Extract<ThreadEvent, { kind: "file" }>;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
   onUndo: (name: string) => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const snippet = event.snippet ?? [];
   const hasSnippet = snippet.length > 0;
   const openTarget = event.subtitle || event.name;
+  const displayPath = event.subtitle ? `./${event.name}` : event.name;
+  const isNew = event.adds > 0 && event.dels === 0;
   return (
     <div className="file-card">
-      <div
-        className={`file-card__head ${hasSnippet ? "file-card__head--toggle" : ""}`}
-        onClick={hasSnippet ? () => setOpen((v) => !v) : undefined}
-        title={event.subtitle}
-      >
-        <span className="file-card__badge">{extBadge(event.name)}</span>
-        <span className="file-card__name">{event.name}</span>
+      <div className="file-card__head">
+        <span className={`file-card__icon ${isNew ? "file-card__icon--add" : "file-card__icon--edit"}`}>
+          <Icon name={isNew ? "plus" : "pencil"} size={10} />
+        </span>
+        <button
+          type="button"
+          className={`file-card__path${hasSnippet ? " file-card__path--toggle" : ""}`}
+          onClick={hasSnippet ? () => setOpen((v) => !v) : undefined}
+          title={openTarget}
+        >
+          <span className="file-card__name">{displayPath}</span>
+          {hasSnippet && <Icon name={open ? "chevronDown" : "chevronRight"} size={11} className="file-card__chevron" />}
+        </button>
         {(event.adds > 0 || event.dels > 0) && (
           <span className="file-card__changes">
-            <span className="adds">+{event.adds}</span>
-            <span className="dels">-{event.dels}</span>
+            {event.adds > 0 && <span className="adds">+{event.adds}</span>}
+            {event.dels > 0 && <span className="dels">-{event.dels}</span>}
           </span>
         )}
-        <span className="file-card__actions" onClick={(e) => e.stopPropagation()}>
-          <button className="chip chip--small" title="Restore the previous content of this file" onClick={() => onUndo(event.name)}>
-            <Icon name="undo" size={11} />
-            Undo
-          </button>
-          <button className="chip chip--small" onClick={() => onOpenFile(openTarget)}>
-            Open
-          </button>
-        </span>
-        {hasSnippet && <Icon name={open ? "chevronDown" : "chevronRight"} size={11} className="file-card__chevron" />}
+        <button type="button" className="file-card__review" onClick={() => onOpenFile(openTarget)}>
+          Review
+        </button>
       </div>
       {hasSnippet && open && (
-        <div className="file-card__diff" style={{ fontSize: codeDisplay.fontSize }}>
+        <div className="file-card__diff">
           <table className="diff-table">
             <tbody>
               {snippet.map((line, i) => (
                 <tr key={i} className={`diff-row diff-row--${line.type}`}>
-                  {codeDisplay.showLineNumbers && <td className="diff-no">{line.oldNo ?? ""}</td>}
-                  {codeDisplay.showLineNumbers && <td className="diff-no">{line.newNo ?? ""}</td>}
                   <td className="diff-sign">{line.type === "add" ? "+" : line.type === "del" ? "-" : ""}</td>
                   <td className="diff-text">{line.text}</td>
                 </tr>
@@ -816,7 +883,7 @@ function FileCard({
             </tbody>
           </table>
           {(event.snippetMore ?? 0) > 0 && (
-            <button className="file-card__more" onClick={() => onOpenFile(openTarget)}>
+            <button type="button" className="file-card__more" onClick={() => onOpenFile(openTarget)}>
               … {event.snippetMore} more changed lines
             </button>
           )}
@@ -849,25 +916,7 @@ function stripExitNote(result: string): string {
   return result.replace(EXIT_NOTE_RE, "").replace(/\n+$/, "");
 }
 
-/** Compact a path for the card header: keep the tail, ellipsize the middle. */
-function shortenPath(path: string, max = 32): string {
-  if (path.length <= max) return path;
-  const segments = path.split(/[\\/]/).filter(Boolean);
-  const tail: string[] = [];
-  let len = 0;
-  while (segments.length > 0 && (len === 0 || len + segments[segments.length - 1]!.length + 1 <= max - 1)) {
-    const seg = segments.pop()!;
-    tail.unshift(seg);
-    len += seg.length + 1;
-  }
-  return `…/${tail.join("/")}`;
-}
-
-/**
- * Live subagent run, rendered as a two-line entry: the subagent's name over its
- * current activity, with the parent's "waiting" note underneath while it runs.
- * Clicking opens the workspace Agent panel on this run.
- */
+/** Subagent run card: avatar + name + status, task line with L-connector. */
 function SubagentCard({
   event,
   onOpen,
@@ -877,28 +926,33 @@ function SubagentCard({
 }) {
   const running = event.status === "running";
   const failed = event.status === "failed";
+  const done = event.status === "done";
+  const statusLabel = running ? "In Progress" : failed ? "Failed" : done ? "Completed" : "Queued";
+  const taskLine = subagentStatusLine(event);
   return (
-    <div className="subagent-block">
-      <button
-        type="button"
-        className={`subagent-card ${failed ? "subagent-card--failed" : ""} ${running ? "subagent-card--running" : ""}`}
-        onClick={() => onOpen?.(event.id)}
-        disabled={!onOpen}
-        title={onOpen ? "Open this subagent in the Agent panel" : undefined}
-      >
-        <span className={`subagent-card__icon ${running ? "subagent-card__spinner" : ""}`}>
-          <Icon name={running ? "sparkles" : failed ? "close" : "check"} size={13} />
+    <button
+      type="button"
+      className={`subagent-card ${failed ? "subagent-card--failed" : ""} ${running ? "subagent-card--running" : ""}`}
+      onClick={() => onOpen?.(event.id)}
+      disabled={!onOpen}
+      title={onOpen ? "Open this subagent in the Agent panel" : undefined}
+    >
+      <div className="subagent-card__header">
+        <span className={`subagent-card__avatar ${running ? "subagent-card__avatar--live" : ""}`}>
+          <Icon name={running ? "sparkles" : failed ? "close" : "check"} size={12} />
         </span>
-        <span className="subagent-card__body">
-          <span className="subagent-card__row">
-            <span className="subagent-card__name">{subagentDisplayName(event.name)}</span>
-            {event.ms !== undefined && <span className="subagent-card__duration">{formatDuration(event.ms)}</span>}
-          </span>
-          <span className="subagent-card__line">{subagentStatusLine(event)}</span>
+        <span className="subagent-card__name">{subagentDisplayName(event.name)}</span>
+        <span className={`subagent-card__status ${running ? "subagent-card__status--live" : done ? "subagent-card__status--done" : ""}`}>
+          {statusLabel}
         </span>
-      </button>
-      {running && <div className="subagent-block__waiting">Waiting for subagent</div>}
-    </div>
+      </div>
+      {taskLine && (
+        <div className="subagent-card__task">
+          <span className="subagent-card__connector" aria-hidden />
+          <span className="subagent-card__line">{taskLine}</span>
+        </div>
+      )}
+    </button>
   );
 }
 
@@ -912,25 +966,23 @@ function formatDuration(ms: number): string {
 /** One agent tool call: status line expanding to the (truncated) result. */
 function ToolCard({
   event,
-  onOpenAgentTerminal,
+  compact = false,
 }: {
   event: Extract<ThreadEvent, { kind: "tool" }>;
   onOpenAgentTerminal?: () => void;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const resultRef = useRef<HTMLPreElement>(null);
-  // ok undefined means still running (result may already be streaming).
   const running = event.ok === undefined;
   const isShell = event.name === "bash";
   const hasOutput = event.result !== undefined && event.result.length > 0;
-  // Non-zero exits resolve ok:true, so surface the trailing exit note as a badge.
   const exitCode = isShell ? shellExitCode(event.result, !running) : undefined;
   const failed = event.ok === false || (exitCode !== undefined && exitCode !== 0);
   const displayName = toolDisplayName(event.name);
   const displayResult =
     event.result === undefined ? undefined : isShell ? stripExitNote(stripAnsi(event.result)) : stripAnsi(event.result);
 
-  // Auto-expand and follow output while a shell command streams.
   useLayoutEffect(() => {
     if (running && isShell && hasOutput) {
       setOpen(true);
@@ -940,32 +992,16 @@ function ToolCard({
   }, [running, isShell, hasOutput, event.result]);
 
   return (
-    <div className={`tool-card ${failed ? "tool-card--failed" : ""} ${running ? "tool-card--running" : ""}`}>
-      <button className="tool-card__row" onClick={() => setOpen((v) => !v)}>
-        <Icon name={running ? "clock" : failed ? "close" : "check"} size={12} />
+    <div
+      className={`tool-card ${compact ? "tool-card--compact" : ""} ${failed ? "tool-card--failed" : ""} ${running ? "tool-card--running" : ""}`}
+    >
+      <button type="button" className="tool-card__row" onClick={() => setOpen((v) => !v)}>
+        {!compact && <Icon name={running ? "clock" : failed ? "close" : "check"} size={12} />}
         <code className="tool-card__name">{displayName}</code>
         <span className="tool-card__summary">{event.summary}</span>
-        {isShell && event.cwd && (
-          <span className="tool-card__cwd" title={event.cwd}>
-            {shortenPath(event.cwd)}
-          </span>
-        )}
-        {exitCode !== undefined && exitCode !== 0 && <span className="tool-card__exit">exit {exitCode}</span>}
         {event.denied && <span className="badge badge--muted">denied</span>}
-        {event.durationMs !== undefined && (
+        {event.durationMs !== undefined && !compact && (
           <span className="tool-card__duration">{formatDuration(event.durationMs)}</span>
-        )}
-        {isShell && onOpenAgentTerminal && (
-          <span
-            className="tool-card__open-term"
-            title="Open in terminal"
-            onClick={(e) => {
-              e.stopPropagation();
-              onOpenAgentTerminal();
-            }}
-          >
-            <Icon name="terminal" size={11} />
-          </span>
         )}
         {(hasOutput || !running) && event.result !== undefined && (
           <Icon name={open ? "chevronDown" : "chevronRight"} size={11} />

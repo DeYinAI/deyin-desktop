@@ -16,7 +16,6 @@ import { SearchOverlay } from "./components/SearchOverlay.js";
 import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
 import { Sidebar } from "./components/Sidebar.js";
-import { TerminalPanel } from "./components/TerminalPanel.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { TopBar } from "./components/TopBar.js";
 import { Icon } from "./components/Icon.js";
@@ -24,6 +23,7 @@ import { UpdateBanner } from "./components/UpdateBanner.js";
 import { WhatsNewModal } from "./components/WhatsNewModal.js";
 import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
+import { PanelRail } from "./components/PanelRail.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
 import { ReviewBanner } from "./components/ReviewBanner.js";
 import { highSeverityFindings } from "./components/SecurityFindingsPanel.js";
@@ -187,14 +187,35 @@ export function App() {
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(false);
+  /** Icon rail stays visible when the panel content is collapsed. */
+  const [panelRail, setPanelRail] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("plan");
   /** Subagent run shown in the Agent panel; null follows the newest run. */
   const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
-  const [terminalOpen, setTerminalOpen] = useState(false);
- /** Agent PTY sessions announced via shell-session, keyed for TerminalPanel attach. */
- const [agentTerminals, setAgentTerminals] = useState<{ id: string; label: string; threadId: string }[]>([]);
+  /** Agent PTY sessions announced via shell-session, keyed for Terminal tab attach. */
+  const [agentTerminals, setAgentTerminals] = useState<{ id: string; label: string; threadId: string }[]>([]);
+
+  const openPanelTab = useCallback((tab: PanelTab) => {
+    setPanelOpen(true);
+    setPanelRail(true);
+    setPanelTab(tab);
+    setView("workspace");
+  }, []);
+
+  const collapsePanel = useCallback(() => {
+    setPanelOpen(false);
+    setPanelRail(true);
+  }, []);
+
+  const dismissPanel = useCallback(() => {
+    setPanelOpen(false);
+    setPanelRail(false);
+  }, []);
+
+  const terminalVisible = panelOpen && panelTab === "terminal";
+  const panelVisible = panelOpen || panelRail;
 
  const [searchOpen, setSearchOpen] = useState(false);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
@@ -457,8 +478,8 @@ export function App() {
 
   // Opening the terminal completes that onboarding step.
   useEffect(() => {
-    if (terminalOpen) markOnboard("terminalUsed");
-  }, [terminalOpen, markOnboard]);
+    if (terminalVisible) markOnboard("terminalUsed");
+  }, [terminalVisible, markOnboard]);
 
   const [connecting, setConnecting] = useState(false);
 
@@ -590,7 +611,7 @@ export function App() {
             return [...cur, { id: effect.terminalId, label: effect.label, threadId: effect.threadId }];
           });
           if (settingsRef.current?.revealTerminalOnAgentCommand !== false) {
-            setTerminalOpen(true);
+            openPanelTab("terminal");
           }
           break;
         }
@@ -608,8 +629,7 @@ export function App() {
           const fileDiff: FileDiff = { fileName: effect.change.path, before: effect.change.before, after: effect.change.after };
           fileDiffsRef.current.set(effect.change.path, fileDiff);
           setDiff(fileDiff);
-          setPanelOpen(true);
-          setPanelTab("diff");
+          openPanelTab("diff");
           break;
         }
         case "pending-change-resolved": {
@@ -687,8 +707,7 @@ export function App() {
           break;
         case "plan-created": {
           const planTitle = effect.name || planTitleFromMarkdown(effect.plan);
-          setPanelOpen(true);
-          setPanelTab("plan");
+          openPanelTab("plan");
           setPlanApproval({
             threadId: effect.threadId,
             title: planTitle,
@@ -714,8 +733,7 @@ export function App() {
           break;
         }
         case "plan-panel-open":
-          setPanelOpen(true);
-          setPanelTab("plan");
+          openPanelTab("plan");
           break;
         case "mode-changed":
           if (effect.mode) selectModeRef.current(effect.mode);
@@ -739,8 +757,7 @@ export function App() {
               })),
             );
             if (fold.planFinished) {
-              setPanelOpen(true);
-              setPanelTab("plan");
+              openPanelTab("plan");
             }
           }
           setApproval(null);
@@ -778,7 +795,7 @@ export function App() {
           break;
       }
     },
-    [appendEvents, markOnboard, selectedModel],
+    [appendEvents, markOnboard, openPanelTab, selectedModel],
   );
   useAgentStateController({ onSideEffect: handleAgentSideEffect });
 
@@ -786,8 +803,7 @@ export function App() {
   useEffect(() => {
     if (!window.deyin.browserControl) return;
     const off = window.deyin.browserControl.onEnsure(() => {
-      setPanelOpen(true);
-      setPanelTab("browser");
+      openPanelTab("browser");
       setBrowserUrl((cur) => cur || "about:blank");
     });
     return off;
@@ -891,8 +907,7 @@ export function App() {
           updateThread(threadId, { unread: true });
           break;
         case "trajectory":
-          setPanelOpen(true);
-          setPanelTab("plan");
+          openPanelTab("plan");
           break;
       }
     },
@@ -1148,9 +1163,8 @@ export function App() {
   const openFileDiff = useCallback((path: string) => {
     const fileDiff = fileDiffsRef.current.get(path);
     if (fileDiff) setDiff(fileDiff);
-    setPanelOpen(true);
-    setPanelTab("diff");
-  }, []);
+    openPanelTab("diff");
+  }, [openPanelTab]);
 
   /** First send before any task exists: create the thread instead of dropping
    *  the click — the composer must never silently no-op. */
@@ -1537,8 +1551,8 @@ export function App() {
         threadPinned={activeThread?.pinned ?? false}
         projectName={projectName}
         workspaceRoot={workspaceRoot}
-        panelOpen={panelOpen}
-        terminalOpen={terminalOpen}
+        panelOpen={panelVisible}
+        terminalOpen={terminalVisible}
         sidebarOpen={sidebarOpen}
         cacheHitRate={activeCacheMetrics?.hitRate ?? null}
         sessionCacheHit={activeCacheMetrics?.sessionHit}
@@ -1547,12 +1561,13 @@ export function App() {
         onOpenFolder={() => void addProjectFolder()}
         onToggleSidebar={() => setSidebarOpen((v) => !v)}
         onTogglePanel={() => {
-          setPanelOpen((v) => !v);
+          if (panelOpen) collapsePanel();
+          else openPanelTab(panelTab);
           setView("workspace");
         }}
         onToggleTerminal={() => {
-          setTerminalOpen((v) => !v);
-          setView("workspace");
+          if (panelOpen && panelTab === "terminal") collapsePanel();
+          else openPanelTab("terminal");
         }}
         onThreadAction={handleThreadAction}
       />
@@ -1623,7 +1638,7 @@ export function App() {
               <div className="chat-column__bar">
                 <EnvironmentBadge
                   env={env}
-                  onPickShell={() => setTerminalOpen(true)}
+                  onPickShell={() => openPanelTab("terminal")}
                 />
                 {boot?.platform === "web" && (
                   <RepoBar
@@ -1658,18 +1673,16 @@ export function App() {
                 canBuildPlan={planCardBuildable}
                 planMarkdown={activeThread?.planMarkdown ?? null}
                 onOpenPlan={() => {
-                  setPanelOpen(true);
-                  setPanelTab("plan");
+                  openPanelTab("plan");
                 }}
                 planArtifact={planArtifact}
                 onOpenSubagent={(id) => {
                   setActiveSubagentId(id);
-                  setPanelOpen(true);
-                  setPanelTab("agent");
+                  openPanelTab("agent");
                 }}
                 onOpenAgentTerminal={
                   agentTerminals.some((t) => t.threadId === activeThreadId)
-                    ? () => setTerminalOpen(true)
+                    ? () => openPanelTab("terminal")
                     : undefined
                 }
                 threadTitles={Object.fromEntries((activeProject?.threads ?? []).map((t) => [t.id, t.title]))}
@@ -1704,8 +1717,7 @@ export function App() {
                     settings?.reviewMode === "on" ? highSeverityFindings(securityReport) : undefined
                   }
                   onOpenSecurity={() => {
-                    setPanelOpen(true);
-                    setPanelTab("security");
+                    openPanelTab("security");
                   }}
                 />
                 {approval && (
@@ -1762,8 +1774,7 @@ export function App() {
                   onPickFolder={() => void addProjectFolder()}
                   onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
                   onOpenSourceControl={() => {
-                    setPanelOpen(true);
-                    setPanelTab("git");
+                    openPanelTab("git");
                   }}
                 />
                 <Composer
@@ -1820,7 +1831,17 @@ export function App() {
               </div>
             </main>
 
-            {panelOpen && (
+            {panelVisible && (
+              <div className="wspanel-wrap">
+                <PanelRail
+                  activeTab={panelTab}
+                  collapsed={!panelOpen}
+                  diffDot={Boolean(diff)}
+                  agentCount={subagentRuns.filter((r) => r.status === "running").length}
+                  onSelectTab={openPanelTab}
+                  onDismiss={dismissPanel}
+                />
+                {panelOpen && (
               <WorkspacePanel
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
@@ -1848,11 +1869,10 @@ export function App() {
                 onSelectTab={setPanelTab}
                 onOpenGitDiff={(d) => {
                   setDiff(d);
-                  setPanelOpen(true);
-                  setPanelTab("diff");
+                  openPanelTab("diff");
                 }}
                 onNavigate={setBrowserUrl}
-                onCollapse={() => setPanelOpen(false)}
+                onCollapse={collapsePanel}
                 onOpenFolder={() => void addProjectFolder()}
                 onOpenBrowserSettings={() => {
                   setSettingsPage("workspace");
@@ -1869,29 +1889,23 @@ export function App() {
                 onSelectSubagent={setActiveSubagentId}
                 onOpenFile={(path) => {
                   void window.deyin.shell.showItem(path);
-                  setPanelOpen(true);
-                  setPanelTab("files");
+                  openPanelTab("files");
                 }}
+                terminalEnv={env}
+                terminalDefaultShell={settings?.defaultShell ?? null}
+                terminalFontSize={settings?.terminalFontSize ?? 12}
+                terminalScrollback={settings?.terminalScrollback ?? 5000}
+                terminalCursorStyle={settings?.terminalCursorStyle ?? "bar"}
+                terminalCopyOnSelect={settings?.terminalCopyOnSelect ?? true}
+                terminalTheme={themeVariant}
+                terminalAttachSessions={agentTerminals
+                  .filter((t) => t.threadId === activeThreadId)
+                  .map((t) => ({ id: t.id, label: t.label }))}
               />
+                )}
+              </div>
             )}
           </div>
-
-          {terminalOpen && (
-            <TerminalPanel
-              cwd={workspaceRoot}
-              env={env}
-              defaultShell={settings?.defaultShell ?? null}
-              fontSize={settings?.terminalFontSize ?? 12}
-              scrollback={settings?.terminalScrollback ?? 5000}
-              cursorStyle={settings?.terminalCursorStyle ?? "bar"}
-              copyOnSelect={settings?.terminalCopyOnSelect ?? true}
-              theme={themeVariant}
-              attachSessions={agentTerminals
-                .filter((t) => t.threadId === activeThreadId)
-                .map((t) => ({ id: t.id, label: t.label }))}
-              onClose={() => setTerminalOpen(false)}
-            />
-          )}
           </>}
         </div>
       </div>
@@ -1917,10 +1931,8 @@ export function App() {
             setView("workspace");
           }}
           onOpenUrl={(url) => {
-            setPanelOpen(true);
-            setPanelTab("browser");
+            openPanelTab("browser");
             setBrowserUrl(url);
-            setView("workspace");
           }}
           onClose={() => setSearchOpen(false)}
         />

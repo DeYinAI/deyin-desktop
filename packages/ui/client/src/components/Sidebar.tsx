@@ -61,11 +61,54 @@ function projectThreads(threads: Thread[]): Thread[] {
   return threads.filter((t) => !t.archived && !t.pinned);
 }
 
+const COLLAPSED_PROJECTS_KEY = "deyin.sidebar.collapsedProjects";
+
+function loadCollapsedProjects(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_PROJECTS_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedProjects(collapsed: Set<string>): void {
+  localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsed]));
+}
+
 export function Sidebar(props: SidebarProps) {
   const t = useT();
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects);
   const now = useNow(30_000);
+
+  const toggleProjectExpanded = (projectId: string) => {
+    setCollapsedProjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      saveCollapsedProjects(next);
+      return next;
+    });
+  };
+
+  const expandProject = (projectId: string) => {
+    setCollapsedProjects((prev) => {
+      if (!prev.has(projectId)) return prev;
+      const next = new Set(prev);
+      next.delete(projectId);
+      saveCollapsedProjects(next);
+      return next;
+    });
+  };
+
+  const isProjectExpanded = (projectId: string) => {
+    if (filter.trim()) return true;
+    return !collapsedProjects.has(projectId);
+  };
 
   // "Search projects…": match project names and thread titles; threads in a
   // matching project are all kept, otherwise only matching threads show.
@@ -202,17 +245,37 @@ export function Sidebar(props: SidebarProps) {
 
         {visibleProjects.map((project) => {
           const active = project.id === props.activeProjectId;
+          const expanded = isProjectExpanded(project.id);
+          const folderIcon: IconName =
+            project.root === null ? "home" : expanded ? "folderOpen" : "folder";
           return (
             <div className="project" key={project.id}>
-              <button
-                className={`project__row ${active ? "project__row--active" : ""}`}
-                onClick={() => props.onSelectProject(project.id)}
-                title={project.root ?? project.name}
-              >
-                <Icon name={project.root === null ? "home" : active ? "folderOpen" : "folder"} size={14} />
-                <span className="project__name">{project.name}</span>
-              </button>
-              {projectThreads(project.threads).map((thread) => renderThread(project.id, thread, true))}
+              <div className={`project__row ${active ? "project__row--active" : ""}`}>
+                <button
+                  type="button"
+                  className="project__toggle"
+                  aria-expanded={expanded}
+                  aria-label={expanded ? "Collapse project" : "Expand project"}
+                  title={expanded ? "Collapse" : "Expand"}
+                  onClick={() => toggleProjectExpanded(project.id)}
+                >
+                  <Icon name={expanded ? "chevronDown" : "chevronRight"} size={11} />
+                </button>
+                <button
+                  type="button"
+                  className="project__select"
+                  onClick={() => {
+                    props.onSelectProject(project.id);
+                    expandProject(project.id);
+                  }}
+                  title={project.root ?? project.name}
+                >
+                  <Icon name={folderIcon} size={14} />
+                  <span className="project__name">{project.name}</span>
+                </button>
+              </div>
+              {expanded &&
+                projectThreads(project.threads).map((thread) => renderThread(project.id, thread, true))}
             </div>
           );
         })}
