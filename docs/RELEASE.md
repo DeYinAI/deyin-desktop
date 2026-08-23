@@ -43,17 +43,39 @@ electron-builder notarizes automatically when the Apple env vars are present.
 `apps/desktop/release/` (installers + `latest*.yml` manifests) to that path. The app's
 `electron-updater` integration (`main/updater.ts`) picks up new versions on launch.
 
-## CI
+## CI and CD
 
-- `.github/workflows/ci.yml` — runs `scripts/verify.sh` on every push/PR.
-- `.github/workflows/release.yml` — on a `v*` tag: the `build` matrix regenerates icons,
-  builds installers on macOS/Windows/Linux (`.dmg` / `.exe` / `.AppImage` + `.deb`) and
-  uploads them as workflow artifacts; the `release` job then attaches all of them to a
-  draft GitHub Release for the tag. Add signing secrets (and optionally CDN sync) to
-  finish the pipeline. Note: `deyin-desktop` must be initialized as a git repo and pushed
-  to GitHub for these workflows to run.
+See [CI.md](./CI.md) for pull request automation (verify, CodeQL, AI review).
+
+### Continuous integration
+
+- [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — runs `scripts/verify.sh`
+  on every push to `main` and on all pull requests (self-hosted Linux runner).
+- [`.github/workflows/codeql.yml`](../.github/workflows/codeql.yml) — static analysis
+  on GitHub-hosted runners.
+- [`.github/workflows/pr-ai-review.yml`](../.github/workflows/pr-ai-review.yml) —
+  Openference Bugbot + Security Review on same-repo PRs.
+
+### Release (continuous delivery)
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) triggers on `v*` tags
+(or manual `workflow_dispatch` for smoke builds):
+
+1. **create-release** — creates a draft GitHub Release on this repo and mirrors a draft
+   to `DeYinAI/deyin-releases` (requires `RELEASES_TOKEN`; non-fatal if missing).
+2. **build** — matrix of self-hosted Windows and Linux runners builds Electron
+   installers (`.exe`, `.AppImage`, `.deb`, blockmaps, update manifests). Assets attach
+   **directly to the draft release** — not via Actions artifacts (artifact storage is
+   quota-billed).
+3. **cli** — cross-compiles CLI binaries with Bun on Linux and attaches them to the
+   same release.
+
+macOS (`.dmg`) builds are disabled until a macOS self-hosted runner or hosted budget
+is available.
+
+Signing secrets for release jobs: `CSC_*`, `APPLE_*`, `WIN_CSC_*`, `RELEASES_TOKEN`.
 
 ## Version bump
 
 Update `apps/desktop/package.json` `version`, tag `vX.Y.Z`, and push the tag to trigger the
-release workflow.
+release workflow. Ensure `main` has passed CI before tagging.

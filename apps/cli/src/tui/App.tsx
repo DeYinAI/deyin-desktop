@@ -202,7 +202,6 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       cancelled = true;
       for (const c of mcpRef.current) void c.close();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Spinner tick while something is in flight.

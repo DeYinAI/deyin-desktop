@@ -17,6 +17,9 @@ fi
 echo "==> Building computer-use-host"
 pnpm --filter @deyin/computer-use-host build
 
+echo "==> Linting core packages and apps"
+pnpm lint
+
 echo "==> Typechecking all workspaces"
 pnpm -r typecheck
 

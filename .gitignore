@@ -22,8 +22,11 @@ squashfs-root/
 .env
 .env.*
 !.env.example
+!.env.release.local.example
 *.pem
 *.key
+*.pfx
+*.p12
 !packages/oauth-provider/keys/.gitkeep
 
 # Logs
