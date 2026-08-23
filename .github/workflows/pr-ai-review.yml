@@ -3,12 +3,23 @@ name: PR AI Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review (same-repo only)
+        required: true
+        type: string
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
 
 jobs:
   ai-review:
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.actor != 'dependabot[bot]'
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor != 'dependabot[bot]')
     runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: read
@@ -17,6 +28,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/pull/{0}/head', inputs.pr_number) || github.event.pull_request.head.sha }}
 
       - uses: pnpm/action-setup@v5
 
@@ -33,7 +45,48 @@ jobs:
           OPENFERENCE_API_KEY: ${{ secrets.OPENFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.base_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: pnpm exec tsx scripts/ci/ai-review.ts
+
+  dependabot-note:
+    if: github.event_name == 'pull_request' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Explain skipped AI review
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const marker = '<!-- deyin-ai-review-dependabot -->';
+            const body = `${marker}
+            ## Deyin AI review
+
+            Skipped for Dependabot PRs (GitHub does not expose repository secrets to Dependabot workflows).
+
+            **Still running:** \`verify\`, CodeQL, dependency-review.
+
+            Maintainers: merge dependency updates after \`verify\` + CodeQL pass, or open an in-repo branch to trigger full AI review.`;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find((c) => c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

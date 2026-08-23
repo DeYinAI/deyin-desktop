@@ -63,12 +63,20 @@ See [CI.md](./CI.md) for pull request automation (verify, CodeQL, AI review).
 
 1. **create-release** — creates a draft GitHub Release on this repo and mirrors a draft
    to `DeYinAI/deyin-releases` (requires `RELEASES_TOKEN`; non-fatal if missing).
-2. **build** — matrix of self-hosted Windows and Linux runners builds Electron
-   installers (`.exe`, `.AppImage`, `.deb`, blockmaps, update manifests). Assets attach
-   **directly to the draft release** — not via Actions artifacts (artifact storage is
-   quota-billed).
+2. **build** — **dell-runner (Linux only)** builds Linux (`.AppImage`, `.deb`) **and**
+   Windows (`.exe` NSIS) installers via Wine + .NET cross-publish. No Windows
+   self-hosted runner required. Assets attach directly to the draft release.
 3. **cli** — cross-compiles CLI binaries with Bun on Linux and attaches them to the
    same release.
+
+**Runner setup:** `sudo bash scripts/ci/setup-dell-runner.sh` then
+`bash scripts/ci/check-dell-runner.sh`.
+
+**Local cross-package smoke test:**
+
+```bash
+bash scripts/ci/package-desktop.sh all   # linux + win on Linux with Wine
+```
 
 macOS (`.dmg`) builds are disabled until a macOS self-hosted runner or hosted budget
 is available.

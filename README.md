@@ -1,5 +1,8 @@
 # Deyin
 
+[![CI](https://github.com/DeYinAI/deyin-desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/DeYinAI/deyin-desktop/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/DeYinAI/deyin-desktop/actions/workflows/codeql.yml/badge.svg)](https://github.com/DeYinAI/deyin-desktop/actions/workflows/codeql.yml)
+
 An original, web-hostable **agentic development environment** with **Openference** sign-in.
 
 Deyin is built from scratch. The renderer is a plain web SPA that runs both inside an

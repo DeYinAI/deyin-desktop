@@ -16,6 +16,18 @@ license — see [TRADEMARK.md](../TRADEMARK.md) for brand policy.
 - All PRs must pass CI checks (see [docs/CI.md](docs/CI.md))
 - Merges require approval from `@DeYinAI/core` (CODEOWNERS)
 
+### What runs on your PR
+
+| Check | Fork PR | Same-repo PR | Dependabot PR |
+|-------|---------|--------------|---------------|
+| verify | yes | yes | yes |
+| CodeQL | yes | yes | yes |
+| dependency-review | yes | yes | yes |
+| AI review (Openference) | no | yes | no (comment only) |
+
+Fork contributors: open a PR from your fork — static checks run automatically.
+Maintainers can cherry-pick to an in-repo branch for full AI review.
+
 ## Code review
 
 Internal PRs receive automated Bugbot + Security Review via Openference. Address
