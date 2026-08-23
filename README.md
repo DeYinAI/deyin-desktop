@@ -96,11 +96,12 @@ Contact: `hello@deyin.ai`. The local OAuth dev server uses a fictional demo user
 
 ## Contributing & open source
 
-Deyin v1 is open source under the PolyForm Noncommercial License. See:
+Deyin v1 is the **first public open-source release** under the PolyForm Noncommercial License.
 
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR flow and CI gates
+- [docs/README.md](docs/README.md) — documentation index
 - [docs/OSS_V1_LAUNCH.md](docs/OSS_V1_LAUNCH.md) — maintainer launch checklist
-- [docs/PLUGINS_AND_MCP.md](docs/PLUGINS_AND_MCP.md) — plugins, MCP, npm vs GitHub distribution
+- [docs/PLUGINS_AND_MCP.md](docs/PLUGINS_AND_MCP.md) — plugins, MCP, distribution
 - [docs/CI.md](docs/CI.md) — automation pipeline
 
 ## License
