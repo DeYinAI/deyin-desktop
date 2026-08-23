@@ -50,13 +50,17 @@ if command -v wine >/dev/null 2>&1; then
   echo "    wine already installed: $(wine --version 2>&1 | head -1)"
 else
   dpkg --add-architecture i386 2>/dev/null || true
-  apt-get install -y wine64 wine32 winbind || apt-get install -y wine winbind
+  apt-get install -y wine64 wine32 winbind xvfb || apt-get install -y wine winbind xvfb
 fi
 
 echo "==> .NET 8 SDK (computer-use-host win-x64 cross-publish)"
 RUNNER_USER="${SUDO_USER:-${USER}}"
 RUNNER_HOME="$(getent passwd "${RUNNER_USER}" | cut -d: -f6)"
 install_dotnet_microsoft "${RUNNER_HOME}"
+ln -sf "${RUNNER_HOME}/.dotnet/dotnet" /usr/local/bin/dotnet 2>/dev/null || true
+if [[ -x "${RUNNER_HOME}/.bun/bin/bun" ]]; then
+  ln -sf "${RUNNER_HOME}/.bun/bin/bun" /usr/local/bin/bun
+fi
 
 echo "==> Bun (CLI release cross-compile)"
 if command -v bun >/dev/null 2>&1; then

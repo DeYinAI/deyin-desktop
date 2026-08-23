@@ -59,17 +59,22 @@ jobs:
       - name: Bootstrap runner toolchain
         run: |
           export PATH="${HOME}/.dotnet:${HOME}/.bun/bin:${PATH}"
-          if ! command -v wine >/dev/null 2>&1; then
+          if ! command -v wine >/dev/null 2>&1 || ! dpkg -s wine32 >/dev/null 2>&1 || ! command -v xvfb-run >/dev/null 2>&1; then
             sudo bash scripts/ci/setup-dell-runner.sh
           fi
           if ! command -v dotnet >/dev/null 2>&1 || ! command -v bun >/dev/null 2>&1; then
             bash scripts/ci/setup-dell-runner.sh
+          fi
+          if [[ ! -d "${HOME}/.wine" ]]; then
+            xvfb-run -a wineboot --init || true
           fi
           for dir in "${HOME}/.dotnet" "${HOME}/.bun/bin"; do
             if [[ -d "$dir" ]]; then
               echo "$dir" >> "$GITHUB_PATH"
             fi
           done
+          sudo ln -sf "${HOME}/.dotnet/dotnet" /usr/local/bin/dotnet 2>/dev/null || true
+          sudo ln -sf "${HOME}/.bun/bin/bun" /usr/local/bin/bun 2>/dev/null || true
 
       - name: Check Dell runner prerequisites
         run: bash scripts/ci/check-dell-runner.sh

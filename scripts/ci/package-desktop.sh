@@ -27,9 +27,15 @@ package_win() {
     echo "error: wine required for Windows NSIS on Linux" >&2
     exit 1
   fi
+  if ! command -v xvfb-run >/dev/null 2>&1; then
+    echo "error: xvfb-run required for headless Wine (rcedit / NSIS on CI)" >&2
+    exit 1
+  fi
+  export PATH="${HOME}/.dotnet:${HOME}/.bun/bin:${PATH}"
   bash scripts/ci/publish-computer-use-host-win.sh
-  echo "==> Packaging Windows (NSIS exe)"
-  pnpm --filter @deyin/desktop exec electron-builder \
+  echo "==> Packaging Windows (NSIS exe) under xvfb-run"
+  # electron-builder invokes Wine for rcedit on Linux; dell-runner has no display.
+  xvfb-run -a pnpm --filter @deyin/desktop exec electron-builder \
     --win \
     --x64 \
     --publish never \
