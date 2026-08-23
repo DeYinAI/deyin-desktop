@@ -9,14 +9,24 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export PATH="${HOME}/.dotnet:${PATH}"
 
-install_dotnet_user() {
-  if command -v dotnet >/dev/null 2>&1; then
-    echo "    dotnet already installed: $(dotnet --version)"
+install_dotnet_microsoft() {
+  local user_home="${1:-${HOME}}"
+  local install_dir="${user_home}/.dotnet"
+  if [[ -f "${install_dir}/dotnet" ]] && [[ -d "${install_dir}/sdk"/*/Sdks/Microsoft.NET.Sdk.WindowsDesktop ]]; then
+    echo "    Microsoft .NET SDK ok: $("${install_dir}/dotnet" --version)"
     return
   fi
-  echo "    Installing .NET 8 SDK to \${HOME}/.dotnet"
+  echo "    Installing Microsoft .NET 8 SDK to ${install_dir} (Ubuntu apt dotnet lacks Windows cross-targets)"
   curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
-  bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "${HOME}/.dotnet"
+  bash /tmp/dotnet-install.sh --channel 8.0 --install-dir "${install_dir}"
+  if [[ "$(id -u)" -eq 0 ]] && [[ -n "${SUDO_USER:-}" ]]; then
+    chown -R "${SUDO_USER}:${SUDO_USER}" "${install_dir}"
+  fi
+  ln -sf "${install_dir}/dotnet" /usr/local/bin/dotnet 2>/dev/null || true
+}
+
+install_dotnet_user() {
+  install_dotnet_microsoft "${HOME}"
   grep -q '.dotnet' "${HOME}/.bashrc" 2>/dev/null || echo 'export PATH="${HOME}/.dotnet:${PATH}"' >> "${HOME}/.bashrc"
 }
 
@@ -44,11 +54,9 @@ else
 fi
 
 echo "==> .NET 8 SDK (computer-use-host win-x64 cross-publish)"
-if command -v dotnet >/dev/null 2>&1; then
-  echo "    dotnet already installed: $(dotnet --version)"
-else
-  apt-get install -y dotnet-sdk-8.0 || install_dotnet_user
-fi
+RUNNER_USER="${SUDO_USER:-${USER}}"
+RUNNER_HOME="$(getent passwd "${RUNNER_USER}" | cut -d: -f6)"
+install_dotnet_microsoft "${RUNNER_HOME}"
 
 echo "==> Bun (CLI release cross-compile)"
 if command -v bun >/dev/null 2>&1; then
