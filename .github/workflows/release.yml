@@ -5,13 +5,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
-# Assets are attached straight to the draft GitHub Release instead of passing
-# through Actions artifacts: artifact storage is quota-billed (and currently
-# exhausted on this account), while release assets are not metered.
+# Assets attach directly to draft GitHub Releases (no Actions artifacts).
 
 jobs:
-  # Create the draft release up front so the build jobs can attach their
-  # assets concurrently without racing to create it.
   create-release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, Linux, X64]
@@ -24,13 +20,6 @@ jobs:
           draft: true
           generate_release_notes: true
 
-      # Mirror draft in the public releases repo (electron-updater feed). Needs a PAT
-      # with contents:write on DeYinAI/deyin-releases stored as RELEASES_TOKEN.
-      # Non-fatal: a missing/invalid token must not block the installer builds
-      # (the source-repo draft above is still created either way).
-      # No generate_release_notes here: deyin-releases holds no commits, so
-      # GitHub cannot resolve a target_commitish to diff against and the
-      # generate-notes call 400s. Release notes live on the source-repo draft.
       - name: Create draft in public releases repo
         continue-on-error: true
         uses: softprops/action-gh-release@v2
@@ -42,32 +31,17 @@ jobs:
           body: Installers and update manifests for Deyin ${{ github.ref_name }}.
 
   build:
-    # Tag pushes attach installers to the draft; workflow_dispatch runs are
-    # smoke builds (create-release is skipped, and so is the upload step).
     needs: create-release
-    if: ${{ !failure() && !cancelled() }}
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    runs-on: [self-hosted, Linux, X64]
     permissions:
       contents: write
-    strategy:
-      # One OS failing must not cancel the others.
-      fail-fast: false
-      matrix:
-        # Self-hosted runners: win-runner (dev machine) + dell-runner (Dell box);
-        # hosted runners are blocked by the Actions budget. To restore the macOS
-        # .dmg leg once a Mac runner or hosted budget exists, add:
-        #   - { name: macos, labels: macos-latest }
-        include:
-          # ebcache: winCodeSign's archive contains symlinks the runner's
-          # NETWORK SERVICE account cannot create, so the cache is pre-seeded
-          # (symlinks materialized) at C:\runner\ebcache on win-runner.
-          - { name: windows, labels: [self-hosted, Windows, X64], ebcache: 'C:\runner\ebcache' }
-          - { name: linux, labels: [self-hosted, Linux, X64] }
-    runs-on: ${{ matrix.labels }}
     steps:
       - uses: actions/checkout@v4
 
-      # pnpm version comes from the "packageManager" field in package.json;
-      # specifying it here too makes action-setup fail with a version conflict.
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
@@ -75,29 +49,33 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      # No Python/node-gyp needed: electron-builder skips native rebuilds
-      # (npmRebuild: false) and node-pty ships N-API prebuilds for win32;
-      # the Linux leg compiles node-pty with the system toolchain.
+      - name: Ensure dotnet on PATH
+        run: |
+          if [[ -x "$HOME/.dotnet/dotnet" ]]; then
+            echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          fi
+
+      - name: Check Dell runner prerequisites
+        run: bash scripts/ci/check-dell-runner.sh
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
       - name: Build shared packages
-        run: pnpm --filter "./packages/**" build
+        run: pnpm --filter "./packages/**" --filter "!@deyin/native-core" build
 
-      # build/ is gitignored, so regenerate the app icons (icon.png + icon.ico)
-      # from the branding SVG before packaging. Uses root devDeps sharp + png-to-ico.
-      - name: Generate app icons
-        run: pnpm --filter @deyin/branding make-icons
+      - name: Build native-core (optional)
+        run: |
+          if command -v cargo >/dev/null 2>&1; then
+            pnpm --filter @deyin/native-core build
+          else
+            echo "cargo not found; TS fallbacks will be used"
+          fi
 
-      # Signing (fill in secrets to enable):
-      #   macOS:   CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
-      #   Windows: WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD
-      - name: Package installers
-        run: pnpm --filter @deyin/desktop package
+      # Linux + Windows installers from dell-runner (Wine + dotnet cross-publish).
+      - name: Package Linux and Windows installers
+        run: bash scripts/ci/package-desktop.sh all
         env:
-          # Empty on legs without a pre-seeded cache; electron-builder then
-          # uses its default cache directory.
-          ELECTRON_BUILDER_CACHE: ${{ matrix.ebcache }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -119,10 +97,6 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/*.yml
 
-      # Mirror the desktop artifacts (incl. latest*.yml manifests, which the
-      # updater resolves first) to the public feed. Publishing this draft is
-      # what ships the update to clients. Non-fatal: keep the source-repo draft
-      # populated even if the mirror token is missing/invalid.
       - name: Attach installers to public releases repo
         if: startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true
@@ -140,12 +114,12 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/*.yml
 
-  # CLI single-file executables: bun cross-compiles every target from one runner
-  # (no native modules in the CLI, so cross-compilation is safe). Asset names match
-  # what `deyin upgrade` and scripts/install.sh expect: deyin-<os>-<arch>[.exe].
   cli:
     needs: create-release
-    if: ${{ !failure() && !cancelled() }}
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     permissions:
       contents: write
     runs-on: [self-hosted, Linux, X64]
@@ -165,7 +139,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build shared packages
-        run: pnpm --filter "./packages/**" build
+        run: pnpm --filter "./packages/**" --filter "!@deyin/native-core" build
 
       - name: Compile CLI binaries
         working-directory: apps/cli
@@ -186,4 +160,3 @@ jobs:
         with:
           draft: true
           files: apps/cli/dist-bin/*
-
