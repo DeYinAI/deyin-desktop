@@ -1,6 +1,7 @@
 # Open-source v1 launch checklist
 
-Use this before tagging **`v1.0.0`** and announcing Deyin as public OSS.
+**v1.0.0 is the first public release.** Pre-v1 GitHub releases were deleted from
+`DeYinAI/deyin-desktop` and `DeYinAI/deyin-releases`.
 
 ## Repository & legal
 
@@ -9,72 +10,42 @@ Use this before tagging **`v1.0.0`** and announcing Deyin as public OSS.
 - [x] [TRADEMARK.md](../TRADEMARK.md)
 - [x] [SECURITY.md](../SECURITY.md)
 - [x] [CONTRIBUTING.md](../CONTRIBUTING.md)
+- [x] Docs index [docs/README.md](./README.md)
 - [ ] Create `@DeYinAI/core` GitHub team (CODEOWNERS approvers)
 
-## CI/CD (automated)
+## CI/CD
 
-- [x] `verify` on dell-runner ([ci.yml](../.github/workflows/ci.yml))
-- [x] CodeQL + dependency-review
-- [x] Openference AI review (same-repo PRs; [docs/CI.md](./CI.md))
-- [x] Dependabot (npm, actions, cargo)
-- [x] Release builds Linux + Windows on **dell-runner only** ([release.yml](../.github/workflows/release.yml))
+- [x] `verify`, CodeQL, Dependabot, AI PR review
+- [x] Release builds on dell-runner (Linux + Windows)
+- [x] Pre-v1 GitHub releases cleaned
 - [ ] Enable **Dependency graph** ([settings](https://github.com/DeYinAI/deyin-desktop/settings/security_analysis))
-- [ ] Branch protection on `main`: require `verify`, `codeql`, Code Owners
+- [ ] Branch protection on `main`
 
-## Runner setup (dell-runner host)
+## Runner (dell-runner)
 
 ```bash
-sudo bash scripts/ci/setup-dell-runner.sh   # Wine + .NET 8 + Bun
+sudo bash scripts/ci/setup-dell-runner.sh
 bash scripts/ci/check-dell-runner.sh
 ```
 
-- [x] Wine installed (NSIS cross-build)
-- [x] .NET 8 SDK (computer-use-host win-x64 publish)
-- [ ] Remove deprecated **win-runner** from GitHub Actions runners
-
-## Secrets
-
-| Secret | Required for |
-|--------|----------------|
-| `OPENFERENCE_API_KEY` | AI PR review |
-| `RELEASES_TOKEN` | Mirror + publish `DeYinAI/deyin-releases` |
-| `WIN_CSC_*`, `CSC_*`, `APPLE_*` | Signed installers (optional v1) |
+- [ ] Remove deprecated **win-runner**
+- [x] Wine + .NET 8 for cross-platform packaging
 
 ## External repos
 
-- [ ] [`DeYinAI/deyin-releases`](https://github.com/DeYinAI/deyin-releases) — public, empty OK; CI publishes installers
-- [ ] [`DeYinAI/registry`](https://github.com/DeYinAI/registry) — public plugin catalog for in-app marketplace
+- [x] `DeYinAI/deyin-releases` — empty, ready for v1.0.0
+- [ ] `DeYinAI/registry` — public plugin catalog
 
-## Version & release
+## Ship v1.0.0
 
-- [x] Desktop + root version **1.0.0**
-- [ ] `bash scripts/verify.sh` green on `main`
-- [ ] Tag `v1.0.0` → verify Release workflow succeeds
-- [ ] Confirm `DeYinAI/deyin-releases` release is **published** (not draft) — required for auto-update
-- [ ] Smoke-test installer on Windows + Linux
+- [x] Version set to **1.0.0**
+- [ ] CI green on `main`
+- [ ] `git tag v1.0.0 && git push origin v1.0.0`
+- [ ] Confirm [deyin-releases](https://github.com/DeYinAI/deyin-releases) has **published** v1.0.0 with installers
+- [ ] Smoke-test Windows + Linux installers
+- [ ] Write GitHub Release notes (first public release)
 
-## Client updates (user-facing)
+## Post-launch
 
-- [x] `electron-updater` → `DeYinAI/deyin-releases`
-- [x] In-app `UpdateBanner` on new version
-- [x] Settings → **Check for updates**
-- [x] Periodic re-check every 24h
-- [ ] Publish first `v1.0.0` release so updater has a target
-
-## Docs accuracy
-
-- [x] [PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md) — GitHub plugins, not npm kernel packages
-- [x] [CI.md](./CI.md) — PR/fork/Dependabot behavior
-- [ ] [CHANGELOG.md](./CHANGELOG.md) — v1.0.0 section
-- [ ] README points to correct update feed (GitHub releases)
-
-## npm scope (explicit non-goals for v1)
-
-- [ ] **Do not** claim `npm install -g @deyin/cli` until publish job exists
-- [ ] Kernel `@deyin/*` packages stay monorepo-private
-
-## Announce
-
-- [ ] GitHub Release notes for v1.0.0
-- [ ] Update homepage/docs.deyin.ai if needed
-- [ ] Invite first external contributors (CONTRIBUTING + PR template ready)
+- [ ] Branch protection + `@DeYinAI/core` reviews enforced
+- [ ] Announce / update docs.deyin.ai

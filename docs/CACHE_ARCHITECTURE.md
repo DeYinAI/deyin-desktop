@@ -133,7 +133,7 @@ DeepSeek reports `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`. These m
 - Compaction frequency: **≤1 per 50 turns**
 - Token cost reduction vs no-cache baseline: **30–50%** (provider-dependent)
 
-See [CACHE_PERFORMANCE_REPORT.md](./CACHE_PERFORMANCE_REPORT.md) for validation results.
+See [archive/CACHE_PERFORMANCE_REPORT.md](./archive/CACHE_PERFORMANCE_REPORT.md) for validation results.
 
 ## Tool schema canonicalization examples
 
