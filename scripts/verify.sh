@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "==> Building shared packages (needed for app type resolution)"
-pnpm --filter "./packages/**" build
+pnpm --filter "./packages/**" --filter "!@deyin/native-core" build
 
 echo "==> Building native-core (Rust; skipped gracefully if cargo is missing — TS fallbacks cover it)"
 if command -v cargo >/dev/null 2>&1; then
