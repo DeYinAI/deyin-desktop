@@ -96,7 +96,7 @@ without adopting its operator/lifestyle scope:
 - Manifest at `.deyin-plugin/plugin.json` (Codex `.codex-plugin/plugin.json` and Cursor `.cursor-plugin/plugin.json` accepted);
   components are auto-discovered from `skills/`, `commands/`, `agents/`, `hooks/hooks.json`,
   `mcp.json`, `.mcp.json`, or a root `SKILL.md` for single-skill plugins.
-- **Bundled first-party plugins** ship with the desktop app (browser, computer-use, chrome, visualize, security)
+- **Bundled first-party plugins** ship with the desktop app (browser, computer-use, visualize, security)
   and materialize to `<userData>/plugins/bundled-*` on startup. Marketplace cards show `interface` metadata
   (display name, category, default prompts, brand color).
 - Installed from GitHub (`owner/repo`, `owner/repo@ref`, URLs) into the user plugin library;
@@ -106,7 +106,7 @@ without adopting its operator/lifestyle scope:
 ## Desktop automation (bundled plugins)
 - **Browser** (`browser_*` tools): in-app workspace webview — localhost, snapshots with element refs, tabs, fill/hover/drag.
 - **Computer use** (`computer_*` tools, Windows): Native C# host (`deyin-computer-use-host.exe`) over named pipe with UIA tree inspection, screenshots, and SendInput automation. Tools: `computer_launch_app`, `computer_list_windows`, `computer_click`, `computer_type`, `computer_set_value`. Default-deny app allowlist in Settings → Computer Use; Esc cancels in-flight actions; screenshot retention configurable. Linux and macOS hosts deferred.
-- **Chrome** (`chrome_*` tools, Windows): consent dialog + persisted consent; attach-or-launch with Default profile; origin approval on first navigation; expanded tool parity (fill, hover, scroll, tabs, screenshot).
+- **Chrome** (`chrome_*` tools, Windows): planned; use the **browser** bundled plugin for in-app web automation today.
 - **Visualize** (`visualize_write`): path-safe HTML fragments embedded in chat via `::deyin-inline-vis{}` with tightened CSP.
 - **Security**: workspace-bounded MCP scans (semgrep when available, regex fallback, npm audit); findings panel in workspace Security tab; diff scan from Git tab; triage/threat-model skills.
 

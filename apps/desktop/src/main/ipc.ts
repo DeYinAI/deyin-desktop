@@ -183,6 +183,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   // download stays gated by settings.autoUpdate / explicit Download click.
   // Deferred past first paint so the network round-trip never blocks startup.
   setTimeout(() => void updates.check(), 10_000);
+  // Re-check every 24h for long-running sessions.
+  setInterval(() => void updates.check(), 24 * 60 * 60 * 1000);
 
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");

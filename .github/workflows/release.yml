@@ -114,6 +114,14 @@ jobs:
             apps/desktop/release/*.blockmap
             apps/desktop/release/*.yml
 
+      # electron-updater only sees published releases on the public feed.
+      - name: Publish public update feed
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo DeYinAI/deyin-releases --draft=false
+
   cli:
     needs: create-release
     if: >-

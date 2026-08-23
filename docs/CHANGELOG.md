@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.0.0 — 2026-08-23 (open-source v1)
+
+### Open source launch
+
+- Public release under PolyForm Noncommercial License 1.0.0
+- CI/CD: verify, CodeQL, Dependabot, Openference AI PR review
+- Dell Linux runner builds Linux + Windows installers (no Windows runner required)
+- Plugin/MCP distribution documented ([PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md))
+
+### Desktop updates
+
+- Auto-update feed: public `DeYinAI/deyin-releases` (published releases required for updater)
+- In-app update banner + Settings → **Check for updates**
+- Periodic update check every 24 hours
+
+### Distribution (v1)
+
+- **CLI:** GitHub Release binaries + `install.sh` (not npm)
+- **Content plugins:** GitHub install + `DeYinAI/registry` catalog
+- **MCP:** bundled catalog; stdio servers via `npx` at runtime
+- **Kernel packages:** monorepo-only (not published to npm)
+
 ## 2.0.0 — 2026-08-02
 
 ### Major: advanced agent architecture
