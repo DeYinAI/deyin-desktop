@@ -176,7 +176,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     isAutoUpdateEnabled: () => settings.get().autoUpdate,
   });
   ipcMain.handle(CH.updatesGetState, () => updates.getState());
-  ipcMain.handle(CH.updatesCheck, () => updates.check());
+  ipcMain.handle(CH.updatesCheck, (_e, opts?: { userInitiated?: boolean }) => updates.check(opts));
   ipcMain.handle(CH.updatesDownload, () => updates.download());
   ipcMain.on(CH.updatesInstall, () => updates.install());
   // Always poll on launch so users with auto-update off still see the banner;

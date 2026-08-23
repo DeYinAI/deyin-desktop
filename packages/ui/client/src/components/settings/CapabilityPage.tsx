@@ -190,7 +190,7 @@ export function CapabilityPage({
                       value={subagentModels?.[item.name] ?? ""}
                       onChange={(e) => onSetSubagentModel(item.name, e.target.value || undefined)}
                     >
-                      <option value="">{item.effectiveModel ? `Auto · ${item.effectiveModel}` : "Inherit main model"}</option>
+                      <option value="">Inherit main model</option>
                       {options.map((o) => (
                         <option key={o.value} value={o.value}>
                           {o.label}

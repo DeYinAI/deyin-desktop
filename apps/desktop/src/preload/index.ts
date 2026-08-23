@@ -272,7 +272,7 @@ agent: {
   },
   updates: {
     getState: () => ipcRenderer.invoke(CH.updatesGetState),
-    check: () => ipcRenderer.invoke(CH.updatesCheck),
+    check: (opts?: { userInitiated?: boolean }) => ipcRenderer.invoke(CH.updatesCheck, opts),
     download: () => ipcRenderer.invoke(CH.updatesDownload),
     install: () => ipcRenderer.send(CH.updatesInstall),
     onState: (cb) => {

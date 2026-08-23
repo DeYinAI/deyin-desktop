@@ -17,9 +17,9 @@ test("resolveSubagentModel inherits parent model and provider by default", () =>
   assert.deepEqual(r, { model: "parent-model", providerId: "openference" });
 });
 
-test("resolveSubagentModel prefers frontmatter model but keeps the parent provider", () => {
+test("resolveSubagentModel ignores frontmatter model when inheriting from parent", () => {
   const r = resolveSubagentModel({ model: "deepseek-pro" }, PARENT);
-  assert.deepEqual(r, { model: "deepseek-pro", providerId: "openference" });
+  assert.deepEqual(r, { model: "parent-model", providerId: "openference" });
 });
 
 test("resolveSubagentModel splits providerId::modelId overrides and routes the provider", () => {

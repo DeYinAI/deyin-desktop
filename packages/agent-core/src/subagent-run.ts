@@ -148,18 +148,18 @@ export interface ResolvedSubagentModel {
  * frontmatter `model:` keeps the parent's provider.
  */
 export function resolveSubagentModel(
-  def: Pick<SubagentDefinition, "model">,
+  _def: Pick<SubagentDefinition, "model">,
   parent: { model: string; providerId: string },
   modelOverride?: string,
 ): ResolvedSubagentModel {
-  let model = def.model ?? parent.model;
-  let providerId = parent.providerId;
   if (modelOverride) {
     const sep = modelOverride.indexOf("::");
-    providerId = sep >= 0 ? modelOverride.slice(0, sep) : "openference";
-    model = sep >= 0 ? modelOverride.slice(sep + 2) : modelOverride;
+    const providerId = sep >= 0 ? modelOverride.slice(0, sep) : "openference";
+    const model = sep >= 0 ? modelOverride.slice(sep + 2) : modelOverride;
+    return { model, providerId };
   }
-  return { model, providerId };
+  // Inherit uses the parent run's composer model, not the subagent frontmatter default.
+  return { model: parent.model, providerId: parent.providerId };
 }
 
 /**

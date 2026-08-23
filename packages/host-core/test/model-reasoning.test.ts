@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  formatStoredModelRef,
   getModelReasoningMode,
   modelEffortKey,
+  parseStoredModelRef,
   resolveModelReasoning,
 } from "../src/model-reasoning.js";
 
@@ -31,4 +33,18 @@ test("getModelReasoningMode ignores invalid stored values", () => {
     thinking: true,
   };
   assert.equal(getModelReasoningMode(settings, "openai", "gpt-4.1"), undefined);
+});
+
+test("parseStoredModelRef splits provider and model ids", () => {
+  assert.deepEqual(parseStoredModelRef("openference::DeepSeek-V4-Pro"), {
+    providerId: "openference",
+    modelId: "DeepSeek-V4-Pro",
+  });
+  assert.deepEqual(parseStoredModelRef("GLM-5.2"), { providerId: "openference", modelId: "GLM-5.2" });
+  assert.equal(parseStoredModelRef(""), null);
+});
+
+test("formatStoredModelRef round-trips parseStoredModelRef", () => {
+  const ref = formatStoredModelRef("ollama", "qwen");
+  assert.deepEqual(parseStoredModelRef(ref), { providerId: "ollama", modelId: "qwen" });
 });

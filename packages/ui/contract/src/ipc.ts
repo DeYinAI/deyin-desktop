@@ -558,7 +558,7 @@ export interface DeyinApi {
   updates: {
     getState(): Promise<UpdatesState>;
     /** Check GitHub Releases for a newer build; resolves to the latest state. */
-    check(): Promise<UpdatesState>;
+    check(opts?: { userInitiated?: boolean }): Promise<UpdatesState>;
     /** Download the pending update (only meaningful while status is "available"). */
     download(): Promise<UpdatesState>;
     /** Quit and install the downloaded update. */

@@ -642,12 +642,6 @@ export class DesktopAgentHost {
       registry.register(
         createMcpAuthenticateTool(mcpAuth, (target) => emitMcpAuthNeeded(target)),
       );
-      for (const def of mcpDefs) {
-        const target = mcpAuth.oauthTargetFor(def);
-        if (target && !mcpAuth.isAuthenticated(target.moduleId)) {
-          emitMcpAuthNeeded(target);
-        }
-      }
     }
 
     // OAuth-backed MCP modules use the stored native-OAuth tokens.
@@ -731,7 +725,7 @@ export class DesktopAgentHost {
          const def = mcpDefs.find((d) => d.name === serverName);
          const target = def && mcpAuth ? mcpAuth.oauthTargetFor(def) : null;
          if (target && isMcpUnauthorized(err)) {
-           emitMcpAuthNeeded(target);
+           console.warn(`[deyin] MCP server "${target.displayName}" skipped — not authenticated.`);
            return;
          }
          console.warn(`[deyin] MCP server "${serverName}" failed to connect:`, err);

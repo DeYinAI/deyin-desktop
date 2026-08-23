@@ -177,7 +177,7 @@ export function ModelRolesPage(props: Props) {
                       label={`Model for ${item.name}`}
                       value={props.subagentModels[item.name] ?? ""}
                       options={options}
-                      placeholder={item.effectiveModel ? `Auto · ${item.effectiveModel}` : "Inherit main model"}
+                      placeholder="Inherit main model"
                       onChange={(value) => props.onSetSubagentModel(item.name, value)}
                     />
                   }

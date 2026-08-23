@@ -20,6 +20,31 @@ export function parseModelEffortKey(key: string): { providerId: string; modelId:
   return { providerId: key.slice(0, sep), modelId: key.slice(sep + 2) };
 }
 
+export interface StoredModelSelection {
+  providerId: string;
+  modelId: string;
+}
+
+/** Parse a persisted `"providerId::modelId"` value (bare ids use `fallbackProvider`). */
+export function parseStoredModelRef(
+  ref: string | null | undefined,
+  fallbackProvider = "openference",
+): StoredModelSelection | null {
+  if (typeof ref !== "string") return null;
+  const trimmed = ref.trim();
+  if (!trimmed) return null;
+  const sep = trimmed.indexOf("::");
+  if (sep < 0) return { providerId: fallbackProvider, modelId: trimmed };
+  const providerId = trimmed.slice(0, sep).trim();
+  const modelId = trimmed.slice(sep + 2).trim();
+  if (!modelId) return null;
+  return { providerId: providerId || fallbackProvider, modelId };
+}
+
+export function formatStoredModelRef(providerId: string, modelId: string): string {
+  return `${providerId}::${modelId}`;
+}
+
 export function isModelReasoningMode(value: unknown): value is ModelReasoningMode {
   return value === "off" || value === "low" || value === "medium" || value === "high";
 }
