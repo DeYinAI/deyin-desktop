@@ -14,17 +14,22 @@
     "build": "pnpm -r --filter \"./packages/**\" build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
+    "lint": "eslint packages/agent-core packages/host-core apps/desktop apps/web apps/cli scripts/ci",
     "oauth:dev": "pnpm --filter @deyin/oauth-provider dev",
     "desktop:dev": "pnpm --filter @deyin/desktop dev",
     "web:dev": "pnpm --filter @deyin/web dev",
     "clean": "pnpm -r exec rm -rf dist out node_modules/.cache"
   },
   "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
     "png-to-ico": "^3.0.2",
     "png2icons": "^2.0.1",
     "sharp": "^0.35.3",
-    "typescript": "^5.6.3"
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.18.2",
+    "globals": "^15.14.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

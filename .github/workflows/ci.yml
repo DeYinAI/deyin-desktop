@@ -27,3 +27,15 @@ jobs:
 
       - name: Verify (build + typecheck + test + app builds)
         run: bash scripts/verify.sh
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
