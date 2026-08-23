@@ -10,26 +10,31 @@ const crateDir = join(__dirname, "..", "..", "..", "native", "deyin-native");
 const pkgDir = join(__dirname, "..");
 const debug = process.argv.includes("--debug");
 
-const args = debug ? [] : ["--release"];
-// spawnSync with an explicit shell can fail in sandboxed environments; use
-// spawnSync on the cargo binary directly (no shell involved).
 const { spawnSync } = require("node:child_process");
 const cargo = process.env.CARGO || "cargo";
-// rustup shims resolve through PATH; pass the parent PATH explicitly since
-// sandboxed spawns may not inherit it.
+const pathEnv = `${join(require("node:os").homedir(), ".cargo", "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`;
+const cargoEnv = {
+  ...process.env,
+  PATH: pathEnv,
+  RUSTFLAGS: [
+    process.env.RUSTFLAGS,
+    `--remap-path-prefix=${require("node:os").homedir()}=/build`,
+  ]
+    .filter(Boolean)
+    .join(" "),
+};
+
+const cargoProbe = spawnSync(cargo, ["--version"], { encoding: "utf8", env: cargoEnv });
+if (cargoProbe.error?.code === "ENOENT") {
+  console.log("cargo not found; skipping native-core build (TS fallbacks will be used)");
+  process.exit(0);
+}
+
+const args = debug ? [] : ["--release"];
 const res = spawnSync(cargo, ["build", ...args], {
   cwd: crateDir,
   stdio: "inherit",
-  env: {
-    ...process.env,
-    PATH: `${join(require("node:os").homedir(), ".cargo", "bin")}:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`,
-    RUSTFLAGS: [
-      process.env.RUSTFLAGS,
-      `--remap-path-prefix=${require("node:os").homedir()}=/build`,
-    ]
-      .filter(Boolean)
-      .join(" "),
-  },
+  env: cargoEnv,
 });
 if (res.error || res.status !== 0) {
   console.error(`cargo build failed: status=${res.status} error=${res.error}`);
