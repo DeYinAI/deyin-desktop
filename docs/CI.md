@@ -103,6 +103,8 @@ bash scripts/ci/check-dell-runner.sh        # verify
 
 See [RELEASE.md](./RELEASE.md) for signing secrets and version bump process.
 
+See [RUNNERS.md](./RUNNERS.md) for adding more self-hosted Linux runners.
+
 ## Local development
 
 Before opening a PR:
