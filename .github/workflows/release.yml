@@ -55,11 +55,13 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Ensure dotnet on PATH
+      - name: Ensure runner toolchain on PATH
         run: |
-          if [[ -x "$HOME/.dotnet/dotnet" ]]; then
-            echo "$HOME/.dotnet" >> "$GITHUB_PATH"
-          fi
+          for dir in "${HOME}/.dotnet" "${HOME}/.bun/bin"; do
+            if [[ -d "$dir" ]]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            fi
+          done
 
       - name: Check Dell runner prerequisites
         run: bash scripts/ci/check-dell-runner.sh
