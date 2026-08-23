@@ -6,10 +6,17 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     # Self-hosted (dell-runner): hosted runners are blocked by the Actions budget.
+    # Dependabot PRs skip verify — they were hogging the single runner for hours.
+    if: github.actor != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
