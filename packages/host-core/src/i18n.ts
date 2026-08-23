@@ -128,7 +128,13 @@ const en = {
   "general.language": "Language",
   "general.languageDesc": "Language used across the interface.",
   "general.autoUpdate": "Automatic updates",
-  "general.autoUpdateDesc": "Download new versions of Deyin in the background. You confirm before restarting to install.",
+  "general.autoUpdateDesc": "Download new versions in the background from GitHub Releases. You choose when to restart; quitting after a download also applies the update.",
+  "general.checkForUpdates": "Check for updates",
+  "general.checkForUpdatesDesc": "Poll the public release feed (DeYinAI/deyin-releases). An in-app banner appears when a newer version is available.",
+  "general.checkForUpdatesButton": "Check now",
+  "general.checkForUpdatesChecking": "Checking…",
+  "general.checkForUpdatesUpToDate": "You're on the latest version ({version}).",
+  "general.checkForUpdatesError": "Could not check: {message}",
   "general.agentMode": "Agent mode",
   "general.agentModeDesc": "Let Deyin use tools (files, terminal, browser, MCP). Turn off for plain chat.",
   "general.automationsCatchUp": "Catch up missed automations",
@@ -151,6 +157,7 @@ const en = {
   "update.later": "Later",
   "update.restart": "Restart to update",
   "update.dismiss": "Dismiss",
+  "update.upToDate": "You're up to date ({version})",
 
   // Appearance page
   "appearance.title": "Appearance",

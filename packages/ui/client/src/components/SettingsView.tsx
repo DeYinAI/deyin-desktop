@@ -255,7 +255,7 @@ export function SettingsView(props: SettingsViewProps) {
         <Suspense fallback={<div className="settings-page" />}>
         {page === "general" && (
           <>
-            <GeneralPage settings={props.settings} version={props.version} onChange={props.onChangeSettings} />
+            <GeneralPage settings={props.settings} version={props.version} platform={props.platform} onChange={props.onChangeSettings} />
             <AppearancePage settings={props.settings} onChange={props.onChangeSettings} />
           </>
         )}

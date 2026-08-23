@@ -158,6 +158,7 @@ cd apps/cli
 bun scripts/compile.mjs bun-linux-x64 dist-bin/deyin-linux-x64
 ```
 
-CI cross-compiles macOS (x64/arm64), Linux (x64/arm64) and Windows (x64) from one runner
-and attaches them to the GitHub Release; `release.yml` also publishes `@deyin/cli` (and
-the workspace packages it depends on) to npm.
+CI cross-compiles macOS (x64/arm64), Linux (x64/arm64) and Windows (x64) from dell-runner
+and attaches binaries to GitHub Releases (`DeYinAI/deyin-desktop` + CLI assets). **npm publish
+is not part of v1** — install via [install.sh](../scripts/install.sh) or release binaries.
+See [PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md).
