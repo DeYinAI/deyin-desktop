@@ -14,7 +14,7 @@ require_cmd() {
 }
 
 # User-level dotnet install (setup-dell-runner.sh without sudo).
-export PATH="${HOME}/.dotnet:${PATH}"
+export PATH="${HOME}/.dotnet:${HOME}/.bun/bin:/usr/local/bin:${PATH}"
 
 echo "==> Dell runner prerequisites"
 require_cmd node
