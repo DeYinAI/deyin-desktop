@@ -23,6 +23,26 @@ require_cmd git
 require_cmd wine
 require_cmd dotnet
 require_cmd bun
+require_cmd xvfb-run
+
+if ! dpkg -s wine32 >/dev/null 2>&1; then
+  echo "MISSING  wine32 (i386) — run: sudo bash scripts/ci/setup-dell-runner.sh"
+  missing=1
+fi
+
+# Microsoft SDK (not Ubuntu apt dotnet) is required for net8.0-windows cross-publish.
+if ! dotnet --list-sdks 2>/dev/null | grep -q .; then
+  echo "MISSING  dotnet SDK — run: bash scripts/ci/setup-dell-runner.sh"
+  missing=1
+fi
+WINE_DESKTOP="$(find "${HOME}/.dotnet/sdk" -maxdepth 3 -type d -name Microsoft.NET.Sdk.WindowsDesktop 2>/dev/null | head -1 || true)"
+if [[ -z "$WINE_DESKTOP" ]]; then
+  WINE_DESKTOP="$(find /usr/lib/dotnet/sdk -maxdepth 3 -type d -name Microsoft.NET.Sdk.WindowsDesktop 2>/dev/null | head -1 || true)"
+fi
+if [[ -z "$WINE_DESKTOP" ]]; then
+  echo "MISSING  Microsoft.NET.Sdk.WindowsDesktop — install Microsoft dotnet to \${HOME}/.dotnet"
+  missing=1
+fi
 
 if [[ "$missing" -ne 0 ]]; then
   exit 1
