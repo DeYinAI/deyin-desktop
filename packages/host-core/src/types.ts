@@ -187,6 +187,10 @@ export interface Thread {
   events: ThreadEvent[];
   /** Composer mode this thread runs in; defaults to "agent". */
   mode?: ChatMode;
+  /** Model selected in the composer for this thread (defaults to app defaultModel). */
+  model?: string;
+  /** Provider for `model`; defaults to openference when omitted. */
+  providerId?: string;
   /** Mode before entering plan mode; used by ExitPlanMode. */
   previousMode?: ChatMode;
   /** Whether the user approved the latest plan via ExitPlanMode. */

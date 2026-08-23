@@ -5,7 +5,7 @@ import type { UpdatesState } from "@deyin/contract";
 
 export interface UpdateController {
   getState(): UpdatesState;
-  check(): Promise<UpdatesState>;
+  check(opts?: { userInitiated?: boolean }): Promise<UpdatesState>;
   download(): Promise<UpdatesState>;
   install(): void;
 }
@@ -20,6 +20,7 @@ export function createUpdateController(opts: {
   isAutoUpdateEnabled: () => boolean;
 }): UpdateController {
   let state: UpdatesState = { status: "idle", currentVersion: app.getVersion() };
+  let userInitiatedCheck = false;
 
   const setState = (patch: Partial<UpdatesState>): UpdatesState => {
     state = { ...state, ...patch };
@@ -67,10 +68,22 @@ export function createUpdateController(opts: {
   });
   autoUpdater.on("error", (err) => {
     console.error("[deyin updater]", err);
-    setState({ status: "error", error: err.message });
+    const isDownloadError =
+      state.status === "downloading" ||
+      (state.status === "available" && Boolean(state.availableVersion));
+    if (isDownloadError) {
+      setState({ status: "error", error: err.message });
+    } else if (userInitiatedCheck) {
+      setState({ status: "error", error: err.message, availableVersion: undefined });
+    } else {
+      // Background poll failed (e.g. no published release yet) — stay quiet in the UI.
+      setState({ status: "not-available", availableVersion: undefined, error: undefined });
+    }
+    userInitiatedCheck = false;
   });
 
-  const check = async (): Promise<UpdatesState> => {
+  const check = async (opts?: { userInitiated?: boolean }): Promise<UpdatesState> => {
+    userInitiatedCheck = opts?.userInitiated ?? false;
     try {
       await autoUpdater.checkForUpdates();
     } catch {

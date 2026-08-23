@@ -140,7 +140,7 @@ export class CapabilityService {
         source: subagent.source,
         path: subagent.path,
         model: override,
-        effectiveModel: override ?? subagent.model,
+        effectiveModel: override,
       });
     }
     for (const server of snap.mcpServers) {

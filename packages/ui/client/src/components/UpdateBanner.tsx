@@ -39,6 +39,8 @@ export function UpdateBanner() {
 
   const version = state.availableVersion ?? "";
   if (state.status === "available" && version && dismissedVersion === version) return null;
+  // Check failures are shown only in Settings → General; banner is for the download flow.
+  if (state.status === "error" && !state.availableVersion) return null;
   if (state.status === "error" && errorDismissed) return null;
 
   const message =

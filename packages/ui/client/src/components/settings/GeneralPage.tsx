@@ -32,7 +32,7 @@ export function GeneralPage({ settings, version, platform, onChange }: Props) {
     if (!isDesktop) return;
     setChecking(true);
     try {
-      const next = await window.deyin.updates.check();
+      const next = await window.deyin.updates.check({ userInitiated: true });
       setUpdateState(next);
     } finally {
       setChecking(false);

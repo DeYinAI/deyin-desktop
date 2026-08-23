@@ -3,8 +3,10 @@ import {
   DEFAULT_SETTINGS,
   buildLinkedThreadContext,
   dedupeContextRefs,
+  formatStoredModelRef,
   formatUserMessageWithContext,
   modelEffortKey,
+  parseStoredModelRef,
   resolveModelReasoning,
 } from "@deyin/host-core/shared";
 import type { ModelReasoningMode } from "@deyin/host-core/shared";
@@ -223,6 +225,9 @@ export function App() {
   settingsRef.current = settings;
   const composerModeRef = useRef(composerMode);
   composerModeRef.current = composerMode;
+  /** Latest composer model pick — updated synchronously so send() never uses a stale closure. */
+  const composerModelRef = useRef({ providerId: selectedProviderId, modelId: selectedModel });
+  composerModelRef.current = { providerId: selectedProviderId, modelId: selectedModel };
   const selectModeRef = useRef<(mode: ChatMode) => void>(() => undefined);
   const startAgentRunRef = useRef<(thread: Thread, text: string, mode: ChatMode) => void>(() => undefined);
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
@@ -363,6 +368,7 @@ export function App() {
         !disabledFor(savedProvider).has(savedModel) &&
         (savedProvider !== "openference" || list.some((m) => m.id === savedModel));
       if (savedUsable) {
+        composerModelRef.current = { providerId: savedProvider, modelId: savedModel };
         setSelectedProviderId(savedProvider);
         setSelectedModel(savedModel);
       } else {
@@ -370,7 +376,11 @@ export function App() {
         const primaryDisabled = disabledFor("openference");
         const enabled = list.filter((m) => !primaryDisabled.has(m.id));
         if (enabled[0]) {
-          setSelectedModel((cur) => (enabled.some((m) => m.id === cur) ? cur : enabled[0]!.id));
+          setSelectedModel((cur) => {
+            const nextId = enabled.some((m) => m.id === cur) ? cur : enabled[0]!.id;
+            composerModelRef.current = { providerId: "openference", modelId: nextId };
+            return nextId;
+          });
         }
       }
     })();
@@ -554,10 +564,24 @@ export function App() {
     };
   }, [livePlanStream]);
 
-  // Restore the thread's composer mode when switching tasks.
+  // Restore the thread's composer mode and model when switching tasks.
   useEffect(() => {
     const thread = projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId);
-    if (thread) setComposerMode(thread.mode ?? "agent");
+    if (!thread) return;
+    setComposerMode(thread.mode ?? "agent");
+    if (thread.model) {
+      const providerId = thread.providerId ?? "openference";
+      composerModelRef.current = { providerId, modelId: thread.model };
+      setSelectedProviderId(providerId);
+      setSelectedModel(thread.model);
+      return;
+    }
+    const fromDefault = parseStoredModelRef(settings?.defaultModel ?? null);
+    if (fromDefault) {
+      composerModelRef.current = fromDefault;
+      setSelectedProviderId(fromDefault.providerId);
+      setSelectedModel(fromDefault.modelId);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeThreadId]);
 
@@ -1038,6 +1062,29 @@ export function App() {
     );
   }, []);
 
+  /** Apply composer model selection to local state, settings default, and the active thread. */
+  const applyComposerModel = useCallback(
+    (providerId: string, modelId: string, persistDefault = true) => {
+      composerModelRef.current = { providerId, modelId };
+      setSelectedProviderId(providerId);
+      setSelectedModel(modelId);
+      if (persistDefault) patchSettings({ defaultModel: formatStoredModelRef(providerId, modelId) });
+      if (activeThreadId) updateThread(activeThreadId, { providerId, model: modelId });
+    },
+    [activeThreadId, patchSettings, updateThread],
+  );
+
+  const resolveThreadModel = useCallback(
+    (_thread: Thread | null | undefined): { providerId: string; modelId: string } => {
+      const live = composerModelRef.current;
+      if (live.modelId) return live;
+      const fromDefault = parseStoredModelRef(settings?.defaultModel ?? null);
+      if (fromDefault) return fromDefault;
+      return { providerId: selectedProviderId, modelId: selectedModel };
+    },
+    [selectedModel, selectedProviderId, settings?.defaultModel],
+  );
+
   const allThreadIds = useMemo(() => projects.flatMap((p) => p.threads.map((t) => t.id)), [projects]);
 
   /** Focus a thread, following it into its own project when that differs. */
@@ -1170,7 +1217,8 @@ export function App() {
     ) => {
       const attachments = meta?.attachments ?? [];
       const linkedThreadIds = meta?.linkedThreadIds ?? [];
-      const runModel = meta?.model ?? selectedModel;
+      const { providerId: runProviderId, modelId: threadModelId } = resolveThreadModel(thread);
+      const runModel = meta?.model ?? threadModelId;
       let agentPrompt = text;
       try {
         const refs = dedupeContextRefs(attachments.map((a) => ({ kind: a.kind, path: a.path })));
@@ -1189,12 +1237,15 @@ export function App() {
       ]);
       agentStateStore.startRun(thread.id, mode);
       if (isFirstMessage) void window.deyin.usage.record({ model: runModel, tokens: 0, newSession: true });
+      if (!thread.model || thread.providerId !== runProviderId) {
+        updateThread(thread.id, { model: runModel, providerId: runProviderId });
+      }
       window.deyin.agent.start({
         threadId: thread.id,
         prompt: agentPrompt,
-        providerId: selectedProviderId,
+        providerId: runProviderId,
         model: runModel,
-        ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, selectedProviderId, runModel),
+        ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, runProviderId, runModel),
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
         history: toChatMessages(thread.events),
@@ -1211,7 +1262,7 @@ export function App() {
         agentStateStore.dispatch({ threadId: thread.id, event: { type: "done", reason: "aborted", finalText: "" } });
       });
     },
-    [appendEvents, selectedModel, selectedProviderId, settings],
+    [appendEvents, resolveThreadModel, settings, updateThread],
   );
   startAgentRunRef.current = startAgentRun;
 
@@ -1366,7 +1417,12 @@ export function App() {
   /** First send before any task exists: create the thread instead of dropping
    *  the click — the composer must never silently no-op. */
   const ensureThread = useCallback((): Thread => {
-    const newThread: Thread = { ...emptyThread(), mode: composerMode };
+    const newThread: Thread = {
+      ...emptyThread(),
+      mode: composerMode,
+      model: selectedModel,
+      providerId: selectedProviderId,
+    };
     setProjects((cur) => {
       if (cur.length === 0) {
         return [{ id: newId("proj"), name: "Workspace", root: null, threads: [newThread] }];
@@ -1376,7 +1432,7 @@ export function App() {
     });
     setActiveThreadId(newThread.id);
     return newThread;
-  }, [activeProjectId, composerMode]);
+  }, [activeProjectId, composerMode, selectedModel, selectedProviderId]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -1406,10 +1462,12 @@ export function App() {
     }
 
     const thread = activeThread ?? ensureThread();
+    const { providerId: runProviderId, modelId: runModelId } = resolveThreadModel(thread);
+    updateThread(thread.id, { model: runModelId, providerId: runProviderId });
 
     // Route to the selected provider: primary uses the Openference OAuth token,
     // custom providers use their stored base URL + API key.
-    const provider = providers.find((p) => p.id === selectedProviderId);
+    const provider = providers.find((p) => p.id === runProviderId);
     let apiBaseUrl = boot.config.apiBaseUrl;
     let token: string | null = null;
     if (!provider || provider.kind === "primary") {
@@ -1442,12 +1500,12 @@ export function App() {
 
     // Models available for the selected provider, used for image + vision routing.
     const modelList =
-      selectedProviderId === "openference" ? models : (providers.find((p) => p.id === selectedProviderId)?.models ?? []);
+      runProviderId === "openference" ? models : (providers.find((p) => p.id === runProviderId)?.models ?? []);
     const imageModels = modelList.filter((m) => m.kind === "image").map((m) => m.id);
     // Chat models that draw: usable by generate_image and able to answer with a
     // picture directly, so they never count as "no image model available".
     const imageChatModels = modelList.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => m.id);
-    const isImageRun = modelList.find((m) => m.id === selectedModel)?.kind === "image";
+    const isImageRun = modelList.find((m) => m.id === runModelId)?.kind === "image";
 
     if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
       const provisional = deriveTitle(text);
@@ -1456,7 +1514,7 @@ export function App() {
       // Skip the LLM call when the provisional title is already short enough.
       const needsLlmTitle = provisional.endsWith("…") || provisional.split(/\s+/).length > 6;
       if (needsLlmTitle) {
-        const titleModel = isImageRun ? (modelList.find((m) => m.kind !== "image")?.id ?? selectedModel) : selectedModel;
+        const titleModel = isImageRun ? (modelList.find((m) => m.kind !== "image")?.id ?? runModelId) : runModelId;
         void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: titleModel, text })
           .then((generated) => {
             if (!generated) return;
@@ -1482,24 +1540,24 @@ export function App() {
       appendEvents(thread.id, [{ kind: "user", text }]);
       setInput("");
       setComposerImages([]);
-      setStreamText(`Generating image with ${selectedModel}…`);
+      setStreamText(`Generating image with ${runModelId}…`);
       try {
         const result = await window.deyin.images.generate({
           threadId: thread.id,
           prompt: text,
-          model: selectedModel,
-          providerId: selectedProviderId,
+          model: runModelId,
+          providerId: runProviderId,
         });
         const alt = text.slice(0, 120).replace(/"/g, "'");
         const body = result.images.map((img) => `::deyin-inline-image{file="${img.file}" alt="${alt}"}`).join("\n");
-        appendEvents(thread.id, [{ kind: "assistant", text: `${body}\n\n*${selectedModel}*` }]);
+        appendEvents(thread.id, [{ kind: "assistant", text: `${body}\n\n*${runModelId}*` }]);
       } catch (err) {
         appendEvents(thread.id, [
           { kind: "assistant", text: `Image generation failed: ${err instanceof Error ? err.message : String(err)}` },
         ]);
       } finally {
         setStreamText(null);
-        void window.deyin.usage.record({ model: selectedModel, tokens: 0, newSession: isFirstMessage });
+        void window.deyin.usage.record({ model: runModelId, tokens: 0, newSession: isFirstMessage });
       }
       return;
     }
@@ -1511,10 +1569,10 @@ export function App() {
     if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
       // Vision routing: images must land on a vision-capable model from the
       // user's plan (the provider model list); unknown capabilities pass through.
-      let runModel = selectedModel;
+      let runModel = runModelId;
       let visionNotice: string | undefined;
       if (images.length > 0) {
-        const route = resolveVisionModel(modelList, selectedModel);
+        const route = resolveVisionModel(modelList, runModelId);
         if (!route) {
           appendEvents(thread.id, [
             {
@@ -1573,9 +1631,9 @@ export function App() {
       for await (const delta of streamChat({
         apiBaseUrl,
         token: token ?? "",
-        model: selectedModel,
+        model: runModelId,
         messages: history,
-        ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, selectedProviderId, selectedModel),
+        ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, runProviderId, runModelId),
         apiFormat: provider?.apiFormat ?? "chat-completions",
         authHeader: provider?.authHeader,
         signal: abort.signal,
@@ -1602,9 +1660,9 @@ export function App() {
       setStreamText(null);
       // Real token usage from the provider's final stream frame. Providers that
       // report none record 0 tokens; message/session counts still apply.
-      void window.deyin.usage.record({ model: selectedModel, tokens: reportedTokens, newSession: isFirstMessage });
+      void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, selectedProviderId, selectedModel, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread]);
+  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread, resolveThreadModel]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
@@ -2062,15 +2120,8 @@ export function App() {
                   onSendNow={sendNow}
                   onClearQueue={clearQueue}
                   onStop={streamText !== null || runningThreadId !== null ? stopRun : undefined}
-                  onSelectModel={(id) => {
-                    setSelectedModel(id);
-                    patchSettings({ defaultModel: `${selectedProviderId}::${id}` });
-                  }}
-                  onSelectProviderModel={(providerId, modelId) => {
-                    setSelectedProviderId(providerId);
-                    setSelectedModel(modelId);
-                    patchSettings({ defaultModel: `${providerId}::${modelId}` });
-                  }}
+                  onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
+                  onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
                   onManageModels={() => {
                     setSettingsPage("models");
                     setView("settings");
