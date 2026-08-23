@@ -7,7 +7,7 @@ TARGET="${1:-all}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-CONFIG="apps/desktop/electron-builder.yml"
+CONFIG="electron-builder.yml"
 
 build_vite() {
   echo "==> electron-vite build"
