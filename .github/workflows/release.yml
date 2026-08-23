@@ -7,10 +7,15 @@ on:
 
 # Assets attach directly to draft GitHub Releases (no Actions artifacts).
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   create-release:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -37,6 +42,7 @@ jobs:
       !cancelled() &&
       (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 180
     permissions:
       contents: write
     steps:
@@ -131,6 +137,7 @@ jobs:
     permissions:
       contents: write
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
