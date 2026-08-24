@@ -114,7 +114,11 @@ async function callReviewer(
 
     let parsed: ReviewResult;
     try {
-      parsed = JSON.parse(content) as ReviewResult;
+      const raw = JSON.parse(content) as Partial<ReviewResult>;
+      parsed = {
+        findings: Array.isArray(raw.findings) ? raw.findings : [],
+        review_notes: typeof raw.review_notes === "string" ? raw.review_notes : "",
+      };
     } catch {
       fail(`Openference API returned invalid JSON (${reviewer}): ${content.slice(0, 500)}`);
     }

@@ -44,7 +44,6 @@ jobs:
       - name: Openference AI review
         env:
           OPENFERENCE_API_KEY: ${{ secrets.OPENFERENCE_API_KEY }}
-          OPENFERENCE_REVIEW_MODEL: ${{ vars.OPENFERENCE_REVIEW_MODEL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
