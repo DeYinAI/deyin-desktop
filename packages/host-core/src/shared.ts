@@ -24,6 +24,7 @@ export * from "./redact.js";
 export * from "./i18n.js";
 export * from "./telemetry.js";
 export * from "./linked-thread-context.js";
+export * from "./recent-workspaces.js";
 export { formatUserMessageWithContext, dedupeContextRefs } from "./context-message.js";
-export { isPathInsideRoot } from "./pathInside.js";
+export { isPathInsideRoot, logicalResolve } from "./pathInside.js";
 export type { ContextRef, ContextSearchHit, ResolvedContextFile } from "./types.js";

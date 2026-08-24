@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { LOCALES } from "@deyin/host-core/shared";
 import { useT } from "../../i18n.js";
-import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, SettingsPageBlock, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings, UpdatesState } from "@deyin/contract";
 
 interface Props {
@@ -59,8 +59,7 @@ export function GeneralPage({ settings, version, platform, onChange }: Props) {
   })();
 
   return (
-    <div className="settings-page">
-      <PageHeader title={t("general.title")} description={t("general.desc")} />
+    <SettingsPageBlock title={t("general.title")} description={t("general.desc")}>
 
       <SectionHeader title={t("general.application")} />
       <SettingGroup>
@@ -135,6 +134,6 @@ export function GeneralPage({ settings, version, platform, onChange }: Props) {
           <span className="hint">{version}</span>
         </SettingCard>
       </SettingGroup>
-    </div>
+    </SettingsPageBlock>
   );
 }

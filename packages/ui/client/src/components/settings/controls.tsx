@@ -204,6 +204,29 @@ export function PageHeader(props: { title: string; description?: ReactNode; chil
   );
 }
 
+/**
+ * A major settings division on a nav page. Use `continued` for stacked pages
+ * (Appearance under General, Browser under Terminal) so they read as distinct
+ * blocks rather than more subsections.
+ */
+export function SettingsPageBlock(props: {
+  title: string;
+  description?: ReactNode;
+  continued?: boolean;
+  children?: ReactNode;
+}) {
+  const TitleTag = props.continued ? "h2" : "h1";
+  return (
+    <section className={`settings-block${props.continued ? " settings-block--continued" : ""}`}>
+      <header className="settings-block__header">
+        <TitleTag className="settings-block__title">{props.title}</TitleTag>
+      </header>
+      {props.description && <p className="settings-block__desc">{props.description}</p>}
+      {props.children ? <div className="settings-block__body">{props.children}</div> : null}
+    </section>
+  );
+}
+
 /** Full-width search box; `children` renders trailing controls (filters). */
 export function SearchField(props: {
   value: string;

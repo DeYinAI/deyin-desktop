@@ -6,6 +6,14 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.1 — 2026-08-24
+
+### Highlights
+
+- Remote SSH workspaces with project picker (clone, browse, recent workspaces)
+- Model reasoning options and chat UI improvements
+- Computer-use host reliability fixes
+
 ## 1.0.0 — 2026-08-23
 
 First public open-source release under the PolyForm Noncommercial License 1.0.0.

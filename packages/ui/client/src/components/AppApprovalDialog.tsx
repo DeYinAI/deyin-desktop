@@ -25,7 +25,7 @@ export function AppApprovalDialog() {
   const actionLabel = req.action === "launch" ? "launch" : "interact with";
 
   return (
-    <div className="goal-modal-backdrop" role="dialog" aria-modal="true" onClick={() => close("deny")}>
+    <div className="goal-modal-backdrop" role="dialog" aria-modal="true">
       <div
         className="goal-modal app-approval-modal"
         role="dialog"

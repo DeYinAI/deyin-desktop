@@ -437,8 +437,27 @@ export function createBrowserTransport(): DeyinApi {
         host.invoke<FilesWriteResult>((id) => ({ type: "files.write", id, path, content })).then(() => undefined),
     },
     workspace: {
-      openFolder: async (_startIn?: string) => null, // web sessions use the server-provisioned sandbox root
-      setRoot: async () => undefined, // sandbox root is server-owned; nothing to switch
+      openFolder: async (_startIn?: string) => null,
+      listDirectory: async () => [],
+      setRoot: async () => undefined,
+      connectRemote: async () => ({
+        location: null,
+        connected: false,
+        connectionState: "disconnected" as const,
+        label: "",
+      }),
+      disconnectRemote: async () => ({
+        location: null,
+        connected: false,
+        connectionState: "disconnected" as const,
+        label: "",
+      }),
+      getLocation: async () => ({
+        location: null,
+        connected: false,
+        connectionState: "disconnected" as const,
+        label: "",
+      }),
       getRoot: async () => {
         try {
           await host.ensure();
@@ -448,6 +467,7 @@ export function createBrowserTransport(): DeyinApi {
         }
       },
       onRootChanged: (cb) => host.onRootChanged(cb),
+      onLocationChanged: () => () => undefined,
     },
     git: (() => {
       // Real git over the host-server: a generic RPC mapped onto the shared

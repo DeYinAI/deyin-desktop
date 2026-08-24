@@ -34,7 +34,12 @@ const api: DeyinApi = {
   },
   workspace: {
     openFolder: (startIn?: string) => ipcRenderer.invoke(CH.workspaceOpen, startIn),
+    listDirectory: (path: string) => ipcRenderer.invoke(CH.workspaceListDirectory, path),
     setRoot: (root) => ipcRenderer.invoke(CH.workspaceSetRoot, root),
+    connectRemote: (hostId: string, remotePath: string) =>
+      ipcRenderer.invoke(CH.workspaceConnectRemote, hostId, remotePath),
+    disconnectRemote: () => ipcRenderer.invoke(CH.workspaceDisconnectRemote),
+    getLocation: () => ipcRenderer.invoke(CH.workspaceGetLocation),
     getRoot: () => ipcRenderer.invoke(CH.workspaceGetRoot),
     onRootChanged: (cb) => {
       let alive = true;
@@ -50,6 +55,14 @@ const api: DeyinApi = {
         alive = false;
         ipcRenderer.removeListener(CH.workspaceRootChanged, listener);
       };
+    },
+    onLocationChanged: (cb) => {
+      const listener = (_e: unknown, state: import("@deyin/contract").WorkspaceState) => cb(state);
+      void ipcRenderer.invoke(CH.workspaceGetLocation).then((state: import("@deyin/contract").WorkspaceState) => {
+        cb(state);
+        ipcRenderer.on(CH.workspaceLocationChanged, listener);
+      });
+      return () => ipcRenderer.removeListener(CH.workspaceLocationChanged, listener);
     },
   },
   git: {
@@ -190,6 +203,7 @@ agent: {
     getAllowlist: () => ipcRenderer.invoke(CH.computerUseGetAllowlist),
     setAllowlist: (apps) => ipcRenderer.invoke(CH.computerUseSetAllowlist, apps),
     listApps: () => ipcRenderer.invoke(CH.computerUseListApps),
+    getHostStatus: () => ipcRenderer.invoke(CH.computerUseGetHostStatus),
     onActive: (cb) => {
       const listener = (_e: unknown, active: boolean) => cb(active);
       ipcRenderer.on(CH.computerUseActive, listener);
@@ -335,6 +349,23 @@ agent: {
     test: (hostId, acceptFingerprint) => ipcRenderer.invoke(CH.sshHostsTest, hostId, acceptFingerprint),
     pinFingerprint: (hostId, fingerprint) => ipcRenderer.invoke(CH.sshHostsPinFingerprint, hostId, fingerprint),
     importKey: () => ipcRenderer.invoke(CH.sshHostsImportKey),
+    browse: (hostId: string, remotePath: string) => ipcRenderer.invoke(CH.sshBrowse, hostId, remotePath),
+  },
+  repo: {
+    connect: (opts) => ipcRenderer.invoke(CH.repoConnect, opts),
+    state: () => ipcRenderer.invoke(CH.repoState),
+    ship: () => Promise.reject(new Error("Ship is web-only")),
+    onProgress: (cb) => {
+      const listener = (_e: unknown, payload: import("@deyin/contract").RepoProgressEvent) => cb(payload);
+      ipcRenderer.on(CH.repoProgress, listener);
+      return () => ipcRenderer.removeListener(CH.repoProgress, listener);
+    },
+  },
+  github: {
+    connect: () => ipcRenderer.invoke(CH.githubConnect),
+    disconnect: () => ipcRenderer.invoke(CH.githubDisconnect),
+    authState: () => ipcRenderer.invoke(CH.githubAuthState),
+    listRepos: (query?: string) => ipcRenderer.invoke(CH.githubListRepos, query),
   },
 };
 

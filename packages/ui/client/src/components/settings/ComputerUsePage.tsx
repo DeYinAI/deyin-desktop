@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
-import type { DeyinSettings } from "@deyin/contract";
+import type { ComputerUseHostStatus, DeyinSettings } from "@deyin/contract";
 
 interface Props {
   settings: DeyinSettings;
@@ -36,42 +36,90 @@ export function ComputerUsePage({ settings, onChange }: Props) {
 
 function ComputerUseSettings({ api, settings, onChange }: Props & { api: ComputerUseApi }) {
   const isWindows = navigator.userAgent.includes("Windows");
+  const computerUseOn = settings.computerUseEnabled && isWindows;
   const [allowlist, setAllowlist] = useState<string[]>([]);
   const [pickerApps, setPickerApps] = useState<AppRow[]>([]);
   const [loadingApps, setLoadingApps] = useState(false);
+  const [manualAppId, setManualAppId] = useState("");
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [hostStatus, setHostStatus] = useState<ComputerUseHostStatus | null>(null);
+  const [checkingHost, setCheckingHost] = useState(false);
 
   const refreshAllowlist = useCallback(async () => {
     const apps = await api.getAllowlist();
     setAllowlist(apps);
   }, [api]);
 
+  const refreshHostStatus = useCallback(async () => {
+    setCheckingHost(true);
+    try {
+      const status = await api.getHostStatus();
+      setHostStatus(status);
+    } catch (err) {
+      setHostStatus({
+        ok: false,
+        error: err instanceof Error ? err.message : "Could not check computer use host.",
+      });
+    } finally {
+      setCheckingHost(false);
+    }
+  }, [api]);
+
   useEffect(() => {
     void refreshAllowlist();
   }, [refreshAllowlist]);
 
+  useEffect(() => {
+    void refreshHostStatus();
+  }, [refreshHostStatus, computerUseOn]);
+
   const pickApps = async (): Promise<void> => {
+    if (!computerUseOn) {
+      setPickerError("Enable computer use above before picking apps.");
+      return;
+    }
     setLoadingApps(true);
+    setPickerError(null);
     try {
       const rows = (await api.listApps()) as AppRow[];
       setPickerApps(Array.isArray(rows) ? rows : []);
-    } catch {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        setPickerError("No apps returned. Check host status below or add apps manually.");
+      }
+    } catch (err) {
       setPickerApps([]);
+      setPickerError(
+        err instanceof Error ? err.message : "Could not list apps — is the computer-use host running?",
+      );
     } finally {
       setLoadingApps(false);
     }
   };
 
   const addApp = async (id: string): Promise<void> => {
-    if (!id || allowlist.includes(id)) return;
-    const next = [...allowlist, id];
-    await api.setAllowlist(next);
-    setAllowlist(next);
+    const trimmed = id.trim();
+    if (!trimmed || allowlist.some((entry) => entry.toLowerCase() === trimmed.toLowerCase())) return;
+    setActionError(null);
+    try {
+      const next = [...allowlist, trimmed];
+      const saved = await api.setAllowlist(next);
+      setAllowlist(saved);
+      setManualAppId("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not save allowlist.");
+    }
   };
 
   const removeApp = async (id: string): Promise<void> => {
-    const next = allowlist.filter((a) => a !== id);
-    await api.setAllowlist(next);
-    setAllowlist(next);
+    setActionError(null);
+    try {
+      const next = allowlist.filter((a) => a !== id);
+      const saved = await api.setAllowlist(next);
+      setAllowlist(saved);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not update allowlist.");
+    }
   };
 
   return (
@@ -89,17 +137,45 @@ function ComputerUseSettings({ api, settings, onChange }: Props & { api: Compute
         }
       >
         <Toggle
-          checked={settings.computerUseEnabled && isWindows}
+          checked={computerUseOn}
           disabled={!isWindows}
           onChange={(v) => onChange({ computerUseEnabled: v })}
         />
       </SettingCard>
 
+      {isWindows && (
+        <SettingCard
+          title="Host status"
+          description="The native Windows sidecar must be running for listing apps and automation."
+        >
+          <div className="settings-page__actions" style={{ alignItems: "center", gap: 12 }}>
+            {checkingHost ? (
+              <span className="hint">Checking host…</span>
+            ) : hostStatus?.ok ? (
+              <span className="hint hint--ok">Connected</span>
+            ) : (
+              <span className="hint hint--bad">{hostStatus?.error ?? "Host unavailable"}</span>
+            )}
+            <button type="button" className="btn btn--small" disabled={checkingHost} onClick={() => void refreshHostStatus()}>
+              Recheck
+            </button>
+          </div>
+          {hostStatus?.hostPath && !hostStatus.ok && (
+            <p className="hint" style={{ marginTop: 8 }}>
+              Expected host: <code>{hostStatus.hostPath}</code>
+              {hostStatus.hostExists === false ? " (missing)" : ""}
+            </p>
+          )}
+        </SettingCard>
+      )}
+
       <SectionTitle>Always-allowed apps</SectionTitle>
       <p className="settings-page__desc" style={{ margin: "0 0 10px" }}>
         When the agent uses an app for the first time, you'll be asked to allow it. Choose <strong>Always allow</strong>{" "}
-        to skip future prompts — those apps appear here. You can also pre-add apps below.
+        to skip future prompts — those apps appear here. You can also pre-add apps below (use process names like{" "}
+        <code>notepad</code> or <code>chrome</code>).
       </p>
+      {actionError && <p className="hint hint--bad">{actionError}</p>}
       {allowlist.length === 0 ? (
         <p className="hint">No apps on the always-allow list yet. You'll be asked the first time the agent uses an app.</p>
       ) : (
@@ -120,15 +196,47 @@ function ComputerUseSettings({ api, settings, onChange }: Props & { api: Compute
         </div>
       )}
       <div className="settings-page__actions">
-        <button type="button" className="btn" disabled={!isWindows || loadingApps} onClick={() => void pickApps()}>
+        <input
+          type="text"
+          className="input"
+          placeholder="App id (e.g. notepad)"
+          value={manualAppId}
+          disabled={!isWindows}
+          onChange={(e) => setManualAppId(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void addApp(manualAppId);
+          }}
+          aria-label="App id to allow"
+        />
+        <button
+          type="button"
+          className="btn"
+          disabled={!isWindows || !manualAppId.trim()}
+          onClick={() => void addApp(manualAppId)}
+        >
+          Add app
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={!isWindows || !computerUseOn || loadingApps}
+          onClick={() => void pickApps()}
+        >
           {loadingApps ? "Loading apps…" : "Pick apps"}
         </button>
       </div>
+      {!computerUseOn && isWindows && (
+        <p className="hint">Enable computer use to browse installed apps from the native host.</p>
+      )}
+      {pickerError && <p className="hint hint--bad">{pickerError}</p>}
       {pickerApps.length > 0 && (
         <ul className="settings-list">
           {pickerApps.slice(0, 40).map((app) => (
             <li key={app.id ?? app.name}>
-              <span>{app.name ?? app.id}</span>
+              <span>
+                {app.name ?? app.id}
+                {app.id ? ` (${app.id})` : ""}
+              </span>
               <button type="button" className="btn btn--small" disabled={!app.id} onClick={() => void addApp(String(app.id))}>
                 Add
               </button>

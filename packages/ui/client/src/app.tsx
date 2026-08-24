@@ -8,10 +8,13 @@ import {
   modelEffortKey,
   parseStoredModelRef,
   resolveModelReasoning,
+  locationKey,
+  projectLocation,
+  touchProjectOpened,
 } from "@deyin/host-core/shared";
-import type { ModelReasoningMode } from "@deyin/host-core/shared";
+import type { ModelReasoningMode, WorkspaceLocation } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
-import { I18nProvider } from "./i18n.js";
+import { AppProviders } from "./providers.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
 import { AppApprovalDialog } from "./components/AppApprovalDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
@@ -38,6 +41,7 @@ import { UpdateBanner } from "./components/UpdateBanner.js";
 import { WhatsNewModal } from "./components/WhatsNewModal.js";
 import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
+import { ProjectPicker, type ProjectPickerAction } from "./components/project-picker/ProjectPicker.js";
 import { NavRail } from "./components/NavRail.js";
 import { PanelRail } from "./components/PanelRail.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
@@ -87,6 +91,9 @@ import type {
  RepoStateResult,
  UserProfile,
  SecurityFindingsReport,
+ GitHubAuthState,
+ SshHostInfo,
+ WorkspaceState,
 } from "@deyin/contract";
 
 /** Right workspace panel sizing. The panel is measured against the content
@@ -239,6 +246,8 @@ export function App() {
   /** Subagent run shown in the Agent panel; null follows the newest run. */
   const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
+  /** Opens a path in the Files panel (markdown links, security findings). */
+  const [filesOpenRequest, setFilesOpenRequest] = useState<{ path: string; seq: number } | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   /** Agent PTY sessions announced via shell-session, keyed for Terminal tab attach. */
   const [agentTerminals, setAgentTerminals] = useState<{ id: string; label: string; threadId: string }[]>([]);
@@ -323,6 +332,12 @@ export function App() {
   };
 
  const [searchOpen, setSearchOpen] = useState(false);
+ const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+ const [githubAuth, setGithubAuth] = useState<GitHubAuthState>({ connected: false, login: null });
+ const [sshHosts, setSshHosts] = useState<SshHostInfo[]>([]);
+ const [desktopCloneBusy, setDesktopCloneBusy] = useState(false);
+ const [desktopCloneProgress, setDesktopCloneProgress] = useState<string | null>(null);
+ const [workspaceState, setWorkspaceState] = useState<WorkspaceState | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
   const [threadMenu, setThreadMenu] = useState<{ threadId: string; x: number; y: number } | null>(null);
   const [projectMenu, setProjectMenu] = useState<{ projectId: string; x: number; y: number } | null>(null);
@@ -437,8 +452,22 @@ export function App() {
   useEffect(() => {
     const repo = window.deyin.repo;
     if (!repo) return;
-    return repo.onProgress((e) => setRepoProgressLine(e.line));
+    return repo.onProgress((e) => {
+      setRepoProgressLine(e.line);
+      setDesktopCloneProgress(e.line);
+    });
   }, []);
+
+  useEffect(() => {
+    if (boot?.platform !== "desktop") return;
+    void window.deyin.github?.authState().then(setGithubAuth);
+    void window.deyin.sshHosts?.list().then(setSshHosts);
+    return window.deyin.workspace.onLocationChanged(setWorkspaceState);
+  }, [boot?.platform]);
+
+  useEffect(() => {
+    if (boot?.workspaceState) setWorkspaceState(boot.workspaceState);
+  }, [boot?.workspaceState]);
 
   // After a (re)connect the sandbox gains files the Files tab has never seen.
   const repoConnected = repoState?.connected === true;
@@ -681,44 +710,140 @@ export function App() {
     patchSettings({ welcomeDismissed: false });
   }, [patchSettings]);
 
-  /** Find or create the folder-backed project for a workspace root. */
+  /** Find or create the folder-backed project for a workspace location. */
   const ensureFolderProject = useCallback(
-    (root: string): Project => {
-      const existing = projects.find((p) => p.root === root);
-      if (existing) return existing;
+    (location: WorkspaceLocation, displayRoot: string): Project => {
+      const key = locationKey(location);
+      const existing = projects.find((p) => {
+        const loc = projectLocation(p);
+        return loc ? locationKey(loc) === key : p.root === displayRoot;
+      });
+      const now = new Date().toISOString();
+      if (existing) {
+        setProjects((cur) =>
+          touchProjectOpened(
+            cur.map((p) =>
+              p.id === existing.id ? { ...p, location, root: displayRoot, lastOpenedAt: now } : p,
+            ),
+            existing.id,
+          ),
+        );
+        return { ...existing, location, root: displayRoot, lastOpenedAt: now };
+      }
       const project: Project = {
         id: newId("proj"),
-        name: root.split(/[\\/]/).filter(Boolean).pop() ?? root,
-        root,
+        name: displayRoot.split(/[\\/]/).filter(Boolean).pop() ?? displayRoot,
+        root: displayRoot,
+        location,
+        lastOpenedAt: now,
         threads: [],
       };
-      setProjects((cur) => (cur.some((p) => p.root === root) ? cur : [...cur, project]));
+      setProjects((cur) => [...cur, project]);
       return project;
     },
     [projects],
   );
 
-  /** "+" / TopBar folder button: pick a folder; it becomes the active project. */
-  /** `startIn` seeds the native picker (WSL entries pass the distro's UNC root). */
+  const openWorkspaceLocal = useCallback(
+    async (root: string) => {
+      await window.deyin.workspace.setRoot(root);
+      const location: WorkspaceLocation = { kind: "local", root };
+      const project = ensureFolderProject(location, root);
+      setActiveProjectId(project.id);
+      setWorkspaceRoot(root);
+      markOnboard("workspaceOpened");
+      setProjectPickerOpen(false);
+    },
+    [ensureFolderProject, markOnboard],
+  );
+
+  /** Opens the Cursor-style project picker (desktop) or native picker (fallback). */
   const addProjectFolder = useCallback(async (startIn?: string) => {
+    if (boot?.platform === "desktop" && !startIn) {
+      setProjectPickerOpen(true);
+      return;
+    }
     const root = await window.deyin.workspace.openFolder(startIn);
     if (!root) return;
-    const project = ensureFolderProject(root);
-    setActiveProjectId(project.id);
-    setWorkspaceRoot(root);
-    markOnboard("workspaceOpened");
-  }, [ensureFolderProject, markOnboard]);
+    await openWorkspaceLocal(root);
+  }, [boot?.platform, openWorkspaceLocal]);
 
   const selectProject = useCallback(
     async (projectId: string) => {
       setActiveProjectId(projectId);
-      const root = projects.find((p) => p.id === projectId)?.root;
+      const project = projects.find((p) => p.id === projectId);
+      if (!project) return;
+      const loc = projectLocation(project);
+      if (loc?.kind === "remote") {
+        const state = await window.deyin.workspace.connectRemote(loc.hostId, loc.root);
+        setWorkspaceState(state);
+        if (state.connected) setWorkspaceRoot(state.label);
+        return;
+      }
+      const root = project.root;
       if (root) {
         await window.deyin.workspace.setRoot(root);
         setWorkspaceRoot(root);
       }
     },
     [projects],
+  );
+
+  const handleProjectPickerAction = useCallback(
+    async (action: ProjectPickerAction) => {
+      switch (action.type) {
+        case "open-local":
+          await openWorkspaceLocal(action.path);
+          break;
+        case "select-recent": {
+          await selectProject(action.projectId);
+          setProjectPickerOpen(false);
+          break;
+        }
+        case "connect-remote": {
+          const state = await window.deyin.workspace.connectRemote(action.hostId, action.remotePath);
+          setWorkspaceState(state);
+          if (!state.connected) throw new Error(state.error ?? "SSH connection failed");
+          const location: WorkspaceLocation = { kind: "remote", hostId: action.hostId, root: action.remotePath };
+          const project = ensureFolderProject(location, state.label);
+          setActiveProjectId(project.id);
+          setWorkspaceRoot(state.label);
+          markOnboard("workspaceOpened");
+          setProjectPickerOpen(false);
+          break;
+        }
+        case "clone-url": {
+          if (!window.deyin.repo) break;
+          setDesktopCloneBusy(true);
+          try {
+            await window.deyin.repo.connect(action);
+            const root = await window.deyin.workspace.getRoot();
+            if (root) await openWorkspaceLocal(root);
+          } finally {
+            setDesktopCloneBusy(false);
+            setDesktopCloneProgress(null);
+          }
+          break;
+        }
+        case "clone-github": {
+          if (!window.deyin.repo) break;
+          setDesktopCloneBusy(true);
+          try {
+            await window.deyin.repo.connect({ url: action.repo.cloneUrl });
+            const root = await window.deyin.workspace.getRoot();
+            if (root) await openWorkspaceLocal(root);
+          } finally {
+            setDesktopCloneBusy(false);
+          }
+          break;
+        }
+        default: {
+          const _exhaustive: never = action;
+          return _exhaustive;
+        }
+      }
+    },
+    [openWorkspaceLocal, ensureFolderProject, markOnboard, selectProject],
   );
 
   const removeProject = useCallback(
@@ -1030,7 +1155,8 @@ export function App() {
       if (projects.length === 0 && boot?.platform === "desktop") {
         const root = await window.deyin.workspace.openFolder();
         if (root) {
-          createdProject = ensureFolderProject(root);
+          const location: WorkspaceLocation = { kind: "local", root };
+          createdProject = ensureFolderProject(location, root);
           setWorkspaceRoot(root);
         }
       }
@@ -1060,6 +1186,39 @@ export function App() {
         threads: project.threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread)),
       })),
     );
+  }, []);
+
+  /** Fork a new task from the conversation prefix ending at `eventIndex`. */
+  const forkThreadAtEvent = useCallback((sourceThreadId: string, eventIndex: number) => {
+    let forkedId: string | null = null;
+    setProjects((cur) =>
+      cur.map((project) => {
+        const sourceIdx = project.threads.findIndex((t) => t.id === sourceThreadId);
+        if (sourceIdx < 0) return project;
+        const source = project.threads[sourceIdx]!;
+        if (eventIndex < 0 || eventIndex >= source.events.length) return project;
+        const forkedThread: Thread = {
+          ...emptyThread(),
+          title: `${source.title} · fork`,
+          mode: source.mode,
+          model: source.model,
+          providerId: source.providerId,
+          previousMode: source.previousMode,
+          events: source.events.slice(0, eventIndex + 1),
+          planMarkdown: source.planMarkdown,
+          planFilePath: source.planFilePath,
+          todos: source.todos,
+        };
+        forkedId = forkedThread.id;
+        const threads = [...project.threads];
+        threads.splice(sourceIdx + 1, 0, forkedThread);
+        return { ...project, threads };
+      }),
+    );
+    if (forkedId) {
+      setActiveThreadId(forkedId);
+      setView("workspace");
+    }
   }, []);
 
   /** Apply composer model selection to local state, settings default, and the active thread. */
@@ -1151,6 +1310,10 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setSearchOpen((v) => !v);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        setProjectPickerOpen(true);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
@@ -1412,6 +1575,12 @@ export function App() {
     const fileDiff = fileDiffsRef.current.get(path);
     if (fileDiff) setDiff(fileDiff);
     openPanelTab("diff");
+  }, [openPanelTab]);
+
+  /** Markdown file refs and security findings: open in the Files panel. */
+  const openWorkspaceFile = useCallback((path: string) => {
+    setFilesOpenRequest({ path, seq: Date.now() });
+    openPanelTab("files");
   }, [openPanelTab]);
 
   /** First send before any task exists: create the thread instead of dropping
@@ -1735,7 +1904,7 @@ export function App() {
   // full-page redirect, so it never sits in this state.)
   if (boot && boot.platform === "desktop" && !user && !settings?.welcomeDismissed) {
     return (
-      <I18nProvider language={language}>
+      <AppProviders language={language}>
         <Welcome
           busy={busy}
           connecting={connecting}
@@ -1747,13 +1916,13 @@ export function App() {
             setView("settings");
           }}
         />
-      </I18nProvider>
+      </AppProviders>
     );
   }
 
   if (view === "settings" && settings && boot) {
     return (
-      <I18nProvider language={language}>
+      <AppProviders language={language}>
         <div className="app">
           {boot.platform === "desktop" ? <UpdateBanner /> : null}
           <SettingsView
@@ -1780,13 +1949,13 @@ export function App() {
             }}
           />
         </div>
-      </I18nProvider>
+      </AppProviders>
     );
   }
 
   if (view === "upgrade" && boot) {
     return (
-      <I18nProvider language={language}>
+      <AppProviders language={language}>
         <PlansView
           platform={boot.platform}
           oauthIssuer={boot.config.oauthIssuer}
@@ -1797,12 +1966,12 @@ export function App() {
             setView("workspace");
           }}
         />
-      </I18nProvider>
+      </AppProviders>
     );
   }
 
   return (
-    <I18nProvider language={language}>
+    <AppProviders language={language}>
     <div className="app">
       <TopBar
         platform={boot?.platform ?? "desktop"}
@@ -1817,7 +1986,7 @@ export function App() {
         sessionCacheHit={activeCacheMetrics?.sessionHit}
         sessionCacheMiss={activeCacheMetrics?.sessionMiss}
         tokenStats={sessionTokenStats}
-        onOpenFolder={() => void addProjectFolder()}
+        onOpenFolder={() => setProjectPickerOpen(true)}
         onTogglePanel={() => {
           if (panelOpen) collapsePanel();
           else openPanelTab(panelTab);
@@ -1830,6 +1999,11 @@ export function App() {
         onThreadAction={handleThreadAction}
       />
       {boot?.platform === "desktop" ? <UpdateBanner /> : null}
+      {workspaceState?.connectionState === "error" && workspaceState.error ? (
+        <div className="update-banner update-banner--error" role="alert">
+          {workspaceState.error}
+        </div>
+      ) : null}
 
       <div className={`app__body${sidebarOpen ? "" : " app__body--nosidebar"}`}>
         {!sidebarOpen && (
@@ -1840,7 +2014,7 @@ export function App() {
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAutomations={() => setView("automations")}
             onOpenCustomize={() => {
-              setSettingsPage("general");
+              setSettingsPage("appearance");
               setView("settings");
             }}
             onOpenSettings={() => {
@@ -1898,8 +2072,7 @@ export function App() {
           }}
           onOpenAutomations={() => setView("automations")}
           onOpenCustomize={() => {
-            // Appearance/theme controls live on the General page.
-            setSettingsPage("general");
+            setSettingsPage("appearance");
             setView("settings");
           }}
         />
@@ -1956,6 +2129,8 @@ export function App() {
                   wrapLongLines: settings?.wrapLongLines ?? false,
                 }}
                 onOpenFile={openFileDiff}
+                onOpenWorkspaceFile={openWorkspaceFile}
+                workspaceRoot={workspaceRoot}
                 onUndo={undoFileChange}
                 onBuild={buildFromPlan}
                 canBuildPlan={planCardBuildable}
@@ -1967,6 +2142,17 @@ export function App() {
                 onOpenSubagent={(id) => {
                   setActiveSubagentId(id);
                   openPanelTab("agent");
+                }}
+                onForkAtEvent={(eventIndex) => {
+                  if (activeThreadId) forkThreadAtEvent(activeThreadId, eventIndex);
+                }}
+                onMessageFeedback={(eventIndex, rating) => {
+                  if (!activeThreadId) return;
+                  window.deyin.telemetry.record("message-feedback", {
+                    rating,
+                    threadId: activeThreadId,
+                    eventIndex,
+                  });
                 }}
                 onOpenAgentTerminal={
                   agentTerminals.some((t) => t.threadId === activeThreadId)
@@ -2117,6 +2303,7 @@ export function App() {
                   selectedProviderId={selectedProviderId}
                   onChange={setInput}
                   onSend={() => void send()}
+                  onSteer={() => void send()}
                   onSendNow={sendNow}
                   onClearQueue={clearQueue}
                   onStop={streamText !== null || runningThreadId !== null ? stopRun : undefined}
@@ -2228,10 +2415,8 @@ export function App() {
                 subagentRuns={subagentRuns}
                 selectedSubagentId={activeSubagentId}
                 onSelectSubagent={setActiveSubagentId}
-                onOpenFile={(path) => {
-                  void window.deyin.shell.showItem(path);
-                  openPanelTab("files");
-                }}
+                onOpenFile={openWorkspaceFile}
+                filesOpenRequest={filesOpenRequest}
                 terminalEnv={env}
                 terminalDefaultShell={settings?.defaultShell ?? null}
                 terminalFontSize={settings?.terminalFontSize ?? 12}
@@ -2298,6 +2483,31 @@ export function App() {
         />
       )}
 
+      {boot?.platform === "desktop" && (
+        <ProjectPicker
+          open={projectPickerOpen}
+          platform="desktop"
+          projects={projects}
+          activeProjectId={activeProjectId}
+          homeDir={boot?.homeDir}
+          wslDistros={env?.wslDistros}
+          sshHosts={sshHosts}
+          githubConnected={githubAuth.connected}
+          githubLogin={githubAuth.login}
+          cloneBusy={desktopCloneBusy}
+          cloneProgress={desktopCloneProgress}
+          onClose={() => setProjectPickerOpen(false)}
+          onAction={handleProjectPickerAction}
+          listDirectory={(path) => window.deyin.workspace.listDirectory(path)}
+          sshBrowse={(hostId, path) => window.deyin.sshHosts!.browse(hostId, path)}
+          githubConnect={async () => {
+            const state = await window.deyin.github!.connect();
+            setGithubAuth(state);
+          }}
+          githubListRepos={(query) => window.deyin.github!.listRepos(query)}
+        />
+      )}
+
       {showWhatsNew && boot && (
         <WhatsNewModal
           version={boot.version}
@@ -2313,6 +2523,6 @@ export function App() {
       <ComputerUseOverlay />
       <AppApprovalDialog />
     </div>
-    </I18nProvider>
+    </AppProviders>
   );
 }

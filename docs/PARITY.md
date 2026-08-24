@@ -78,7 +78,9 @@ full UX is not yet fleshed out. All implementation here is original Deyin code.
 | Live local semantic index + `codebase_search` tool | Done | `host-core/src/indexer/*`, `agent-core/src/tools/codebase-search.ts` |
 | Browser control (CDP navigate/click/type/screenshot/console/network, per-workspace profile) | Done | `main/browser.ts`, `components/WorkspacePanel.tsx` |
 | File explorer / read | Done | `components/WorkspacePanel.tsx` (Files tab), `main/host/files.ts`, `host-core/src/context-refs.ts`, web `server/host.ts` |
-| Workspace folder picker (open/switch) | Foundation | `main/ipc.ts` (`workspace:open`) |
+| Workspace folder picker (open/switch) | Done | `components/project-picker/*`, `main/remote/workspace-service.ts`, `main/ipc.ts` |
+| Remote SSH workspace (files/git read, SFTP writes) | Done (foundation) | `host-core/src/host/remote-backend.ts`, `main/remote/connection-pool.ts` |
+| Desktop git clone from URL / GitHub | Done | `host-core/src/host/repo-manager.ts`, `main/github.ts`, `ProjectPicker.tsx` |
 | Agent runtime on the web (WS channel to the session host) | Done | `apps/web/src/server/agent-host.ts` runs `@deyin/agent-core` in the session sandbox; events stream over `agent.event` WS pushes using the desktop-shaped `AgentEventEnvelope` |
 | Inline visualizations | Done | `visualize_write` tool, path-safe read/write, tightened CSP in `InlineVisualization.tsx` |
 | Security findings panel | Done | `SecurityFindingsPanel.tsx`, semgrep/npm audit MCP, workspace-bounded scans |

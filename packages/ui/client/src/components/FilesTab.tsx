@@ -73,6 +73,8 @@ interface FilesTabProps {
   workspaceRoot: string | null;
   /** Bumped by the app when sandbox content changes without a root switch. */
   refreshKey?: number;
+  /** When set, open this path in the editor (seq changes re-trigger the same path). */
+  openRequest?: { path: string; seq: number } | null;
   codeDisplay: CodeDisplaySettings;
   onOpenFolder?: () => void;
 }
@@ -352,6 +354,12 @@ export function FilesTab(props: FilesTabProps) {
     },
     [selectedPath, draftMode, openFileInternal],
   );
+
+  useEffect(() => {
+    const req = props.openRequest;
+    if (!req?.path) return;
+    void openFile(req.path);
+  }, [props.openRequest, openFile]);
 
   const saveFile = useCallback(async () => {
     if (!selectedPath || isBinaryPath(selectedPath) || draftMode) return;

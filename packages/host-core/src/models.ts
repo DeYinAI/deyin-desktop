@@ -1,4 +1,5 @@
 import { modelImageCapability } from "./images.js";
+import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { ModelInfo } from "./types.js";
 
 interface OpenAIModelListItem {
@@ -16,6 +17,9 @@ interface OpenAIModelListItem {
   output_modalities?: unknown;
   /** OpenRouter-style nested modality block. */
   architecture?: unknown;
+  /** Per-model reasoning effort configuration. */
+  reasoning?: unknown;
+  supported_parameters?: unknown;
 }
 
 /** Model ids from known vision-capable families, used when the catalog carries
@@ -73,6 +77,7 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
       // to them. "chat" models generate pictures inside a normal completion, so
       // they stay chat models that additionally emit images.
       const endpointOnly = capability === "endpoint";
+      const reasoning = parseModelReasoningMeta(m);
       return {
         id: m.id,
         name: m.id,
@@ -81,6 +86,7 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
         vision: endpointOnly ? false : modelSupportsVision(m.id, m),
         kind: endpointOnly ? ("image" as const) : ("chat" as const),
         ...(capability === "chat" ? { imageOutput: true } : {}),
+        ...(reasoning ? { reasoning } : {}),
       };
     });
   } catch {

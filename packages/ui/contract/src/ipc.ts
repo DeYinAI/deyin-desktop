@@ -69,6 +69,10 @@ import type {
   RepoStateResult,
   RepoShipResult,
   RepoProgressEvent,
+  WorkspaceState,
+  DirectoryEntry,
+  GitHubRepoEntry,
+  GitHubAuthState,
 } from "./types.js";
 
 /** Decision for an agent permission request (mirrors agent-core). */
@@ -87,6 +91,14 @@ export interface KernelPluginStatus {
   error?: string;
   /** Config layer that pulled the plugin in ("bundle:base", "profile:desktop", ...). */
   source?: string;
+}
+
+/** Health check for the Windows computer-use native sidecar. */
+export interface ComputerUseHostStatus {
+  ok: boolean;
+  error?: string;
+  hostPath?: string;
+  hostExists?: boolean;
 }
 
 /** Main → renderer command for multi-tab browser control. */
@@ -112,6 +124,19 @@ export const CH = {
   workspaceSetRoot: "deyin:workspace:setRoot",
   workspaceGetRoot: "deyin:workspace:getRoot",
   workspaceRootChanged: "deyin:workspace:rootChanged",
+  workspaceListDirectory: "deyin:workspace:listDirectory",
+  workspaceGetLocation: "deyin:workspace:getLocation",
+  workspaceConnectRemote: "deyin:workspace:connectRemote",
+  workspaceDisconnectRemote: "deyin:workspace:disconnectRemote",
+  workspaceLocationChanged: "deyin:workspace:locationChanged",
+  sshBrowse: "deyin:ssh:browse",
+  repoConnect: "deyin:repo:connect",
+  repoState: "deyin:repo:state",
+  repoProgress: "deyin:repo:progress",
+  githubConnect: "deyin:github:connect",
+  githubDisconnect: "deyin:github:disconnect",
+  githubAuthState: "deyin:github:authState",
+  githubListRepos: "deyin:github:listRepos",
   gitInfo: "deyin:git:info",
   gitStatus: "deyin:git:status",
   gitBranches: "deyin:git:branches",
@@ -190,6 +215,7 @@ export const CH = {
   computerUseGetAllowlist: "deyin:computerUse:getAllowlist",
   computerUseSetAllowlist: "deyin:computerUse:setAllowlist",
   computerUseListApps: "deyin:computerUse:listApps",
+  computerUseGetHostStatus: "deyin:computerUse:getHostStatus",
   computerUseAppApprovalRequest: "deyin:computerUse:appApproval-request",
   computerUseAppApprovalRespond: "deyin:computerUse:appApproval-respond",
   visualizeRead: "deyin:visualize:read",
@@ -297,12 +323,20 @@ export interface DeyinApi {
      * click away instead of a path the user has to type.
      */
     openFolder(startIn?: string): Promise<string | null>;
+    /** In-app folder browser: list directories at an absolute path. */
+    listDirectory(path: string): Promise<DirectoryEntry[]>;
     /** Point the host's workspace cwd at a folder (terminal/files/agent); persisted. */
     setRoot(root: string | null): Promise<void>;
+    /** Connect to a remote SSH host and open a folder there. */
+    connectRemote(hostId: string, remotePath: string): Promise<WorkspaceState>;
+    disconnectRemote(): Promise<WorkspaceState>;
+    getLocation(): Promise<WorkspaceState>;
     /** Current workspace / sandbox root (may change after a web host reconnect). */
     getRoot(): Promise<string | null>;
     /** Fires when the host workspace/sandbox root changes (desktop setRoot or web reconnect). */
     onRootChanged(cb: (root: string | null) => void): () => void;
+    /** Fires when workspace location or connection state changes. */
+    onLocationChanged(cb: (state: WorkspaceState) => void): () => void;
   };
   git: {
     /** Repo detection + branch/ahead/behind for the current workspace root. */
@@ -376,6 +410,8 @@ export interface DeyinApi {
     test(hostId: string, acceptFingerprint?: string): Promise<SshTestResult>;
     pinFingerprint(hostId: string, fingerprint: string): Promise<SshHostInfo[]>;
     importKey(): Promise<string | null>;
+    /** Browse remote directories for SSH workspace connect. */
+    browse(hostId: string, remotePath: string): Promise<DirectoryEntry[]>;
   };
   repo?: {
     connect(opts: RepoConnectRequest): Promise<RepoStateResult>;
@@ -383,6 +419,12 @@ export interface DeyinApi {
     ship(message?: string): Promise<RepoShipResult>;
     /** Streaming progress for clone/connect/ship operations. */
     onProgress(cb: (e: RepoProgressEvent) => void): () => void;
+  };
+  github?: {
+    connect(): Promise<GitHubAuthState>;
+    disconnect(): Promise<void>;
+    authState(): Promise<GitHubAuthState>;
+    listRepos(query?: string): Promise<GitHubRepoEntry[]>;
   };
   projects: {
     /** Persisted folder-projects + active selection. The renderer patches projects
@@ -486,6 +528,7 @@ export interface DeyinApi {
     getAllowlist(): Promise<string[]>;
     setAllowlist(apps: string[]): Promise<string[]>;
     listApps(): Promise<unknown>;
+    getHostStatus(): Promise<ComputerUseHostStatus>;
     onActive(cb: (active: boolean) => void): () => void;
     onAppApprovalRequest(cb: (req: { requestId: string; appId: string; action: string }) => void): () => void;
     respondAppApproval(requestId: string, decision: "always" | "once" | "deny"): void;

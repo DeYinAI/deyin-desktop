@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock, type CodeTheme } from "../code.js";
 import { splitInlineEmbeds } from "../embeds.js";
+import { looksLikeFilePath, resolveWorkspaceFilePath } from "../filePath.js";
 import type { ChatCodeDisplay } from "./ChatView.js";
 import { InlineImage } from "./InlineImage.js";
 import { InlineVisualization } from "./InlineVisualization.js";
@@ -12,6 +13,9 @@ interface MarkdownProps {
   theme: CodeTheme;
   display: ChatCodeDisplay;
   threadId?: string | null;
+  workspaceRoot?: string | null;
+  /** Open a workspace file in the right-hand Files panel. */
+  onOpenWorkspaceFile?: (path: string) => void;
 }
 
 /** Extract the raw code text and fence language from a <pre>'s <code> child. */
@@ -41,7 +45,14 @@ function flattenText(node: ReactNode): string {
  * Assistant markdown: GFM (tables, task lists, strikethrough) with code fences
  * rendered through the themed CodeBlock so Appearance settings keep applying.
  */
-export function Markdown({ text, theme, display, threadId }: MarkdownProps) {
+export function Markdown({
+  text,
+  theme,
+  display,
+  threadId,
+  workspaceRoot,
+  onOpenWorkspaceFile,
+}: MarkdownProps) {
   const segments = splitInlineEmbeds(text);
   return (
     <div className="markdown">
@@ -51,14 +62,21 @@ export function Markdown({ text, theme, display, threadId }: MarkdownProps) {
         ) : seg.kind === "image" && threadId ? (
           <InlineImage key={`img-${i}`} threadId={threadId} file={seg.file} alt={seg.alt} />
         ) : seg.kind === "md" && seg.text.trim() ? (
-          <MarkdownBlock key={`md-${i}`} text={seg.text} theme={theme} display={display} />
+          <MarkdownBlock
+            key={`md-${i}`}
+            text={seg.text}
+            theme={theme}
+            display={display}
+            workspaceRoot={workspaceRoot}
+            onOpenWorkspaceFile={onOpenWorkspaceFile}
+          />
         ) : null,
       )}
     </div>
   );
 }
 
-function MarkdownBlock({ text, theme, display }: MarkdownProps) {
+function MarkdownBlock({ text, theme, display, workspaceRoot, onOpenWorkspaceFile }: MarkdownProps) {
   return (
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -79,6 +97,19 @@ function MarkdownBlock({ text, theme, display }: MarkdownProps) {
           code({ className, children, ...rest }) {
             const isBlock = /language-/.test(className ?? "");
             if (isBlock) return <code className={className} {...rest}>{children}</code>;
+            const label = flattenText(children);
+            if (onOpenWorkspaceFile && looksLikeFilePath(label)) {
+              const target = resolveWorkspaceFilePath(workspaceRoot ?? null, label);
+              return (
+                <button
+                  type="button"
+                  className="md-file-link"
+                  onClick={() => onOpenWorkspaceFile(target)}
+                >
+                  {label}
+                </button>
+              );
+            }
             return <code className="ui-code-tag" {...rest}>{children}</code>;
           },
           blockquote({ children }) {

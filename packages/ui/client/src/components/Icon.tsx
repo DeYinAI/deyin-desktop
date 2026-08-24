@@ -55,6 +55,8 @@ const PATHS: Record<string, JSX.Element> = {
   arrowLeft: <path d="M13 8H3m4-4L3 8l4 4" />,
   arrowRight: <path d="M3 8h10M9 4l4 4-4 4" />,
   arrowUp: <path d="M8 13V3M4 7l4-4 4 4" />,
+  /** Return / steer — corner arrow used in the Composer pending bar. */
+  steer: <path d="M12 4H5.5v6.5M5.5 10.5L3 8" />,
   arrowDown: <path d="M8 3v10M12 9l-4 4-4-4" />,
   close: <path d="M4 4l8 8M12 4l-8 8" />,
   minimize: <path d="M3 8.5h10" />,
@@ -161,6 +163,16 @@ const PATHS: Record<string, JSX.Element> = {
     <>
       <rect x="5.5" y="5.5" width="8" height="8" rx="1.2" />
       <path d="M10.5 5.5V3.7A1.2 1.2 0 009.3 2.5H3.7A1.2 1.2 0 002.5 3.7v5.6a1.2 1.2 0 001.2 1.2h1.8" />
+    </>
+  ),
+  thumbUp: (
+    <>
+      <path d="M5.5 7.5V4.2a1 1 0 012 0V7.5m0-4.7a1 1 0 012 0V7.5m0-3.4a1 1 0 012 0v2.1c0 2.2-1.6 4-3.6 4.4H5.8c-1.1 0-2-.6-2.6-1.5L2.4 8.8a1.1 1.1 0 011.7-1.4l.9 1" />
+    </>
+  ),
+  thumbDown: (
+    <>
+      <path d="M5.5 8.5v3.3a1 1 0 002 0V8.5m0 4.7a1 1 0 002 0V8.5m0 3.4a1 1 0 002 0v-2.1c0-2.2-1.6-4-3.6-4.4H5.8c-1.1 0-2 .6-2.6 1.5l-1.8 3.1a1.1 1.1 0 011.7 1.4l.9-1" />
     </>
   ),
   flag: <path d="M4 14V2.5M4 3h8l-1.8 2.5L12 8H4" />,

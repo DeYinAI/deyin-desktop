@@ -34,6 +34,8 @@ interface WorkspacePanelProps {
   onRejectChange?: (changeId: string) => void;
   /** Reveal a file in the Files tab (security findings jump-to-file). */
   onOpenFile?: (path: string) => void;
+  /** Files tab open request (path + seq so repeat clicks re-open). */
+  filesOpenRequest?: { path: string; seq: number } | null;
   planMarkdown: string;
   /** Structured todos for the Plan tab footer (from thread.todos). */
   planTodos?: AgentTodoItem[];
@@ -107,6 +109,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           active={props.activeTab === "files"}
           workspaceRoot={props.workspaceRoot}
           refreshKey={props.filesRefreshKey}
+          openRequest={props.filesOpenRequest}
           codeDisplay={props.codeDisplay}
           onOpenFolder={props.onOpenFolder}
         />

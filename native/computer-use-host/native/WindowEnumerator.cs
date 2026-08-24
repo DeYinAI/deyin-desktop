@@ -49,8 +49,11 @@ public sealed class WindowEnumerator
       {
         var name = Path.GetFileNameWithoutExtension(lnk);
         if (string.IsNullOrWhiteSpace(name)) continue;
-        var id = name.ToLowerInvariant().Replace(' ', '-');
-        apps.TryAdd(id, new { id, name, path = lnk });
+        var target = ResolveShortcutTarget(lnk);
+        var id = !string.IsNullOrWhiteSpace(target)
+          ? Path.GetFileNameWithoutExtension(target).ToLowerInvariant()
+          : name.ToLowerInvariant().Replace(' ', '-');
+        apps.TryAdd(id, new { id, name, path = target ?? lnk });
       }
     }
     foreach (var proc in Process.GetProcesses())
@@ -118,6 +121,22 @@ public sealed class WindowEnumerator
     catch
     {
       return "unknown";
+    }
+  }
+
+  private static string? ResolveShortcutTarget(string lnkPath)
+  {
+    try
+    {
+      var shellType = Type.GetTypeFromProgID("WScript.Shell");
+      if (shellType is null) return null;
+      dynamic shell = Activator.CreateInstance(shellType)!;
+      dynamic shortcut = shell.CreateShortcut(lnkPath);
+      return (string?)shortcut.TargetPath;
+    }
+    catch
+    {
+      return null;
     }
   }
 }

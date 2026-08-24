@@ -72,6 +72,8 @@ interface ComposerProps {
   onSend: () => void;
   /** Abort current run and send immediately (Cursor-like interrupt). */
   onSendNow?: () => void;
+  /** Queue draft as follow-up without stopping the run (Cursor Steer). */
+  onSteer?: () => void;
   onClearQueue?: () => void;
   /** When set and streaming, a stop button is shown. */
   onStop?: () => void;
@@ -393,12 +395,77 @@ export function Composer(props: ComposerProps) {
   };
 
   const queued = props.queuedPrompt?.trim() ?? "";
+  const draft = props.value.trim();
+  const showSteerBar = props.streaming && draft.length > 0 && queued.length === 0;
   const showStop = props.streaming && !!props.onStop;
   const showSend = !props.streaming || props.canSend;
-  const showSendNow = props.streaming && !!props.onSendNow && (props.canSend || queued.length > 0);
 
   return (
     <div className="composer" ref={rootRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+      {queued.length > 0 && (
+        <div className="composer__pending composer__pending--queued" title={queued}>
+          <span className="composer__pending-label">Queued</span>
+          <span className="composer__pending-text">{queued}</span>
+          <div className="composer__pending-actions">
+            {props.onSendNow && (
+              <button
+                type="button"
+                className="composer__pending-link"
+                title="Stop and send now"
+                onClick={() => props.onSendNow?.()}
+              >
+                Send now
+              </button>
+            )}
+            {props.onClearQueue && (
+              <button
+                type="button"
+                className="composer__pending-dismiss"
+                title="Remove queued message"
+                aria-label="Remove queued message"
+                onClick={() => props.onClearQueue?.()}
+              >
+                <Icon name="close" size={12} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {showSteerBar && (
+        <div className="composer__pending composer__pending--steer" title={draft}>
+          <Icon name="steer" size={14} className="composer__pending-steer-icon" />
+          <span className="composer__pending-text composer__pending-text--quoted">&ldquo;{draft}&rdquo;</span>
+          <div className="composer__pending-actions">
+            <button
+              type="button"
+              className="composer__pending-steer"
+              title="Queue as follow-up without stopping the run"
+              onClick={() => (props.onSteer ?? props.onSend)()}
+            >
+              <Icon name="steer" size={12} />
+              Steer
+            </button>
+            <button
+              type="button"
+              className="composer__pending-dismiss"
+              title="Discard draft"
+              aria-label="Discard draft"
+              onClick={() => props.onChange("")}
+            >
+              <Icon name="trash" size={12} />
+            </button>
+            <button
+              type="button"
+              className="composer__pending-dismiss"
+              title="More options"
+              aria-label="More options"
+              disabled
+            >
+              <Icon name="dots" size={12} />
+            </button>
+          </div>
+        </div>
+      )}
       {(attachments.length > 0 || linkedThreads.length > 0 || images.length > 0) && (
         <div className="composer__chips">
           {images.map((img) => (
@@ -464,33 +531,6 @@ export function Composer(props: ComposerProps) {
           Attachments may use ~{attachmentEstimateTokens.toLocaleString()} tokens (
           {Math.round((attachmentEstimateTokens / contextLimit) * 100)}% of context). Consider fewer or smaller
           files.
-        </div>
-      )}
-      {queued.length > 0 && (
-        <div className="composer__queue" title={queued}>
-          <span className="composer__queue-label">Queued</span>
-          <span className="composer__queue-text">{queued}</span>
-          {props.onSendNow && (
-            <button
-              type="button"
-              className="composer__queue-action"
-              title="Stop and send now"
-              onClick={() => props.onSendNow?.()}
-            >
-              Send now
-            </button>
-          )}
-          {props.onClearQueue && (
-            <button
-              type="button"
-              className="composer__queue-dismiss"
-              title="Remove queued message"
-              aria-label="Remove queued message"
-              onClick={() => props.onClearQueue?.()}
-            >
-              <Icon name="close" size={12} />
-            </button>
-          )}
         </div>
       )}
       {slashMatches.length > 0 && (
@@ -715,16 +755,6 @@ export function Composer(props: ComposerProps) {
           {showStop && (
             <button className="btn--stop" onClick={props.onStop} title="Stop the run" aria-label="Stop">
               <Icon name="close" size={14} />
-            </button>
-          )}
-          {showSendNow && (
-            <button
-              className="btn--send btn--send-now"
-              onClick={() => props.onSendNow?.()}
-              title="Stop and send now (Alt+Enter)"
-              aria-label="Stop and send now"
-            >
-              <Icon name="bolt" size={14} />
             </button>
           )}
           {showSend && (

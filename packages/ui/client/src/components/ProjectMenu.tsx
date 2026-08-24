@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useConfirm } from "./ConfirmDialog.js";
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
 
@@ -19,6 +20,7 @@ interface ProjectMenuProps {
 /** Context menu for a sidebar project/folder group. */
 export function ProjectMenu(props: ProjectMenuProps) {
   const t = useT();
+  const { confirm } = useConfirm();
   const ref = useRef<HTMLDivElement>(null);
   const isDesktop = props.platform === "desktop";
 
@@ -44,11 +46,16 @@ export function ProjectMenu(props: ProjectMenuProps) {
   };
 
   const remove = () => {
-    if (props.chatCount > 0) {
-      const ok = window.confirm(t("nav.removeProjectConfirm").replace("{name}", props.projectName));
-      if (!ok) return;
-    }
-    act("remove");
+    void (async () => {
+      if (props.chatCount > 0) {
+        const ok = await confirm({
+          message: t("nav.removeProjectConfirm").replace("{name}", props.projectName),
+          destructive: true,
+        });
+        if (!ok) return;
+      }
+      act("remove");
+    })();
   };
 
   const item = (icon: IconName, label: string, onClick: () => void, disabled = false) => (

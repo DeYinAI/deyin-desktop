@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useConfirm } from "./ConfirmDialog.js";
+import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import type { GitBranch, GitRepoInfo, GitStatus } from "@deyin/contract";
 
@@ -65,6 +67,8 @@ export function GitBranchBadge({
   className = "env-badge",
   menuUp = false,
 }: GitBranchBadgeProps) {
+  const t = useT();
+  const { confirm } = useConfirm();
   const { info, status, branches, refresh } = useGitStatus(workspaceRoot);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -98,12 +102,18 @@ export function GitBranchBadge({
   };
 
   const deleteBranch = (name: string): void => {
-    if (!window.confirm(`Delete branch ${name}?`)) return;
-    setError(null);
-    void window.deyin.git.deleteBranch(name).then((r) => {
-      if (r.ok) refresh();
-      else setError(r.message);
-    });
+    void (async () => {
+      const ok = await confirm({
+        message: t("git.deleteBranchConfirm").replace("{name}", name),
+        destructive: true,
+      });
+      if (!ok) return;
+      setError(null);
+      void window.deyin.git.deleteBranch(name).then((r) => {
+        if (r.ok) refresh();
+        else setError(r.message);
+      });
+    })();
   };
 
   return (
