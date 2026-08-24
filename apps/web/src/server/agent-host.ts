@@ -37,7 +37,7 @@ import {
 import { PluginKernel } from "@deyin/kernel";
 import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
 import { createWebProfile } from "@deyin/bundle-web-app";
-import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
+import { buildPromptCacheKeyFor, resolveWireProvider, type ReasoningEffort } from "@deyin/host-core/shared";
 import {
   Optimization,
   bindAgentCacheHooks,
@@ -60,7 +60,7 @@ export interface WebAgentStartOptions {
   prompt: string;
   model: string;
   thinking: boolean;
-  effort?: "low" | "medium" | "high";
+  effort?: ReasoningEffort;
   approvalMode: "full-access" | "ask-first" | "read-only";
   mode: ChatMode;
   history: { role: "user" | "assistant"; content: string }[];

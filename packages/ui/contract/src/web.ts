@@ -5,7 +5,16 @@
  * The host-facing shapes come from @deyin/host-core (the same types the desktop contract
  * uses), so the browser transport satisfies the desktop `DeyinApi` by construction.
  */
-import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, EnvInfo, FileNode, ProviderApiFormat, TerminalCreateOptions } from "@deyin/host-core/shared";
+import type {
+  AgentEventEnvelope,
+  AgentImageInput,
+  AgentTodoItem,
+  EnvInfo,
+  FileNode,
+  ProviderApiFormat,
+  ReasoningEffort,
+  TerminalCreateOptions,
+} from "@deyin/host-core/shared";
 
 export type { EnvInfo, FileNode, ShellInfo, TerminalCreateOptions } from "@deyin/host-core/shared";
 export type { AgentEventEnvelope, AgentImageInput, AgentTodoItem } from "@deyin/host-core/shared";
@@ -37,7 +46,7 @@ export type ClientMessage =
       prompt: string;
       model: string;
       thinking: boolean;
-      effort?: "low" | "medium" | "high";
+      effort?: ReasoningEffort;
       approvalMode: "full-access" | "ask-first" | "read-only";
       mode: "agent" | "plan" | "ask" | "delivery";
       history: { role: "user" | "assistant"; content: string }[];
