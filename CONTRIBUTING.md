@@ -23,7 +23,7 @@ license — see [TRADEMARK.md](../TRADEMARK.md) for brand policy.
 | verify | yes | yes | yes |
 | CodeQL | yes | yes | yes |
 | dependency-review | yes | yes | yes |
-| AI review (Openference) | no | yes | no (comment only) |
+| AI review (Openference) | no | yes | yes (Commit suggestion or `/ai-fix apply`) |
 
 Fork contributors: open a PR from your fork — static checks run automatically.
 Maintainers can cherry-pick to an in-repo branch for full AI review.
