@@ -88,6 +88,9 @@ export type {
   Thread,
   Project,
   ProjectsState,
+  WorkspaceLocation,
+  WorkspaceState,
+  DirectoryEntry,
   ContextAttachment,
   LinkedThreadRef,
   ContextSearchHit,
@@ -192,6 +195,23 @@ export type RepoProgressStage = "clone" | "connect" | "ship";
 export interface RepoProgressEvent {
   stage: RepoProgressStage;
   line: string;
+}
+
+/** GitHub repo entry for the in-app browser. */
+export interface GitHubRepoEntry {
+  id: number;
+  fullName: string;
+  name: string;
+  owner: string;
+  private: boolean;
+  cloneUrl: string;
+  defaultBranch: string;
+  description: string | null;
+}
+
+export interface GitHubAuthState {
+  connected: boolean;
+  login: string | null;
 }
 
 /** One text-to-image run requested from the chat or the agent. */

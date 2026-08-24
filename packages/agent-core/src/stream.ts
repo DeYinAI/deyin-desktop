@@ -1,5 +1,6 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
 import { addImage, imagesFromMessage, type StreamImage } from "@deyin/host-core";
+import type { ReasoningEffort } from "@deyin/host-core/shared";
 import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
 import {
   normalizeUsage,
@@ -20,8 +21,8 @@ export interface StreamChatEventsOptions {
  tools?: WireTool[];
  /** Request model reasoning ("thinking") when supported. */
  thinking?: boolean;
- /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
- effort?: "low" | "medium" | "high";
+ /** Reasoning effort for models that support it. */
+ effort?: ReasoningEffort;
  temperature?: number;
  /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
  maxTokens?: number;

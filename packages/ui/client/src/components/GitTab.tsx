@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "./Icon.js";
+import { useConfirm } from "./ConfirmDialog.js";
 import { useGitStatus } from "./GitBranchBadge.js";
 import type { FileDiff } from "../diff.js";
 import type { GitBlameLine, GitCommit, GitCommitDetail, GitFileEntry, GitResultLite, GitStash } from "@deyin/contract";
@@ -265,6 +266,7 @@ function FileGroup(props: {
   rowActions: (f: GitFileEntry) => RowAction[];
   onOpen: (f: GitFileEntry) => void;
 }) {
+  const { confirm } = useConfirm();
   if (props.files.length === 0) return null;
   return (
     <div className="git-group">
@@ -290,8 +292,10 @@ function FileGroup(props: {
                 className="icon-btn icon-btn--small"
                 title={a.title}
                 onClick={() => {
-                  if (a.confirm && !window.confirm(a.confirm)) return;
-                  a.run();
+                  void (async () => {
+                    if (a.confirm && !(await confirm({ message: a.confirm, destructive: true }))) return;
+                    a.run();
+                  })();
                 }}
               >
                 <Icon name={a.icon} size={12} />

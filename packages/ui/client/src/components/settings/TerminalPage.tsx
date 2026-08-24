@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, SettingsPageBlock, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings, EnvInfo } from "@deyin/contract";
 
 interface Props {
@@ -19,8 +19,7 @@ export function TerminalPage({ settings, onChange }: Props) {
   const detectedDefault = shells.find((s) => s.id === env?.defaultShell)?.label;
 
   return (
-    <div className="settings-page">
-      <PageHeader title="Terminal" description="Defaults for integrated terminal sessions." />
+    <SettingsPageBlock title="Terminal" description="Defaults for integrated terminal sessions.">
 
       <SectionHeader title="Shell" />
       <SettingGroup>
@@ -142,6 +141,6 @@ export function TerminalPage({ settings, onChange }: Props) {
         />
       </SettingCard>
       </SettingGroup>
-    </div>
+    </SettingsPageBlock>
   );
 }

@@ -17,7 +17,7 @@ echo "==> Publishing computer-use-host for win-x64"
 dotnet publish "$PROJECT" \
   -c Release \
   -r win-x64 \
-  --self-contained false \
+  --self-contained true \
   -o "$OUT"
 
 test -f "${OUT}/deyin-computer-use-host.exe"

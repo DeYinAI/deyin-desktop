@@ -2,8 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSy
 import { join } from "node:path";
 import { app, BrowserWindow, globalShortcut } from "electron";
 import type { ToolDefinition } from "@deyin/agent-core";
-import { createComputerUseHost, PipeComputerUseHost, type ComputerUseHostApi } from "@deyin/computer-use-host";
-import { CH } from "@deyin/contract";
+import { createComputerUseHost, PipeComputerUseHost, resolveHostExe, type ComputerUseHostApi } from "@deyin/computer-use-host";
+import { CH, type ComputerUseHostStatus } from "@deyin/contract";
 
 interface AllowlistFile {
   apps: string[];
@@ -126,6 +126,42 @@ export class ComputerUseService {
 
   async listAppsPreview(): Promise<unknown> {
     return this.ensureHost().listApps();
+  }
+
+  getHostPath(): string {
+    return resolveHostExe(process.resourcesPath);
+  }
+
+  async getHostStatus(): Promise<ComputerUseHostStatus> {
+    if (!this.isWindows()) {
+      return { ok: false, error: "Computer use is available on Windows only.", hostExists: false };
+    }
+    if (!this.isEnabled()) {
+      return { ok: false, error: "Computer use is disabled. Enable it in Settings → Computer Use.", hostExists: false };
+    }
+    const hostPath = this.getHostPath();
+    const hostExists = existsSync(hostPath);
+    if (!hostExists) {
+      return {
+        ok: false,
+        error: "Computer use host executable not found. Reinstall Deyin or rebuild the sidecar.",
+        hostPath,
+        hostExists: false,
+      };
+    }
+    try {
+      const ok = await this.ensureHost().ping();
+      if (ok) return { ok: true, hostPath, hostExists: true };
+      return {
+        ok: false,
+        error: "Computer use host did not respond. Install .NET 8 Desktop Runtime or restart Deyin.",
+        hostPath,
+        hostExists: true,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: message, hostPath, hostExists: true };
+    }
   }
 
   private async ensureWindowAllowed(windowId: string): Promise<void> {

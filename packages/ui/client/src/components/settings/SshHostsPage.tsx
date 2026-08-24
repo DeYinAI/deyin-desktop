@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConfirm } from "../ConfirmDialog.js";
 import { useT } from "../../i18n.js";
 import { Icon } from "../Icon.js";
 import { EmptyState, Field, FormSection, PageHeader, Row, RowList, RowMenu, Tag } from "./controls.js";
@@ -64,6 +65,7 @@ export function SshHostsPage() {
 
 function SshHostsEditor({ api: sshApi }: { api: SshApi }) {
   const t = useT();
+  const { confirm } = useConfirm();
   const [hosts, setHosts] = useState<SshHostInfo[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   /** The editor is only mounted once the user picks a host or adds one. */
@@ -242,7 +244,11 @@ function SshHostsEditor({ api: sshApi }: { api: SshApi }) {
   };
 
   const removeHost = async (id: string): Promise<void> => {
-    if (!window.confirm(`${t("ssh.removeConfirm")} ${t("ssh.usedByAutomations")}`)) return;
+    const ok = await confirm({
+      message: `${t("ssh.removeConfirm")} ${t("ssh.usedByAutomations")}`,
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       setHosts(await sshApi.remove(id));
       if (id === selectedId || id === workingIdRef.current) closeEditor();

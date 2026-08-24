@@ -32,6 +32,7 @@ import type {
 
 export type SettingsPage =
   | "general"
+  | "appearance"
   | "models"
   | "modelRoles"
   | "integrations"
@@ -44,7 +45,6 @@ export type SettingsPage =
 
 /** Legacy page ids kept valid so stale deep-links (e.g. stored settings pages) route somewhere sane. */
 const LEGACY_PAGE_ROUTES: Partial<Record<string, SettingsPage>> = {
-  appearance: "general",
   browser: "workspace",
   terminal: "workspace",
   chrome: "workspace",
@@ -93,6 +93,7 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     sectionKey: "settings.section.basics",
     entries: [
       { page: "general", labelKey: "settings.nav.general", icon: "gear" },
+      { page: "appearance", labelKey: "settings.nav.appearance", icon: "customize" },
       { page: "models", labelKey: "settings.nav.models", icon: "cpu" },
       { page: "modelRoles", labelKey: "settings.nav.modelRoles", icon: "brain" },
     ],
@@ -254,10 +255,14 @@ export function SettingsView(props: SettingsViewProps) {
       <div className="settings__content">
         <Suspense fallback={<div className="settings-page" />}>
         {page === "general" && (
-          <>
+          <div className="settings-page">
             <GeneralPage settings={props.settings} version={props.version} platform={props.platform} onChange={props.onChangeSettings} />
+          </div>
+        )}
+        {page === "appearance" && (
+          <div className="settings-page">
             <AppearancePage settings={props.settings} onChange={props.onChangeSettings} />
-          </>
+          </div>
         )}
         {page === "models" && (
           <ModelSettingsPage
@@ -301,11 +306,11 @@ export function SettingsView(props: SettingsViewProps) {
           />
         )}
         {page === "workspace" && (
-          <>
+          <div className="settings-page">
             <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />
             <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />
             <ComputerUsePage settings={props.settings} onChange={props.onChangeSettings} />
-          </>
+          </div>
         )}
         {page === "data" && (
           <>

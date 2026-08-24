@@ -33,7 +33,11 @@ bash scripts/ci/check-dell-runner.sh
 
 ## External repos
 
-- [x] `DeYinAI/deyin-releases` — empty, ready for v1.0.0
+- [x] `DeYinAI/deyin-releases` — update feed (v1.0.0 published)
+- [x] `DeYinAI/deyin-releases` — [README](https://github.com/DeYinAI/deyin-releases/blob/main/README.md) (purpose, downloads, license pointer)
+- [x] `DeYinAI/deyin-releases` — [LICENSE](https://github.com/DeYinAI/deyin-releases/blob/main/LICENSE) (PolyForm Noncommercial; required for binary redistribution)
+- [x] `DeYinAI/deyin-releases` — [TRADEMARK.md](https://github.com/DeYinAI/deyin-releases/blob/main/TRADEMARK.md)
+- [x] `DeYinAI/deyin-releases` — [SECURITY.md](https://github.com/DeYinAI/deyin-releases/blob/main/SECURITY.md)
 - [ ] `DeYinAI/registry` — public plugin catalog
 
 ## Ship v1.0.0

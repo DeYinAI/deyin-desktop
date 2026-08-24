@@ -1,4 +1,5 @@
 import type { ChatMessage, ProviderApiFormat } from "./types.js";
+import type { ReasoningEffort } from "./model-reasoning.js";
 import { ssePayloads } from "./sse-core.js";
 
 /** Token usage reported by the provider on the final stream frame. */
@@ -17,8 +18,8 @@ export interface StreamChatOptions {
   messages: ChatMessage[];
   /** Request model reasoning ("thinking") when supported. */
   thinking?: boolean;
-  /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
-  effort?: "low" | "medium" | "high";
+  /** Reasoning effort for models that support it. */
+  effort?: ReasoningEffort;
   /** Called once with the real token usage, when the provider reports it. */
   onUsage?: (usage: StreamUsage) => void;
   signal?: AbortSignal;

@@ -8,6 +8,7 @@ import { subagentDisplayName, subagentStatusLine } from "./SubagentPanel.js";
 import { TodoRows, countVisibleTodos } from "./TodoChecklist.js";
 import { Callout, CodeTag, FlatCard, SectionLabel, SeverityBadge } from "./ui/index.js";
 import type { ThreadEvent } from "../threads.js";
+import { summarizeToolActivity } from "../toolActivity.js";
 import { TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 
 /** Distance from the bottom (px) within which we consider the view "pinned". */
@@ -39,6 +40,9 @@ interface ChatViewProps {
   greetingName: string;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
+  /** Open a workspace path in the right-hand Files panel (markdown file refs). */
+  onOpenWorkspaceFile?: (path: string) => void;
+  workspaceRoot?: string | null;
   onUndo: (name: string) => void;
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
@@ -57,6 +61,10 @@ interface ChatViewProps {
   onOpenAgentTerminal?: () => void;
   /** Open the workspace Agent panel on a subagent run (subagent cards). */
   onOpenSubagent?: (id: string) => void;
+  /** Fork the thread at a timeline event index (assistant messages). */
+  onForkAtEvent?: (eventIndex: number) => void;
+  /** Optional message feedback (telemetry / analytics). */
+  onMessageFeedback?: (eventIndex: number, rating: "up" | "down") => void;
 }
 
 /** The session timeline: chat bubbles interleaved with agent activity cards. */
@@ -65,7 +73,12 @@ export function ChatView(props: ChatViewProps) {
   const timelineRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const [showJump, setShowJump] = useState(false);
+  const [messageFeedback, setMessageFeedback] = useState<Record<number, "up" | "down">>({});
   const t = useT();
+
+  useEffect(() => {
+    setMessageFeedback({});
+  }, [props.threadKey]);
 
   const syncPinFromScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -148,9 +161,12 @@ export function ChatView(props: ChatViewProps) {
             <EventRow
               key={i}
               event={group.event}
+              eventIndex={group.eventIndex}
               codeTheme={codeTheme}
               codeDisplay={props.codeDisplay}
               onOpenFile={props.onOpenFile}
+              onOpenWorkspaceFile={props.onOpenWorkspaceFile}
+              workspaceRoot={props.workspaceRoot}
               onUndo={props.onUndo}
               onBuild={props.onBuild}
               onOpenPlan={props.onOpenPlan}
@@ -160,6 +176,12 @@ export function ChatView(props: ChatViewProps) {
               threadTitles={props.threadTitles}
               threadId={props.threadKey}
               onOpenSubagent={props.onOpenSubagent}
+              messageFeedback={messageFeedback[group.eventIndex]}
+              onForkAtEvent={props.onForkAtEvent}
+              onMessageFeedback={(rating) => {
+                setMessageFeedback((cur) => ({ ...cur, [group.eventIndex]: rating }));
+                props.onMessageFeedback?.(group.eventIndex, rating);
+              }}
             />
           ),
         )}
@@ -167,9 +189,15 @@ export function ChatView(props: ChatViewProps) {
           <LiveReasoning text={props.streamReasoning} />
         )}
         {props.streamText !== null && props.streamText.length > 0 && (
-          <div className="assistant-text">
-            <Markdown text={props.streamText} theme={codeTheme} display={props.codeDisplay} threadId={props.threadKey} />
-          </div>
+          <AssistantMessage
+            text={props.streamText}
+            codeTheme={codeTheme}
+            codeDisplay={props.codeDisplay}
+            threadId={props.threadKey}
+            workspaceRoot={props.workspaceRoot}
+            onOpenWorkspaceFile={props.onOpenWorkspaceFile}
+            streaming
+          />
         )}
         {props.streamText !== null &&
           props.streamText.length === 0 &&
@@ -209,22 +237,23 @@ export function ChatView(props: ChatViewProps) {
 }
 
 type TimelineGroup =
-  | { kind: "tools"; events: Extract<ThreadEvent, { kind: "tool" }>[] }
-  | { kind: "single"; event: ThreadEvent };
+  | { kind: "tools"; events: Extract<ThreadEvent, { kind: "tool" }>[]; startIndex: number }
+  | { kind: "single"; event: ThreadEvent; eventIndex: number };
 
 /** Collapse consecutive tool events into one stack so shell runs read as one activity block. */
 function groupTimelineEvents(events: ThreadEvent[]): TimelineGroup[] {
   const groups: TimelineGroup[] = [];
-  for (const event of events) {
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i]!;
     if (event.kind === "tool") {
       const last = groups[groups.length - 1];
       if (last?.kind === "tools") {
         last.events.push(event);
       } else {
-        groups.push({ kind: "tools", events: [event] });
+        groups.push({ kind: "tools", events: [event], startIndex: i });
       }
     } else {
-      groups.push({ kind: "single", event });
+      groups.push({ kind: "single", event, eventIndex: i });
     }
   }
   return groups;
@@ -270,16 +299,56 @@ function renderToolStack(
   events: Extract<ThreadEvent, { kind: "tool" }>[],
   onOpenAgentTerminal?: () => void,
 ) {
-  return partitionToolStack(events).map((item, j) =>
-    item.kind === "tool" ? (
-      item.event.name === "bash" ? (
-        <ShellCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
-      ) : (
-        <ToolCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
-      )
-    ) : (
-      <QuietToolsRow key={j} events={item.events} />
-    ),
+  return <ActivityGroup events={events} onOpenAgentTerminal={onOpenAgentTerminal} />;
+}
+
+/** Cursor-style one-line tool summary in chat; expand for individual calls. */
+function ActivityGroup({
+  events,
+  onOpenAgentTerminal,
+}: {
+  events: Extract<ThreadEvent, { kind: "tool" }>[];
+  onOpenAgentTerminal?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wasRunningRef = useRef(false);
+  const summary = summarizeToolActivity(events);
+  const anyRunning = events.some((e) => e.ok === undefined);
+
+  useLayoutEffect(() => {
+    if (anyRunning) setOpen(true);
+    else if (wasRunningRef.current) setOpen(false);
+    wasRunningRef.current = anyRunning;
+  }, [anyRunning]);
+
+  return (
+    <div className={`activity-summary${summary.failed ? " activity-summary--failed" : ""}${anyRunning ? " activity-summary--live" : ""}`}>
+      <button type="button" className="activity-summary__row" onClick={() => setOpen((v) => !v)}>
+        <Icon name={summary.icon} size={12} className="activity-summary__icon" />
+        <span className="activity-summary__label">
+          {summary.label}
+          {summary.overflow > 0 && (
+            <span className="activity-summary__more">+{summary.overflow}</span>
+          )}
+        </span>
+        <Icon name={open ? "chevronDown" : "chevronRight"} size={10} className="activity-summary__chevron" />
+      </button>
+      {open && (
+        <div className="activity-summary__detail">
+          {partitionToolStack(events).map((item, j) =>
+            item.kind === "tool" ? (
+              item.event.name === "bash" ? (
+                <ShellCard key={j} event={item.event} onOpenAgentTerminal={onOpenAgentTerminal} />
+              ) : (
+                <ToolCard key={j} event={item.event} compact onOpenAgentTerminal={onOpenAgentTerminal} />
+              )
+            ) : (
+              <QuietToolsRow key={j} events={item.events} />
+            ),
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -327,9 +396,12 @@ function LiveReasoning({ text }: { text: string }) {
 
 function EventRow({
   event,
+  eventIndex,
   codeTheme,
   codeDisplay,
   onOpenFile,
+  onOpenWorkspaceFile,
+  workspaceRoot,
   onUndo,
   onBuild,
   onOpenPlan,
@@ -339,11 +411,17 @@ function EventRow({
   threadTitles,
   threadId,
   onOpenSubagent,
+  messageFeedback,
+  onForkAtEvent,
+  onMessageFeedback,
 }: {
   event: ThreadEvent;
+  eventIndex: number;
   codeTheme: CodeTheme;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
+  onOpenWorkspaceFile?: (path: string) => void;
+  workspaceRoot?: string | null;
   onUndo: (name: string) => void;
   onBuild?: () => void;
   onOpenPlan?: () => void;
@@ -359,6 +437,9 @@ function EventRow({
   threadId?: string | null;
   /** Open the workspace Agent panel on this subagent run. */
   onOpenSubagent?: (id: string) => void;
+  messageFeedback?: "up" | "down";
+  onForkAtEvent?: (eventIndex: number) => void;
+  onMessageFeedback?: (rating: "up" | "down") => void;
 }) {
   switch (event.kind) {
     case "user": {
@@ -384,9 +465,17 @@ function EventRow({
 
     case "assistant":
       return (
-        <div className="assistant-text">
-          <Markdown text={event.text} theme={codeTheme} display={codeDisplay} threadId={threadId} />
-        </div>
+        <AssistantMessage
+          text={event.text}
+          codeTheme={codeTheme}
+          codeDisplay={codeDisplay}
+          threadId={threadId}
+          workspaceRoot={workspaceRoot}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          feedback={messageFeedback}
+          onFork={onForkAtEvent ? () => onForkAtEvent(eventIndex) : undefined}
+          onFeedback={onMessageFeedback}
+        />
       );
 
     case "reasoning":
@@ -505,6 +594,105 @@ function EventRow({
   }
 }
 
+/** Assistant bubble with hover actions: copy, feedback, fork-from-here. */
+function AssistantMessage({
+  text,
+  codeTheme,
+  codeDisplay,
+  threadId,
+  workspaceRoot,
+  onOpenWorkspaceFile,
+  streaming = false,
+  feedback,
+  onFork,
+  onFeedback,
+}: {
+  text: string;
+  codeTheme: CodeTheme;
+  codeDisplay: ChatCodeDisplay;
+  threadId?: string | null;
+  workspaceRoot?: string | null;
+  onOpenWorkspaceFile?: (path: string) => void;
+  streaming?: boolean;
+  feedback?: "up" | "down";
+  onFork?: () => void;
+  onFeedback?: (rating: "up" | "down") => void;
+}) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    if (!text.trim()) return;
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    });
+  };
+
+  const showActions = !streaming && text.trim().length > 0;
+
+  return (
+    <div className={`assistant-message${streaming ? " assistant-message--streaming" : ""}`}>
+      <div className="assistant-text">
+        <Markdown
+          text={text}
+          theme={codeTheme}
+          display={codeDisplay}
+          threadId={threadId}
+          workspaceRoot={workspaceRoot}
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+        />
+      </div>
+      {showActions && (
+        <div className="assistant-message__actions">
+          <button
+            type="button"
+            className="assistant-message__action"
+            onClick={copy}
+            title={copied ? t("chat.copied") : t("chat.copyMessage")}
+            aria-label={copied ? t("chat.copied") : t("chat.copyMessage")}
+          >
+            <Icon name={copied ? "check" : "copy"} size={14} />
+          </button>
+          {onFeedback && (
+            <>
+              <button
+                type="button"
+                className={`assistant-message__action${feedback === "up" ? " assistant-message__action--active" : ""}`}
+                onClick={() => onFeedback("up")}
+                title={t("chat.feedbackUp")}
+                aria-label={t("chat.feedbackUp")}
+              >
+                <Icon name="thumbUp" size={14} />
+              </button>
+              <button
+                type="button"
+                className={`assistant-message__action${feedback === "down" ? " assistant-message__action--active" : ""}`}
+                onClick={() => onFeedback("down")}
+                title={t("chat.feedbackDown")}
+                aria-label={t("chat.feedbackDown")}
+              >
+                <Icon name="thumbDown" size={14} />
+              </button>
+            </>
+          )}
+          {onFork && (
+            <button
+              type="button"
+              className="assistant-message__action"
+              onClick={onFork}
+              title={t("chat.forkHere")}
+              aria-label={t("chat.forkHere")}
+            >
+              <Icon name="gitBranch" size={14} />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Muted timeline status (Thought · 3s, Created 6 tasks, Worked on it · 1 action). */
 function StatusLine({
   icon,
@@ -521,12 +709,12 @@ function StatusLine({
   return (
     <Tag
       type={onClick ? "button" : undefined}
-      className={`status-line${onClick ? " status-line--clickable" : ""}`}
+      className={`activity-summary__row status-line${onClick ? " status-line--clickable" : ""}`}
       onClick={onClick}
     >
-      <Icon name={icon} size={13} />
-      <span>{label}</span>
-      {onClick && <Icon name={open ? "chevronDown" : "chevronRight"} size={10} />}
+      <Icon name={icon} size={12} className="activity-summary__icon" />
+      <span className="activity-summary__label">{label}</span>
+      {onClick && <Icon name={open ? "chevronDown" : "chevronRight"} size={10} className="activity-summary__chevron" />}
     </Tag>
   );
 }
@@ -770,7 +958,7 @@ function formatDisplayPath(path: string): string {
   return path;
 }
 
-/** Shell command card: cwd header + monospace command, expand for output. */
+/** Shell command card: one-line summary, expand for cwd / full command / output. */
 function ShellCard({
   event,
   onOpenAgentTerminal,
@@ -780,6 +968,7 @@ function ShellCard({
 }) {
   const [open, setOpen] = useState(false);
   const resultRef = useRef<HTMLPreElement>(null);
+  const wasRunningRef = useRef(false);
   const running = event.ok === undefined;
   const hasOutput = event.result !== undefined && event.result.length > 0;
   const exitCode = shellExitCode(event.result, !running);
@@ -787,44 +976,67 @@ function ShellCard({
   const displayResult =
     event.result === undefined ? undefined : stripExitNote(stripAnsi(event.result));
   const cwd = event.cwd ? formatDisplayPath(event.cwd) : undefined;
+  const canExpand = Boolean(cwd || event.summary || (displayResult !== undefined && displayResult.length > 0) || !running);
 
   useLayoutEffect(() => {
     if (running && hasOutput) {
       setOpen(true);
       const el = resultRef.current;
       if (el) el.scrollTop = el.scrollHeight;
+    } else if (wasRunningRef.current && !running) {
+      setOpen(false);
     }
+    wasRunningRef.current = running;
   }, [running, hasOutput, event.result]);
 
   return (
-    <div className={`shell-card ${failed ? "shell-card--failed" : ""} ${running ? "shell-card--running" : ""}`}>
-      {cwd && (
-        <div className="shell-card__meta">
-          <Icon name="terminal" size={13} />
-          <span className="shell-card__cwd">{cwd}</span>
-          {onOpenAgentTerminal && (
-            <button
-              type="button"
-              className="shell-card__open-term"
-              title="Open in terminal"
-              onClick={onOpenAgentTerminal}
-            >
-              <Icon name="terminal" size={11} />
-            </button>
-          )}
-        </div>
-      )}
-      <button type="button" className="shell-card__cmd" onClick={() => setOpen((v) => !v)}>
-        <code>{event.summary}</code>
-        {exitCode !== undefined && exitCode !== 0 && <span className="shell-card__exit">exit {exitCode}</span>}
-        {(hasOutput || !running) && event.result !== undefined && (
+    <div
+      className={`shell-card ${open ? "shell-card--open" : ""} ${failed ? "shell-card--failed" : ""} ${running ? "shell-card--running" : ""}`}
+    >
+      <button
+        type="button"
+        className="shell-card__row"
+        onClick={() => canExpand && setOpen((v) => !v)}
+        disabled={!canExpand}
+      >
+        <Icon name="terminal" size={12} className="shell-card__icon" />
+        <code className="shell-card__cmd">{event.summary || "(shell)"}</code>
+        {exitCode !== undefined && exitCode !== 0 && (
+          <span className="shell-card__exit">exit {exitCode}</span>
+        )}
+        {event.durationMs !== undefined && !running && (
+          <span className="shell-card__duration">{formatDuration(event.durationMs)}</span>
+        )}
+        {canExpand && (
           <Icon name={open ? "chevronDown" : "chevronRight"} size={11} className="shell-card__chevron" />
         )}
       </button>
-      {open && displayResult !== undefined && displayResult.length > 0 && (
-        <pre className="shell-card__output" ref={resultRef}>
-          {truncateToolCard(displayResult, TOOL_RESULT_UI_CAP)}
-        </pre>
+      {open && (
+        <div className="shell-card__detail">
+          {cwd && (
+            <div className="shell-card__meta">
+              <span className="shell-card__cwd">{cwd}</span>
+              {onOpenAgentTerminal && (
+                <button
+                  type="button"
+                  className="shell-card__open-term"
+                  title="Open in terminal"
+                  onClick={onOpenAgentTerminal}
+                >
+                  <Icon name="terminal" size={11} />
+                </button>
+              )}
+            </div>
+          )}
+          {event.summary && (
+            <pre className="shell-card__cmd-full">{event.summary}</pre>
+          )}
+          {displayResult !== undefined && displayResult.length > 0 && (
+            <pre className="shell-card__output" ref={resultRef}>
+              {truncateToolCard(displayResult, TOOL_RESULT_UI_CAP)}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );
@@ -975,6 +1187,7 @@ function ToolCard({
 }) {
   const [open, setOpen] = useState(false);
   const resultRef = useRef<HTMLPreElement>(null);
+  const wasRunningRef = useRef(false);
   const running = event.ok === undefined;
   const isShell = event.name === "bash";
   const hasOutput = event.result !== undefined && event.result.length > 0;
@@ -989,12 +1202,15 @@ function ToolCard({
       setOpen(true);
       const el = resultRef.current;
       if (el) el.scrollTop = el.scrollHeight;
+    } else if (wasRunningRef.current && !running && isShell) {
+      setOpen(false);
     }
+    wasRunningRef.current = running;
   }, [running, isShell, hasOutput, event.result]);
 
   return (
     <div
-      className={`tool-card ${compact ? "tool-card--compact" : ""} ${failed ? "tool-card--failed" : ""} ${running ? "tool-card--running" : ""}`}
+      className={`tool-card ${open ? "tool-card--open" : ""} ${compact ? "tool-card--compact" : ""} ${failed ? "tool-card--failed" : ""} ${running ? "tool-card--running" : ""}`}
     >
       <button type="button" className="tool-card__row" onClick={() => setOpen((v) => !v)}>
         {!compact && <Icon name={running ? "clock" : failed ? "close" : "check"} size={12} />}

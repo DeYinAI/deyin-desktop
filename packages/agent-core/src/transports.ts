@@ -1,5 +1,6 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
 import { addImage, parseImagePart, type StreamImage } from "@deyin/host-core";
+import type { ReasoningEffort } from "@deyin/host-core/shared";
 import { toAnthropicMessages, toResponsesInput, type CompressionResult, type WireOptions } from "./wire.js";
 
 /**
@@ -43,7 +44,7 @@ export interface TransportOptions {
   /** Request model reasoning ("thinking") when supported. */
   thinking?: boolean;
   /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
-  effort?: "low" | "medium" | "high";
+  effort?: ReasoningEffort;
   temperature?: number;
   /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
   maxTokens?: number;

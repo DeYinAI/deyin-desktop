@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { BrowserWindow, app, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import {
@@ -12,18 +12,14 @@ import {
   TelemetryReporter,
   TerminalManager,
   UsageStore,
-  assertInsideRoot,
   detectEnv,
   git,
   GitWatcher,
   imageDataUrl,
   type GitResult,
-  readTextFile,
-  readTree,
-  writeTextFile,
   webSearch,
 } from "@deyin/host-core";
-import { fetchPublicPlans } from "@deyin/host-core/shared";
+import { fetchPublicPlans, projectLocation } from "@deyin/host-core/shared";
 import {
   abortCrossCurrencyUpgrade,
   completeCrossCurrencyUpgrade,
@@ -79,9 +75,13 @@ import { ImageService } from "./images.js";
 import { runImageGeneration, type ImageRouting } from "./image-gen.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { WorkspaceTrustStore } from "./workspace-trust.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join as pathJoin } from "node:path";
+import { RepoManager } from "@deyin/host-core";
+import { defaultCloneRoot, WorkspaceService } from "./remote/workspace-service.js";
+import { GitHubService } from "./github.js";
+import type { RepoConnectRequest, RepoProgressEvent, WorkspaceState } from "@deyin/contract";
 
 interface RegisterOptions {
   config: DeyinConfig;
@@ -361,24 +361,60 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     isCatchUpEnabled: () => settings.get().automationsCatchUp,
   });
 
+  const workspaceService = new WorkspaceService(automations.sshHosts);
+  const github = new GitHubService();
+  let desktopRepoManager: RepoManager | null = null;
+  const emitRepoProgress = (e: RepoProgressEvent): void => broadcast(CH.repoProgress, e);
+
   // Watches .git for external changes (terminal/agent) and pings the renderer.
   const gitWatcher = new GitWatcher(() => broadcast(CH.gitChanged, undefined));
 
+  const broadcastLocation = (state: WorkspaceState): void => {
+    broadcast(CH.workspaceLocationChanged, state);
+  };
+
   /* Workspace root changes fan out to the index, capability scanner, and renderer. */
   const applyWorkspaceRoot = (root: string | null): void => {
-    opts.setWorkspaceRoot(root);
-    projects.set({ workspaceRoot: root });
-    capabilities.invalidate();
-    void index.setRoot(root);
-    gitWatcher.watch(root);
-    broadcast(CH.workspaceRootChanged, root);
-    broadcast(CH.gitChanged, undefined);
+    if (!root) {
+      void workspaceService.disconnect().then(broadcastLocation);
+      opts.setWorkspaceRoot(null);
+      projects.set({ workspaceRoot: null });
+      capabilities.invalidate();
+      void index.setRoot(null);
+      gitWatcher.watch(null);
+      broadcast(CH.workspaceRootChanged, null);
+      broadcast(CH.gitChanged, undefined);
+      return;
+    }
+    void workspaceService.setLocal(root).then((state) => {
+      opts.setWorkspaceRoot(root);
+      projects.set({ workspaceRoot: root });
+      capabilities.invalidate();
+      void index.setRoot(root);
+      gitWatcher.watch(root);
+      broadcast(CH.workspaceRootChanged, root);
+      broadcast(CH.gitChanged, undefined);
+      broadcastLocation(state);
+    });
   };
   // Restore the last workspace folder so terminals/files land where the user
   // left off; the renderer re-reads the project state via projectsGet.
-  opts.setWorkspaceRoot(projects.get().workspaceRoot);
-  void index.setRoot(projects.get().workspaceRoot);
-  gitWatcher.watch(projects.get().workspaceRoot);
+  const restored = projects.get().workspaceRoot;
+  const activeProject = projects.get().projects.find((p) => p.id === projects.get().activeProjectId);
+  const restoredLoc = activeProject ? projectLocation(activeProject) : null;
+  if (restoredLoc?.kind === "remote") {
+    void workspaceService.connectRemote(restoredLoc.hostId, restoredLoc.root).then((state) => {
+      opts.setWorkspaceRoot(state.label);
+      broadcastLocation(state);
+    });
+  } else if (restored) {
+    void workspaceService.setLocal(restored).then((state) => {
+      opts.setWorkspaceRoot(restored);
+      broadcastLocation(state);
+    });
+  }
+  void index.setRoot(restoredLoc?.kind === "remote" ? null : restored);
+  gitWatcher.watch(restoredLoc?.kind === "remote" ? null : restored);
 
   ipcMain.handle(CH.bootstrap, async (): Promise<Bootstrap> => {
     return {
@@ -389,6 +425,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       },
       user: await auth.getUser(),
       workspaceRoot: opts.getWorkspaceRoot(),
+      workspaceState: workspaceService.getState(),
       version: app.getVersion(),
       platform: "desktop",
       homeDir: homedir(),
@@ -405,49 +442,57 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.modelsRefresh, () => modelsCache.get(true));
 
   ipcMain.handle(CH.filesTree, (_e, dir?: string) => {
-    const root = opts.getWorkspaceRoot();
-    if (!root) return [];
-    if (!dir) return readTree(root);
-    return readTree(assertInsideRoot(root, dir));
+    const backend = workspaceService.getBackend();
+    if (!backend) return [];
+    if (!dir) return backend.readTree(undefined);
+    return backend.readTree(dir);
   });
   ipcMain.handle(CH.filesRead, (_e, path: string) => {
-    const root = opts.getWorkspaceRoot();
-    if (!root) throw new Error("No workspace open");
-    return readTextFile(assertInsideRoot(root, path));
+    const backend = workspaceService.getBackend();
+    if (!backend) throw new Error("No workspace open");
+    return backend.readText(path);
   });
   ipcMain.handle(CH.filesWrite, (_e, path: string, content: string) => {
-    const root = opts.getWorkspaceRoot();
-    if (!root) throw new Error("No workspace open");
-    return writeTextFile(assertInsideRoot(root, path), content);
+    const backend = workspaceService.getBackend();
+    if (!backend) throw new Error("No workspace open");
+    return backend.writeText(path, content);
   });
 
   /* Git: system-`git` via host-core, scoped to the workspace root. Read ops degrade
      gracefully (no root / not a repo → empty); mutations re-broadcast gitChanged. */
+  const gitRoot = (): string | null => workspaceService.execRoot();
+  const remoteGit = () => workspaceService.getRemoteGit();
+
   ipcMain.handle(CH.gitInfo, (): Promise<GitRepoInfo> => {
-    const root = opts.getWorkspaceRoot();
+    const rg = remoteGit();
+    if (rg) return rg.repoInfo();
+    const root = gitRoot();
     if (!root) return Promise.resolve({ isRepo: false, root: null, branch: null, detached: false, ahead: 0, behind: 0, remotes: [] });
     return git.repoInfo(root);
   });
   ipcMain.handle(CH.gitStatus, (): Promise<GitStatus> => {
-    const root = opts.getWorkspaceRoot();
+    const rg = remoteGit();
+    if (rg) return rg.status();
+    const root = gitRoot();
     if (!root) return Promise.resolve({ branch: null, detached: false, upstream: null, ahead: 0, behind: 0, staged: [], unstaged: [], untracked: [], conflicts: [] });
     return git.status(root);
   });
   ipcMain.handle(CH.gitBranches, (): Promise<GitBranch[]> => {
-    const root = opts.getWorkspaceRoot();
+    const rg = remoteGit();
+    if (rg) return rg.branches();
+    const root = gitRoot();
     return root ? git.branches(root) : Promise.resolve([]);
   });
-  // Run a mutating git op scoped to the workspace root, then ping the renderer.
   const gitMutate = async (run: (root: string) => Promise<GitResult>, okMsg: string): Promise<GitResultLite> => {
-    const root = opts.getWorkspaceRoot();
-    if (!root) return { ok: false, message: "No workspace open" };
+    const root = gitRoot();
+    if (!root || workspaceService.isRemote()) return { ok: false, message: "Git mutations require a local workspace" };
     const result = await run(root);
     broadcast(CH.gitChanged, undefined);
     return { ok: result.ok, message: (result.ok ? result.stdout : result.stderr).trim() || (result.ok ? okMsg : "git command failed") };
   };
   const gitRead = <T>(run: (root: string) => Promise<T>, fallback: T): Promise<T> => {
-    const root = opts.getWorkspaceRoot();
-    return root ? run(root) : Promise.resolve(fallback);
+    const root = gitRoot();
+    return root && !workspaceService.isRemote() ? run(root) : Promise.resolve(fallback);
   };
 
   ipcMain.handle(CH.gitCheckout, (_e, name: string) => gitMutate((r) => git.checkout(r, name), `Switched to ${name}`));
@@ -487,6 +532,32 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     const root = result.filePaths[0]!;
     applyWorkspaceRoot(root);
     return root;
+  });
+  ipcMain.handle(CH.workspaceListDirectory, (_e, dir: string) => workspaceService.listLocalDirectory(dir));
+  ipcMain.handle(CH.workspaceGetLocation, () => workspaceService.getState());
+  ipcMain.handle(CH.workspaceConnectRemote, async (_e, hostId: string, remotePath: string) => {
+    const hosts = automations.listSshHosts();
+    const host = hosts.find((h) => h.id === hostId);
+    const state = await workspaceService.connectRemote(hostId, remotePath, host?.label ?? host?.host);
+    if (state.connected && state.location?.kind === "remote") {
+      opts.setWorkspaceRoot(state.label);
+      projects.set({ workspaceRoot: state.label });
+      capabilities.invalidate();
+      void index.setRoot(null);
+      gitWatcher.watch(null);
+      broadcast(CH.workspaceRootChanged, state.label);
+      broadcast(CH.gitChanged, undefined);
+    }
+    broadcastLocation(state);
+    return state;
+  });
+  ipcMain.handle(CH.workspaceDisconnectRemote, async () => {
+    const state = await workspaceService.disconnect();
+    opts.setWorkspaceRoot(null);
+    projects.set({ workspaceRoot: null });
+    broadcast(CH.workspaceRootChanged, null);
+    broadcastLocation(state);
+    return state;
   });
   ipcMain.handle(CH.workspaceSetRoot, (_e, root: string | null) => {
     applyWorkspaceRoot(root);
@@ -528,6 +599,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     return computerUse.getAllowlist();
   });
   ipcMain.handle(CH.computerUseListApps, () => computerUse.listAppsPreview());
+  ipcMain.handle(CH.computerUseGetHostStatus, () => computerUse.getHostStatus());
   ipcMain.on(CH.computerUseAppApprovalRespond, (_e, requestId: string, decision: "always" | "once" | "deny") => {
     const pending = pendingAppApprovals.get(requestId);
     if (!pending) return;
@@ -823,6 +895,44 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     if (result.canceled || result.filePaths.length === 0) return null;
     return readFileSync(result.filePaths[0]!, "utf8");
   });
+  ipcMain.handle(CH.sshBrowse, (_e, hostId: string, remotePath: string) =>
+    workspaceService.listRemoteDirectory(hostId, remotePath),
+  );
+
+  ipcMain.handle(CH.repoConnect, async (_e, req: RepoConnectRequest) => {
+    const { slugifyRepo } = await import("@deyin/host-core");
+    const slug = slugifyRepo(req.url);
+    const cloneDir = pathJoin(defaultCloneRoot(), `${slug}-${randomBytes(3).toString("hex")}`);
+    try {
+      mkdirSync(cloneDir, { recursive: true });
+      const user = await auth.getUser();
+      desktopRepoManager = new RepoManager(
+        cloneDir,
+        { name: user?.name ?? undefined, email: user?.email ?? undefined },
+        (stage, line) => emitRepoProgress({ stage, line }),
+      );
+      const token = req.token ?? github.getToken() ?? undefined;
+      const state = await desktopRepoManager.connect({ ...req, token });
+      applyWorkspaceRoot(cloneDir);
+      return state;
+    } catch (err) {
+      try {
+        const { rmSync } = await import("node:fs");
+        rmSync(cloneDir, { recursive: true, force: true });
+      } catch {
+        /* best effort */
+      }
+      throw err;
+    }
+  });
+  ipcMain.handle(CH.repoState, () => desktopRepoManager?.state() ?? { connected: false, url: null, branch: null, defaultBranch: null });
+
+  ipcMain.handle(CH.githubConnect, () => github.connect());
+  ipcMain.handle(CH.githubDisconnect, () => {
+    github.disconnect();
+  });
+  ipcMain.handle(CH.githubAuthState, () => github.authState());
+  ipcMain.handle(CH.githubListRepos, (_e, query?: string) => github.listRepos(query));
 
   return {
     terminals,
@@ -848,6 +958,7 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       ]);
       index.dispose();
       gitWatcher.stop();
+      workspaceService.dispose();
     },
   };
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConfirm } from "./ConfirmDialog.js";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import {
@@ -218,6 +219,7 @@ interface Props {
 
 export function AutomationsView(props: Props) {
   const t = useT();
+  const { confirm } = useConfirm();
   const api = window.deyin.automations;
   const sshApi = window.deyin.sshHosts;
 
@@ -422,7 +424,8 @@ export function AutomationsView(props: Props) {
 
   const remove = async () => {
     if (!api || !selectedId) return;
-    if (!window.confirm(t("automations.deleteConfirm"))) return;
+    const ok = await confirm({ message: t("automations.deleteConfirm"), destructive: true });
+    if (!ok) return;
     setItems(await api.remove(selectedId));
     startNew();
   };

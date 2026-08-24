@@ -8,6 +8,16 @@ export interface UserProfile {
   plan?: string;
 }
 
+export interface ModelReasoningMeta {
+  /** Allowed effort values from the catalog, highest first. `null` = all gateway values. */
+  supportedEfforts?: string[] | null;
+  defaultEffort?: string;
+  defaultEnabled?: boolean;
+  /** When true, reasoning cannot be disabled — hide Off. */
+  mandatory?: boolean;
+  supportsMaxTokens?: boolean;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -23,6 +33,8 @@ export interface ModelInfo {
    * arrives attached to the assistant message.
    */
   imageOutput?: boolean;
+  /** Per-model reasoning effort options from the catalog (`GET /models`). */
+  reasoning?: ModelReasoningMeta;
 }
 
 export interface FileNode {
@@ -32,10 +44,41 @@ export interface FileNode {
   children?: FileNode[];
 }
 
+/** Where the active workspace lives — local disk or a remote SSH host. */
+export type WorkspaceLocation =
+  | { kind: "local"; root: string }
+  /** `root` is an absolute POSIX path on the remote machine. */
+  | { kind: "remote"; hostId: string; root: string };
+
+/** One row in the in-app folder browser (directories only). */
+export interface DirectoryEntry {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+}
+
+export type WorkspaceConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error";
+
+/** Authoritative workspace state owned by the host. */
+export interface WorkspaceState {
+  location: WorkspaceLocation | null;
+  connected: boolean;
+  connectionState: WorkspaceConnectionState;
+  /** Human label for the UI, e.g. `~/github/foo` or `user@host:/path`. */
+  label: string;
+  error?: string;
+}
+
 export interface Bootstrap {
   config: Pick<DeyinConfig, "oauthIssuer" | "apiBaseUrl" | "clientId">;
   user: UserProfile | null;
   workspaceRoot: string | null;
+  workspaceState?: WorkspaceState;
   version: string;
   /** Which runtime hosts the renderer: the Electron shell or a browser tab. */
   platform: "desktop" | "web";
@@ -371,6 +414,10 @@ export interface Project {
   name: string;
   /** Absolute path of the workspace folder; null for the default chat-only project. */
   root: string | null;
+  /** Preferred location model; `root` mirrors local paths for compat. */
+  location?: WorkspaceLocation;
+  /** ISO timestamp — powers the Recents list in the project picker. */
+  lastOpenedAt?: string;
   threads: Thread[];
 }
 
@@ -904,7 +951,7 @@ export interface AgentStartOptions {
   model: string;
   thinking: boolean;
   /** Reasoning effort when the model supports it; omitted when unset. */
-  effort?: "low" | "medium" | "high";
+  effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   approvalMode: ApprovalMode;
   /** Composer mode: agent (build), plan (read-only research) or ask (read-only Q&A). */
   mode: ChatMode;
@@ -941,6 +988,8 @@ export interface ProviderModel {
    * arrives attached to the assistant message.
    */
   imageOutput?: boolean;
+  /** Per-model reasoning effort options from the provider catalog. */
+  reasoning?: ModelReasoningMeta;
 }
 
 export type ProviderApiFormat = "chat-completions" | "responses" | "anthropic";

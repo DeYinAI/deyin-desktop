@@ -10,6 +10,7 @@ import {
 } from "./defaults.js";
 import { classifyModelKinds, isImageModel } from "./images.js";
 import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
+import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { Storage } from "./storage.js";
 import type {
   AccountUsage,
@@ -307,6 +308,7 @@ export class AgentsStore {
         .filter((m): m is { id: string; context_length?: number; vision?: unknown; capabilities?: unknown } => typeof m.id === "string" && m.id.length > 0)
         .map((m) => {
           const image = isImageModel(m.id, m);
+          const reasoning = parseModelReasoningMeta(m);
           return {
             id: m.id,
             name: m.id,
@@ -319,6 +321,7 @@ export class AgentsStore {
                   capabilities: m.capabilities,
                 }),
             kind: image ? ("image" as const) : ("chat" as const),
+            ...(reasoning ? { reasoning } : {}),
           };
         });
       if (models.length > 0) {

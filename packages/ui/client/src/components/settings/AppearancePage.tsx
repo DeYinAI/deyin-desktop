@@ -1,7 +1,7 @@
 import { ACCENTS, ACCENT_IDS } from "@deyin/branding";
 import { CodeBlock, DARK_CODE_THEMES, LIGHT_CODE_THEMES, themeByName } from "../../code.js";
 import { useT } from "../../i18n.js";
-import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, SettingsPageBlock, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "@deyin/contract";
 
 const SAMPLE = `interface ThemeConfig {
@@ -23,8 +23,7 @@ interface Props {
 export function AppearancePage({ settings, onChange }: Props) {
   const t = useT();
   return (
-    <div className="settings-page">
-      <PageHeader title={t("appearance.title")} description={t("appearance.desc")} />
+    <SettingsPageBlock title={t("appearance.title")} description={t("appearance.desc")}>
 
       <SectionHeader title={t("appearance.interface")} />
       <SettingGroup>
@@ -122,7 +121,7 @@ export function AppearancePage({ settings, onChange }: Props) {
       </SettingGroup>
 
       <SectionHeader title={t("appearance.codePreview")} />
-      <p className="settings-page__desc" style={{ margin: "0 0 12px" }}>
+      <p className="section-lead">
         Live preview of both code themes with the current display options. The theme matching the interface is active.
       </p>
       <div className="codepreview">
@@ -141,7 +140,7 @@ export function AppearancePage({ settings, onChange }: Props) {
           settings={settings}
         />
       </div>
-    </div>
+    </SettingsPageBlock>
   );
 }
 

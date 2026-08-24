@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SettingGroup, PageHeader, SectionHeader, SettingCard, Toggle } from "./controls.js";
+import { SettingGroup, SettingsPageBlock, SectionHeader, SettingCard, Toggle } from "./controls.js";
 import type { DeyinSettings } from "@deyin/contract";
 
 interface Props {
@@ -20,8 +20,7 @@ export function BrowserPage({ settings, onChange }: Props) {
   };
 
   return (
-    <div className="settings-page">
-      <PageHeader title="Browser" description="The built-in browser used by agent sessions and previews." />
+    <SettingsPageBlock title="Browser" description="The built-in browser used by agent sessions and previews." continued>
 
       <SectionHeader title="Browser control" />
       <SettingGroup>
@@ -53,6 +52,6 @@ export function BrowserPage({ settings, onChange }: Props) {
       </SettingGroup>
 
       {note && <div className="hint" style={{ marginTop: 10 }}>{note}</div>}
-    </div>
+    </SettingsPageBlock>
   );
 }
