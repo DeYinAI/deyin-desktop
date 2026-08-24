@@ -313,6 +313,13 @@ function hasBlockingFindings(findings: ReviewFinding[]): boolean {
   return findings.some((f) => f.severity === "Critical" || f.severity === "High");
 }
 
+class BlockingReviewError extends Error {
+  constructor() {
+    super("AI review found Critical or High severity issues — see PR comment and suggested fixes");
+    this.name = "BlockingReviewError";
+  }
+}
+
 async function main(): Promise<void> {
   requireEnv();
 
@@ -350,11 +357,16 @@ async function main(): Promise<void> {
   console.log(`Findings: ${findings.length} (${findings.filter((f) => f.severity === "Critical" || f.severity === "High").length} blocking)`);
 
   if (hasBlockingFindings(findings)) {
-    fail("AI review found Critical or High severity issues — see PR comment and suggested fixes");
+    throw new BlockingReviewError();
   }
 }
 
 main().catch(async (err: unknown) => {
+  if (err instanceof BlockingReviewError) {
+    console.error(err.message);
+    process.exit(1);
+  }
+
   const message = err instanceof Error ? err.message : String(err);
   console.error(message);
   try {
