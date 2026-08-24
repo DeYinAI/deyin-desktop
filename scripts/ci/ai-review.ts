@@ -15,7 +15,7 @@ import {
 const COMMENT_MARKER = "<!-- deyin-ai-review -->";
 const MAX_DIFF_BYTES = 100 * 1024;
 const API_BASE = process.env.OPENFERENCE_API_BASE ?? "https://api.openference.com/v1";
-const MODEL = process.env.OPENFERENCE_REVIEW_MODEL ?? "gpt-4o-mini";
+const MODEL = process.env.OPENFERENCE_REVIEW_MODEL ?? "GLM-4.7-Flash";
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
 const SEVERITY_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
@@ -33,7 +33,7 @@ function run(cmd: string): string {
 
 function fail(message: string): never {
   console.error(message);
-  process.exit(1);
+  throw new Error(message);
 }
 
 function requireEnv(): void {
@@ -180,6 +180,21 @@ function renderComment(findings: Finding[], notes: string[], truncated: boolean)
   return lines.join("\n");
 }
 
+function renderErrorComment(message: string): string {
+  return [
+    COMMENT_MARKER,
+    "## Deyin AI review (Bugbot + Security)",
+    "",
+    "AI review failed before results could be posted.",
+    "",
+    "```",
+    message,
+    "```",
+    "",
+    "_Check the workflow logs for full details. Override model with the `OPENFERENCE_REVIEW_MODEL` env var._",
+  ].join("\n");
+}
+
 async function ghApi(path: string, method = "GET", body?: unknown): Promise<unknown> {
   const res = await fetch(`https://api.github.com${path}`, {
     method,
@@ -256,7 +271,15 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
+main().catch(async (err: unknown) => {
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(message);
+  try {
+    if (githubToken && repo && prNumber) {
+      await upsertComment(renderErrorComment(message));
+    }
+  } catch (commentErr) {
+    console.error("Failed to post error comment:", commentErr);
+  }
   process.exit(1);
 });
