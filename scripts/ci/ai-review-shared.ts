@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 
 export const COMMENT_MARKER = "<!-- deyin-ai-review -->";
 export const FIXES_MARKER_PREFIX = "<!-- deyin-ai-review-fixes:v1:";
@@ -69,13 +69,17 @@ function isStoredFix(value: unknown): value is StoredFix {
 }
 
 export function validateSuggestedFix(repoPath: string, fix: SuggestedFix): string | null {
-  if (fix.path.startsWith("/") || fix.path.includes("\0")) {
+  if (!fix.path || fix.path.includes("\0") || fix.path.startsWith("/")) {
     return `invalid path: ${fix.path}`;
   }
   const root = resolve(repoPath);
+  const rootPrefix = root.endsWith(sep) ? root : `${root}${sep}`;
   const filePath = resolve(root, fix.path);
+  if (!filePath.startsWith(rootPrefix)) {
+    return `invalid path: ${fix.path}`;
+  }
   const rel = relative(root, filePath);
-  if (rel.startsWith("..") || rel.includes("..")) {
+  if (rel.startsWith("..") || rel.split(sep).includes("..")) {
     return `invalid path: ${fix.path}`;
   }
   let lines: string[];
@@ -103,17 +107,49 @@ export function applySuggestedFix(repoPath: string, fix: SuggestedFix): void {
   writeFileSync(filePath, next.join("\n"));
 }
 
-export function suggestionCommentBody(finding: ReviewFinding): string {
+export function suggestionCommentBody(finding: ReviewFinding, repoPath: string): string | null {
   const fix = finding.suggested_fix;
-  if (!fix) return "";
+  if (!fix) return null;
+
+  const validationError = validateSuggestedFix(repoPath, fix);
+  if (validationError) return null;
+
+  const filePath = resolve(repoPath, fix.path);
+  const fileLines = readFileSync(filePath, "utf8").split("\n");
+  const endLine = Math.min(fix.end_line, fileLines.length);
+  if (fix.start_line < 1 || endLine < fix.start_line) return null;
+
+  // GitHub replaces exactly start_line..line; replacement must be the new text for that span.
+  const replacement = fix.replacement.trimEnd();
+  if (!replacement) return null;
+
   const summary = finding.finding.replace(/\|/g, "\\|").replace(/\n/g, " ");
   return [
     `**${finding.severity}** (${finding.reviewer}) — ${summary}`,
     "",
     "```suggestion",
-    fix.replacement,
+    replacement,
     "```",
   ].join("\n");
+}
+
+export function githubReviewCommentForFix(
+  finding: ReviewFinding,
+  repoPath: string,
+): { path: string; body: string; line: number; start_line: number } | null {
+  const fix = finding.suggested_fix;
+  if (!fix) return null;
+  const body = suggestionCommentBody(finding, repoPath);
+  if (!body) return null;
+
+  const replacementLineCount = fix.replacement.split("\n").length;
+  const endLine = fix.start_line + replacementLineCount - 1;
+  return {
+    path: fix.path,
+    body,
+    start_line: fix.start_line,
+    line: endLine,
+  };
 }
 
 export async function ghApi(

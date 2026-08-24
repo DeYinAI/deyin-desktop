@@ -85,7 +85,7 @@ Return JSON matching the provided schema. Report findings only — do not modify
   - path — repository-relative file path (must match the file in location)
   - start_line — 1-based inclusive start line in the current file
   - end_line — 1-based inclusive end line (same as start_line for a one-line fix)
-  - replacement — exact replacement text for lines start_line..end_line (no diff markers, no markdown fences)
+  - replacement — the exact new text for lines start_line..end_line only (no diff markers, no markdown fences, no extra context lines). This is posted as a GitHub "Commit suggestion", so it must replace only that line span.
   Set suggested_fix to null when the fix is unclear, architectural, or spans many files.
 
 If you found nothing, return an empty findings array.
