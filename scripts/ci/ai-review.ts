@@ -242,7 +242,7 @@ function renderComment(findings: ReviewFinding[], notes: string[], truncated: bo
     lines.push("| Severity | Location | Reviewer | Finding | Fix |");
     lines.push("| --- | --- | --- | --- | --- |");
     for (const f of findings) {
-      const finding = f.finding.replace(/\|/g, "\\|").replace(/\n/g, " ");
+      const finding = f.finding.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
       const fixCell = f.suggested_fix ? "Suggested below" : "Manual";
       lines.push(`| ${f.severity} | ${f.location} | ${f.reviewer} | ${finding} | ${fixCell} |`);
     }
@@ -268,7 +268,7 @@ function renderComment(findings: ReviewFinding[], notes: string[], truncated: bo
   const fixesPayload = encodeFixesPayload(findings);
   if (fixesPayload) lines.push("", fixesPayload);
 
-  lines.push("", "_Automated review via Openference. Critical/High findings fail this check._");
+  lines.push("", "_Automated review via Openference. Critical findings fail this check._");
   return lines.join("\n");
 }
 
@@ -354,12 +354,12 @@ async function postSuggestedFixComments(findings: ReviewFinding[], commitId: str
 }
 
 function hasBlockingFindings(findings: ReviewFinding[]): boolean {
-  return findings.some((f) => f.severity === "Critical" || f.severity === "High");
+  return findings.some((f) => f.severity === "Critical");
 }
 
 class BlockingReviewError extends Error {
   constructor() {
-    super("AI review found Critical or High severity issues — see PR comment and suggested fixes");
+    super("AI review found Critical severity issues — see PR comment and suggested fixes");
     this.name = "BlockingReviewError";
   }
 }

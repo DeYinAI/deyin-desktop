@@ -9,8 +9,10 @@ import { resolve } from "node:path";
 import {
   applySuggestedFix,
   decodeFixesPayload,
+  fixesOverlap,
   ghApi,
   COMMENT_MARKER,
+  sortFixesForApply,
   type StoredFix,
 } from "./ai-review-shared.ts";
 
@@ -63,12 +65,22 @@ async function main(): Promise<void> {
     head: { ref: string; sha: string };
   };
 
-  const fixes = await loadFixesFromReviewComment(owner, name);
+  const fixes = sortFixesForApply(await loadFixesFromReviewComment(owner, name));
   console.log(`Applying ${fixes.length} suggested fix(es)...`);
 
+  const applied: StoredFix[] = [];
   for (const fix of fixes) {
+    if (applied.some((prev) => fixesOverlap(prev, fix))) {
+      console.warn(`  skip overlapping fix ${fix.path}:${fix.start_line}-${fix.end_line}`);
+      continue;
+    }
     applySuggestedFix(repoPath, fix);
+    applied.push(fix);
     console.log(`  applied ${fix.path}:${fix.start_line}-${fix.end_line}`);
+  }
+
+  if (applied.length === 0) {
+    fail("No fixes applied — all overlapped or invalid");
   }
 
   runGit(["add", "-A"]);
@@ -78,7 +90,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const message = `fix: apply AI review suggestions (${fixes.length} patch(es))`;
+  const message = `fix: apply AI review suggestions (${applied.length} patch(es))`;
   runGit(["commit", "-m", message]);
   const headRef = resolveHeadRef(pr.head.ref);
   runGit(["push", "origin", `HEAD:${headRef}`]);
@@ -89,7 +101,7 @@ async function main(): Promise<void> {
       "<!-- deyin-ai-review-applied -->",
       "## AI review fixes applied",
       "",
-      `Committed ${fixes.length} suggested patch(es) to \`${pr.head.ref}\`.`,
+      `Committed ${applied.length} suggested patch(es) to \`${pr.head.ref}\`.`,
       "",
       "Re-run CI to verify. The `ai-review` check will refresh on the next push.",
     ].join("\n"),
