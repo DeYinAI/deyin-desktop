@@ -50,7 +50,7 @@ in-app subagents. The workflow:
 4. Posts inline **suggested fixes** on changed files (GitHub **Commit suggestion**
    buttons in the Files changed tab)
 5. Lets maintainers apply all fixes at once by commenting `/ai-fix apply` on the PR
-6. **Fails** the check if any Critical or High severity finding is reported
+6. **Fails** the check if any Critical severity finding is reported (High/Medium/Low are advisory)
 
 **Same-repo PRs only.** Fork PRs do not receive the Openference API key (secret
 abuse prevention). External contributors still get `verify`, CodeQL, and

@@ -3,6 +3,7 @@ import { relative, resolve, sep } from "node:path";
 
 export const COMMENT_MARKER = "<!-- deyin-ai-review -->";
 export const FIXES_MARKER_PREFIX = "<!-- deyin-ai-review-fixes:v1:";
+const MAX_FIXES_PAYLOAD_BYTES = 256 * 1024;
 
 export interface SuggestedFix {
   path: string;
@@ -26,6 +27,30 @@ export interface StoredFix extends SuggestedFix {
   reviewer: ReviewFinding["reviewer"];
 }
 
+interface FileText {
+  lines: string[];
+  eol: "\n" | "\r\n";
+}
+
+function readFileText(filePath: string): FileText {
+  const raw = readFileSync(filePath, "utf8");
+  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+  const lines = raw.split(/\r?\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "" && (raw.endsWith("\n") || raw.endsWith("\r\n"))) {
+    lines.pop();
+  }
+  return { lines, eol };
+}
+
+function writeFileText(filePath: string, lines: string[], eol: "\n" | "\r\n"): void {
+  const trailingNewline = lines.length > 0 ? eol : "";
+  writeFileSync(filePath, lines.join(eol) + trailingNewline);
+}
+
+function escapeMarkdownCell(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
 export function encodeFixesPayload(findings: ReviewFinding[]): string {
   const fixes: StoredFix[] = findings
     .filter((f): f is ReviewFinding & { suggested_fix: SuggestedFix } => !!f.suggested_fix)
@@ -37,7 +62,9 @@ export function encodeFixesPayload(findings: ReviewFinding[]): string {
       reviewer: f.reviewer,
     }));
   if (fixes.length === 0) return "";
-  return `${FIXES_MARKER_PREFIX}${Buffer.from(JSON.stringify(fixes), "utf8").toString("base64")} -->`;
+  const encoded = Buffer.from(JSON.stringify(fixes), "utf8").toString("base64");
+  if (encoded.length > MAX_FIXES_PAYLOAD_BYTES) return "";
+  return `${FIXES_MARKER_PREFIX}${encoded} -->`;
 }
 
 export function decodeFixesPayload(body: string): StoredFix[] {
@@ -46,6 +73,7 @@ export function decodeFixesPayload(body: string): StoredFix[] {
   const end = body.indexOf(" -->", start);
   if (end < 0) return [];
   const encoded = body.slice(start + FIXES_MARKER_PREFIX.length, end);
+  if (encoded.length > MAX_FIXES_PAYLOAD_BYTES) return [];
   try {
     const parsed = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -60,9 +88,12 @@ function isStoredFix(value: unknown): value is StoredFix {
   const fix = value as Partial<StoredFix>;
   return (
     typeof fix.path === "string" &&
+    fix.path.length > 0 &&
+    fix.path.length <= 512 &&
     typeof fix.start_line === "number" &&
     typeof fix.end_line === "number" &&
     typeof fix.replacement === "string" &&
+    fix.replacement.length <= 64 * 1024 &&
     fix.start_line >= 1 &&
     fix.end_line >= fix.start_line
   );
@@ -82,13 +113,13 @@ export function validateSuggestedFix(repoPath: string, fix: SuggestedFix): strin
   if (rel.startsWith("..") || rel.split(sep).includes("..")) {
     return `invalid path: ${fix.path}`;
   }
-  let lines: string[];
+  let file: FileText;
   try {
-    lines = readFileSync(filePath, "utf8").split("\n");
+    file = readFileText(filePath);
   } catch {
     return `file not found: ${fix.path}`;
   }
-  if (fix.start_line < 1 || fix.end_line > lines.length || fix.end_line < fix.start_line) {
+  if (fix.start_line < 1 || fix.end_line > file.lines.length || fix.end_line < fix.start_line) {
     return `line range out of bounds for ${fix.path}: ${fix.start_line}-${fix.end_line}`;
   }
   return null;
@@ -97,14 +128,28 @@ export function validateSuggestedFix(repoPath: string, fix: SuggestedFix): strin
 export function applySuggestedFix(repoPath: string, fix: SuggestedFix): void {
   const error = validateSuggestedFix(repoPath, fix);
   if (error) throw new Error(error);
-  const filePath = resolve(repoPath, fix.path);
-  const lines = readFileSync(filePath, "utf8").split("\n");
+  const root = resolve(repoPath);
+  const filePath = resolve(root, fix.path);
+  const file = readFileText(filePath);
+  const replacementLines = fix.replacement.split(/\r?\n/);
   const next = [
-    ...lines.slice(0, fix.start_line - 1),
-    ...fix.replacement.split("\n"),
-    ...lines.slice(fix.end_line),
+    ...file.lines.slice(0, fix.start_line - 1),
+    ...replacementLines,
+    ...file.lines.slice(fix.end_line),
   ];
-  writeFileSync(filePath, next.join("\n"));
+  writeFileText(filePath, next, file.eol);
+}
+
+export function fixesOverlap(a: SuggestedFix, b: SuggestedFix): boolean {
+  if (a.path !== b.path) return false;
+  return a.start_line <= b.end_line && b.start_line <= a.end_line;
+}
+
+export function sortFixesForApply(fixes: StoredFix[]): StoredFix[] {
+  return [...fixes].sort((a, b) => {
+    if (a.path !== b.path) return a.path.localeCompare(b.path);
+    return b.start_line - a.start_line;
+  });
 }
 
 export function suggestionCommentBody(finding: ReviewFinding, repoPath: string): string | null {
@@ -114,21 +159,18 @@ export function suggestionCommentBody(finding: ReviewFinding, repoPath: string):
   const validationError = validateSuggestedFix(repoPath, fix);
   if (validationError) return null;
 
-  const filePath = resolve(repoPath, fix.path);
-  const fileLines = readFileSync(filePath, "utf8").split("\n");
-  const endLine = Math.min(fix.end_line, fileLines.length);
-  if (fix.start_line < 1 || endLine < fix.start_line) return null;
+  const root = resolve(repoPath);
+  const file = readFileText(resolve(root, fix.path));
+  const endLine = fix.end_line;
+  if (fix.start_line < 1 || endLine > file.lines.length || endLine < fix.start_line) return null;
+  if (!fix.replacement) return null;
 
-  // GitHub replaces exactly start_line..line; replacement must be the new text for that span.
-  const replacement = fix.replacement.trimEnd();
-  if (!replacement) return null;
-
-  const summary = finding.finding.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  const summary = escapeMarkdownCell(finding.finding);
   return [
     `**${finding.severity}** (${finding.reviewer}) — ${summary}`,
     "",
     "```suggestion",
-    replacement,
+    fix.replacement,
     "```",
   ].join("\n");
 }
@@ -142,8 +184,11 @@ export function githubReviewCommentForFix(
   const body = suggestionCommentBody(finding, repoPath);
   if (!body) return null;
 
-  const replacementLineCount = fix.replacement.split("\n").length;
-  const endLine = fix.start_line + replacementLineCount - 1;
+  const root = resolve(repoPath);
+  const file = readFileText(resolve(root, fix.path));
+  const endLine = Math.min(fix.end_line, file.lines.length);
+  if (fix.start_line < 1 || endLine < fix.start_line) return null;
+
   return {
     path: fix.path,
     body,
