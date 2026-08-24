@@ -105,47 +105,87 @@ async function callReviewer(
   reviewer: ReviewFinding["reviewer"],
   userContent: string,
 ): Promise<ReviewResult> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let lastError = "unknown error";
 
-  try {
-    const res = await fetch(`${API_BASE}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "code_review_findings",
-            strict: true,
-            schema: FINDINGS_WITH_FIXES_JSON_SCHEMA,
-          },
-        },
-      }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      fail(`Openference API error (${reviewer}): ${res.status} ${body}`);
-    }
-
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = json.choices?.[0]?.message?.content;
-    if (!content) fail(`Openference API returned empty content (${reviewer})`);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-      const raw = JSON.parse(content) as {
+      const res = await fetch(`${API_BASE}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content:
+                attempt === 1
+                  ? userContent
+                  : `${userContent}\n\nReturn ONLY valid JSON matching the schema. No prose, markdown, or explanation outside the JSON object.`,
+            },
+          ],
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: "code_review_findings",
+              strict: true,
+              schema: FINDINGS_WITH_FIXES_JSON_SCHEMA,
+            },
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        fail(`Openference API error (${reviewer}): ${res.status} ${body}`);
+      }
+
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const content = json.choices?.[0]?.message?.content;
+      if (!content) {
+        lastError = `empty content (${reviewer})`;
+        continue;
+      }
+
+      const parsed = parseReviewJson(content, reviewer);
+      return parsed;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (attempt === 1) {
+      console.warn(`Retrying ${reviewer} review after: ${lastError}`);
+    }
+  }
+
+  console.warn(`${reviewer} review unavailable after retries: ${lastError}`);
+  return {
+    findings: [],
+    review_notes: `${reviewer} review failed to return structured JSON: ${lastError}`,
+  };
+}
+
+function parseReviewJson(content: string, reviewer: ReviewFinding["reviewer"]): ReviewResult {
+  const candidates = [content.trim()];
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim();
+  if (fenced) candidates.push(fenced);
+  const objectMatch = content.match(/\{[\s\S]*\}/);
+  if (objectMatch) candidates.push(objectMatch[0]);
+
+  for (const candidate of candidates) {
+    try {
+      const raw = JSON.parse(candidate) as {
         findings?: Partial<ReviewFinding>[];
         review_notes?: string;
       };
@@ -156,11 +196,11 @@ async function callReviewer(
         review_notes: typeof raw.review_notes === "string" ? raw.review_notes : "",
       };
     } catch {
-      fail(`Openference API returned invalid JSON (${reviewer}): ${content.slice(0, 500)}`);
+      continue;
     }
-  } finally {
-    clearTimeout(timer);
   }
+
+  throw new Error(`invalid JSON (${reviewer}): ${content.slice(0, 500)}`);
 }
 
 function buildUserPrompt(diff: string, stat: string, truncated: boolean): string {
