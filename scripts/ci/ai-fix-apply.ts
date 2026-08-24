@@ -3,7 +3,7 @@
  * Apply AI review suggested fixes to a PR branch after maintainer approval.
  * Triggered when someone comments `/ai-fix apply` on the pull request.
  */
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -19,8 +19,12 @@ const repo = process.env.GITHUB_REPOSITORY;
 const prNumber = process.env.PR_NUMBER;
 const repoPath = resolve(process.env.GITHUB_WORKSPACE ?? process.cwd());
 
-function run(cmd: string): string {
-  return execSync(cmd, { encoding: "utf8", cwd: repoPath, stdio: ["ignore", "pipe", "pipe"] }).trim();
+function runGit(args: string[]): string {
+  return execFileSync("git", args, {
+    encoding: "utf8",
+    cwd: repoPath,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
 }
 
 function fail(message: string): never {
@@ -38,6 +42,14 @@ async function loadFixesFromReviewComment(owner: string, name: string): Promise<
   const fixes = decodeFixesPayload(reviewComment.body);
   if (fixes.length === 0) fail("AI review comment has no suggested fixes to apply");
   return fixes;
+}
+
+function resolveHeadRef(rawRef: string): string {
+  const sanitized = rawRef.replace(/[^A-Za-z0-9._/-]/g, "");
+  if (!sanitized || sanitized !== rawRef) {
+    fail(`Invalid PR head ref: ${rawRef}`);
+  }
+  return sanitized;
 }
 
 async function main(): Promise<void> {
@@ -59,17 +71,17 @@ async function main(): Promise<void> {
     console.log(`  applied ${fix.path}:${fix.start_line}-${fix.end_line}`);
   }
 
-  run("git add -A");
-  const status = run("git status --porcelain");
+  runGit(["add", "-A"]);
+  const status = runGit(["status", "--porcelain"]);
   if (!status.trim()) {
     console.log("No file changes after applying fixes — nothing to commit");
     return;
   }
 
-  run(`git commit -m "fix: apply AI review suggestions (${fixes.length} patch(es))"`);
-  const headRef = pr.head.ref.replace(/[^A-Za-z0-9._/-]/g, "");
-  if (!headRef) fail("Invalid PR head ref");
-  run(`git push origin "HEAD:${headRef}"`);
+  const message = `fix: apply AI review suggestions (${fixes.length} patch(es))`;
+  runGit(["commit", "-m", message]);
+  const headRef = resolveHeadRef(pr.head.ref);
+  runGit(["push", "origin", `HEAD:${headRef}`]);
   console.log(`Pushed fixes to ${headRef}`);
 
   await ghApi(githubToken, `/repos/${owner}/${name}/issues/${prNumber}/comments`, "POST", {

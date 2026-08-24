@@ -13,9 +13,9 @@ import {
 } from "../../packages/agent-core/src/review-contracts.ts";
 import {
   COMMENT_MARKER,
+  githubReviewCommentForFix,
   encodeFixesPayload,
   ghApi,
-  suggestionCommentBody,
   validateSuggestedFix,
   type ReviewFinding,
   type SuggestedFix,
@@ -322,18 +322,22 @@ async function postSuggestedFixComments(findings: ReviewFinding[], commitId: str
   }> = [];
 
   for (const finding of findings) {
-    const fix = finding.suggested_fix;
-    if (!fix) continue;
-    const validationError = validateSuggestedFix(repoPath, fix);
-    if (validationError) {
-      console.warn(`Skipping invalid suggested fix at ${finding.location}: ${validationError}`);
+    const comment = githubReviewCommentForFix(finding, repoPath);
+    if (!comment) {
+      const fix = finding.suggested_fix;
+      if (fix) {
+        const validationError = validateSuggestedFix(repoPath, fix);
+        console.warn(
+          `Skipping suggested fix at ${finding.location}: ${validationError ?? "could not build GitHub suggestion"}`,
+        );
+      }
       continue;
     }
     comments.push({
-      path: fix.path,
-      line: fix.end_line,
-      ...(fix.start_line < fix.end_line ? { start_line: fix.start_line } : {}),
-      body: suggestionCommentBody(finding),
+      path: comment.path,
+      line: comment.line,
+      ...(comment.start_line < comment.line ? { start_line: comment.start_line } : {}),
+      body: comment.body,
     });
   }
 
