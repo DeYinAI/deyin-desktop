@@ -15,7 +15,7 @@ import {
 const COMMENT_MARKER = "<!-- deyin-ai-review -->";
 const MAX_DIFF_BYTES = 100 * 1024;
 const API_BASE = process.env.OPENFERENCE_API_BASE ?? "https://api.openference.com/v1";
-const MODEL = process.env.OPENFERENCE_REVIEW_MODEL ?? "GLM-4.7-Flash";
+const MODEL = process.env.OPENFERENCE_REVIEW_MODEL?.trim() || "GLM-4.7-Flash";
 const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 
 const SEVERITY_ORDER = { Critical: 0, High: 1, Medium: 2, Low: 3 };
