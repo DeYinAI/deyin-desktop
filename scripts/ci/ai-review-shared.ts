@@ -69,6 +69,9 @@ function isStoredFix(value: unknown): value is StoredFix {
 }
 
 export function validateSuggestedFix(repoPath: string, fix: SuggestedFix): string | null {
+  if (fix.path.startsWith("/") || fix.path.includes("\0")) {
+    return `invalid path: ${fix.path}`;
+  }
   const root = resolve(repoPath);
   const filePath = resolve(root, fix.path);
   const rel = relative(root, filePath);
