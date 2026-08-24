@@ -95,3 +95,5 @@ All core packages remain monorepo-private:
 | `DeYinAI/registry` | Plugin marketplace catalog |
 
 Ensure `DeYinAI/registry` is public before launch so the in-app catalog works offline of private repos.
+
+**Authoring:** see the [registry README](https://github.com/DeYinAI/registry/blob/main/README.md) for manifest layout, MCP patterns, secrets, and OAuth prerequisites.

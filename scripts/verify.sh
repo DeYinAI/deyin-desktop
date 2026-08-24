@@ -35,4 +35,7 @@ pnpm --filter @deyin/web build
 echo "==> Building CLI"
 pnpm --filter @deyin/cli build
 
+echo "==> Verifying DeYinAI/registry plugins (skipped when registry checkout is absent)"
+bash scripts/verify-registry-plugins.sh
+
 echo "==> All green."

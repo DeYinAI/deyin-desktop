@@ -24,6 +24,28 @@ const FALLBACK_CATALOG: PluginCatalogEntry[] = [
     description: "Curated starter skills: conventional commits and README writing.",
     repo: "DeYinAI/registry/plugins/starter-pack",
     kind: "plugin",
+    interface: { displayName: "Starter Pack", category: "Guides", brandColor: "#6366F1" },
+  },
+  {
+    name: "conventional-commits",
+    description: "Write conventional commit messages with a guided skill and /conventional-commit command.",
+    repo: "DeYinAI/registry/plugins/conventional-commits",
+    kind: "plugin",
+    interface: { displayName: "Conventional Commits", category: "Developer Tools", brandColor: "#10B981" },
+  },
+  {
+    name: "postgres-dev",
+    description: "Query and inspect PostgreSQL with guided skills and MCP.",
+    repo: "DeYinAI/registry/plugins/postgres-dev",
+    kind: "plugin",
+    interface: { displayName: "PostgreSQL Dev", category: "Developer Tools", brandColor: "#336791" },
+  },
+  {
+    name: "docs-lookup",
+    description: "Look up up-to-date library documentation with Context7 and Fetch MCP.",
+    repo: "DeYinAI/registry/plugins/docs-lookup",
+    kind: "plugin",
+    interface: { displayName: "Docs Lookup", category: "Developer Tools", brandColor: "#0EA5E9" },
   },
 ];
 

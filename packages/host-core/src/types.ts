@@ -697,6 +697,13 @@ export interface PluginCatalogEntry {
   repo: string;
   version?: string;
   kind?: "plugin" | "skill" | "mcp";
+  /** Optional marketplace card metadata (shown before install). */
+  interface?: {
+    displayName?: string;
+    category?: string;
+    brandColor?: string;
+    logo?: string;
+  };
 }
 
 /* Indexing ------------------------------------------------------------------- */
