@@ -61,7 +61,7 @@ workflows) and receive an explanatory PR comment instead.
 **Required secret:** `OPENFERENCE_API_KEY` (`sk-of-...`) in repository settings.
 
 **Optional variable:** `OPENFERENCE_REVIEW_MODEL` (repository variable). Defaults to
-`GLM-4.7-Flash` when unset. Must be a model id from
+`GLM-5.2` when unset. Must be a model id from
 [openference.com/models](https://openference.com/models) — OpenAI model names like
 `gpt-4o-mini` are not valid on this gateway.
 
