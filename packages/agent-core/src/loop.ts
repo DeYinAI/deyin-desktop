@@ -1,9 +1,10 @@
-import { compactMessages } from "./compaction.js";
+import type { ReasoningEffort } from "@deyin/host-core/shared";
 import {
   comparePrefixShapes,
   computePrefixShape,
   shouldBumpLogRewriteVersion,
 } from "./cache/prefix-tracker.js";
+import { compactMessages } from "./compaction.js";
 import {
   estimateContextUsage,
   splitToolSchemaTokens,
@@ -88,7 +89,7 @@ export interface AgentRunOptions {
   cwd: string;
   thinking?: boolean;
   /** Reasoning effort for models that support it ("low" | "medium" | "high"). */
-  effort?: "low" | "medium" | "high";
+  effort?: ReasoningEffort;
   /** Provider wire format; defaults to "chat-completions". */
   apiFormat?: ProviderApiFormat;
   /** Anthropic-compatible gateways using Bearer instead of x-api-key. */

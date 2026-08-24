@@ -53,6 +53,9 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
       if (result.ok) {
         setSource("");
         setAdding(false);
+        if (result.plugin?.variables && result.plugin.variables.length > 0) {
+          setSecretsFor(result.plugin.name);
+        }
         reload();
       }
     } finally {
@@ -92,9 +95,10 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
         if (installedNames.has(entry.name)) continue;
         entries.push({
           key: `catalog:${entry.repo}`,
-          name: entry.name,
+          name: entry.interface?.displayName ?? entry.name,
           description: entry.description,
-          category: "Community catalog",
+          category: entry.interface?.category ?? "Community catalog",
+          color: entry.interface?.brandColor,
           repo: entry.repo,
         });
       }
