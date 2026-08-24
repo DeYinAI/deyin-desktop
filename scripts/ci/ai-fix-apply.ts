@@ -67,8 +67,10 @@ async function main(): Promise<void> {
   }
 
   run(`git commit -m "fix: apply AI review suggestions (${fixes.length} patch(es))"`);
-  run(`git push origin HEAD:${pr.head.ref}`);
-  console.log(`Pushed fixes to ${pr.head.ref}`);
+  const headRef = pr.head.ref.replace(/[^A-Za-z0-9._/-]/g, "");
+  if (!headRef) fail("Invalid PR head ref");
+  run(`git push origin "HEAD:${headRef}"`);
+  console.log(`Pushed fixes to ${headRef}`);
 
   await ghApi(githubToken, `/repos/${owner}/${name}/issues/${prNumber}/comments`, "POST", {
     body: [

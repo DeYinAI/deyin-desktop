@@ -1,5 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 
 export const COMMENT_MARKER = "<!-- deyin-ai-review -->";
 export const FIXES_MARKER_PREFIX = "<!-- deyin-ai-review-fixes:v1:";
@@ -69,8 +69,10 @@ function isStoredFix(value: unknown): value is StoredFix {
 }
 
 export function validateSuggestedFix(repoPath: string, fix: SuggestedFix): string | null {
-  const filePath = resolve(repoPath, fix.path);
-  if (fix.path.includes("..") || !filePath.startsWith(resolve(repoPath))) {
+  const root = resolve(repoPath);
+  const filePath = resolve(root, fix.path);
+  const rel = relative(root, filePath);
+  if (rel.startsWith("..") || rel.includes("..")) {
     return `invalid path: ${fix.path}`;
   }
   let lines: string[];
