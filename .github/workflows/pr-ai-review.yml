@@ -49,6 +49,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
           BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: pnpm exec tsx scripts/ci/ai-review.ts
 

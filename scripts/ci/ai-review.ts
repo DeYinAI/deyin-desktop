@@ -1,18 +1,26 @@
 #!/usr/bin/env node
 /**
  * Openference AI code review for pull requests.
- * Runs Bugbot + Security Review with structured JSON output and posts a PR comment.
+ * Runs Bugbot + Security Review, posts findings, and attaches GitHub suggested fixes.
  */
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   BUGBOT_CI_PROMPT,
-  FINDINGS_JSON_SCHEMA,
+  FINDINGS_WITH_FIXES_JSON_SCHEMA,
   SECURITY_REVIEW_CI_PROMPT,
 } from "../../packages/agent-core/src/review-contracts.ts";
+import {
+  COMMENT_MARKER,
+  encodeFixesPayload,
+  ghApi,
+  suggestionCommentBody,
+  validateSuggestedFix,
+  type ReviewFinding,
+  type SuggestedFix,
+} from "./ai-review-shared.ts";
 
-const COMMENT_MARKER = "<!-- deyin-ai-review -->";
 const MAX_DIFF_BYTES = 100 * 1024;
 const API_BASE = process.env.OPENFERENCE_API_BASE ?? "https://api.openference.com/v1";
 const MODEL = process.env.OPENFERENCE_REVIEW_MODEL?.trim() || "GLM-5.2";
@@ -25,6 +33,7 @@ const githubToken = process.env.GITHUB_TOKEN;
 const repo = process.env.GITHUB_REPOSITORY;
 const prNumber = process.env.PR_NUMBER;
 const baseRef = process.env.BASE_REF ?? "main";
+const headSha = process.env.PR_HEAD_SHA;
 const repoPath = resolve(process.env.GITHUB_WORKSPACE ?? process.cwd());
 
 function run(cmd: string): string {
@@ -56,21 +65,44 @@ function gitDiff(): { diff: string; stat: string; truncated: boolean } {
   return { diff, stat, truncated };
 }
 
-interface Finding {
-  severity: "Critical" | "High" | "Medium" | "Low";
-  location: string;
-  finding: string;
-  reviewer: "bugbot" | "security";
+interface ReviewResult {
+  findings: ReviewFinding[];
+  review_notes: string;
 }
 
-interface ReviewResult {
-  findings: Finding[];
-  review_notes: string;
+function normalizeFinding(raw: Partial<ReviewFinding>, reviewer: ReviewFinding["reviewer"]): ReviewFinding {
+  const suggestedFix = normalizeSuggestedFix(raw.suggested_fix);
+  return {
+    severity: raw.severity ?? "Low",
+    location: raw.location ?? "unknown",
+    finding: raw.finding ?? "",
+    reviewer,
+    suggested_fix: suggestedFix,
+  };
+}
+
+function normalizeSuggestedFix(value: unknown): SuggestedFix | null {
+  if (!value || typeof value !== "object") return null;
+  const fix = value as Partial<SuggestedFix>;
+  if (
+    typeof fix.path !== "string" ||
+    typeof fix.start_line !== "number" ||
+    typeof fix.end_line !== "number" ||
+    typeof fix.replacement !== "string"
+  ) {
+    return null;
+  }
+  return {
+    path: fix.path,
+    start_line: fix.start_line,
+    end_line: fix.end_line,
+    replacement: fix.replacement,
+  };
 }
 
 async function callReviewer(
   systemPrompt: string,
-  reviewer: "bugbot" | "security",
+  reviewer: ReviewFinding["reviewer"],
   userContent: string,
 ): Promise<ReviewResult> {
   const controller = new AbortController();
@@ -94,7 +126,7 @@ async function callReviewer(
           json_schema: {
             name: "code_review_findings",
             strict: true,
-            schema: FINDINGS_JSON_SCHEMA,
+            schema: FINDINGS_WITH_FIXES_JSON_SCHEMA,
           },
         },
       }),
@@ -112,21 +144,20 @@ async function callReviewer(
     const content = json.choices?.[0]?.message?.content;
     if (!content) fail(`Openference API returned empty content (${reviewer})`);
 
-    let parsed: ReviewResult;
     try {
-      const raw = JSON.parse(content) as Partial<ReviewResult>;
-      parsed = {
-        findings: Array.isArray(raw.findings) ? raw.findings : [],
+      const raw = JSON.parse(content) as {
+        findings?: Partial<ReviewFinding>[];
+        review_notes?: string;
+      };
+      return {
+        findings: Array.isArray(raw.findings)
+          ? raw.findings.map((f) => normalizeFinding(f, reviewer))
+          : [],
         review_notes: typeof raw.review_notes === "string" ? raw.review_notes : "",
       };
     } catch {
       fail(`Openference API returned invalid JSON (${reviewer}): ${content.slice(0, 500)}`);
     }
-
-    for (const f of parsed.findings) {
-      f.reviewer = reviewer;
-    }
-    return parsed;
   } finally {
     clearTimeout(timer);
   }
@@ -147,14 +178,15 @@ Diff:
 ${diff}${truncationNote}`;
 }
 
-function sortFindings(findings: Finding[]): Finding[] {
+function sortFindings(findings: ReviewFinding[]): ReviewFinding[] {
   return [...findings].sort(
     (a, b) =>
       (SEVERITY_ORDER[a.severity] ?? 99) - (SEVERITY_ORDER[b.severity] ?? 99),
   );
 }
 
-function renderComment(findings: Finding[], notes: string[], truncated: boolean): string {
+function renderComment(findings: ReviewFinding[], notes: string[], truncated: boolean): string {
+  const fixable = findings.filter((f) => f.suggested_fix).length;
   const lines = [COMMENT_MARKER, "## Deyin AI review (Bugbot + Security)", ""];
 
   if (truncated) {
@@ -167,11 +199,12 @@ function renderComment(findings: Finding[], notes: string[], truncated: boolean)
   if (findings.length === 0) {
     lines.push("No issues found.");
   } else {
-    lines.push("| Severity | Location | Reviewer | Finding |");
-    lines.push("| --- | --- | --- | --- |");
+    lines.push("| Severity | Location | Reviewer | Finding | Fix |");
+    lines.push("| --- | --- | --- | --- | --- |");
     for (const f of findings) {
       const finding = f.finding.replace(/\|/g, "\\|").replace(/\n/g, " ");
-      lines.push(`| ${f.severity} | ${f.location} | ${f.reviewer} | ${finding} |`);
+      const fixCell = f.suggested_fix ? "Suggested below" : "Manual";
+      lines.push(`| ${f.severity} | ${f.location} | ${f.reviewer} | ${finding} | ${fixCell} |`);
     }
   }
 
@@ -179,6 +212,21 @@ function renderComment(findings: Finding[], notes: string[], truncated: boolean)
   if (noteBlock) {
     lines.push("", "**Review notes**", "", noteBlock);
   }
+
+  if (fixable > 0) {
+    lines.push(
+      "",
+      "### Apply fixes",
+      "",
+      `- **Per fix:** open the **Files changed** tab — inline comments include **Commit suggestion** buttons.`,
+      `- **All fixes:** comment \`/ai-fix apply\` on this PR to commit every suggested patch to the branch.`,
+      "",
+      `${fixable} suggested fix(es) attached.`,
+    );
+  }
+
+  const fixesPayload = encodeFixesPayload(findings);
+  if (fixesPayload) lines.push("", fixesPayload);
 
   lines.push("", "_Automated review via Openference. Critical/High findings fail this check._");
   return lines.join("\n");
@@ -199,42 +247,69 @@ function renderErrorComment(message: string): string {
   ].join("\n");
 }
 
-async function ghApi(path: string, method = "GET", body?: unknown): Promise<unknown> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${githubToken}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    fail(`GitHub API error ${method} ${path}: ${res.status} ${text}`);
-  }
-  if (res.status === 204) return null;
-  return res.json();
-}
-
 async function upsertComment(body: string): Promise<void> {
   const [owner, name] = repo!.split("/");
   const comments = (await ghApi(
+    githubToken!,
     `/repos/${owner}/${name}/issues/${prNumber}/comments?per_page=100`,
   )) as Array<{ id: number; body?: string }>;
 
   const existing = comments.find((c) => c.body?.includes(COMMENT_MARKER));
   if (existing) {
-    await ghApi(`/repos/${owner}/${name}/issues/comments/${existing.id}`, "PATCH", { body });
+    await ghApi(githubToken!, `/repos/${owner}/${name}/issues/comments/${existing.id}`, "PATCH", { body });
     console.log(`Updated PR comment ${existing.id}`);
   } else {
-    await ghApi(`/repos/${owner}/${name}/issues/${prNumber}/comments`, "POST", { body });
+    await ghApi(githubToken!, `/repos/${owner}/${name}/issues/${prNumber}/comments`, "POST", { body });
     console.log("Created PR comment");
   }
 }
 
-function hasBlockingFindings(findings: Finding[]): boolean {
+async function resolveHeadSha(owner: string, name: string): Promise<string> {
+  if (headSha) return headSha;
+  const pr = (await ghApi(githubToken!, `/repos/${owner}/${name}/pulls/${prNumber}`)) as {
+    head: { sha: string };
+  };
+  return pr.head.sha;
+}
+
+async function postSuggestedFixComments(findings: ReviewFinding[], commitId: string): Promise<number> {
+  const [owner, name] = repo!.split("/");
+  const comments: Array<{
+    path: string;
+    body: string;
+    line: number;
+    start_line?: number;
+  }> = [];
+
+  for (const finding of findings) {
+    const fix = finding.suggested_fix;
+    if (!fix) continue;
+    const validationError = validateSuggestedFix(repoPath, fix);
+    if (validationError) {
+      console.warn(`Skipping invalid suggested fix at ${finding.location}: ${validationError}`);
+      continue;
+    }
+    comments.push({
+      path: fix.path,
+      line: fix.end_line,
+      ...(fix.start_line < fix.end_line ? { start_line: fix.start_line } : {}),
+      body: suggestionCommentBody(finding),
+    });
+  }
+
+  if (comments.length === 0) return 0;
+
+  await ghApi(githubToken!, `/repos/${owner}/${name}/pulls/${prNumber}/reviews`, "POST", {
+    commit_id: commitId,
+    event: "COMMENT",
+    body: "Suggested fixes from Deyin AI review — use **Commit suggestion** to approve each patch.",
+    comments,
+  });
+  console.log(`Posted ${comments.length} suggested fix comment(s)`);
+  return comments.length;
+}
+
+function hasBlockingFindings(findings: ReviewFinding[]): boolean {
   return findings.some((f) => f.severity === "Critical" || f.severity === "High");
 }
 
@@ -245,6 +320,7 @@ async function main(): Promise<void> {
     fail("Not a git repository");
   }
 
+  const [owner, name] = repo!.split("/");
   const { diff, stat, truncated } = gitDiff();
 
   if (!diff.trim()) {
@@ -265,13 +341,16 @@ async function main(): Promise<void> {
   const findings = sortFindings([...bugbot.findings, ...security.findings]);
   const notes = [bugbot.review_notes, security.review_notes].filter(Boolean);
 
+  const commitId = await resolveHeadSha(owner, name);
+  await postSuggestedFixComments(findings, commitId);
+
   const comment = renderComment(findings, notes, truncated);
   await upsertComment(comment);
 
   console.log(`Findings: ${findings.length} (${findings.filter((f) => f.severity === "Critical" || f.severity === "High").length} blocking)`);
 
   if (hasBlockingFindings(findings)) {
-    fail("AI review found Critical or High severity issues — see PR comment");
+    fail("AI review found Critical or High severity issues — see PR comment and suggested fixes");
   }
 }
 

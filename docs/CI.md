@@ -47,7 +47,10 @@ in-app subagents. The workflow:
 2. Calls `https://api.openference.com/v1/chat/completions` twice (bugbot +
    security) with structured JSON output
 3. Posts or updates a PR comment tagged `<!-- deyin-ai-review -->`
-4. **Fails** the check if any Critical or High severity finding is reported
+4. Posts inline **suggested fixes** on changed files (GitHub **Commit suggestion**
+   buttons in the Files changed tab)
+5. Lets maintainers apply all fixes at once by commenting `/ai-fix apply` on the PR
+6. **Fails** the check if any Critical or High severity finding is reported
 
 **Same-repo PRs only.** Fork PRs do not receive the Openference API key (secret
 abuse prevention). External contributors still get `verify`, CodeQL, and
@@ -57,6 +60,10 @@ dependency-review.
 workflows) and receive an explanatory PR comment instead.
 
 **Manual re-run:** Actions → PR AI Review → Run workflow → enter PR number.
+
+**Apply fixes:** On the PR, use **Commit suggestion** on each inline review comment,
+or comment `/ai-fix apply` to commit every suggested patch to the PR branch
+(triggers [`.github/workflows/pr-ai-fix-apply.yml`](../.github/workflows/pr-ai-fix-apply.yml)).
 
 **Required secret:** `OPENFERENCE_API_KEY` (`sk-of-...`) in repository settings.
 

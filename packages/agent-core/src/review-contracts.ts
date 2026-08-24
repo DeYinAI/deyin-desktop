@@ -72,6 +72,25 @@ Return JSON matching the provided schema. Report findings only.
 If you found nothing, return an empty findings array.
 If something blocks the review, put a short note in review_notes.`;
 
+/** CI variant with optional inline fix payloads for GitHub suggested changes. */
+export const REVIEW_OUTPUT_JSON_WITH_FIXES_CONTRACT = `## Output format
+
+Return JSON matching the provided schema. Report findings only — do not modify the repository yourself.
+
+- Severity is one of Critical, High, Medium, Low.
+- Location is file:line using the repository-relative path.
+- Finding is one or two sentences: what is wrong, the concrete consequence, and the fix.
+- reviewer must be "bugbot" or "security" depending on which review you are running.
+- suggested_fix: when you can propose a minimal, correct patch for this finding, set an object with:
+  - path — repository-relative file path (must match the file in location)
+  - start_line — 1-based inclusive start line in the current file
+  - end_line — 1-based inclusive end line (same as start_line for a one-line fix)
+  - replacement — exact replacement text for lines start_line..end_line (no diff markers, no markdown fences)
+  Set suggested_fix to null when the fix is unclear, architectural, or spans many files.
+
+If you found nothing, return an empty findings array.
+If something blocks the review, put a short note in review_notes.`;
+
 export const BUGBOT_PROMPT = `You are Bugbot: an adversarial reviewer whose only job is finding real bugs in a change before it ships. You are precise and quiet — a false positive costs more than a missed nit.
 
 ${REVIEW_INPUT_CONTRACT}
@@ -104,7 +123,7 @@ Hunt in this order, and only report what the diff actually introduces or exposes
 5. **Data loss and irreversibility** — writes that clobber, deletes without a guard, migrations without a rollback, retries that duplicate a side effect.
 6. **Performance defects that matter** — N+1 queries, unbounded growth, work in a hot render path, blocking I/O on a latency path. Only when the change makes it real, not theoretically suboptimal.
 
-${REVIEW_OUTPUT_JSON_CONTRACT}`;
+${REVIEW_OUTPUT_JSON_WITH_FIXES_CONTRACT}`;
 
 export const SECURITY_REVIEW_PROMPT = `You are a Security Review subagent: an application security engineer auditing a change for exploitable vulnerabilities. You report what an attacker could actually do, not what a checklist says to worry about.
 
@@ -144,7 +163,19 @@ For every change, ask who controls the input and what trust boundary it crosses:
 
 For each candidate finding, state the attack: who the attacker is, what they send, and what they get. If you cannot construct that path from the code you read, it is not a finding — drop it or report it as Low with the uncertainty named.
 
-${REVIEW_OUTPUT_JSON_CONTRACT}`;
+${REVIEW_OUTPUT_JSON_WITH_FIXES_CONTRACT}`;
+
+export const SUGGESTED_FIX_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    path: { type: "string" },
+    start_line: { type: "integer" },
+    end_line: { type: "integer" },
+    replacement: { type: "string" },
+  },
+  required: ["path", "start_line", "end_line", "replacement"],
+} as const;
 
 export const FINDINGS_JSON_SCHEMA = {
   type: "object",
@@ -162,6 +193,32 @@ export const FINDINGS_JSON_SCHEMA = {
           reviewer: { type: "string", enum: ["bugbot", "security"] },
         },
         required: ["severity", "location", "finding", "reviewer"],
+      },
+    },
+    review_notes: { type: "string" },
+  },
+  required: ["findings", "review_notes"],
+} as const;
+
+export const FINDINGS_WITH_FIXES_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          severity: { type: "string", enum: ["Critical", "High", "Medium", "Low"] },
+          location: { type: "string" },
+          finding: { type: "string" },
+          reviewer: { type: "string", enum: ["bugbot", "security"] },
+          suggested_fix: {
+            anyOf: [{ type: "null" }, SUGGESTED_FIX_JSON_SCHEMA],
+          },
+        },
+        required: ["severity", "location", "finding", "reviewer", "suggested_fix"],
       },
     },
     review_notes: { type: "string" },
