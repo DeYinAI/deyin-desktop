@@ -6,6 +6,15 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.2 — 2026-08-25
+
+### Highlights
+
+- Computer-use sidecar fix: spawn with correct working directory so the Windows host can load and open the named pipe
+- Computer-use diagnostics: sidecar stderr logged to `%APPDATA%\Deyin\computer-use\host.log`; Settings host status shows log path
+- Update notice moved to a compact sidebar pill (Cursor-style) instead of a full-width top banner
+- Pre-ship security audit skill bundled in the security plugin
+
 ## 1.0.1 — 2026-08-24
 
 ### Highlights
