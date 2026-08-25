@@ -13,7 +13,11 @@
     "category": "Security",
     "capabilities": ["Read", "Write"],
     "brandColor": "#EF4444",
-    "defaultPrompt": ["Run a security scan on this repo", "Review this diff for security issues"],
+    "defaultPrompt": [
+      "Run a security scan on this repo",
+      "Review this diff for security issues",
+      "Audit my code for security holes before production"
+    ],
     "logo": "logo.svg"
   }
 }
