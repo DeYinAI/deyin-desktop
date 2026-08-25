@@ -206,6 +206,65 @@ test("useAgentState: mcp-auth-needed emits side effect for inline auth card", ()
   off();
   const authEffect = effects.find((e) => e.type === "mcp-auth-needed");
   assert.ok(authEffect && authEffect.type === "mcp-auth-needed");
+  assert.equal(authEffect.threadId, threadId);
   assert.equal(authEffect.moduleId, "cloudflare-observability");
   assert.equal(authEffect.serverName, "Cloudflare Observability");
+});
+
+test("useAgentState: permission-request side effect includes threadId", () => {
+  __testResetAgentStore();
+  const threadId = "perm-thread";
+  const effects: import("../src/hooks/useAgentState.js").AgentSideEffect[] = [];
+  const off = agentStateStore.onSideEffect((effect) => effects.push(effect));
+
+  agentStateStore.startRun(threadId, "agent");
+  __testDispatch({
+    threadId,
+    event: {
+      type: "permission-request",
+      requestId: "req-perm",
+      toolName: "bash",
+      summary: "npm test",
+    },
+  });
+
+  off();
+  const permEffect = effects.find((e) => e.type === "permission-request");
+  assert.ok(permEffect && permEffect.type === "permission-request");
+  assert.equal(permEffect.threadId, threadId);
+  assert.equal(permEffect.requestId, "req-perm");
+});
+
+test("useAgentState: mode-changed side effect includes threadId", () => {
+  __testResetAgentStore();
+  const threadId = "mode-thread";
+  const effects: import("../src/hooks/useAgentState.js").AgentSideEffect[] = [];
+  const off = agentStateStore.onSideEffect((effect) => effects.push(effect));
+
+  agentStateStore.startRun(threadId, "agent");
+  __testDispatch({ threadId, event: { type: "mode-changed", mode: "plan" } });
+
+  off();
+  const modeEffect = effects.find((e) => e.type === "mode-changed");
+  assert.ok(modeEffect && modeEffect.type === "mode-changed");
+  assert.equal(modeEffect.threadId, threadId);
+  assert.equal(modeEffect.mode, "plan");
+});
+
+test("useAgentState: two concurrent runs stay isolated per thread", async () => {
+  __testResetAgentStore();
+  agentStateStore.startRun("thread-a", "agent");
+  agentStateStore.startRun("thread-b", "agent");
+
+  assert.equal(agentStateStore.isRunning("thread-a"), true);
+  assert.equal(agentStateStore.isRunning("thread-b"), true);
+  assert.equal(__testGetThreadState("thread-a").running, true);
+  assert.equal(__testGetThreadState("thread-b").running, true);
+
+  __testDispatch({ threadId: "thread-a", event: { type: "text-delta", delta: "A" } });
+  __testDispatch({ threadId: "thread-b", event: { type: "text-delta", delta: "B" } });
+  await __testFlushRaf();
+
+  assert.equal(__testGetThreadState("thread-a").streamText, "A");
+  assert.equal(__testGetThreadState("thread-b").streamText, "B");
 });

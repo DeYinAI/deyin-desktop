@@ -28,6 +28,11 @@ import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
 import { resolveVisionModel, visionBlockedMessage } from "./vision.js";
+import {
+  pickRunningThreadToStop,
+  resolveChatStreamText,
+  shouldQueueFollowUp,
+} from "./composerThreadState.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { PlansView } from "./components/PlansView.js";
@@ -152,6 +157,17 @@ interface PendingPlanApproval {
   filePath?: string;
 }
 
+interface ComposerDraft {
+  input: string;
+  attachments: ContextAttachment[];
+  linked: LinkedThreadRef[];
+  images: ComposerImage[];
+}
+
+function emptyComposerDraft(): ComposerDraft {
+  return { input: "", attachments: [], linked: [], images: [] };
+}
+
 export function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -189,9 +205,18 @@ export function App() {
   // A queue, not a slot: parallel tool calls raise several permission requests
   // at once, and dropping any of them leaves its tool call awaiting a decision
   // that can never arrive (the run then hangs until the main-process timeout).
-  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
-  const [mcpAuthRequests, setMcpAuthRequests] = useState<PendingMcpAuth[]>([]);
-  const [question, setQuestion] = useState<PendingQuestion | null>(null);
+  // Per-thread pending UI (parallel chats must not share approval/question slots).
+  const [approvalsByThread, setApprovalsByThread] = useState<Record<string, PendingApproval[]>>({});
+  const [mcpAuthByThread, setMcpAuthByThread] = useState<Record<string, PendingMcpAuth[]>>({});
+  const [questionByThread, setQuestionByThread] = useState<Record<string, PendingQuestion | null>>({});
+  const draftByThreadRef = useRef<Record<string, ComposerDraft>>({});
+  const composerDraftRef = useRef<ComposerDraft>(emptyComposerDraft());
+  composerDraftRef.current = {
+    input,
+    attachments: composerAttachments,
+    linked: composerLinked,
+    images: composerImages,
+  };
   const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
   /** Bumped to pull focus into the composer (declining a plan hands the turn back). */
   const [composerFocus, setComposerFocus] = useState(0);
@@ -211,6 +236,36 @@ export function App() {
     else next[threadId] = text;
     queuedPromptByThreadRef.current = next;
     setQueuedPromptByThread(next);
+  }, []);
+  const saveDraftForThread = useCallback((threadId: string) => {
+    draftByThreadRef.current = { ...draftByThreadRef.current, [threadId]: composerDraftRef.current };
+  }, []);
+  const restoreDraftForThread = useCallback((threadId: string | null) => {
+    const draft = threadId ? (draftByThreadRef.current[threadId] ?? emptyComposerDraft()) : emptyComposerDraft();
+    setInput(draft.input);
+    setComposerAttachments([...draft.attachments]);
+    setComposerLinked([...draft.linked]);
+    setComposerImages([...draft.images]);
+  }, []);
+  const clearPendingForThread = useCallback((threadId: string) => {
+    setApprovalsByThread((cur) => {
+      if (!(threadId in cur)) return cur;
+      const next = { ...cur };
+      delete next[threadId];
+      return next;
+    });
+    setMcpAuthByThread((cur) => {
+      if (!(threadId in cur)) return cur;
+      const next = { ...cur };
+      delete next[threadId];
+      return next;
+    });
+    setQuestionByThread((cur) => {
+      if (!(threadId in cur)) return cur;
+      const next = { ...cur };
+      delete next[threadId];
+      return next;
+    });
   }, []);
   /** Latest Context Usage snapshot per thread (session-scoped). */
   const [contextByThread, setContextByThread] = useState<Record<string, ContextUsageSnapshot>>({});
@@ -236,6 +291,8 @@ export function App() {
   const plainChatAbortRef = useRef<AbortController | null>(null);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
+  const activeThreadIdRef = useRef(activeThreadId);
+  activeThreadIdRef.current = activeThreadId;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const composerModeRef = useRef(composerMode);
@@ -562,8 +619,11 @@ export function App() {
     activeThreadId !== null ? queuedPromptByThread[activeThreadId]?.trim() ?? null : null;
   const activeThreadStreaming =
     activeThreadId !== null &&
-    (runningThreadId === activeThreadId ||
+    ((agentRunState?.running ?? false) ||
       (streamText !== null && plainChatThreadIdRef.current === activeThreadId));
+  const activeApprovals = activeThreadId !== null ? (approvalsByThread[activeThreadId] ?? []) : [];
+  const activeMcpAuthRequests = activeThreadId !== null ? (mcpAuthByThread[activeThreadId] ?? []) : [];
+  const activeQuestion = activeThreadId !== null ? (questionByThread[activeThreadId] ?? null) : null;
 
   const selectedContextLength = useMemo(() => {
     const fromModels = models.find((m) => m.id === selectedModel)?.contextLength;
@@ -596,7 +656,7 @@ export function App() {
   }, [activeThreadId, selectedContextLength]);
 
   /** Live plan-file card while Plan mode streams markdown into the Plan tab. */
-  const livePlanStream = runningThreadId === activeThreadId ? (agentRunState?.planStream ?? null) : null;
+  const livePlanStream = agentRunState?.running ? (agentRunState.planStream ?? null) : null;
   const planArtifact = useMemo(() => {
     if (livePlanStream === null) return null;
     if (!livePlanStream.trim()) return null;
@@ -1028,29 +1088,45 @@ export function App() {
           break;
         }
         case "permission-request":
-          setApprovals((cur) =>
-            cur.some((a) => a.requestId === effect.requestId)
-              ? cur
-              : [...cur, { requestId: effect.requestId, toolName: effect.toolName, summary: effect.summary }],
-          );
+          setApprovalsByThread((cur) => {
+            const list = cur[effect.threadId] ?? [];
+            if (list.some((a) => a.requestId === effect.requestId)) return cur;
+            return {
+              ...cur,
+              [effect.threadId]: [
+                ...list,
+                { requestId: effect.requestId, toolName: effect.toolName, summary: effect.summary },
+              ],
+            };
+          });
           break;
         case "mcp-auth-needed":
-          setMcpAuthRequests((cur) =>
-            cur.some((r) => r.moduleId === effect.moduleId)
-              ? cur
-              : [
-                  ...cur,
-                  {
-                    requestId: effect.requestId,
-                    moduleId: effect.moduleId,
-                    serverName: effect.serverName,
-                    message: effect.message,
-                  },
-                ],
-          );
+          setMcpAuthByThread((cur) => {
+            const list = cur[effect.threadId] ?? [];
+            if (list.some((r) => r.moduleId === effect.moduleId)) return cur;
+            return {
+              ...cur,
+              [effect.threadId]: [
+                ...list,
+                {
+                  requestId: effect.requestId,
+                  moduleId: effect.moduleId,
+                  serverName: effect.serverName,
+                  message: effect.message,
+                },
+              ],
+            };
+          });
           break;
         case "question-request":
-          setQuestion({ requestId: effect.requestId, title: effect.title, questions: effect.questions });
+          setQuestionByThread((cur) => ({
+            ...cur,
+            [effect.threadId]: {
+              requestId: effect.requestId,
+              title: effect.title,
+              questions: effect.questions,
+            },
+          }));
           break;
         case "plan-created": {
           const planTitle = effect.name || planTitleFromMarkdown(effect.plan);
@@ -1083,7 +1159,9 @@ export function App() {
           openPanelTab("plan");
           break;
         case "mode-changed":
-          if (effect.mode) selectModeRef.current(effect.mode);
+          if (effect.mode && effect.threadId === activeThreadIdRef.current) {
+            selectModeRef.current(effect.mode);
+          }
           break;
         case "run-complete": {
           const { fold } = effect;
@@ -1107,9 +1185,7 @@ export function App() {
               openPanelTab("plan");
             }
           }
-          setApprovals([]);
-          setMcpAuthRequests([]);
-          setQuestion(null);
+          clearPendingForThread(fold.threadId);
           markOnboard("taskRun");
           void window.deyin.usage.record({ model: selectedModel, tokens: fold.tokens, newSession: false });
 
@@ -1131,7 +1207,7 @@ export function App() {
             setQueuedForThread(fold.threadId, null);
             const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
             if (thread) {
-              const mode = composerModeRef.current;
+              const mode = thread.mode ?? "agent";
               queueMicrotask(() => startAgentRunRef.current(thread, queued, mode));
             }
           }
@@ -1141,7 +1217,7 @@ export function App() {
           break;
       }
     },
-    [appendEvents, markOnboard, openPanelTab, selectedModel, setQueuedForThread],
+    [appendEvents, markOnboard, openPanelTab, selectedModel, setQueuedForThread, clearPendingForThread],
   );
   useAgentStateController({ onSideEffect: handleAgentSideEffect });
 
@@ -1187,10 +1263,12 @@ export function App() {
               : cur[0]!.id;
         return cur.map((p) => (p.id === target ? { ...p, threads: [thread, ...p.threads] } : p));
       });
+      if (activeThreadId) saveDraftForThread(activeThreadId);
       setActiveThreadId(thread.id);
+      restoreDraftForThread(thread.id);
       setView("workspace");
     })();
-  }, [projects, activeProjectId, boot, ensureFolderProject, composerMode]);
+  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, saveDraftForThread, restoreDraftForThread]);
 
   const updateThread = useCallback((threadId: string, patch: Partial<Project["threads"][number]>) => {
     setProjects((cur) =>
@@ -1229,10 +1307,11 @@ export function App() {
       }),
     );
     if (forkedId) {
+      if (activeThreadId) saveDraftForThread(activeThreadId);
       setActiveThreadId(forkedId);
       setView("workspace");
     }
-  }, []);
+  }, [activeThreadId, saveDraftForThread]);
 
   /** Apply composer model selection to local state, settings default, and the active thread. */
   const applyComposerModel = useCallback(
@@ -1262,13 +1341,14 @@ export function App() {
   /** Focus a thread, following it into its own project when that differs. */
   const selectThread = useCallback(
     (threadId: string, projectId?: string) => {
+      if (activeThreadId && activeThreadId !== threadId) saveDraftForThread(activeThreadId);
       const owner = projectId ?? projects.find((p) => p.threads.some((t) => t.id === threadId))?.id;
       if (owner && owner !== activeProjectId) void selectProject(owner);
       setActiveThreadId(threadId);
       updateThread(threadId, { unread: false });
       setView("workspace");
     },
-    [projects, activeProjectId, selectProject, updateThread],
+    [projects, activeProjectId, activeThreadId, selectProject, updateThread, saveDraftForThread],
   );
 
   const threadHistory = useThreadHistory(activeThreadId, allThreadIds, selectThread);
@@ -1409,6 +1489,7 @@ export function App() {
       }
 
       const isFirstMessage = toChatMessages(thread.events).length === 0;
+      if (agentStateStore.isRunning(thread.id)) return;
       appendEvents(thread.id, [
         { kind: "user", text: meta?.displayText ?? text, attachments, linkedThreadIds },
         ...(meta?.notice ? [{ kind: "assistant" as const, text: meta.notice }] : []),
@@ -1446,16 +1527,15 @@ export function App() {
 
   useEffect(() => {
     if (!activeThreadId) {
+      restoreDraftForThread(null);
       setPendingReview([]);
       setSecurityReport(null);
       return;
     }
-    setComposerAttachments([]);
-    setComposerLinked([]);
-    setComposerImages([]);
+    restoreDraftForThread(activeThreadId);
     void window.deyin.review?.list(activeThreadId).then(setPendingReview);
     void window.deyin.security.listFindings(activeThreadId).then(setSecurityReport);
-  }, [activeThreadId]);
+  }, [activeThreadId, restoreDraftForThread]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -1493,8 +1573,15 @@ export function App() {
 
   /** Abort the in-flight agent (or plain-chat) run and unlock the composer. */
   const stopRun = useCallback(() => {
-    const threadId = runningThreadId;
-    if (plainChatAbortRef.current) {
+    const isActiveComposerBusy =
+      streamText !== null && plainChatThreadIdRef.current === activeThreadId;
+    const threadId = pickRunningThreadToStop({
+      activeThreadId,
+      runningThreadId,
+      isActiveThreadRunning: agentRunState?.running ?? false,
+      isActiveComposerBusy,
+    });
+    if (plainChatAbortRef.current && plainChatThreadIdRef.current === activeThreadId) {
       plainChatAbortRef.current.abort();
       plainChatAbortRef.current = null;
       plainChatThreadIdRef.current = null;
@@ -1502,15 +1589,16 @@ export function App() {
       return;
     }
     if (!threadId) {
-      setStreamText(null);
+      if (plainChatThreadIdRef.current === activeThreadId) setStreamText(null);
       return;
     }
 
     window.deyin.agent?.stop(threadId);
-    setApprovals([]);
-    setMcpAuthRequests([]);
-    // Unlock the composer immediately; fold + clear still happen on `done`.
-    setStreamText(null);
+    clearPendingForThread(threadId);
+    if (plainChatThreadIdRef.current === threadId) {
+      plainChatThreadIdRef.current = null;
+      setStreamText(null);
+    }
 
     if (stopWatchdogRef.current) clearTimeout(stopWatchdogRef.current);
     stopWatchdogRef.current = setTimeout(() => {
@@ -1520,8 +1608,7 @@ export function App() {
       agentStateStore.setIgnoreNextDone(threadId, true);
       const finished = agentStateStore.forceStop(threadId);
       appendEvents(threadId, finished);
-      setApprovals([]);
-      setMcpAuthRequests([]);
+      clearPendingForThread(threadId);
 
       const sendNow = pendingSendNowRef.current;
       pendingSendNowRef.current = null;
@@ -1535,10 +1622,10 @@ export function App() {
       if (queued) {
         setQueuedForThread(threadId, null);
         const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
-        if (thread) startAgentRunRef.current(thread, queued, composerModeRef.current);
+        if (thread) startAgentRunRef.current(thread, queued, thread.mode ?? "agent");
       }
     }, 3_000);
-  }, [runningThreadId, appendEvents, setQueuedForThread]);
+  }, [activeThreadId, runningThreadId, agentRunState?.running, streamText, appendEvents, setQueuedForThread, clearPendingForThread]);
 
   /** Persist manual todo edits and keep the latest timeline todo card in sync. */
   const updatePlanTodos = useCallback(
@@ -1562,9 +1649,12 @@ export function App() {
     [activeThreadId],
   );
 
+  const activeComposerBusy =
+    streamText !== null && plainChatThreadIdRef.current === activeThreadId;
+
   /** Plan-ready card "Build": switch the thread to agent mode and execute the plan. */
   const buildFromPlan = useCallback(() => {
-    if (!activeThread || streamText !== null || runningThreadId !== null) return;
+    if (!activeThread || activeComposerBusy || agentRunState?.running) return;
     selectMode("agent");
     const plan = activeThread.planMarkdown?.trim();
     const prompt = plan
@@ -1573,7 +1663,7 @@ export function App() {
     startAgentRun(activeThread, prompt, "agent");
     setPlanApproval(null);
     if (activeThreadId) updateThread(activeThreadId, { planApproved: true });
-  }, [activeThread, activeThreadId, streamText, selectMode, startAgentRun, updateThread]);
+  }, [activeThread, activeThreadId, activeComposerBusy, agentRunState?.running, selectMode, startAgentRun, updateThread]);
 
   /** The newest plan is written but not built, and no gate is on screen: the plan
    *  card carries Build so dismissing the gate never strands the plan. */
@@ -1581,8 +1671,8 @@ export function App() {
     Boolean(activeThread?.planMarkdown?.trim()) &&
     activeThread?.planApproved !== true &&
     !planApproval &&
-    streamText === null &&
-    runningThreadId !== activeThreadId;
+    !activeComposerBusy &&
+    !(agentRunState?.running ?? false);
 
   /** File card "Open": show that change in the Diff tab (when we still hold it). */
   const openFileDiff = useCallback((path: string) => {
@@ -1638,10 +1728,14 @@ export function App() {
     const thread = activeThread ?? ensureThread();
 
     // While this thread's run is active, Enter/Send queues the follow-up (Cursor-like).
-    const runActiveOnThisThread =
-      runningThreadId === thread.id ||
-      (streamText !== null && plainChatThreadIdRef.current === thread.id);
-    if (runActiveOnThisThread) {
+    if (
+      shouldQueueFollowUp({
+        threadId: thread.id,
+        isThreadRunning: agentStateStore.isRunning(thread.id),
+        streamText,
+        busyThreadId: plainChatThreadIdRef.current,
+      })
+    ) {
       setQueuedForThread(thread.id, text);
       setInput("");
       return;
@@ -1724,6 +1818,7 @@ export function App() {
       appendEvents(thread.id, [{ kind: "user", text }]);
       setInput("");
       setComposerImages([]);
+      plainChatThreadIdRef.current = thread.id;
       setStreamText(`Generating image with ${runModelId}…`);
       try {
         const result = await window.deyin.images.generate({
@@ -1740,6 +1835,7 @@ export function App() {
           { kind: "assistant", text: `Image generation failed: ${err instanceof Error ? err.message : String(err)}` },
         ]);
       } finally {
+        plainChatThreadIdRef.current = null;
         setStreamText(null);
         void window.deyin.usage.record({ model: runModelId, tokens: 0, newSession: isFirstMessage });
       }
@@ -1889,9 +1985,8 @@ export function App() {
     setQueuedForThread(activeThread.id, null);
 
     const runActive =
-      runningThreadId === activeThread.id ||
-      (streamText !== null && plainChatThreadIdRef.current === activeThread.id) ||
-      (plainChatAbortRef.current !== null && plainChatThreadIdRef.current === activeThread.id);
+      agentStateStore.isRunning(activeThread.id) ||
+      (streamText !== null && plainChatThreadIdRef.current === activeThread.id);
     if (!runActive) {
       if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
         startAgentRun(activeThread, text, composerMode);
@@ -1901,7 +1996,7 @@ export function App() {
 
     pendingSendNowRef.current = { threadId: activeThread.id, text, mode: composerMode };
     stopRun();
-  }, [input, activeThread, streamText, runningThreadId, settings, boot, composerMode, startAgentRun, stopRun, appendEvents, updateThread, setQueuedForThread]);
+  }, [input, activeThread, streamText, settings, boot, composerMode, startAgentRun, stopRun, appendEvents, updateThread, setQueuedForThread]);
 
   const clearQueue = useCallback(() => {
     if (activeThreadId) setQueuedForThread(activeThreadId, null);
@@ -1925,7 +2020,12 @@ export function App() {
   const chatEvents = [...(activeThread?.events ?? []), ...(agentRunState?.runEvents ?? [])];
   // Subagent runs in this thread, oldest first — the Agent panel's source list.
   const subagentRuns = chatEvents.filter((e): e is Extract<typeof e, { kind: "subagent" }> => e.kind === "subagent");
-  const chatStreamText = agentRunState?.streamText ?? streamText;
+  const chatStreamText = resolveChatStreamText({
+    activeThreadId,
+    agentStreamText: agentRunState?.streamText ?? null,
+    streamText,
+    busyThreadId: plainChatThreadIdRef.current,
+  });
   const isChatEmpty = chatEvents.length === 0 && chatStreamText === null;
 
   const language = settings?.language ?? "en";
@@ -2196,7 +2296,7 @@ export function App() {
                 <div className="chat-column__tasks">
                   <TaskList
                     todos={activeThread!.todos!}
-                    running={runningThreadId !== null && runningThreadId === activeThreadId}
+                    running={agentRunState?.running ?? false}
                     title={
                       activeThread!.title !== DEFAULT_THREAD_TITLE ? activeThread!.title : undefined
                     }
@@ -2224,36 +2324,44 @@ export function App() {
                     openPanelTab("security");
                   }}
                 />
-                {mcpAuthRequests[0] && (
+                {activeMcpAuthRequests[0] && activeThreadId && (
                   <McpAuthCard
-                    key={mcpAuthRequests[0].requestId}
-                    moduleId={mcpAuthRequests[0].moduleId}
-                    serverName={mcpAuthRequests[0].serverName}
-                    message={mcpAuthRequests[0].message}
+                    key={activeMcpAuthRequests[0].requestId}
+                    moduleId={activeMcpAuthRequests[0].moduleId}
+                    serverName={activeMcpAuthRequests[0].serverName}
+                    message={activeMcpAuthRequests[0].message}
                     onSkip={() =>
-                      setMcpAuthRequests((cur) => cur.filter((r) => r.requestId !== mcpAuthRequests[0]!.requestId))
+                      setMcpAuthByThread((cur) => ({
+                        ...cur,
+                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                          (r) => r.requestId !== activeMcpAuthRequests[0]!.requestId,
+                        ),
+                      }))
                     }
                   />
                 )}
-                {approvals[0] && (
+                {activeApprovals[0] && activeThreadId && (
                   <ApprovalDialog
-                    key={approvals[0].requestId}
-                    toolName={approvals[0].toolName}
-                    summary={approvals[0].summary}
-                    pendingCount={approvals.length}
+                    key={activeApprovals[0].requestId}
+                    toolName={activeApprovals[0].toolName}
+                    summary={activeApprovals[0].summary}
+                    pendingCount={activeApprovals.length}
                     onDecision={(decision) => {
-                      const answered = approvals[0]!;
+                      const answered = activeApprovals[0]!;
                       window.deyin.agent?.approve(answered.requestId, decision);
                       // "Allow for session" covers every queued request for the
                       // same tool, so the user is not asked N times in a row.
                       const covered =
                         decision === "allow-always"
-                          ? approvals.filter((a) => a !== answered && a.toolName === answered.toolName)
+                          ? activeApprovals.filter((a) => a !== answered && a.toolName === answered.toolName)
                           : [];
                       for (const a of covered) window.deyin.agent?.approve(a.requestId, "allow");
-                      setApprovals((cur) =>
-                        cur.filter((a) => a.requestId !== answered.requestId && !covered.includes(a)),
-                      );
+                      setApprovalsByThread((cur) => ({
+                        ...cur,
+                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                          (a) => a.requestId !== answered.requestId && !covered.includes(a),
+                        ),
+                      }));
                     }}
                   />
                 )}
@@ -2274,19 +2382,19 @@ export function App() {
                     }
                   />
                 )}
-                {question && (
+                {activeQuestion && activeThreadId && (
                   <AskQuestionDialog
-                    title={question.title}
-                    questions={question.questions}
+                    title={activeQuestion.title}
+                    questions={activeQuestion.questions}
                     onSubmit={(answers) => {
-                      window.deyin.agent?.answerQuestion(question.requestId, answers);
-                      setQuestion(null);
+                      window.deyin.agent?.answerQuestion(activeQuestion.requestId, answers);
+                      setQuestionByThread((cur) => ({ ...cur, [activeThreadId]: null }));
                     }}
                     onCancel={() => {
-                      window.deyin.agent?.answerQuestion(question.requestId, {
+                      window.deyin.agent?.answerQuestion(activeQuestion.requestId, {
                         __cancelled: "AskQuestion was cancelled before answers were returned.",
                       });
-                      setQuestion(null);
+                      setQuestionByThread((cur) => ({ ...cur, [activeThreadId]: null }));
                     }}
                   />
                 )}
@@ -2326,7 +2434,7 @@ export function App() {
                   modelEfforts={settings?.modelEfforts}
                   canSend={input.trim().length > 0}
                   streaming={activeThreadStreaming}
-                  runStatus={runningThreadId === activeThreadId ? agentRunState?.status ?? null : null}
+                  runStatus={agentRunState?.running ? agentRunState.status ?? null : null}
                   queuedPrompt={activeQueuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
@@ -2411,8 +2519,8 @@ export function App() {
                   livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")
                 }
                 planTodos={activeThread?.todos ?? []}
-                planTodosRunning={runningThreadId !== null && runningThreadId === activeThreadId}
-                canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && streamText === null && runningThreadId !== activeThreadId}
+                planTodosRunning={agentRunState?.running ?? false}
+                canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && !activeComposerBusy && !(agentRunState?.running ?? false)}
                 diff={diff}
                 browserUrl={browserUrl}
                 browserPartition={browserPartition}
