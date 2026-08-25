@@ -115,9 +115,10 @@ export type AgentSideEffect =
   | { type: "pending-change-resolved"; changeId: string }
   | { type: "goal-updated"; threadId: string; goal: import("@deyin/contract").ThreadGoal | null }
   | { type: "todos"; threadId: string; todos: import("@deyin/contract").AgentTodoItem[] }
-  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+  | { type: "permission-request"; threadId: string; requestId: string; toolName: string; summary: string }
   | {
       type: "mcp-auth-needed";
+      threadId: string;
       requestId: string;
       moduleId: string;
       serverName: string;
@@ -125,6 +126,7 @@ export type AgentSideEffect =
     }
   | {
       type: "question-request";
+      threadId: string;
       requestId: string;
       title?: string;
       questions: Array<{
@@ -136,7 +138,7 @@ export type AgentSideEffect =
     }
   | { type: "plan-created"; threadId: string; name: string; overview?: string; plan: string; filePath?: string }
   | { type: "plan-panel-open"; threadId: string }
-  | { type: "mode-changed"; mode: ChatMode }
+  | { type: "mode-changed"; threadId: string; mode: ChatMode }
   | { type: "shell-session"; threadId: string; terminalId: string; label: string }
   | {
       type: "evidence-sign-off";
@@ -685,11 +687,18 @@ class AgentStateStore {
         break;
       }
       case "permission-request":
-        this.emit({ type: "permission-request", requestId: event.requestId, toolName: event.toolName, summary: event.summary });
+        this.emit({
+          type: "permission-request",
+          threadId,
+          requestId: event.requestId,
+          toolName: event.toolName,
+          summary: event.summary,
+        });
         break;
       case "mcp-auth-needed":
         this.emit({
           type: "mcp-auth-needed",
+          threadId,
           requestId: event.requestId,
           moduleId: event.moduleId,
           serverName: event.serverName,
@@ -699,6 +708,7 @@ class AgentStateStore {
       case "question-request":
         this.emit({
           type: "question-request",
+          threadId,
           requestId: event.requestId,
           title: event.title,
           questions: event.questions,
@@ -723,7 +733,7 @@ class AgentStateStore {
         break;
       }
       case "mode-changed":
-        this.emit({ type: "mode-changed", mode: event.mode });
+        this.emit({ type: "mode-changed", threadId, mode: event.mode });
         break;
       case "subagent-start":
         this.flushText(t);
