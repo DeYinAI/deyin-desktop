@@ -24,7 +24,7 @@ jobs:
       # specifying it here too makes action-setup fail with a version conflict.
       - uses: pnpm/action-setup@v5
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
