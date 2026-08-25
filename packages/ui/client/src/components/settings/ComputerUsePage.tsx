@@ -164,6 +164,12 @@ function ComputerUseSettings({ api, settings, onChange }: Props & { api: Compute
             <p className="hint" style={{ marginTop: 8 }}>
               Expected host: <code>{hostStatus.hostPath}</code>
               {hostStatus.hostExists === false ? " (missing)" : ""}
+              {hostStatus.hostExists !== false ? (
+                <>
+                  {" "}
+                  · Log: <code>%APPDATA%\Deyin\computer-use\host.log</code>
+                </>
+              ) : null}
             </p>
           )}
         </SettingCard>

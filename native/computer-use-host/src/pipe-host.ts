@@ -1,19 +1,21 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect, type Socket } from "node:net";
-import { existsSync } from "node:fs";
+import { createWriteStream, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { JsonRpcRequest, JsonRpcResponse } from "./protocol.js";
 import { PIPE_NAME } from "./protocol.js";
 import type { ComputerUseHostApi } from "./host-api.js";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const CONNECT_RETRY_ATTEMPTS = 10;
+const CONNECT_RETRY_ATTEMPTS = 30;
 const CONNECT_RETRY_DELAY_MS = 200;
 const PIPE_PATH = `\\\\.\\pipe\\${PIPE_NAME}`;
 
 export interface PipeComputerUseHostOptions {
   hostExe: string;
   shotsDir: string;
+  /** Optional log file for sidecar stderr (diagnostics when the pipe never opens). */
+  logPath?: string;
   signal?: AbortSignal;
 }
 
@@ -22,6 +24,7 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
   private id = 0;
   private child: ChildProcess | null = null;
   private childExitCode: number | null = null;
+  private launchError: Error | null = null;
   private socket: Socket | null = null;
   private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
   private buffer = "";
@@ -60,10 +63,22 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
       throw new Error(`Computer use host not found at ${this.opts.hostExe}`);
     }
     this.childExitCode = null;
+    this.launchError = null;
+    const logStream = this.opts.logPath ? createWriteStream(this.opts.logPath, { flags: "a" }) : null;
+    if (logStream) {
+      logStream.write(`\n--- spawn ${new Date().toISOString()} ${this.opts.hostExe} ---\n`);
+    }
     this.child = spawn(this.opts.hostExe, [], {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", logStream ? "pipe" : "ignore"],
       windowsHide: true,
       env: { ...process.env, DEYIN_COMPUTER_USE_SHOTS: this.opts.shotsDir },
+    });
+    if (logStream && this.child.stderr) {
+      this.child.stderr.pipe(logStream);
+    }
+    this.child.on("error", (err) => {
+      this.launchError = err;
+      this.resetConnection();
     });
     this.child.on("exit", (code) => {
       this.childExitCode = code ?? null;
@@ -81,9 +96,14 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < CONNECT_RETRY_ATTEMPTS; attempt++) {
+      if (this.launchError) {
+        throw new Error(
+          `Computer use host failed to start: ${String(this.launchError)}. Path: ${this.opts.hostExe}. Check antivirus or reinstall Deyin.`,
+        );
+      }
       if (this.childExitCode !== null) {
         throw new Error(
-          `Computer use host exited (code ${this.childExitCode}). Install .NET 8 Desktop Runtime if missing.`,
+          `Computer use host exited (code ${this.childExitCode}). Install .NET 8 Desktop Runtime if missing, or check ${this.opts.logPath ?? "sidecar logs"}.`,
         );
       }
       try {
@@ -95,7 +115,11 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
         await sleep(CONNECT_RETRY_DELAY_MS);
       }
     }
-    throw lastError ?? new Error("Could not connect to computer use host.");
+    const hint =
+      lastError?.message.includes("ENOENT") || lastError?.message.includes("connect")
+        ? ` Sidecar pipe not found — the host may be blocked by antivirus or missing from the install. Expected: ${this.opts.hostExe}`
+        : "";
+    throw new Error((lastError?.message ?? "Could not connect to computer use host.") + hint);
   }
 
   private connectPipe(): Promise<void> {
@@ -258,6 +282,10 @@ export function resolveHostExe(resourcesPath?: string): string {
     join(process.cwd(), "native/computer-use-host/native/bin/Release/net8.0-windows/win-x64/deyin-computer-use-host.exe"),
   ].filter(Boolean);
   return candidates.find((p) => existsSync(p)) ?? candidates[0] ?? "";
+}
+
+export function hostLogPath(dataDir: string): string {
+  return join(dataDir, "host.log");
 }
 
 function isRetryableDisconnect(err: unknown): boolean {
