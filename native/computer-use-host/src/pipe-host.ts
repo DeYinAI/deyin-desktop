@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect, type Socket } from "node:net";
 import { createWriteStream, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { JsonRpcRequest, JsonRpcResponse } from "./protocol.js";
 import { PIPE_NAME } from "./protocol.js";
 import type { ComputerUseHostApi } from "./host-api.js";
@@ -59,16 +59,21 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
   }
 
   private async open(): Promise<void> {
-    if (!existsSync(this.opts.hostExe)) {
-      throw new Error(`Computer use host not found at ${this.opts.hostExe}`);
+    const hostExe = resolve(this.opts.hostExe);
+    const hostDir = dirname(hostExe);
+    if (!existsSync(hostExe)) {
+      throw new Error(`Computer use host not found at ${hostExe}`);
     }
     this.childExitCode = null;
     this.launchError = null;
     const logStream = this.opts.logPath ? createWriteStream(this.opts.logPath, { flags: "a" }) : null;
     if (logStream) {
-      logStream.write(`\n--- spawn ${new Date().toISOString()} ${this.opts.hostExe} ---\n`);
+      logStream.write(`\n--- spawn ${new Date().toISOString()} ${hostExe} cwd=${hostDir} ---\n`);
     }
-    this.child = spawn(this.opts.hostExe, [], {
+    // cwd must be the sidecar folder so self-contained .NET can load native DLLs
+    // sitting next to deyin-computer-use-host.exe (Electron's process.cwd() is wrong).
+    this.child = spawn(hostExe, [], {
+      cwd: hostDir,
       stdio: ["ignore", "ignore", logStream ? "pipe" : "ignore"],
       windowsHide: true,
       env: { ...process.env, DEYIN_COMPUTER_USE_SHOTS: this.opts.shotsDir },
@@ -98,7 +103,7 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
     for (let attempt = 0; attempt < CONNECT_RETRY_ATTEMPTS; attempt++) {
       if (this.launchError) {
         throw new Error(
-          `Computer use host failed to start: ${String(this.launchError)}. Path: ${this.opts.hostExe}. Check antivirus or reinstall Deyin.`,
+          `Computer use host failed to start: ${String(this.launchError)}. Path: ${hostExe}. Check antivirus or reinstall Deyin.`,
         );
       }
       if (this.childExitCode !== null) {
@@ -117,7 +122,7 @@ export class PipeComputerUseHost implements ComputerUseHostApi {
     }
     const hint =
       lastError?.message.includes("ENOENT") || lastError?.message.includes("connect")
-        ? ` Sidecar pipe not found — the host may be blocked by antivirus or missing from the install. Expected: ${this.opts.hostExe}`
+        ? ` Sidecar pipe not found — the host may be blocked by antivirus or missing from the install. Expected: ${hostExe}`
         : "";
     throw new Error((lastError?.message ?? "Could not connect to computer use host.") + hint);
   }
@@ -280,7 +285,9 @@ export function resolveHostExe(resourcesPath?: string): string {
     resourcesPath ? join(resourcesPath, "computer-use-host", "deyin-computer-use-host.exe") : "",
     join(process.cwd(), "native/computer-use-host/native/bin/Release/net8.0-windows/win-x64/publish/deyin-computer-use-host.exe"),
     join(process.cwd(), "native/computer-use-host/native/bin/Release/net8.0-windows/win-x64/deyin-computer-use-host.exe"),
-  ].filter(Boolean);
+  ]
+    .filter(Boolean)
+    .map((p) => resolve(p));
   return candidates.find((p) => existsSync(p)) ?? candidates[0] ?? "";
 }
 
