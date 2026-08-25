@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
 import { ProfileMenu } from "./ProfileMenu.js";
+import { UpdateBanner } from "./UpdateBanner.js";
 import { formatThreadAge, type Project, type Thread } from "../threads.js";
 import type { DeyinSettings, UserProfile } from "@deyin/contract";
 
@@ -304,6 +305,12 @@ export function Sidebar(props: SidebarProps) {
           <div className="sidebar__empty">No matches for “{filter}”.</div>
         )}
       </div>
+
+      {props.platform === "desktop" ? (
+        <div className="sidebar__update">
+          <UpdateBanner variant="sidebar" />
+        </div>
+      ) : null}
 
       <div className="sidebar__footer">
         <ProfileMenu

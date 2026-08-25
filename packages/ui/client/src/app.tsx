@@ -37,7 +37,6 @@ import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { ProjectMenu, type ProjectAction } from "./components/ProjectMenu.js";
 import { TopBar } from "./components/TopBar.js";
 import { Icon } from "./components/Icon.js";
-import { UpdateBanner } from "./components/UpdateBanner.js";
 import { WhatsNewModal } from "./components/WhatsNewModal.js";
 import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
@@ -1924,7 +1923,6 @@ export function App() {
     return (
       <AppProviders language={language}>
         <div className="app">
-          {boot.platform === "desktop" ? <UpdateBanner /> : null}
           <SettingsView
           platform={boot?.platform === "web" ? "web" : "desktop"}
             key={settingsPage}
@@ -1998,7 +1996,6 @@ export function App() {
         }}
         onThreadAction={handleThreadAction}
       />
-      {boot?.platform === "desktop" ? <UpdateBanner /> : null}
       {workspaceState?.connectionState === "error" && workspaceState.error ? (
         <div className="update-banner update-banner--error" role="alert">
           {workspaceState.error}
