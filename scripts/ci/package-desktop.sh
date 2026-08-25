@@ -40,6 +40,12 @@ package_win() {
     --x64 \
     --publish never \
     --config "$CONFIG"
+  HOST="${ROOT}/apps/desktop/release/win-unpacked/resources/computer-use-host/deyin-computer-use-host.exe"
+  if [[ ! -f "$HOST" ]]; then
+    echo "error: Windows package missing computer-use sidecar at $HOST" >&2
+    exit 1
+  fi
+  echo "==> Verified computer-use sidecar in win-unpacked"
 }
 
 echo "==> Generate app icons"

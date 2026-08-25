@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSy
 import { join } from "node:path";
 import { app, BrowserWindow, globalShortcut } from "electron";
 import type { ToolDefinition } from "@deyin/agent-core";
-import { createComputerUseHost, PipeComputerUseHost, resolveHostExe, type ComputerUseHostApi } from "@deyin/computer-use-host";
+import { createComputerUseHost, PipeComputerUseHost, resolveHostExe, hostLogPath, type ComputerUseHostApi } from "@deyin/computer-use-host";
 import { CH, type ComputerUseHostStatus } from "@deyin/contract";
 
 interface AllowlistFile {
@@ -97,6 +97,7 @@ export class ComputerUseService {
       this.host = createComputerUseHost({
         shotsDir: this.shotsDir,
         resourcesPath: process.resourcesPath,
+        logPath: hostLogPath(this.dataDir),
       });
     }
     if (this.host instanceof PipeComputerUseHost) {
