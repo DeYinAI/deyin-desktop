@@ -184,22 +184,22 @@ export function githubReviewCommentForFix(
   const body = suggestionCommentBody(finding, repoPath);
   if (!body) return null;
 
-  const root = resolve(repoPath);
-  const file = readFileText(resolve(root, fix.path));
-  const endLine = Math.min(fix.end_line, file.lines.length);
-  if (fix.start_line < 1 || endLine < fix.start_line) return null;
+export function githubReviewCommentForFix(
+  finding: ReviewFinding,
+  repoPath: string,
+): { path: string; body: string; line: number; start_line: number } | null {
+  const fix = finding.suggested_fix;
+  if (!fix) return null;
+  const body = suggestionCommentBody(finding, repoPath);
+  if (!body) return null;
 
   return {
     path: fix.path,
     body,
     start_line: fix.start_line,
-    line: endLine,
+    line: fix.end_line,
   };
 }
-
-export async function ghApi(
-  githubToken: string,
-  path: string,
   method = "GET",
   body?: unknown,
 ): Promise<unknown> {
