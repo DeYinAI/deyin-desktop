@@ -1,6 +1,7 @@
 import type {
   AccountUsage,
   AgentEventEnvelope,
+  AgentImageInput,
   AgentStartOptions,
   AgentUiEvent,
   Automation,
@@ -18,6 +19,8 @@ import type {
   EnvInfo,
   ImageGenerateRequest,
   ImageGenerateResult,
+  LocalVisionDescribeResult,
+  LocalVisionStatus,
   FileNode,
   GitBlameLine,
   GitBranch,
@@ -222,6 +225,8 @@ export const CH = {
   imagesSave: "deyin:images:save",
   imagesRead: "deyin:images:read",
   imagesGenerate: "deyin:images:generate",
+  visionDescribeLocal: "deyin:vision:describeLocal",
+  visionLocalStatus: "deyin:vision:localStatus",
   telemetryRecord: "deyin:telemetry:record",
   providersList: "deyin:providers:list",
   providersAdd: "deyin:providers:add",
@@ -543,6 +548,13 @@ export interface DeyinApi {
     read(threadId: string, fileName: string): Promise<string>;
     /** Run a text-to-image model and store the results for the thread. */
     generate(request: ImageGenerateRequest): Promise<ImageGenerateResult>;
+  };
+  /**
+   * On-device vision via the Local Vision plugin (Ollama). Desktop only.
+   */
+  vision?: {
+    describeLocal(images: AgentImageInput[], userText?: string): Promise<LocalVisionDescribeResult>;
+    localStatus(): Promise<LocalVisionStatus>;
   };
   telemetry: {
     /** Anonymous feature-usage event; dropped unless telemetry is enabled. */

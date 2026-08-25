@@ -27,7 +27,8 @@ full UX is not yet fleshed out. All implementation here is original Deyin code.
 | Workspace panel: Diff tab | Done (LCS line diff + source preview + review Accept/Reject) | `components/WorkspacePanel.tsx`, `renderer/diff.ts`, `components/ReviewBanner.tsx` |
 | Workspace panel: Git tab | Done (status, stage, commit, branches, log; web via sandbox git RPCs) | `components/GitTab.tsx`, `host-core/src/host/git.ts`, `main/ipc.ts`, `apps/web/src/server/session.ts` |
 | Web repo workflow (connect URL → work branch → Ship button: commit/push/merge, PR-link fallback) | Done (web) | `apps/web/src/server/repo.ts`, `components/RepoBar.tsx`, `client/transport.ts` (`repo` API) |
-| Vision: image attach (paste/drag/pick) routed to a vision-capable model in the user's plan | Done (shared pipeline, all 3 wire formats) | `components/Composer.tsx`, `vision.ts`, `host-core/src/models.ts` (`modelSupportsVision`), `agent-core/src/wire.ts` |
+| Vision: image attach (paste/drag/pick); cloud auto-route opt-in (Settings → General, default off) | Done (desktop + web) | `components/Composer.tsx`, `vision.ts`, `host-core/src/models.ts` |
+| Local Vision plugin (Ollama moondream, desktop only) | Done | `host-core/src/local-vision.ts`, `apps/desktop/src/main/local-vision-service.ts`, `registry/plugins/local-vision/` |
 | Text-to-image: image models in the picker + `generate_image` tool, pictures rendered inline in chat | Done (desktop + web) | `host-core/src/images.ts` (`modelImageCapability`, `generateImages`), `host-core/src/host/image-store.ts`, `agent-core/tools/generate-image.ts`, `components/InlineImage.tsx`, `client/embeds.ts`, `main/image-gen.ts`, `apps/web/src/server/session.ts` |
 | Image output from chat models that draw (Gemini flash-image / nano-banana, Responses image tool): detected from the catalog, captured from the stream, stored and embedded | Done (desktop + web, all 3 wire formats) | `host-core/src/image-parts.ts`, `host-core/src/host/image-bridge.ts`, `agent-core/src/stream.ts`, `agent-core/src/transports.ts`, `agent-core/src/loop.ts` |
 | Image editing (`input_images`) and saving generated pictures into the workspace (`save_to`) | Done (desktop + web) | `host-core/src/host/image-bridge.ts`, `host-core/src/images.ts` (`/images/edits`), `agent-core/src/tools/generate-image.ts` |
@@ -36,7 +37,7 @@ full UX is not yet fleshed out. All implementation here is original Deyin code.
 | Change review before apply | Done | `main/pending-review.ts`, `agent-core/src/tools/file-mutation.ts`, `ReviewBanner.tsx` |
 | Goal mode (UI modal + report_goal_met tool) | Done | `agent-core/src/tools/report-goal-met.ts`, `Composer.tsx`, `app.tsx` |
 | Workspace panel: Browser tab | Done | `components/WorkspacePanel.tsx` (`<webview>` desktop, iframe web) |
-| Settings: General (live i18n en/zh/de, auto-update, telemetry, agent mode) | Done | `components/settings/GeneralPage.tsx`, `host-core/src/i18n.ts`, `host-core/src/telemetry.ts` |
+| Settings: General (live i18n en/zh/de, auto-update, telemetry, agent mode, auto vision routing) | Done | `components/settings/GeneralPage.tsx`, `host-core/src/i18n.ts`, `host-core/src/telemetry.ts` |
 | Settings: Appearance (interface font size, real code theme palettes + highlighter) | Done | `settings/AppearancePage.tsx`, `renderer/code.tsx` |
 | Settings: Model providers (plan display, 1-week model cache, draft add form) | Done | `settings/ModelSettingsPage.tsx`, `host-core/src/stores.ts` (`AccountCache`, `ModelsCache`) |
 | Settings: Browser control + clear data | Done | `components/settings/BrowserPage.tsx`, `main/ipc.ts` (`browser:*`) |

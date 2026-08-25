@@ -26,5 +26,25 @@ export * from "./telemetry.js";
 export * from "./linked-thread-context.js";
 export * from "./recent-workspaces.js";
 export { formatUserMessageWithContext, dedupeContextRefs } from "./context-message.js";
+export {
+  DEFAULT_LOCAL_VISION_MODEL,
+  DEFAULT_OLLAMA_BASE_URL,
+  LOCAL_VISION_MAX_IMAGE_BYTES,
+  LOCAL_VISION_MAX_IMAGES,
+  checkOllamaVisionModel,
+  describeImageViaOllama,
+  describeImagesViaOllama,
+  formatUserMessageWithLocalVision,
+  resolveLocalOllamaBaseUrl,
+  validateLocalVisionImages,
+} from "./local-vision.js";
+export type {
+  LocalVisionConfig,
+  LocalVisionDescription,
+  LocalVisionDescribeResult,
+  LocalVisionImage,
+  LocalVisionStatus,
+  OllamaHealth,
+} from "./local-vision.js";
 export { isPathInsideRoot, logicalResolve } from "./pathInside.js";
 export type { ContextRef, ContextSearchHit, ResolvedContextFile } from "./types.js";

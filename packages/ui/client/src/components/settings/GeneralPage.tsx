@@ -100,6 +100,9 @@ export function GeneralPage({ settings, version, platform, onChange }: Props) {
             onChange={(v) => onChange({ agentMode: v ? "agent" : "chat" })}
           />
         </SettingCard>
+        <SettingCard title={t("general.autoVisionRouting")} description={t("general.autoVisionRoutingDesc")}>
+          <Toggle checked={settings.autoVisionRouting ?? false} onChange={(v) => onChange({ autoVisionRouting: v })} />
+        </SettingCard>
         <SettingCard title={t("general.keepRunningInBackground")} description={t("general.keepRunningInBackgroundDesc")}>
           <Toggle checked={settings.keepRunningInBackground} onChange={(v) => onChange({ keepRunningInBackground: v })} />
         </SettingCard>

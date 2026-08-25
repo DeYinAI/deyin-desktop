@@ -144,6 +144,9 @@ const en = {
   "general.checkForUpdatesError": "Could not check: {message}",
   "general.agentMode": "Agent mode",
   "general.agentModeDesc": "Let Deyin use tools (files, terminal, browser, MCP). Turn off for plain chat.",
+  "general.autoVisionRouting": "Auto route to cloud vision",
+  "general.autoVisionRoutingDesc":
+    "When you attach images on a text-only model, switch to the first vision model in your plan. Off by default — install the Local Vision plugin (Ollama + moondream, ~1.7 GB) or pick a vision model manually instead.",
   "general.automationsCatchUp": "Catch up missed automations",
   "general.automationsCatchUpDesc": "Run scheduled automations once on startup if the app was closed during the scheduled time.",
   "general.keepRunningInBackground": "Keep running in background",
@@ -522,6 +525,9 @@ const zh: Partial<Record<MessageKey, string>> = {
   "general.autoUpdateDesc": "在后台下载新版本的 Deyin。重启安装前会征求确认。",
   "general.agentMode": "智能体模式",
   "general.agentModeDesc": "允许 Deyin 使用工具（文件、终端、浏览器、MCP）。关闭后为纯聊天。",
+  "general.autoVisionRouting": "自动路由到云端视觉模型",
+  "general.autoVisionRoutingDesc":
+    "在纯文本模型上附加图片时，自动切换到你计划中的第一个视觉模型。默认关闭——可安装 Local Vision 插件（Ollama + moondream，约 1.7 GB）或手动选择视觉模型。",
   "general.privacy": "隐私",
   "general.telemetry": "使用统计",
   "general.telemetryDesc": "共享匿名功能使用数据（绝不包含代码、路径或提示词）。默认关闭。",
@@ -849,6 +855,9 @@ const de: Partial<Record<MessageKey, string>> = {
   "general.autoUpdateDesc": "Neue Deyin-Versionen im Hintergrund herunterladen. Vor dem Neustart zur Installation bestätigen.",
   "general.agentMode": "Agent-Modus",
   "general.agentModeDesc": "Deyin darf Werkzeuge nutzen (Dateien, Terminal, Browser, MCP). Aus = reiner Chat.",
+  "general.autoVisionRouting": "Automatisch zu Cloud-Vision routen",
+  "general.autoVisionRoutingDesc":
+    "Bei Bildanhängen auf einem reinen Textmodell zum ersten Vision-Modell deines Plans wechseln. Standard aus — Local-Vision-Plugin (Ollama + moondream, ~1,7 GB) installieren oder Vision-Modell manuell wählen.",
   "general.privacy": "Privatsphäre",
   "general.telemetry": "Nutzungstelemetrie",
   "general.telemetryDesc": "Anonyme Nutzungsdaten teilen (niemals Code, Pfade oder Prompts). Standardmäßig aus.",

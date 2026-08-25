@@ -31,6 +31,7 @@ import { resolveContextRefs, searchContextPaths } from "@deyin/host-core";
 import type { PermissionDecision } from "@deyin/agent-core";
 import { CH } from "@deyin/contract";
 import type {
+  AgentImageInput,
   AgentStartOptions,
   Automation,
   Bootstrap,
@@ -73,6 +74,7 @@ import { scanDiffViaMcp } from "./security-scan.js";
 import { VisualizeService } from "./visualize.js";
 import { ImageService } from "./images.js";
 import { runImageGeneration, type ImageRouting } from "./image-gen.js";
+import { LocalVisionService } from "./local-vision-service.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { WorkspaceTrustStore } from "./workspace-trust.js";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -271,6 +273,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const security = new SecurityService();
   const visualize = new VisualizeService();
   const images = new ImageService();
+  const localVision = new LocalVisionService(pluginsDir, agents);
 
   /** Provider routing for image generation, mirroring the chat/agent routing. */
   const imageRouting = (providerId?: string): ImageRouting => {
@@ -709,6 +712,12 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.imagesGenerate, (_e, request: ImageGenerateRequest) =>
     runImageGeneration(images, imageRouting(request.providerId), request),
   );
+
+  /* Local Vision plugin (Ollama + moondream). */
+  ipcMain.handle(CH.visionDescribeLocal, (_e, images: AgentImageInput[], userText?: string) =>
+    localVision.describeLocal(images, userText),
+  );
+  ipcMain.handle(CH.visionLocalStatus, () => localVision.status());
 
   /* Beta feedback: best-effort upload to the Openference backend. */
   ipcMain.handle(

@@ -225,6 +225,10 @@ agent: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.imagesRead, threadId, fileName),
     generate: (request) => ipcRenderer.invoke(CH.imagesGenerate, request),
   },
+  vision: {
+    describeLocal: (images, userText) => ipcRenderer.invoke(CH.visionDescribeLocal, images, userText),
+    localStatus: () => ipcRenderer.invoke(CH.visionLocalStatus),
+  },
   telemetry: {
     record: (name, props) => ipcRenderer.send(CH.telemetryRecord, name, props),
   },

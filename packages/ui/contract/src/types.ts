@@ -55,6 +55,8 @@ export type {
   AgentTodoItem,
   AgentTodoStatus,
   AgentImageInput,
+  LocalVisionDescribeResult,
+  LocalVisionStatus,
   PlanStep,
   DiffSnippetLine,
   AgentUiEvent,
