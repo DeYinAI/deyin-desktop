@@ -7,11 +7,18 @@ function fill(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
 
+type UpdateBannerVariant = "sidebar" | "rail";
+
+interface UpdateBannerProps {
+  /** Sidebar footer pill (default) or collapsed nav-rail dot. */
+  variant?: UpdateBannerVariant;
+}
+
 /**
- * Cursor-style update strip: available → download (or auto), progress, then
- * Restart to update. Never force-installs without that confirm.
+ * Compact update notice — lives in the sidebar footer (Cursor-style), not a
+ * full-width strip. available → download, progress, then restart to update.
  */
-export function UpdateBanner() {
+export function UpdateBanner({ variant = "sidebar" }: UpdateBannerProps) {
   const t = useT();
   const [state, setState] = useState<UpdatesState | null>(null);
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
@@ -52,39 +59,63 @@ export function UpdateBanner() {
           ? fill(t("update.downloaded"), { version })
           : fill(t("update.error"), { message: state.error ?? "unknown" });
 
-  return (
-    <div className="update-banner" role="status">
-      <div className="update-banner__body">
+  if (variant === "rail") {
+    const title =
+      state.status === "downloaded"
+        ? fill(t("update.downloaded"), { version })
+        : state.status === "available"
+          ? fill(t("update.available"), { version })
+          : message;
+    return (
+      <button
+        type="button"
+        className="update-pill update-pill--rail"
+        title={title}
+        aria-label={title}
+        onClick={() => {
+          if (state.status === "downloaded") window.deyin.updates.install();
+          else if (state.status === "available") void window.deyin.updates.download();
+        }}
+      >
         <Icon name="refresh" size={14} />
-        <span className="update-banner__text">{message}</span>
-        {state.status === "downloading" && (
-          <div
-            className="update-banner__progress"
-            role="progressbar"
-            aria-valuenow={state.progressPercent ?? 0}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div
-              className="update-banner__progress-bar"
-              style={{ width: `${Math.min(100, Math.max(0, state.progressPercent ?? 0))}%` }}
-            />
-          </div>
-        )}
+        <span className="update-pill__dot" aria-hidden />
+      </button>
+    );
+  }
+
+  return (
+    <div className="update-pill" role="status">
+      <div className="update-pill__head">
+        <Icon name="refresh" size={12} />
+        <span className="update-pill__text">{message}</span>
       </div>
-      <div className="update-banner__actions">
+      {state.status === "downloading" && (
+        <div
+          className="update-pill__progress"
+          role="progressbar"
+          aria-valuenow={state.progressPercent ?? 0}
+          aria-valuemin={0}
+          aria-valuemax={100}
+        >
+          <div
+            className="update-pill__progress-bar"
+            style={{ width: `${Math.min(100, Math.max(0, state.progressPercent ?? 0))}%` }}
+          />
+        </div>
+      )}
+      <div className="update-pill__actions">
         {state.status === "available" && (
           <>
             <button
               type="button"
-              className="btn btn--primary btn--small"
+              className="update-pill__btn update-pill__btn--primary"
               onClick={() => void window.deyin.updates.download()}
             >
               {t("update.download")}
             </button>
             <button
               type="button"
-              className="btn btn--ghost btn--small"
+              className="update-pill__btn update-pill__btn--ghost"
               onClick={() => setDismissedVersion(version || "pending")}
             >
               {t("update.later")}
@@ -94,7 +125,7 @@ export function UpdateBanner() {
         {state.status === "downloaded" && (
           <button
             type="button"
-            className="btn btn--primary btn--small"
+            className="update-pill__btn update-pill__btn--primary"
             onClick={() => window.deyin.updates.install()}
           >
             {t("update.restart")}
@@ -103,7 +134,7 @@ export function UpdateBanner() {
         {state.status === "error" && (
           <button
             type="button"
-            className="btn btn--ghost btn--small"
+            className="update-pill__btn update-pill__btn--ghost"
             onClick={() => setErrorDismissed(true)}
           >
             {t("update.dismiss")}

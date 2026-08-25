@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
 import { SectionHeader, SettingCard, SettingGroup, TabBar, Toggle } from "./settings/controls.js";
+import { UpdateBanner } from "./UpdateBanner.js";
 
 // Settings pages are heavy (MCP catalog, indexing UI, usage charts) and only one
 // is visible at a time; lazy chunks keep them out of the initial renderer bundle.
@@ -250,6 +251,11 @@ export function SettingsView(props: SettingsViewProps) {
             ))}
           </div>
         ))}
+        {!isWeb ? (
+          <div className="settings__update">
+            <UpdateBanner variant="sidebar" />
+          </div>
+        ) : null}
       </aside>
 
       <div className="settings__content">

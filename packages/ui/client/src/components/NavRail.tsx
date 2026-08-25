@@ -1,5 +1,6 @@
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
+import { UpdateBanner } from "./UpdateBanner.js";
 
 interface NavRailProps {
   /** Which top-level view is showing, so its rail button reads as selected. */
@@ -56,15 +57,18 @@ export function NavRail(props: NavRailProps) {
         ))}
       </div>
 
-      <button
-        type="button"
-        className="nav-rail__btn"
-        title={t("nav.settings")}
-        aria-label={t("nav.settings")}
-        onClick={props.onOpenSettings}
-      >
-        <Icon name="gear" size={14} />
-      </button>
+      <div className="nav-rail__footer">
+        <UpdateBanner variant="rail" />
+        <button
+          type="button"
+          className="nav-rail__btn"
+          title={t("nav.settings")}
+          aria-label={t("nav.settings")}
+          onClick={props.onOpenSettings}
+        >
+          <Icon name="gear" size={14} />
+        </button>
+      </div>
     </nav>
   );
 }

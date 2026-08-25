@@ -155,7 +155,116 @@ code {
   min-height: 0;
 }
 
-/* Update banner (Cursor-style strip under the title bar) -------------------- */
+/* Update pill (Cursor-style, sidebar footer) -------------------------------- */
+.update-pill {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+  color: var(--color-text);
+  font-size: 11.5px;
+}
+.update-pill__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  color: var(--color-accent);
+}
+.update-pill__text {
+  color: var(--color-text);
+  min-width: 0;
+  line-height: 1.35;
+}
+.update-pill__progress {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+.update-pill__progress-bar {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 999px;
+  transition: width 120ms linear;
+}
+.update-pill__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.update-pill__btn {
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.3;
+  cursor: pointer;
+  background: transparent;
+  color: var(--color-text-muted);
+}
+.update-pill__btn--primary {
+  background: var(--color-accent);
+  color: var(--color-accent-contrast, #fff);
+  font-weight: 500;
+}
+.update-pill__btn--primary:hover {
+  filter: brightness(1.06);
+}
+.update-pill__btn--ghost:hover {
+  color: var(--color-text);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+.update-pill--rail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-accent);
+  cursor: pointer;
+}
+.update-pill--rail:hover {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+.update-pill__dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  box-shadow: 0 0 0 1.5px var(--color-surface);
+}
+
+.sidebar__update {
+  flex-shrink: 0;
+  padding: 0 8px 6px;
+  margin: 0 4px;
+}
+.settings__update {
+  margin-top: auto;
+  padding: 8px 4px 4px;
+}
+.nav-rail__footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+}
+
+/* Legacy full-width banner (workspace connection errors only) -------------- */
 .update-banner {
   display: flex;
   align-items: center;
