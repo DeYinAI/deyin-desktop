@@ -27,7 +27,7 @@ import { Composer, type ComposerImage } from "./components/Composer.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
-import { resolveVisionModel } from "./vision.js";
+import { resolveVisionModel, visionBlockedMessage } from "./vision.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { PlansView } from "./components/PlansView.js";
@@ -200,9 +200,18 @@ export function App() {
   const runningThreadId = useRunningThreadId();
   /** Volatile diff contents per file path; thread events only persist the counts. */
   const fileDiffsRef = useRef(new Map<string, FileDiff>());
-  /** Follow-up queued while a run is active; drained when the run finishes. */
-  const [queuedPrompt, setQueuedPrompt] = useState<string | null>(null);
-  const queuedPromptRef = useRef<string | null>(null);
+  /** Follow-up queued while a run is active; drained when the run finishes (per thread). */
+  const [queuedPromptByThread, setQueuedPromptByThread] = useState<Record<string, string>>({});
+  const queuedPromptByThreadRef = useRef<Record<string, string>>({});
+  /** Thread that owns an in-flight plain-chat stream (agent runs use runningThreadId). */
+  const plainChatThreadIdRef = useRef<string | null>(null);
+  const setQueuedForThread = useCallback((threadId: string, text: string | null) => {
+    const next = { ...queuedPromptByThreadRef.current };
+    if (text === null || !text.trim()) delete next[threadId];
+    else next[threadId] = text;
+    queuedPromptByThreadRef.current = next;
+    setQueuedPromptByThread(next);
+  }, []);
   /** Latest Context Usage snapshot per thread (session-scoped). */
   const [contextByThread, setContextByThread] = useState<Record<string, ContextUsageSnapshot>>({});
   /** Prefix cache session metrics per thread (from optimization events). */
@@ -548,6 +557,13 @@ export function App() {
     () => projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId) ?? null,
     [projects, activeThreadId],
   );
+
+  const activeQueuedPrompt =
+    activeThreadId !== null ? queuedPromptByThread[activeThreadId]?.trim() ?? null : null;
+  const activeThreadStreaming =
+    activeThreadId !== null &&
+    (runningThreadId === activeThreadId ||
+      (streamText !== null && plainChatThreadIdRef.current === activeThreadId));
 
   const selectedContextLength = useMemo(() => {
     const fromModels = models.find((m) => m.id === selectedModel)?.contextLength;
@@ -1101,8 +1117,7 @@ export function App() {
           const sendNow = pendingSendNowRef.current;
           pendingSendNowRef.current = null;
           if (sendNow) {
-            queuedPromptRef.current = null;
-            setQueuedPrompt(null);
+            setQueuedForThread(sendNow.threadId, null);
             const thread =
               projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === sendNow.threadId) ?? null;
             if (thread) {
@@ -1111,10 +1126,9 @@ export function App() {
             }
             break;
           }
-          const queued = queuedPromptRef.current;
+          const queued = queuedPromptByThreadRef.current[fold.threadId]?.trim();
           if (queued) {
-            queuedPromptRef.current = null;
-            setQueuedPrompt(null);
+            setQueuedForThread(fold.threadId, null);
             const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
             if (thread) {
               const mode = composerModeRef.current;
@@ -1127,7 +1141,7 @@ export function App() {
           break;
       }
     },
-    [appendEvents, markOnboard, openPanelTab, selectedModel],
+    [appendEvents, markOnboard, openPanelTab, selectedModel, setQueuedForThread],
   );
   useAgentStateController({ onSideEffect: handleAgentSideEffect });
 
@@ -1375,6 +1389,8 @@ export function App() {
         model?: string;
         /** Inline notice shown next to the sent message (e.g. vision routing). */
         notice?: string;
+        /** Transcript text when it differs from the agent prompt (local vision). */
+        displayText?: string;
       },
     ) => {
       const attachments = meta?.attachments ?? [];
@@ -1394,7 +1410,7 @@ export function App() {
 
       const isFirstMessage = toChatMessages(thread.events).length === 0;
       appendEvents(thread.id, [
-        { kind: "user", text, attachments, linkedThreadIds },
+        { kind: "user", text: meta?.displayText ?? text, attachments, linkedThreadIds },
         ...(meta?.notice ? [{ kind: "assistant" as const, text: meta.notice }] : []),
       ]);
       agentStateStore.startRun(thread.id, mode);
@@ -1481,6 +1497,7 @@ export function App() {
     if (plainChatAbortRef.current) {
       plainChatAbortRef.current.abort();
       plainChatAbortRef.current = null;
+      plainChatThreadIdRef.current = null;
       setStreamText(null);
       return;
     }
@@ -1509,21 +1526,19 @@ export function App() {
       const sendNow = pendingSendNowRef.current;
       pendingSendNowRef.current = null;
       if (sendNow) {
-        queuedPromptRef.current = null;
-        setQueuedPrompt(null);
+        setQueuedForThread(sendNow.threadId, null);
         const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === sendNow.threadId) ?? null;
         if (thread) startAgentRunRef.current(thread, sendNow.text, sendNow.mode);
         return;
       }
-      const queued = queuedPromptRef.current;
+      const queued = queuedPromptByThreadRef.current[threadId]?.trim();
       if (queued) {
-        queuedPromptRef.current = null;
-        setQueuedPrompt(null);
+        setQueuedForThread(threadId, null);
         const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
         if (thread) startAgentRunRef.current(thread, queued, composerModeRef.current);
       }
     }, 3_000);
-  }, [runningThreadId, appendEvents]);
+  }, [runningThreadId, appendEvents, setQueuedForThread]);
 
   /** Persist manual todo edits and keep the latest timeline todo card in sync. */
   const updatePlanTodos = useCallback(
@@ -1620,16 +1635,17 @@ export function App() {
       return;
     }
 
-    // While a run is active, Enter/Send queues the follow-up (Cursor-like).
-    const runActive = streamText !== null || runningThreadId !== null;
-    if (runActive) {
-      queuedPromptRef.current = text;
-      setQueuedPrompt(text);
+    const thread = activeThread ?? ensureThread();
+
+    // While this thread's run is active, Enter/Send queues the follow-up (Cursor-like).
+    const runActiveOnThisThread =
+      runningThreadId === thread.id ||
+      (streamText !== null && plainChatThreadIdRef.current === thread.id);
+    if (runActiveOnThisThread) {
+      setQueuedForThread(thread.id, text);
       setInput("");
       return;
     }
-
-    const thread = activeThread ?? ensureThread();
     const { providerId: runProviderId, modelId: runModelId } = resolveThreadModel(thread);
     updateThread(thread.id, { model: runModelId, providerId: runProviderId });
 
@@ -1735,38 +1751,55 @@ export function App() {
     // switched off. Images require the agent runtime (vision content parts).
     const images: AgentImageInput[] = composerImages.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
     if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
-      // Vision routing: images must land on a vision-capable model from the
-      // user's plan (the provider model list); unknown capabilities pass through.
+      // Vision: cloud auto-route (opt-in), manual vision model pick, or Local Vision plugin.
       let runModel = runModelId;
       let visionNotice: string | undefined;
+      let sendText = text;
+      let sendImages = images;
       if (images.length > 0) {
-        const route = resolveVisionModel(modelList, runModelId);
-        if (!route) {
+        const autoRoute = settings?.autoVisionRouting ?? false;
+        const route = resolveVisionModel(modelList, runModelId, { autoRoute });
+        if (route) {
+          runModel = route.model;
+          if (route.routedTo) visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
+        } else if (autoRoute) {
           appendEvents(thread.id, [
             {
               kind: "assistant",
               text: "Your plan doesn't include a vision-capable model yet. Remove the attached images, or pick a vision model from the model menu.",
             },
           ]);
-          return; // Keep the message and images in the composer.
+          return;
+        } else if (window.deyin.vision?.describeLocal) {
+          const local = await window.deyin.vision.describeLocal(images, text);
+          if (local.ok && local.descriptions?.length) {
+            sendText = local.prompt ?? text;
+            sendImages = [];
+            visionNotice = `📷 Vision: described locally with ${local.model ?? "moondream"}.`;
+          } else {
+            appendEvents(thread.id, [{ kind: "assistant", text: local.error ?? visionBlockedMessage({ localVisionAvailable: true }) }]);
+            return;
+          }
+        } else {
+          appendEvents(thread.id, [{ kind: "assistant", text: visionBlockedMessage({ localVisionAvailable: Boolean(window.deyin.vision?.describeLocal) }) }]);
+          return;
         }
-        runModel = route.model;
-        if (route.routedTo) visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
       }
       setInput("");
       const sendMeta = {
         attachments: [...composerAttachments],
         linkedThreadIds: composerLinked.map((l) => l.threadId),
-        images,
+        images: sendImages,
         imageModels,
         imageChatModels,
         model: runModel,
         notice: visionNotice,
+        displayText: sendImages.length < images.length ? text : undefined,
       };
       setComposerAttachments([]);
       setComposerLinked([]);
       setComposerImages([]);
-      void startAgentRun(thread, text, composerMode, sendMeta);
+      void startAgentRun(thread, sendText, composerMode, sendMeta);
       return;
     }
 
@@ -1786,6 +1819,7 @@ export function App() {
     let timedOut = false;
     const abort = new AbortController();
     plainChatAbortRef.current = abort;
+    plainChatThreadIdRef.current = thread.id;
     const armWatchdog = () =>
       setTimeout(() => {
         timedOut = true;
@@ -1825,17 +1859,18 @@ export function App() {
     } finally {
       clearTimeout(watchdog);
       plainChatAbortRef.current = null;
+      plainChatThreadIdRef.current = null;
       setStreamText(null);
       // Real token usage from the provider's final stream frame. Providers that
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread, resolveThreadModel]);
+  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
     const fromInput = input.trim();
-    const text = fromInput || queuedPromptRef.current?.trim() || "";
+    const text = fromInput || queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim() || "";
     if (!text || !activeThread) return;
 
     // /goal never reaches the model — apply it without interrupting the run.
@@ -1846,18 +1881,17 @@ export function App() {
       });
       appendEvents(activeThread.id, [{ kind: "goal-set", text: goal }]);
       if (fromInput) setInput("");
-      else {
-        queuedPromptRef.current = null;
-        setQueuedPrompt(null);
-      }
+      else setQueuedForThread(activeThread.id, null);
       return;
     }
 
     setInput("");
-    queuedPromptRef.current = null;
-    setQueuedPrompt(null);
+    setQueuedForThread(activeThread.id, null);
 
-    const runActive = streamText !== null || runningThreadId !== null || plainChatAbortRef.current !== null;
+    const runActive =
+      runningThreadId === activeThread.id ||
+      (streamText !== null && plainChatThreadIdRef.current === activeThread.id) ||
+      (plainChatAbortRef.current !== null && plainChatThreadIdRef.current === activeThread.id);
     if (!runActive) {
       if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
         startAgentRun(activeThread, text, composerMode);
@@ -1867,12 +1901,11 @@ export function App() {
 
     pendingSendNowRef.current = { threadId: activeThread.id, text, mode: composerMode };
     stopRun();
-  }, [input, activeThread, streamText, runningThreadId, settings, boot, composerMode, startAgentRun, stopRun, appendEvents, updateThread]);
+  }, [input, activeThread, streamText, runningThreadId, settings, boot, composerMode, startAgentRun, stopRun, appendEvents, updateThread, setQueuedForThread]);
 
   const clearQueue = useCallback(() => {
-    queuedPromptRef.current = null;
-    setQueuedPrompt(null);
-  }, []);
+    if (activeThreadId) setQueuedForThread(activeThreadId, null);
+  }, [activeThreadId, setQueuedForThread]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -2292,9 +2325,9 @@ export function App() {
                   thinkingDefault={settings?.thinking ?? true}
                   modelEfforts={settings?.modelEfforts}
                   canSend={input.trim().length > 0}
-                  streaming={streamText !== null || runningThreadId !== null}
+                  streaming={activeThreadStreaming}
                   runStatus={runningThreadId === activeThreadId ? agentRunState?.status ?? null : null}
-                  queuedPrompt={queuedPrompt}
+                  queuedPrompt={activeQueuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
                   selectedProviderId={selectedProviderId}
@@ -2303,7 +2336,7 @@ export function App() {
                   onSteer={() => void send()}
                   onSendNow={sendNow}
                   onClearQueue={clearQueue}
-                  onStop={streamText !== null || runningThreadId !== null ? stopRun : undefined}
+                  onStop={activeThreadStreaming ? stopRun : undefined}
                   onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
                   onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
                   onManageModels={() => {

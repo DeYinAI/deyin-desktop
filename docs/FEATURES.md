@@ -186,6 +186,10 @@ without adopting its operator/lifestyle scope:
 - Model picker backed by Openference's live `/v1/models` catalog.
 - Catalog entries are classified: chat models stream completions, vision models accept
   image attachments, and text-to-image models are tagged **Image** in the picker.
+- Cloud vision auto-routing is **off by default** (Settings → General → **Auto route to
+  cloud vision**). With it off, attach images on a text model by installing the
+  **Local Vision** plugin (Ollama + `moondream`, ~1.7 GB) or by picking a vision model
+  manually.
 
 ## Image generation
 - Image ability is read off the `/v1/models` catalog (`host-core/src/images.ts`,

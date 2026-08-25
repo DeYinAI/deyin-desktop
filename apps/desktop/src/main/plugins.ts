@@ -47,6 +47,13 @@ const FALLBACK_CATALOG: PluginCatalogEntry[] = [
     kind: "plugin",
     interface: { displayName: "Docs Lookup", category: "Developer Tools", brandColor: "#0EA5E9" },
   },
+  {
+    name: "local-vision",
+    description: "Describe attached images on-device with Ollama moondream (~1.7 GB).",
+    repo: "DeYinAI/registry/plugins/local-vision",
+    kind: "plugin",
+    interface: { displayName: "Local Vision", category: "Engineering", brandColor: "#F97316" },
+  },
 ];
 
 interface CatalogCacheFile {

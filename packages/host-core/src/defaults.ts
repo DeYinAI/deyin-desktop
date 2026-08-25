@@ -1,7 +1,7 @@
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 15;
+export const SETTINGS_SCHEMA_VERSION = 16;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   optimizationPluginEnabled: false,
   memoryEnabled: true,
   reviewMode: "off",
+  autoVisionRouting: false,
   whatsNewSeenVersion: null,
 };
 
@@ -110,6 +111,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   }
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
+  if (typeof merged.autoVisionRouting !== "boolean") merged.autoVisionRouting = DEFAULT_SETTINGS.autoVisionRouting;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
   if (!["dark", "light", "system", "warm"].includes(merged.theme)) merged.theme = "dark";
