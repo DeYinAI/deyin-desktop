@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { threadPreview } from "@deyin/host-core/shared";
 import { useT } from "../i18n.js";
+import { AnchoredMenu } from "./AnchoredMenu.js";
 import { ContextUsage } from "./ContextUsage.js";
 import { Icon, type IconName } from "./Icon.js";
 import { ModelPicker } from "./ModelPicker.js";
+import { PortalledPanel } from "./PortalledPanel.js";
 import type {
   ApprovalMode,
   ChatMode,
@@ -72,6 +74,8 @@ interface ComposerProps {
   onSend: () => void;
   /** Abort current run and send immediately (Cursor-like interrupt). */
   onSendNow?: () => void;
+  /** Run the queued message in a new thread without stopping the current run. */
+  onStartMultitasking?: () => void;
   /** Queue draft as follow-up without stopping the run (Cursor Steer). */
   onSteer?: () => void;
   onClearQueue?: () => void;
@@ -105,6 +109,9 @@ interface ComposerProps {
   threadsForPicker?: Thread[];
   activeThreadId?: string | null;
   workspaceRoot?: string | null;
+  /** Active goal text for this thread (goal mode). */
+  goalText?: string | null;
+  onSetGoal?: (text: string | null) => void;
   /** Bumped by the host to pull focus into the input (e.g. after declining a plan). */
   focusSignal?: number;
 }
@@ -138,6 +145,7 @@ interface SlashItem {
 export function Composer(props: ComposerProps) {
   const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const modeOrder = useMemo(
     () => (props.deliveryModeEnabled === false ? MODE_ORDER.filter((m) => m !== "delivery") : MODE_ORDER),
     [props.deliveryModeEnabled],
@@ -150,9 +158,13 @@ export function Composer(props: ComposerProps) {
   const [accessOpen, setAccessOpen] = useState(false);
   const [modeOpen, setModeOpen] = useState(false);
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
+  /** The composer holds a bare "/name" prefix, so the command menu is in play. */
+  const slashOpen =
+    props.value.startsWith("/") && !props.value.includes("\n") && !props.value.includes(" ");
   const [atHits, setAtHits] = useState<ContextSearchHit[]>([]);
   const [hashHits, setHashHits] = useState<LinkedThreadRef[]>([]);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const attachments = props.attachments ?? [];
@@ -174,9 +186,17 @@ export function Composer(props: ComposerProps) {
 
   const cycleMode = () => {
     if (!props.mode || !props.onSelectMode) return;
+    setPlusOpen(false);
+    setAccessOpen(false);
     const next = modeOrder[(modeOrder.indexOf(props.mode!) + 1) % modeOrder.length]!;
     props.onSelectMode(next);
   };
+
+  const closeComposerMenus = useCallback(() => {
+    setPlusOpen(false);
+    setAccessOpen(false);
+    setModeOpen(false);
+  }, []);
 
   // Ctrl/Cmd+. opens the mode menu from anywhere (Cursor's Mode Menu binding).
   useEffect(() => {
@@ -184,6 +204,8 @@ export function Composer(props: ComposerProps) {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === ".") {
         e.preventDefault();
+        setPlusOpen(false);
+        setAccessOpen(false);
         setModeOpen((v) => !v);
         ref.current?.focus();
       }
@@ -192,7 +214,20 @@ export function Composer(props: ComposerProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [props.mode]);
 
+  useEffect(() => {
+    if (!goalOpen) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") setGoalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goalOpen]);
+
   // Slash autocomplete sources: commands plus skills (invocable as /skill-name).
+  // Re-scanned when the workspace changes and whenever the menu opens: commands
+  // and skills are workspace-scoped, and one authored mid-session (create-skill)
+  // has to show up without restarting the app. The host caches the scan, so
+  // reopening the menu is cheap.
   useEffect(() => {
     let alive = true;
     void Promise.all([window.deyin.caps.list("command"), window.deyin.caps.list("skill")])
@@ -215,10 +250,10 @@ export function Composer(props: ComposerProps) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [slashOpen, props.workspaceRoot]);
 
   const slashMatches = (() => {
-    if (!props.value.startsWith("/") || props.value.includes("\n") || props.value.includes(" ")) return [];
+    if (!slashOpen) return [];
     const query = props.value.slice(1).toLowerCase();
     return slashItems.filter((i) => i.name.startsWith(query)).slice(0, 8);
   })();
@@ -351,18 +386,6 @@ export function Composer(props: ComposerProps) {
     }
   };
 
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setPlusOpen(false);
-        setAccessOpen(false);
-        setModeOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
-
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -399,35 +422,56 @@ export function Composer(props: ComposerProps) {
   const showSteerBar = props.streaming && draft.length > 0 && queued.length === 0;
   const showStop = props.streaming && !!props.onStop;
   const showSend = !props.streaming || props.canSend;
+  const showSlashMenu = slashMatches.length > 0;
+  const showAtMenu = atQuery !== null && atHits.length > 0;
+  const showHashMenu = hashQuery !== null && hashHits.length > 0;
+
+  useEffect(() => {
+    if (showSlashMenu || showAtMenu || showHashMenu) closeComposerMenus();
+  }, [showSlashMenu, showAtMenu, showHashMenu, closeComposerMenus]);
 
   return (
-    <div className="composer" ref={rootRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
+    <div className="composer" ref={composerRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       {queued.length > 0 && (
-        <div className="composer__pending composer__pending--queued" title={queued}>
-          <span className="composer__pending-label">Queued</span>
-          <span className="composer__pending-text">{queued}</span>
-          <div className="composer__pending-actions">
-            {props.onSendNow && (
-              <button
-                type="button"
-                className="composer__pending-link"
-                title="Stop and send now"
-                onClick={() => props.onSendNow?.()}
-              >
-                Send now
-              </button>
-            )}
-            {props.onClearQueue && (
-              <button
-                type="button"
-                className="composer__pending-dismiss"
-                title="Remove queued message"
-                aria-label="Remove queued message"
-                onClick={() => props.onClearQueue?.()}
-              >
-                <Icon name="close" size={12} />
-              </button>
-            )}
+        <div className="composer__pending composer__pending--queued">
+          <div className="composer__pending-header">
+            <span className="composer__pending-label">{t("composer.queuedMessage")}</span>
+            <div className="composer__pending-actions">
+              {props.onStartMultitasking && (
+                <button
+                  type="button"
+                  className="composer__pending-link"
+                  title={t("composer.startMultitaskingHint")}
+                  onClick={() => props.onStartMultitasking?.()}
+                >
+                  {t("composer.startMultitasking")}
+                </button>
+              )}
+              {props.onSendNow && (
+                <button
+                  type="button"
+                  className="composer__pending-link"
+                  title={t("composer.sendNowHint")}
+                  onClick={() => props.onSendNow?.()}
+                >
+                  {t("composer.sendNow")}
+                </button>
+              )}
+              {props.onClearQueue && (
+                <button
+                  type="button"
+                  className="composer__pending-dismiss"
+                  title={t("composer.removeQueuedHint")}
+                  aria-label={t("composer.removeQueuedHint")}
+                  onClick={() => props.onClearQueue?.()}
+                >
+                  <Icon name="close" size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="composer__pending-body" title={queued}>
+            <span className="composer__pending-text composer__pending-text--preview">{queued}</span>
           </div>
         </div>
       )}
@@ -533,11 +577,19 @@ export function Composer(props: ComposerProps) {
           files.
         </div>
       )}
-      {slashMatches.length > 0 && (
-        <div className="slashmenu">
+      {showSlashMenu && (
+        <PortalledPanel
+          open
+          onClose={() => undefined}
+          anchorRef={composerRef}
+          matchAnchorWidth
+          gap={6}
+          className="slashmenu slashmenu--portalled"
+        >
           {slashMatches.map((item) => (
             <button
               key={item.name}
+              type="button"
               className="slashmenu__item"
               onClick={() => {
                 props.onChange(`/${item.name} `);
@@ -548,22 +600,36 @@ export function Composer(props: ComposerProps) {
               <span>{item.description}</span>
             </button>
           ))}
-        </div>
+        </PortalledPanel>
       )}
-      {atQuery !== null && atHits.length > 0 && (
-        <div className="slashmenu">
+      {showAtMenu && (
+        <PortalledPanel
+          open
+          onClose={() => undefined}
+          anchorRef={composerRef}
+          matchAnchorWidth
+          gap={6}
+          className="slashmenu slashmenu--portalled"
+        >
           {atHits.map((hit) => (
-            <button key={hit.path} className="slashmenu__item" onClick={() => addAttachment(hit)}>
+            <button key={hit.path} type="button" className="slashmenu__item" onClick={() => addAttachment(hit)}>
               <Icon name={hit.kind === "folder" ? "folder" : "file"} size={14} />
               <span>{hit.label}</span>
             </button>
           ))}
-        </div>
+        </PortalledPanel>
       )}
-      {hashQuery !== null && hashHits.length > 0 && (
-        <div className="slashmenu">
+      {showHashMenu && (
+        <PortalledPanel
+          open
+          onClose={() => undefined}
+          anchorRef={composerRef}
+          matchAnchorWidth
+          gap={6}
+          className="slashmenu slashmenu--portalled"
+        >
           {hashHits.map((hit) => (
-            <button key={hit.threadId} className="slashmenu__item" onClick={() => addLinkedThread(hit)}>
+            <button key={hit.threadId} type="button" className="slashmenu__item" onClick={() => addLinkedThread(hit)}>
               <Icon name="hash" size={14} />
               <span>
                 {hit.title}
@@ -573,7 +639,7 @@ export function Composer(props: ComposerProps) {
               </span>
             </button>
           ))}
-        </div>
+        </PortalledPanel>
       )}
       <input
         ref={fileInputRef}
@@ -623,100 +689,115 @@ export function Composer(props: ComposerProps) {
         onPaste={onPaste}
       />
       <div className="composer__row">
-        <div className="menu">
-          <button className="icon-btn" title="Insert" onClick={() => setPlusOpen((v) => !v)}>
-            <Icon name="plus" size={15} />
+        <AnchoredMenu
+          open={plusOpen}
+          onToggle={() => {
+            setModeOpen(false);
+            setAccessOpen(false);
+            setPlusOpen((v) => !v);
+          }}
+          onClose={() => setPlusOpen(false)}
+          triggerClassName="icon-btn"
+          triggerTitle="Insert"
+          trigger={<Icon name="plus" size={15} />}
+        >
+          <button
+            type="button"
+            className="menu__item"
+            onClick={() => {
+              fileInputRef.current?.click();
+              setPlusOpen(false);
+            }}
+          >
+            <Icon name="attach" size={14} />
+            Add attachment
           </button>
-          {plusOpen && (
-            <div className="menu__panel menu__panel--up">
-              <button
-                className="menu__item"
-                onClick={() => {
-                  fileInputRef.current?.click();
-                  setPlusOpen(false);
-                }}
-              >
-                <Icon name="attach" size={14} />
-                Add attachment
-              </button>
-              <button className="menu__item" onClick={() => insertToken("@")}>
-                <Icon name="at" size={14} />
-                Insert @ mention
-              </button>
-              <button className="menu__item" onClick={() => insertToken("#")}>
-                <Icon name="hash" size={14} />
-                Insert # session
-              </button>
-              <button className="menu__item" onClick={() => insertToken("/")}>
-                <Icon name="slash" size={14} />
-                Insert / command
-              </button>
-            </div>
-          )}
-        </div>
+          <button type="button" className="menu__item" onClick={() => insertToken("@")}>
+            <Icon name="at" size={14} />
+            Insert @ mention
+          </button>
+          <button type="button" className="menu__item" onClick={() => insertToken("#")}>
+            <Icon name="hash" size={14} />
+            Insert # session
+          </button>
+          <button type="button" className="menu__item" onClick={() => insertToken("/")}>
+            <Icon name="slash" size={14} />
+            Insert / command
+          </button>
+        </AnchoredMenu>
 
         {props.mode && props.onSelectMode && (
-          <div className="menu">
-            <button
-              className={`chip ${props.mode !== "agent" ? "chip--mode" : ""}`}
-              title={t("mode.switchHint")}
-              onClick={() => setModeOpen((v) => !v)}
-            >
-              <Icon name={MODE_META[props.mode].icon} size={13} />
-              <span>{t(MODE_META[props.mode].labelKey)}</span>
-              <Icon name="chevronDown" size={11} />
-            </button>
-            {modeOpen && (
-              <div className="menu__panel menu__panel--up">
-                {modeOrder.map((mode) => (
-                  <button
-                    key={mode}
-                    className={`menu__item ${mode === props.mode ? "menu__item--active" : ""}`}
-                    onClick={() => {
-                      props.onSelectMode?.(mode);
-                      setModeOpen(false);
-                      ref.current?.focus();
-                    }}
-                  >
-                    <Icon name={MODE_META[mode].icon} size={14} />
-                    <span className="menu__item-body">
-                      {t(MODE_META[mode].labelKey)}
-                      <span className="menu__item-desc">{t(MODE_META[mode].descKey)}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          <AnchoredMenu
+            open={modeOpen}
+            onToggle={() => {
+              setPlusOpen(false);
+              setAccessOpen(false);
+              setModeOpen((v) => !v);
+            }}
+            onClose={() => setModeOpen(false)}
+            triggerClassName={`chip ${props.mode !== "agent" ? "chip--mode" : ""}`}
+            triggerTitle={t("mode.switchHint")}
+            trigger={
+              <>
+                <Icon name={MODE_META[props.mode].icon} size={13} />
+                <span>{t(MODE_META[props.mode].labelKey)}</span>
+                <Icon name="chevronDown" size={11} />
+              </>
+            }
+          >
+            {modeOrder.map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                className={`menu__item ${mode === props.mode ? "menu__item--active" : ""}`}
+                onClick={() => {
+                  props.onSelectMode?.(mode);
+                  setModeOpen(false);
+                  ref.current?.focus();
+                }}
+              >
+                <Icon name={MODE_META[mode].icon} size={14} />
+                <span className="menu__item-body">
+                  {t(MODE_META[mode].labelKey)}
+                  <span className="menu__item-desc">{t(MODE_META[mode].descKey)}</span>
+                </span>
+              </button>
+            ))}
+          </AnchoredMenu>
         )}
 
-        <div className="menu">
-          <button
-            className={`chip ${props.approvalMode === "full-access" ? "chip--warn" : ""}`}
-            onClick={() => setAccessOpen((v) => !v)}
-          >
-            <Icon name={APPROVAL_META[props.approvalMode].icon} size={13} />
-            <span>{APPROVAL_META[props.approvalMode].label}</span>
-            <Icon name="chevronDown" size={11} />
-          </button>
-          {accessOpen && (
-            <div className="menu__panel menu__panel--up">
-              {(Object.keys(APPROVAL_META) as ApprovalMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  className={`menu__item ${mode === props.approvalMode ? "menu__item--active" : ""}`}
-                  onClick={() => {
-                    props.onSelectApproval(mode);
-                    setAccessOpen(false);
-                  }}
-                >
-                  <Icon name={APPROVAL_META[mode].icon} size={14} />
-                  {APPROVAL_META[mode].label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <AnchoredMenu
+          open={accessOpen}
+          onToggle={() => {
+            setPlusOpen(false);
+            setModeOpen(false);
+            setAccessOpen((v) => !v);
+          }}
+          onClose={() => setAccessOpen(false)}
+          triggerClassName={`chip ${props.approvalMode === "full-access" ? "chip--warn" : ""}`}
+          trigger={
+            <>
+              <Icon name={APPROVAL_META[props.approvalMode].icon} size={13} />
+              <span>{APPROVAL_META[props.approvalMode].label}</span>
+              <Icon name="chevronDown" size={11} />
+            </>
+          }
+        >
+          {(Object.keys(APPROVAL_META) as ApprovalMode[]).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={`menu__item ${mode === props.approvalMode ? "menu__item--active" : ""}`}
+              onClick={() => {
+                props.onSelectApproval(mode);
+                setAccessOpen(false);
+              }}
+            >
+              <Icon name={APPROVAL_META[mode].icon} size={14} />
+              {APPROVAL_META[mode].label}
+            </button>
+          ))}
+        </AnchoredMenu>
 
         <div className="composer__spacer" />
 
@@ -751,6 +832,21 @@ export function Composer(props: ComposerProps) {
           </button>
         )}
 
+        {props.onSetGoal && (
+          <button
+            type="button"
+            className={`chip ${props.goalText ? "chip--mode" : ""}`}
+            title="Set a verifiable goal for this task (/goal in the composer)"
+            onClick={() => {
+              setGoalDraft(props.goalText ?? "");
+              setGoalOpen(true);
+            }}
+          >
+            <Icon name="flag" size={12} />
+            <span>{props.goalText ? "Goal" : "Set goal"}</span>
+          </button>
+        )}
+
         <div className="composer__actions">
           {showStop && (
             <button className="btn--stop" onClick={props.onStop} title="Stop the run" aria-label="Stop">
@@ -770,6 +866,55 @@ export function Composer(props: ComposerProps) {
           )}
         </div>
       </div>
+      {goalOpen && props.onSetGoal && (
+        <div className="goal-modal-backdrop" onClick={() => setGoalOpen(false)}>
+          <div
+            className="goal-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Set goal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="goal-modal__title">Task goal</div>
+            <p className="hint">A verifiable objective. The agent can report when it is met via report_goal_met.</p>
+            <textarea
+              className="input goal-modal__input"
+              rows={3}
+              placeholder="e.g. All tests pass and README documents the new API"
+              value={goalDraft}
+              onChange={(e) => setGoalDraft(e.target.value)}
+              autoFocus
+            />
+            <div className="goal-modal__actions">
+              <button type="button" className="chip chip--small" onClick={() => setGoalOpen(false)}>
+                Cancel
+              </button>
+              {props.goalText && (
+                <button
+                  type="button"
+                  className="chip chip--small"
+                  onClick={() => {
+                    props.onSetGoal?.(null);
+                    setGoalOpen(false);
+                  }}
+                >
+                  Clear goal
+                </button>
+              )}
+              <button
+                type="button"
+                className="chip chip--small chip--active"
+                onClick={() => {
+                  props.onSetGoal?.(goalDraft.trim() || null);
+                  setGoalOpen(false);
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

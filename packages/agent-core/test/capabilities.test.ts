@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { BUILTIN_SKILLS, materializeBuiltinSkills } from "../src/capabilities/builtin-skills.js";
-import { expandCommand, discoverCommands, matchCommand } from "../src/capabilities/commands.js";
+import {
+  expandCommand,
+  discoverCommands,
+  matchCommand,
+  resolveCommandInvocation,
+  unknownCommandMessage,
+} from "../src/capabilities/commands.js";
+import { applyGoalCommandText, matchGoalCommand } from "../src/capabilities/goal-command.js";
 import { fmBool, fmString, parseFrontmatter } from "../src/capabilities/frontmatter.js";
 import { loadHooks, runHooks } from "../src/capabilities/hooks.js";
 import { interpolate, loadMcpServers } from "../src/capabilities/mcp-config.js";
@@ -435,4 +442,67 @@ test("registry scan merges every kind including plugin contributions", async () 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("matchGoalCommand parses set, clear, and ignores other slash commands", () => {
+  assert.equal(matchGoalCommand("/goal make tests pass"), "make tests pass");
+  assert.equal(matchGoalCommand("/goal"), null);
+  assert.equal(matchGoalCommand("/commit all"), undefined);
+
+  let applied: string | null | undefined;
+  assert.equal(
+    applyGoalCommandText("/goal ship v1", (goal) => {
+      applied = goal;
+    }),
+    true,
+  );
+  assert.equal(applied, "ship v1");
+});
+
+test("a leading absolute path is not read as a slash command", () => {
+  // The name must be followed by whitespace or end of input, so a message that
+  // opens with a path stays prose instead of resolving to /home or /dev.
+  assert.equal(matchCommand("/home/me/notes.md is out of date"), null);
+  assert.equal(matchCommand("/dev/null"), null);
+  assert.equal(matchCommand("/usr/bin/env node"), null);
+  // Real invocations still match, with and without arguments.
+  assert.deepEqual(matchCommand("/commit"), { name: "commit", args: "" });
+  assert.deepEqual(matchCommand("/commit  fix the bug"), { name: "commit", args: "fix the bug" });
+  assert.deepEqual(matchCommand("/review-bugbot"), { name: "review-bugbot", args: "" });
+});
+
+test("resolveCommandInvocation expands commands, skills, and names the misses", () => {
+  const caps = {
+    commands: [{ name: "commit", body: "Commit with message: $ARGUMENTS" }],
+    skills: [{ name: "review-bugbot", path: "/skills/review-bugbot/SKILL.md" }],
+  };
+
+  assert.deepEqual(resolveCommandInvocation("plain prose", caps), { kind: "none" });
+
+  const command = resolveCommandInvocation("/commit tighten the loop", caps);
+  assert.equal(command.kind, "command");
+  if (command.kind !== "command") return;
+  assert.equal(command.prompt, "Commit with message: tighten the loop");
+
+  const skill = resolveCommandInvocation("/review-bugbot", caps);
+  assert.equal(skill.kind, "skill");
+  if (skill.kind !== "skill") return;
+  assert.ok(skill.prompt.includes("/skills/review-bugbot/SKILL.md"));
+
+  // A typo is reported with a suggestion rather than sent to the model as prose.
+  const miss = resolveCommandInvocation("/commmit", caps);
+  assert.equal(miss.kind, "unknown");
+  if (miss.kind !== "unknown") return;
+  assert.deepEqual(miss.suggestions, ["commit"]);
+  assert.ok(unknownCommandMessage(miss.name, miss.suggestions).includes("/commit"));
+
+  // Nothing close by: the message points at the composer menu instead.
+  const noIdea = resolveCommandInvocation("/zzzzzz", caps);
+  assert.equal(noIdea.kind, "unknown");
+  if (noIdea.kind !== "unknown") return;
+  assert.deepEqual(noIdea.suggestions, []);
+  assert.ok(unknownCommandMessage(noIdea.name, noIdea.suggestions).includes("Type `/`"));
+
+  // A path must never reach the unknown-command path.
+  assert.deepEqual(resolveCommandInvocation("/home/me/x.md needs an update", caps), { kind: "none" });
 });

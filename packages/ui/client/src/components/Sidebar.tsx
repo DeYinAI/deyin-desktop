@@ -42,6 +42,8 @@ interface SidebarProps {
   onOpenAutomations: () => void;
   /** Open the appearance/customisation surface. */
   onOpenCustomize: () => void;
+  /** Pending approvals / MCP auth / questions per thread (sidebar badge). */
+  pendingByThread?: Record<string, number>;
 }
 
 /** A pinned thread, carrying the project it belongs to so the flat list can select it. */
@@ -159,8 +161,9 @@ export function Sidebar(props: SidebarProps) {
           props.onThreadContext(thread.id, e.clientX, e.clientY);
         }}
       >
-        {thread.unread && <span className="thread-row__unread" />}
+        {thread.unread && <span className="thread-row__unread" aria-hidden />}
         <span className="thread-row__title">{thread.title}</span>
+        <ThreadPendingBadge count={props.pendingByThread?.[thread.id] ?? 0} />
         <ThreadMark thread={thread} />
         <ThreadAge updatedAt={thread.updatedAt} now={now} />
       </button>
@@ -217,6 +220,7 @@ export function Sidebar(props: SidebarProps) {
           <span>{t("nav.search")}</span>
           <span className="kbd">Ctrl+K</span>
         </button>
+        {props.platform !== "web" && (
         <button
           className={`nav-item nav-item--feature${props.activeView === "automations" ? " nav-item--active" : ""}`}
           onClick={props.onOpenAutomations}
@@ -224,6 +228,7 @@ export function Sidebar(props: SidebarProps) {
           <Icon name="automation" size={14} />
           <span>{t("nav.automations")}</span>
         </button>
+        )}
         <button className="nav-item nav-item--feature" onClick={props.onOpenCustomize}>
           <Icon name="customize" size={14} />
           <span>{t("nav.customize")}</span>
@@ -331,6 +336,15 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
     </aside>
+  );
+}
+
+function ThreadPendingBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="thread-row__pending" title={`${count} pending interaction${count === 1 ? "" : "s"}`}>
+      {count > 1 ? count : null}
+    </span>
   );
 }
 

@@ -124,7 +124,6 @@ test("bash falls back to spawn only on ShellUnavailableError", async () => {
 
 test("bash does not re-exec when ToolShell throws a generic mid-run error", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "deyin-noexec-"));
-  let spawnInvocations = 0;
   // Intercept the spawn-based runCommand by wrapping the registry is awkward;
   // instead assert: a generic Error from the shell surfaces as ERROR: ... and
   // the shell's run was attempted exactly once (no retry via spawn).
@@ -172,8 +171,6 @@ test("bash does not re-exec when ToolShell throws a generic mid-run error", asyn
       // is that the content reflects the error, not a silent re-exec).
       assert.doesNotMatch(toolMsg.content, /should-not-run-twice/);
     }
-    // Track spawn indirectly: clean up if the file was created either way.
-    spawnInvocations;
   } finally {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });

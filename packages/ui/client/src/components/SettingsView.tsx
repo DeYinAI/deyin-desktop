@@ -293,7 +293,7 @@ export function SettingsView(props: SettingsViewProps) {
         )}
         {page === "integrations" && (
           <>
-            {integrationTab === "mcp" && <McpPage onToggle={toggleCap} tabs={integrationTabs} />}
+            {integrationTab === "mcp" && <McpPage onToggle={toggleCap} tabs={integrationTabs} platform={props.platform} />}
             {integrationTab === "plugins" && <PluginsPage onToggle={toggleCap} tabs={integrationTabs} />}
           </>
         )}

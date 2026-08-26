@@ -13,46 +13,46 @@ import {
 export type { ProviderApiFormat, StreamEvent };
 
 export interface StreamChatEventsOptions {
- apiBaseUrl: string;
- token: string;
- model: string;
- messages: AgentMessage[];
- /** Declared tools; omitted from the request when empty so plain chat still works. */
- tools?: WireTool[];
- /** Request model reasoning ("thinking") when supported. */
- thinking?: boolean;
- /** Reasoning effort for models that support it. */
- effort?: ReasoningEffort;
- temperature?: number;
- /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
- maxTokens?: number;
- signal?: AbortSignal;
- /** Compression + Anthropic cache_control markers. */
- wire?: WireOptions;
- /** OpenAI / Openference prompt cache routing key. */
- promptCacheKey?: string;
- promptCacheOptions?: {
- mode?: "implicit" | "explicit";
- ttl?: string;
- };
- /**
-  * Provider wire format. "chat-completions" (default) is the OpenAI-compatible
-  * /chat/completions stream; "responses" speaks the OpenAI Responses API;
-  * "anthropic" speaks the Anthropic Messages API (x-api-key, /v1/messages).
-  */
- apiFormat?: ProviderApiFormat;
- /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
- authHeader?: boolean;
- /** Anthropic API version header; default "2023-06-01". */
- anthropicVersion?: string;
- /** Max auto-continuations for length-truncated responses (default 3, DeepSeek only). */
- maxContinuations?: number;
- /**
-  * Ask the model for images alongside text (models whose catalog entry declares
-  * image output). Sends `modalities: ["text", "image"]` on chat-completions and
-  * enables the built-in image tool on the Responses API.
-  */
- imageOutput?: boolean;
+  apiBaseUrl: string;
+  token: string;
+  model: string;
+  messages: AgentMessage[];
+  /** Declared tools; omitted from the request when empty so plain chat still works. */
+  tools?: WireTool[];
+  /** Request model reasoning ("thinking") when supported. */
+  thinking?: boolean;
+  /** Reasoning effort for models that support it. */
+  effort?: ReasoningEffort;
+  temperature?: number;
+  /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
+  maxTokens?: number;
+  signal?: AbortSignal;
+  /** Compression + Anthropic cache_control markers. */
+  wire?: WireOptions;
+  /** OpenAI / Openference prompt cache routing key. */
+  promptCacheKey?: string;
+  promptCacheOptions?: {
+    mode?: "implicit" | "explicit";
+    ttl?: string;
+  };
+  /**
+   * Provider wire format. "chat-completions" (default) is the OpenAI-compatible
+   * /chat/completions stream; "responses" speaks the OpenAI Responses API;
+   * "anthropic" speaks the Anthropic Messages API (x-api-key, /v1/messages).
+   */
+  apiFormat?: ProviderApiFormat;
+  /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
+  authHeader?: boolean;
+  /** Anthropic API version header; default "2023-06-01". */
+  anthropicVersion?: string;
+  /** Max auto-continuations for length-truncated responses (default 3, DeepSeek only). */
+  maxContinuations?: number;
+  /**
+   * Ask the model for images alongside text (models whose catalog entry declares
+   * image output). Sends `modalities: ["text", "image"]` on chat-completions and
+   * enables the built-in image tool on the Responses API.
+   */
+  imageOutput?: boolean;
 }
 
 interface WireDelta {
@@ -174,22 +174,25 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        const event = parser.push(line);
-        if (!event) continue;
-        if (event.type === "done") {
-          doneEvent = event;
-          break;
+        for (const event of parser.pushAll(line)) {
+          if (event.type === "done") {
+            doneEvent = event;
+            break;
+          }
+          if (event.type === "text") content += event.delta;
+          else if (event.type === "reasoning") reasoning += event.delta;
+          yield event;
         }
-        if (event.type === "text") content += event.delta;
-        else if (event.type === "reasoning") reasoning += event.delta;
-        yield event;
+        if (doneEvent !== null) break;
       }
     }
     // Flush the trailing buffer: providers may end the stream without a final "\n".
     if (doneEvent === null && buffer.length > 0) {
-      const event = parser.push(buffer);
-      if (event && event.type === "done") doneEvent = event;
-      else if (event) {
+      for (const event of parser.pushAll(buffer)) {
+        if (event.type === "done") {
+          doneEvent = event;
+          break;
+        }
         if (event.type === "text") content += event.delta;
         else if (event.type === "reasoning") reasoning += event.delta;
         yield event;
@@ -259,32 +262,46 @@ let syntheticCallCounter = 0;
  * without a network. Feed raw SSE lines; get stream events back.
  */
 export class StreamAccumulator {
- private content = "";
- private reasoning = "";
- private finishReason: string | null = null;
- private usage: TokenUsage | null = null;
- private calls = new Map<number, { id: string; name: string; arguments: string }>();
- private nextImplicitIndex = 0;
- private readonly images: StreamImage[] = [];
- private readonly seenImages = new Set<string>();
- private readonly compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
+  private content = "";
+  private reasoning = "";
+  private finishReason: string | null = null;
+  private usage: TokenUsage | null = null;
+  private calls = new Map<number, { id: string; name: string; arguments: string }>();
+  private nextImplicitIndex = 0;
+  private readonly images: StreamImage[] = [];
+  private readonly seenImages = new Set<string>();
+  private readonly compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
 
- constructor(compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] }) {
- this.compression = compression;
- }
+  constructor(compression?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] }) {
+    this.compression = compression;
+  }
 
-  /** Process one SSE line. Returns an event when the line produced one. */
+  /**
+   * Process one SSE line. Returns the last event the line produced, or null.
+   * Prefer {@link pushAll} — a single chunk can carry reasoning *and* text, and
+   * this signature can only hand back one of them.
+   */
   push(line: string): StreamEvent | null {
+    const events = this.pushAll(line);
+    return events.length > 0 ? events[events.length - 1]! : null;
+  }
+
+  /**
+   * Process one SSE line and return every event it produced. Providers commonly
+   * put `reasoning_content` and `content` in the *same* delta; emitting only one
+   * of them silently dropped the other from the assistant message.
+   */
+  pushAll(line: string): StreamEvent[] {
     const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) return null;
+    if (!trimmed.startsWith("data:")) return [];
     const payload = trimmed.slice(5).trim();
-    if (payload === "[DONE]") return this.finish();
+    if (payload === "[DONE]") return [this.finish()];
 
     let chunk: WireChunk;
     try {
       chunk = JSON.parse(payload) as WireChunk;
     } catch {
-      return null; // keep-alives / malformed lines
+      return []; // keep-alives / malformed lines
     }
 
     if (chunk.usage) {
@@ -298,7 +315,7 @@ export class StreamAccumulator {
     }
 
     const choice = chunk.choices?.[0];
-    if (!choice) return null;
+    if (!choice) return [];
     if (choice.finish_reason) this.finishReason = choice.finish_reason;
 
     // Generated pictures ride along with the text: `delta.images` while
@@ -309,10 +326,48 @@ export class StreamAccumulator {
       addImage(this.images, this.seenImages, image);
     }
 
-    const delta = choice.delta;
-    if (!delta) return null;
+    // Gateways that answer a streaming request with the whole completion in one
+    // frame put it under `message`, not `delta`. Without this the reply arrived
+    // empty and, worse, its tool_calls were dropped — the model looked like it
+    // had simply refused to call any tool.
+    const events: StreamEvent[] = [];
+    if (!choice.delta && choice.message) {
+      const message = choice.message as WireDelta;
+      const text = textFromContent(message.content);
+      if (text) {
+        this.content += text;
+        events.push({ type: "text", delta: text });
+      }
+      const wholeReasoning = message.reasoning_content ?? message.reasoning;
+      if (wholeReasoning) {
+        this.reasoning += wholeReasoning;
+        events.unshift({ type: "reasoning", delta: wholeReasoning });
+      }
+      this.collectToolCallFragments(message.tool_calls);
+      return events;
+    }
 
-    for (const frag of delta.tool_calls ?? []) {
+    const delta = choice.delta;
+    if (!delta) return events;
+
+    this.collectToolCallFragments(delta.tool_calls);
+
+    const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
+    if (reasoningDelta) {
+      this.reasoning += reasoningDelta;
+      events.push({ type: "reasoning", delta: reasoningDelta });
+    }
+    const textDelta = textFromContent(delta.content);
+    if (textDelta) {
+      this.content += textDelta;
+      events.push({ type: "text", delta: textDelta });
+    }
+    return events;
+  }
+
+  /** Merge streamed `tool_calls` fragments into the in-progress call map. */
+  private collectToolCallFragments(fragments: WireDelta["tool_calls"]): void {
+    for (const frag of fragments ?? []) {
       // Most providers set index; when absent, a fragment with an id starts a new call.
       const index = frag.index ?? (frag.id ? this.nextImplicitIndex++ : Math.max(0, this.nextImplicitIndex - 1));
       let call = this.calls.get(index);
@@ -325,45 +380,33 @@ export class StreamAccumulator {
       if (frag.function?.name) call.name += frag.function.name;
       if (frag.function?.arguments) call.arguments += frag.function.arguments;
     }
-
-    const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
-    if (reasoningDelta) {
-      this.reasoning += reasoningDelta;
-      return { type: "reasoning", delta: reasoningDelta };
-    }
-    const textDelta = textFromContent(delta.content);
-    if (textDelta) {
-      this.content += textDelta;
-      return { type: "text", delta: textDelta };
-    }
-    return null;
   }
 
-/** Images collected so far, for callers that fold across continuations. */
- collectedImages(): StreamImage[] {
- return [...this.images];
- }
+  /** Images collected so far, for callers that fold across continuations. */
+  collectedImages(): StreamImage[] {
+    return [...this.images];
+  }
 
- finish(): StreamEvent {
- const toolCalls: AgentToolCall[] = [...this.calls.entries()]
- .sort(([a], [b]) => a - b)
- .map(([i, c]) => ({
- id: c.id || `call_${i}_${(syntheticCallCounter++).toString(36)}`,
- name: c.name,
- arguments: c.arguments,
- }))
- .filter((c) => c.name.length > 0);
- return {
- type: "done",
- content: this.content,
- reasoning: this.reasoning,
- toolCalls,
- finishReason: this.finishReason,
- usage: this.usage,
- ...(this.compression ? { compression: this.compression } : {}),
- ...(this.images.length > 0 ? { images: [...this.images] } : {}),
- };
- }
+  finish(): StreamEvent {
+    const toolCalls: AgentToolCall[] = [...this.calls.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([i, c]) => ({
+        id: c.id || `call_${i}_${(syntheticCallCounter++).toString(36)}`,
+        name: c.name,
+        arguments: c.arguments,
+      }))
+      .filter((c) => c.name.length > 0);
+    return {
+      type: "done",
+      content: this.content,
+      reasoning: this.reasoning,
+      toolCalls,
+      finishReason: this.finishReason,
+      usage: this.usage,
+      ...(this.compression ? { compression: this.compression } : {}),
+      ...(this.images.length > 0 ? { images: [...this.images] } : {}),
+    };
+  }
 }
 
 /**

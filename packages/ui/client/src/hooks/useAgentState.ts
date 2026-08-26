@@ -80,6 +80,7 @@ export interface SessionTokenStats {
 
 export interface ThreadRunSnapshot {
   threadId: string;
+  mode: ChatMode;
   running: boolean;
   turnActive: boolean;
   runEvents: ThreadEvent[];
@@ -328,6 +329,7 @@ class AgentStateStore {
     const t = this.thread(threadId);
     const snap: ThreadRunSnapshot = {
       threadId,
+      mode: t.mode,
       running: t.running,
       turnActive: t.turnActive,
       runEvents: t.runEvents,
@@ -358,7 +360,7 @@ class AgentStateStore {
     return snap;
   }
 
-  startRun(threadId: string, mode: ChatMode) {
+  startRun(threadId: string, mode: ChatMode): string {
     const t = freshThreadRun(mode);
     t.running = true;
     t.turnActive = true;
@@ -373,6 +375,7 @@ class AgentStateStore {
     this.threads.set(threadId, t);
     this.notifyStructural();
     this.notifyStream(threadId);
+    return t.runId;
   }
 
   setIgnoreNextDone(threadId: string, ignore: boolean) {
@@ -441,8 +444,12 @@ class AgentStateStore {
   }
 
   dispatch(envelope: AgentEventEnvelope): void {
-    const { threadId, event } = envelope;
+    const { threadId, event, runId } = envelope;
     const t = this.thread(threadId);
+
+    if (runId !== undefined && runId !== t.runId) return;
+
+    if (event.type === "done" && !t.running && !this.ignoreNextDone.has(threadId)) return;
 
     switch (event.type) {
       case "reasoning-delta": {
@@ -733,6 +740,8 @@ class AgentStateStore {
         break;
       }
       case "mode-changed":
+        t.mode = event.mode;
+        this.notifyStructural();
         this.emit({ type: "mode-changed", threadId, mode: event.mode });
         break;
       case "subagent-start":

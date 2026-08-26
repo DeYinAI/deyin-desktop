@@ -68,6 +68,8 @@ const CLIENT_ID = (import.meta.env.VITE_DEYIN_CLIENT_ID as string) ?? "deyin-des
 const SCOPES = ["openid", "profile", "email", "offline_access", "model:invoke"];
 const REDIRECT_URI = `${location.origin}/auth/callback`;
 const API_BASE = `${location.origin}/api`;
+/** Drop host RPCs that exceed this without a reply (mirrors desktop IPC patience). */
+const INVOKE_TIMEOUT_MS = 120_000;
 
 /** Persist the token set in localStorage so a web session survives reloads. */
 class LocalStorageTokenStore implements TokenStore {
@@ -116,6 +118,8 @@ class HostSocket {
   private repoProgressHandlers = new Set<(e: RepoProgressEvent) => void>();
   /** Sandbox root assigned by the host after auth; kept across transient disconnects. */
   workspaceRoot: string | null = null;
+  /** Messages queued while the socket is reconnecting (fire-and-forget). */
+  private fireAndForgetQueue: ClientMessage[] = [];
 
   private emitRoot(root: string | null): void {
     this.workspaceRoot = root;
@@ -211,6 +215,7 @@ class HostSocket {
     switch (msg.type) {
       case "auth.ok":
         this.emitRoot(msg.workspaceRoot);
+        this.flushFireAndForgetQueue();
         resolveReady();
         break;
       case "auth.err": {
@@ -249,6 +254,11 @@ class HostSocket {
       case "repo.progress":
         this.repoProgressHandlers.forEach((h) => h({ stage: msg.stage, line: msg.line }));
         break;
+      default: {
+        const _exhaustive: never = msg;
+        void _exhaustive;
+        break;
+      }
     }
   }
 
@@ -256,19 +266,43 @@ class HostSocket {
     this.ws?.send(JSON.stringify(msg));
   }
 
+  private flushFireAndForgetQueue(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const queue = this.fireAndForgetQueue.splice(0);
+    for (const msg of queue) this.raw(msg);
+  }
+
   async invoke<T>(build: (id: number) => ClientMessage): Promise<T> {
     await this.ensure();
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      const timer = setTimeout(() => {
+        if (!this.pending.delete(id)) return;
+        reject(new Error("Host request timed out"));
+      }, INVOKE_TIMEOUT_MS);
+      this.pending.set(id, {
+        resolve: (v) => {
+          clearTimeout(timer);
+          resolve(v as T);
+        },
+        reject: (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      });
       this.raw(build(id));
     });
   }
 
   fireAndForget(msg: ClientMessage): void {
     void this.ensure()
-      .then(() => this.raw(msg))
-      .catch(() => undefined);
+      .then(() => {
+        this.flushFireAndForgetQueue();
+        this.raw(msg);
+      })
+      .catch(() => {
+        this.fireAndForgetQueue.push(msg);
+      });
   }
 
   onData(cb: (e: { id: string; data: string }) => void): () => void {
@@ -362,6 +396,20 @@ async function listProviderInfos(connected: boolean): Promise<ProviderInfo[]> {
   }));
 }
 
+function readDisabledCaps(): string[] {
+  const caps = readLocal<CapabilityItem[]>("deyin.caps", DEFAULT_CAPABILITIES);
+  return caps.filter((c) => !c.enabled).map((c) => c.id);
+}
+
+function imageModelIdsForProvider(providerId: string): { imageModels: string[]; imageChatModels: string[] } {
+  const provider = readProviders().find((p) => p.id === providerId);
+  const models = provider?.models ?? [];
+  return {
+    imageModels: models.filter((m) => m.kind === "image").map((m) => m.id),
+    imageChatModels: models.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => m.id),
+  };
+}
+
 function recordUsage(event: UsageEvent): void {
   const days = applyEvent(readLocal<UsageDay[]>("deyin.usage", []), event);
   writeLocal("deyin.usage", days);
@@ -370,6 +418,7 @@ function recordUsage(event: UsageEvent): void {
 /** Build the browser implementation of the DeyinApi contract. */
 export function createBrowserTransport(): DeyinApi {
   const host = new HostSocket();
+  const authChangedHandlers = new Set<() => void>();
 
   return {
     async bootstrap(): Promise<Bootstrap> {
@@ -401,15 +450,19 @@ export function createBrowserTransport(): DeyinApi {
       },
       async logout(): Promise<void> {
         await oauth.logout();
+        authChangedHandlers.forEach((h) => h());
       },
       async getUser(): Promise<UserProfile | null> {
         if (!(await oauth.isAuthenticated())) return null;
         return oauth.getUser().then(toProfile).catch(() => null);
       },
       getAccessToken: () => oauth.getAccessToken().catch(() => null),
-      // The web flow completes via a full-page redirect + reload, so there is
-      // no in-session change event to subscribe to; return a no-op unsubscribe.
-      onChanged: () => () => undefined,
+      onChanged: (cb) => {
+        authChangedHandlers.add(cb);
+        return () => {
+          authChangedHandlers.delete(cb);
+        };
+      },
     },
     models: {
       async list() {
@@ -518,15 +571,17 @@ export function createBrowserTransport(): DeyinApi {
           workspaceRoot: null,
         }),
       set: async (patch) => {
-        const next = {
-          ...readLocal<ProjectsState>("deyin.projects", {
-            projects: [],
-            activeProjectId: null,
-            activeThreadId: null,
-            workspaceRoot: null,
-          }),
-          ...patch,
+        const prev = readLocal<ProjectsState>("deyin.projects", {
+          projects: [],
+          activeProjectId: null,
+          activeThreadId: null,
           workspaceRoot: null,
+        });
+        const next = {
+          ...prev,
+          ...patch,
+          // Host owns workspaceRoot; preserve the sandbox root learned from auth.ok.
+          workspaceRoot: host.workspaceRoot ?? prev.workspaceRoot ?? null,
         };
         writeLocal("deyin.projects", next);
         return next;
@@ -679,6 +734,8 @@ export function createBrowserTransport(): DeyinApi {
           };
         }
 
+        const catalogImages = imageModelIdsForProvider(options.providerId);
+
         await host.invoke((id: number) => ({
           type: "agent.start",
           id,
@@ -693,8 +750,10 @@ export function createBrowserTransport(): DeyinApi {
           initialTodos: options.initialTodos,
           goalText: options.goalText,
           images: options.images,
-          imageModels: options.imageModels,
-          imageChatModels: options.imageChatModels,
+          imageModels: options.imageModels ?? catalogImages.imageModels,
+          imageChatModels: options.imageChatModels ?? catalogImages.imageChatModels,
+          runId: options.runId,
+          disabledCaps: options.disabledCaps ?? readDisabledCaps(),
           provider: {
             baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
             token,
@@ -710,7 +769,7 @@ export function createBrowserTransport(): DeyinApi {
         host.fireAndForget({ type: "agent.approve", requestId, decision }),
       answerQuestion: (requestId, answers) =>
         host.fireAndForget({ type: "agent.answer", requestId, answers }),
-      disposeShell: () => undefined,
+      disposeShell: (threadId) => host.fireAndForget({ type: "agent.disposeShell", threadId }),
       onEvent: (cb: (envelope: AgentEventEnvelope) => void) => host.onAgentEvent(cb),
     },
     context: {

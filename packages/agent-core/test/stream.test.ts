@@ -121,3 +121,43 @@ test("sends reasoning_effort only when effort is set", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("a chunk carrying reasoning and content emits both, losing neither", () => {
+  const acc = new StreamAccumulator();
+  const events = acc.pushAll(
+    data({ choices: [{ delta: { reasoning_content: "weighing it", content: "Answer: 42" } }] }),
+  );
+  assert.deepEqual(events, [
+    { type: "reasoning", delta: "weighing it" },
+    { type: "text", delta: "Answer: 42" },
+  ]);
+  const done = acc.finish();
+  assert.equal(done.type, "done");
+  if (done.type !== "done") return;
+  assert.equal(done.content, "Answer: 42");
+  assert.equal(done.reasoning, "weighing it");
+});
+
+test("a whole-completion frame (message, not delta) still yields text and tool calls", () => {
+  const acc = new StreamAccumulator();
+  const events = acc.pushAll(
+    data({
+      choices: [
+        {
+          message: {
+            content: "listing",
+            tool_calls: [{ index: 0, id: "call_x", type: "function", function: { name: "ls", arguments: '{"path":"."}' } }],
+          },
+          finish_reason: "tool_calls",
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(events, [{ type: "text", delta: "listing" }]);
+  const done = acc.finish();
+  assert.equal(done.type, "done");
+  if (done.type !== "done") return;
+  assert.equal(done.content, "listing");
+  assert.equal(done.finishReason, "tool_calls");
+  assert.deepEqual(done.toolCalls, [{ id: "call_x", name: "ls", arguments: '{"path":"."}' }]);
+});

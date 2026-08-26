@@ -83,10 +83,19 @@ export function UpdateBanner({ variant = "sidebar" }: UpdateBannerProps) {
     );
   }
 
+  const pillClass =
+    state.status === "downloading"
+      ? "update-pill update-pill--downloading"
+      : state.status === "downloaded"
+        ? "update-pill update-pill--ready"
+        : "update-pill";
+
   return (
-    <div className="update-pill" role="status">
+    <div className={pillClass} role="status">
       <div className="update-pill__head">
-        <Icon name="refresh" size={12} />
+        <span className="update-pill__icon" aria-hidden>
+          <Icon name="refresh" size={13} />
+        </span>
         <span className="update-pill__text">{message}</span>
       </div>
       {state.status === "downloading" && (

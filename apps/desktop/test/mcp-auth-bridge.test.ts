@@ -8,6 +8,7 @@ import {
   createMcpAuthBridge,
   createMcpAuthenticateTool,
   isMcpUnauthorized,
+  resolveMcpModuleId,
 } from "../src/main/mcp-auth-bridge.js";
 import { McpModuleService } from "../src/main/mcp-modules.js";
 
@@ -70,6 +71,29 @@ test("createMcpAuthenticateTool emits auth-needed target for unauthenticated mod
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("resolveMcpModuleId extracts module id from def.source", () => {
+  assert.equal(
+    resolveMcpModuleId({
+      name: "cloudflare-observability",
+      transport: "http",
+      url: "https://example.com/mcp",
+      enabled: true,
+      source: "module:cloudflare-observability",
+    }),
+    "cloudflare-observability",
+  );
+  assert.equal(
+    resolveMcpModuleId({
+      name: "local",
+      transport: "stdio",
+      command: "node",
+      enabled: true,
+      source: "config",
+    }),
+    undefined,
+  );
 });
 
 test("isMcpUnauthorized detects UnauthorizedError", () => {

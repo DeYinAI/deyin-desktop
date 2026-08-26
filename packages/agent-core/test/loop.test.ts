@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -249,6 +249,56 @@ test("lookupToolCache short-circuits tool execution and emits fromCache", async 
     const toolMsg = messages.find((m) => m.role === "tool");
     assert.ok(toolMsg && toolMsg.role === "tool");
     assert.equal(toolMsg.content, "cached file body");
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("same-step edits to one file run exclusively instead of racing", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-serial-edit-"));
+  writeFileSync(join(cwd, "a.txt"), "one two");
+  const server = await startMockOpenAI((i) =>
+    i === 0
+      ? multiToolCallResponse([
+          { id: "e0", name: "edit", args: { path: "a.txt", old_string: "one", new_string: "1" } },
+          { id: "e1", name: "edit", args: { path: "a.txt", old_string: "two", new_string: "2" } },
+        ])
+      : textResponse("edited"),
+  );
+
+  try {
+    const messages = baseMessages();
+    const active: string[] = [];
+    let maxOverlap = 0;
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "allow",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "tool-start") {
+          active.push(event.call.id);
+          maxOverlap = Math.max(maxOverlap, active.length);
+        }
+        if (event.type === "tool-end") active.splice(active.indexOf(event.call.id), 1);
+      },
+    });
+
+    assert.equal(result.reason, "completed");
+    // Never two mutations in flight at once — the second edit reads the file as
+    // the first one left it.
+    assert.equal(maxOverlap, 1);
+    assert.equal(readFileSync(join(cwd, "a.txt"), "utf8"), "1 2");
+    const toolMsgs = messages.filter((m) => m.role === "tool");
+    assert.deepEqual(
+      toolMsgs.map((m) => (m.role === "tool" ? m.toolCallId : "")),
+      ["e0", "e1"],
+    );
   } finally {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });

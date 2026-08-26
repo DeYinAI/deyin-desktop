@@ -270,7 +270,6 @@ export const CH = {
   reviewReject: "deyin:review:reject",
   reviewApproveAll: "deyin:review:approveAll",
   reviewRejectAll: "deyin:review:rejectAll",
-  gitDiff: "deyin:git:diff",
   securityListFindings: "deyin:security:listFindings",
   securityClearFindings: "deyin:security:clearFindings",
   securityScanDiff: "deyin:security:scanDiff",
@@ -506,6 +505,7 @@ export interface DeyinApi {
     approve(requestId: string, decision: AgentPermissionDecision): void;
     answerQuestion(requestId: string, answers: Record<string, string | string[]>): void;
     disposeShell(threadId: string): void;
+    /** Agent lifecycle events for a thread; `runId` (when present) must match the active run. */
     onEvent(cb: (envelope: AgentEventEnvelope) => void): () => void;
   };
   browserControl: {

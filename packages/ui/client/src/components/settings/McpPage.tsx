@@ -14,6 +14,7 @@ import {
   Toggle,
   type MenuAction,
 } from "./controls.js";
+import { Callout } from "../ui/Callout.js";
 import type {
   McpAuthMode,
   McpAuthStatus,
@@ -58,7 +59,15 @@ function groupOf(server: McpServerEntry): (typeof GROUPS)[number]["id"] {
  * MCP servers from workspace config, per-module installs (~/.deyin/mcp-modules/<id>/),
  * plugins, and built-in in-process servers.
  */
-export function McpPage({ onToggle, tabs }: { onToggle: (id: string, enabled: boolean) => void; tabs?: ReactNode }) {
+export function McpPage({
+  onToggle,
+  tabs,
+  platform = "desktop",
+}: {
+  onToggle: (id: string, enabled: boolean) => void;
+  tabs?: ReactNode;
+  platform?: "desktop" | "web";
+}) {
   const [servers, setServers] = useState<McpServerEntry[]>([]);
   const [modules, setModules] = useState<McpModuleManifest[]>([]);
   const [catalog, setCatalog] = useState<McpCatalogEntry[]>([]);
@@ -295,6 +304,12 @@ export function McpPage({ onToggle, tabs }: { onToggle: (id: string, enabled: bo
       </PageHeader>
 
       {tabs}
+
+      {platform === "web" && (
+        <Callout tone="warn">
+          MCP server installs and OAuth run in the desktop app. The web agent uses sandbox tools only.
+        </Callout>
+      )}
 
       <SearchField value={query} onChange={setQuery} placeholder="Search MCP servers">
         <Segmented

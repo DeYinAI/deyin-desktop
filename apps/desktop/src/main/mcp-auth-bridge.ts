@@ -52,6 +52,12 @@ export function createMcpAuthBridge(modules: McpModuleService, oauth: McpOAuthSe
   };
 }
 
+/** Module id for OAuth-backed MCP defs (`source: "module:<id>"`); undefined otherwise. */
+export function resolveMcpModuleId(def: McpServerDefinition): string | undefined {
+  if (!def.source.startsWith("module:")) return undefined;
+  return def.source.slice("module:".length);
+}
+
 export function isMcpUnauthorized(err: unknown): boolean {
   return err instanceof UnauthorizedError;
 }

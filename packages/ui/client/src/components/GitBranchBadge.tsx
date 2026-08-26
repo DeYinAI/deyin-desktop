@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useT } from "../i18n.js";
+import { AnchoredMenu } from "./AnchoredMenu.js";
 import { Icon } from "./Icon.js";
 import type { GitBranch, GitRepoInfo, GitStatus } from "@deyin/contract";
 
@@ -65,22 +66,13 @@ export function GitBranchBadge({
   workspaceRoot,
   onOpenSourceControl,
   className = "env-badge",
-  menuUp = false,
+  menuUp: _menuUp = false,
 }: GitBranchBadgeProps) {
   const t = useT();
   const { confirm } = useConfirm();
   const { info, status, branches, refresh } = useGitStatus(workspaceRoot);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
 
   // Not a git repo (or not detected yet): show nothing, like an IDE status bar.
   if (!info?.isRepo) return null;
@@ -117,69 +109,75 @@ export function GitBranchBadge({
   };
 
   return (
-    <div className="menu" ref={rootRef}>
-      <button
-        className={className}
-        title={branchTitle(branchLabel, dirty, info.ahead, info.behind)}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <Icon name="gitBranch" size={12} />
-        <span className="git-badge__branch">{branchLabel}</span>
-        {dirty > 0 && (
-          <span className="git-badge__dirty">
-            {dirty} {dirty === 1 ? "change" : "changes"}
-          </span>
-        )}
-        {info.ahead > 0 && (
-          <span className="git-badge__track">
-            <Icon name="arrowUp" size={9} />
-            {info.ahead}
-          </span>
-        )}
-        {info.behind > 0 && (
-          <span className="git-badge__track">
-            <Icon name="arrowDown" size={9} />
-            {info.behind}
-          </span>
-        )}
-        <Icon name="chevronDown" size={10} className="git-badge__caret" />
-      </button>
-      {open && (
-        <div className={`menu__panel${menuUp ? " menu__panel--up" : ""}`}>
-          <div className="menu__header">Branches</div>
-          {locals.length === 0 && <div className="menu__info">No local branches.</div>}
-          {locals.map((b) => (
-            <div key={b.name} className="git-branch-row">
-              <button className="menu__item git-branch-row__pick" onClick={() => switchTo(b.name)}>
-                <Icon name={b.current ? "check" : "gitBranch"} size={13} />
-                {b.name}
-                {b.upstream && <span className="badge badge--muted">{b.upstream}</span>}
-              </button>
-              {!b.current && (
-                <button className="icon-btn icon-btn--small" title={`Delete ${b.name}`} onClick={() => deleteBranch(b.name)}>
-                  <Icon name="trash" size={12} />
-                </button>
-              )}
-            </div>
-          ))}
-          {error && <div className="menu__info menu__info--error">{error}</div>}
-          {onOpenSourceControl && (
-            <>
-              <div className="menu__sep" />
-              <button
-                className="menu__item"
-                onClick={() => {
-                  onOpenSourceControl();
-                  setOpen(false);
-                }}
-              >
-                <Icon name="diff" size={13} />
-                Open Source Control
-              </button>
-            </>
+    <AnchoredMenu
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+      onClose={() => setOpen(false)}
+      triggerClassName={className}
+      triggerTitle={branchTitle(branchLabel, dirty, info.ahead, info.behind)}
+      trigger={
+        <>
+          <Icon name="gitBranch" size={12} />
+          <span className="git-badge__branch">{branchLabel}</span>
+          {dirty > 0 && (
+            <span className="git-badge__dirty">
+              {dirty} {dirty === 1 ? "change" : "changes"}
+            </span>
+          )}
+          {info.ahead > 0 && (
+            <span className="git-badge__track">
+              <Icon name="arrowUp" size={9} />
+              {info.ahead}
+            </span>
+          )}
+          {info.behind > 0 && (
+            <span className="git-badge__track">
+              <Icon name="arrowDown" size={9} />
+              {info.behind}
+            </span>
+          )}
+          <Icon name="chevronDown" size={10} className="git-badge__caret" />
+        </>
+      }
+    >
+      <div className="menu__header">Branches</div>
+      {locals.length === 0 && <div className="menu__info">No local branches.</div>}
+      {locals.map((b) => (
+        <div key={b.name} className="git-branch-row">
+          <button type="button" className="menu__item git-branch-row__pick" onClick={() => switchTo(b.name)}>
+            <Icon name={b.current ? "check" : "gitBranch"} size={13} />
+            {b.name}
+            {b.upstream && <span className="badge badge--muted">{b.upstream}</span>}
+          </button>
+          {!b.current && (
+            <button
+              type="button"
+              className="icon-btn icon-btn--small"
+              title={`Delete ${b.name}`}
+              onClick={() => deleteBranch(b.name)}
+            >
+              <Icon name="trash" size={12} />
+            </button>
           )}
         </div>
+      ))}
+      {error && <div className="menu__info menu__info--error">{error}</div>}
+      {onOpenSourceControl && (
+        <>
+          <div className="menu__sep" />
+          <button
+            type="button"
+            className="menu__item"
+            onClick={() => {
+              onOpenSourceControl();
+              setOpen(false);
+            }}
+          >
+            <Icon name="diff" size={13} />
+            Open Source Control
+          </button>
+        </>
       )}
-    </div>
+    </AnchoredMenu>
   );
 }

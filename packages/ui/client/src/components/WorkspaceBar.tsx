@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useT } from "../i18n.js";
+import { AnchoredMenu } from "./AnchoredMenu.js";
 import { Icon } from "./Icon.js";
 import { GitBranchBadge } from "./GitBranchBadge.js";
 import type { Project } from "../threads.js";
@@ -43,96 +44,87 @@ export function WorkspaceBar({
 }: WorkspaceBarProps) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, []);
-
   const folders = projects.filter((p) => p.root);
 
   return (
     <div className="workspace-bar">
       {platform === "desktop" ? (
-        <div className="menu" ref={rootRef}>
+        <AnchoredMenu
+          open={open}
+          onToggle={() => setOpen((v) => !v)}
+          onClose={() => setOpen(false)}
+          triggerClassName="workspace-bar__chip"
+          triggerTitle={workspaceRoot ? displayPath(workspaceRoot, homeDir) : "Choose a folder as your workspace"}
+          trigger={
+            <>
+              <Icon name="folder" size={13} />
+              <span className="workspace-bar__name">{folderName(workspaceRoot) || projectName}</span>
+              <Icon name="chevronDown" size={11} className="workspace-bar__caret" />
+            </>
+          }
+        >
+          <div className="menu__header">Workspace</div>
+          {folders.length === 0 && <div className="menu__info">No folders opened yet.</div>}
+          {folders.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`menu__item${p.id === activeProjectId ? " menu__item--active" : ""}`}
+              title={p.root ?? undefined}
+              onClick={() => {
+                onSelectProject(p.id);
+                setOpen(false);
+              }}
+            >
+              <Icon name={p.id === activeProjectId ? "check" : "folder"} size={13} />
+              <span className="workspace-bar__name">{p.name}</span>
+            </button>
+          ))}
+          <div className="menu__sep" />
           <button
             type="button"
-            className="workspace-bar__chip"
-            onClick={() => setOpen((v) => !v)}
-            title={workspaceRoot ? displayPath(workspaceRoot, homeDir) : "Choose a folder as your workspace"}
+            className="menu__item"
+            onClick={() => {
+              onPickFolder();
+              setOpen(false);
+            }}
           >
-            <Icon name="folder" size={13} />
-            <span className="workspace-bar__name">{folderName(workspaceRoot) || projectName}</span>
-            <Icon name="chevronDown" size={11} className="workspace-bar__caret" />
+            <Icon name="folderPlus" size={13} />
+            {wslDistros.length > 0 ? t("workspace.openLocal") : t("workspace.openFolder")}
           </button>
-          {open && (
-            <div className="menu__panel menu__panel--up">
-              <div className="menu__header">Workspace</div>
-              {folders.length === 0 && <div className="menu__info">No folders opened yet.</div>}
-              {folders.map((p) => (
-                <button
-                  key={p.id}
-                  className={`menu__item${p.id === activeProjectId ? " menu__item--active" : ""}`}
-                  title={p.root ?? undefined}
-                  onClick={() => {
-                    onSelectProject(p.id);
-                    setOpen(false);
-                  }}
-                >
-                  <Icon name={p.id === activeProjectId ? "check" : "folder"} size={13} />
-                  <span className="workspace-bar__name">{p.name}</span>
-                </button>
-              ))}
+          {wslDistros.map((distro) => (
+            <button
+              key={distro}
+              type="button"
+              className="menu__item"
+              title={wslRoot(distro)}
+              onClick={() => {
+                onPickFolder(wslRoot(distro));
+                setOpen(false);
+              }}
+            >
+              <Icon name="terminal" size={13} />
+              {t("workspace.openWsl")} · {distro}
+            </button>
+          ))}
+          {onOpenSshHosts && (
+            <>
               <div className="menu__sep" />
+              <div className="menu__info">{t("workspace.remoteNote")}</div>
               <button
+                type="button"
                 className="menu__item"
                 onClick={() => {
-                  onPickFolder();
+                  onOpenSshHosts();
                   setOpen(false);
                 }}
               >
-                <Icon name="folderPlus" size={13} />
-                {wslDistros.length > 0 ? t("workspace.openLocal") : t("workspace.openFolder")}
+                <Icon name="server" size={13} />
+                {t("workspace.manageSsh")}
               </button>
-              {wslDistros.map((distro) => (
-                <button
-                  key={distro}
-                  className="menu__item"
-                  title={wslRoot(distro)}
-                  onClick={() => {
-                    // A WSL folder is just a UNC path, so the same picker works —
-                    // it only needs to start inside the distro's filesystem.
-                    onPickFolder(wslRoot(distro));
-                    setOpen(false);
-                  }}
-                >
-                  <Icon name="terminal" size={13} />
-                  {t("workspace.openWsl")} · {distro}
-                </button>
-              ))}
-              {onOpenSshHosts && (
-                <>
-                  <div className="menu__sep" />
-                  <div className="menu__info">{t("workspace.remoteNote")}</div>
-                  <button
-                    className="menu__item"
-                    onClick={() => {
-                      onOpenSshHosts();
-                      setOpen(false);
-                    }}
-                  >
-                    <Icon name="server" size={13} />
-                    {t("workspace.manageSsh")}
-                  </button>
-                </>
-              )}
-            </div>
+            </>
           )}
-        </div>
+        </AnchoredMenu>
       ) : (
         <button
           type="button"

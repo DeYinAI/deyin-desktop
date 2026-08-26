@@ -143,7 +143,7 @@ export function ModelPicker(props: ModelPickerProps) {
   const panel = open ? (
     <div
       ref={panelRef}
-      className={`menu__panel menu__panel--anchored modelmenu ${showProviderRail ? "" : "modelmenu--single"} ${modePanelOpen ? "modelmenu--mode-open" : ""}`}
+      className={`anchored-menu__panel modelmenu ${showProviderRail ? "" : "modelmenu--single"} ${modePanelOpen ? "modelmenu--mode-open" : ""}`}
       style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? "visible" : "hidden" }}
     >
       {showProviderRail && (

@@ -11,14 +11,15 @@ import {
 } from "@deyin/host-core";
 import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
 import {
-  BUILTIN_SUBAGENTS,
   PermissionEngine,
   agentForMode,
-  buildSystemPrompt,
+  buildSystemPromptParts,
   createRoleRouter,
   createTaskTool,
-  expandCommand,
+  resolveCommandInvocation,
+  unknownCommandMessage,
   getSessionJobsManager,
+  loadContextFiles,
   matchCommand,
   modeReminder,
   rulesForApprovalMode,
@@ -28,6 +29,7 @@ import {
   subagentReadonlyRules,
   type AgentEvent,
   type AgentMessage,
+  type CapabilitySnapshot,
   type ImageGenBridge,
   type PermissionDecision,
   type PermissionEngineOptions,
@@ -35,6 +37,7 @@ import {
   type ToolRegistry,
   type ToolSessionMeta,
 } from "@deyin/agent-core";
+import { truncateToolResultUi } from "@deyin/contract";
 import { PluginKernel } from "@deyin/kernel";
 import { bundleBase, registerBasePlugins } from "@deyin/bundle-base";
 import { createWebProfile } from "@deyin/bundle-web-app";
@@ -51,6 +54,8 @@ import type { WebAgentProviderRouting } from "@deyin/contract/web";
 
 /** Mirrors the desktop's prompt bridge timeout: unanswered prompts deny after 5 minutes. */
 const PROMPT_TIMEOUT_MS = 5 * 60 * 1000;
+/** Files bigger than this ship to the renderer without diff content. */
+const FILE_DIFF_CAP = 400_000;
 
 function shortHash(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -80,11 +85,16 @@ export interface WebAgentStartOptions {
   imageModels?: string[];
   /** Chat model ids that return pictures inside their completion. */
   imageChatModels?: string[];
+  /** Must match the renderer's active run id so stale events are ignored after stop/restart. */
+  runId?: string;
+  /** Capability ids the user disabled in settings (skill:, command:, subagent:, …). */
+  disabledCaps?: string[];
 }
 
 interface ActiveRun {
   abort: AbortController;
   doneEmitted: boolean;
+  runId?: string;
 }
 
 interface PendingPrompt<T> {
@@ -179,15 +189,45 @@ export class WebAgentHost {
 
   start(options: WebAgentStartOptions): void {
     void this.startRun(options).catch((err) => {
-      this.emit(options.threadId, { type: "error", message: err instanceof Error ? err.message : String(err) });
-      this.finish(options.threadId, "aborted", "");
+      this.emit(options.threadId, { type: "error", message: err instanceof Error ? err.message : String(err) }, options.runId);
+      this.finish(options.threadId, "aborted", "", options.runId);
     });
   }
 
   stop(threadId: string): void {
     const run = this.active.get(threadId);
-    if (run) run.abort.abort();
-    this.denyPending(threadId);
+    if (!run) return;
+
+    for (const [requestId, pending] of [...this.pendingPermissions]) {
+      if (pending.threadId !== threadId) continue;
+      this.pendingPermissions.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.resolve("deny");
+    }
+    for (const [requestId, pending] of [...this.pendingQuestions]) {
+      if (pending.threadId !== threadId) continue;
+      this.pendingQuestions.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.resolve({ __cancelled: "AskQuestion was cancelled before answers were returned." });
+    }
+
+    run.abort.abort();
+    // Emit `done` immediately and free the slot so interrupt-and-send can start
+    // a new run without waiting on a hung tool/stream.
+    if (!run.doneEmitted) {
+      run.doneEmitted = true;
+      this.active.delete(threadId);
+      this.emit(threadId, { type: "done", reason: "aborted", finalText: "" }, run.runId);
+    }
+  }
+
+  /** Dispose the persistent shell for a thread (e.g. thread archived). */
+  disposeShell(threadId: string): void {
+    const shell = this.shells.get(threadId);
+    if (!shell) return;
+    this.terminals.unregister(shell.id);
+    shell.dispose();
+    this.shells.delete(threadId);
   }
 
   approve(requestId: string, decision: PermissionDecision): void {
@@ -218,56 +258,63 @@ export class WebAgentHost {
     this.kernelPromise = null;
   }
 
-  private emit(threadId: string, event: AgentUiEvent): void {
-    this.send({ threadId, event });
+  private emit(threadId: string, event: AgentUiEvent, runId?: string): void {
+    const activeRunId = runId ?? this.active.get(threadId)?.runId;
+    this.send({
+      threadId,
+      ...(activeRunId !== undefined ? { runId: activeRunId } : {}),
+      event,
+    });
     // Journal first, send after: an append failure must never drop the live
     // event, so failures are swallowed (the journal is a durable shadow).
     void this.journal.append(threadId, event).catch(() => undefined);
   }
 
-  private finish(threadId: string, reason: "completed" | "max-steps" | "aborted", finalText: string): void {
+  private finish(
+    threadId: string,
+    reason: "completed" | "max-steps" | "aborted",
+    finalText: string,
+    runId?: string,
+  ): void {
     const run = this.active.get(threadId);
     if (!run || run.doneEmitted) return;
     run.doneEmitted = true;
-    this.emit(threadId, { type: "done", reason, finalText });
-  }
-
-  private denyPending(threadId: string): void {
-    for (const [requestId, pending] of this.pendingPermissions) {
-      if (pending.threadId !== threadId) continue;
-      clearTimeout(pending.timer);
-      this.pendingPermissions.delete(requestId);
-      pending.resolve("deny");
-    }
-    for (const [requestId, pending] of this.pendingQuestions) {
-      if (pending.threadId !== threadId) continue;
-      clearTimeout(pending.timer);
-      this.pendingQuestions.delete(requestId);
-      pending.resolve({ __cancelled: "Run stopped before answers were returned." });
-    }
+    this.active.delete(threadId);
+    this.emit(threadId, { type: "done", reason, finalText }, runId ?? run.runId);
   }
 
   private async startRun(options: WebAgentStartOptions): Promise<void> {
     this.stop(options.threadId);
-    const state: ActiveRun = { abort: new AbortController(), doneEmitted: false };
+    const runId = options.runId;
+    const state: ActiveRun = { abort: new AbortController(), doneEmitted: false, runId };
     this.active.set(options.threadId, state);
 
     const kernel = await this.ensureKernel();
-    const caps = kernel.get(Capabilities).snapshot();
+    const snap = kernel.get(Capabilities).snapshot();
+    if (!snap) throw new Error("Capabilities not loaded.");
+    const runCaps = enabledForRun(snap, new Set(options.disabledCaps ?? []));
+
     // Slash-command / skill expansion against the sandbox's own capabilities
     // (same contract as the desktop host).
     let prompt = options.prompt;
     const invocation = matchCommand(prompt);
-    if (invocation) {
-      const command = caps?.commands.find((c) => c.name === invocation.name);
-      const skill = caps?.skills.find((s) => s.name === invocation.name);
-      if (command) prompt = expandCommand(command, invocation.args);
-      else if (skill) {
-        prompt = `Read the skill file at ${skill.path} with the read tool and follow it for this task: ${invocation.args || "(no extra arguments)"}`;
+    if (invocation?.name === "goal") {
+      const args = invocation.args.trim();
+      prompt = args || options.goalText?.trim() || "What should I work on next?";
+    } else {
+      const resolved = resolveCommandInvocation(prompt, runCaps);
+      if (resolved.kind === "unknown") {
+        this.emit(
+          options.threadId,
+          { type: "error", message: unknownCommandMessage(resolved.name, resolved.suggestions) },
+          runId,
+        );
+        this.finish(options.threadId, "aborted", "", runId);
+        return;
       }
+      if (resolved.kind !== "none") prompt = resolved.prompt;
     }
-    // Sandbox-defined subagents join the built-in set for the task tool.
-    const subagents: SubagentDefinition[] = [...BUILTIN_SUBAGENTS, ...(caps?.subagents ?? [])];
+    const subagents: SubagentDefinition[] = runCaps.subagents;
 
     // Live per-run session state: mode tools mutate it so permissions, the
     // system prompt and the UI follow mid-run mode switches (same contract as
@@ -290,17 +337,25 @@ export class WebAgentHost {
       options.images?.length && this.images
         ? storeAttachedImages(this.images, options.threadId, options.images)
         : { files: [], note: "" };
-    const buildPrompt = (mode: ChatMode): string => {
-      let prompt = buildSystemPrompt({ cwd: this.root, agent: agentForMode(mode), toolNames: registry.names() });
+    const skillSummaries = runCaps.skills;
+    const buildPrompt = async (mode: ChatMode): Promise<string> => {
+      const parts = buildSystemPromptParts({
+        cwd: this.root,
+        agent: agentForMode(mode),
+        toolNames: registry.names(),
+        skills: skillSummaries,
+        contextFiles: await loadContextFiles(this.root).catch(() => []),
+      });
+      let systemPrompt = parts.content;
       const repo = this.repoInfo();
       if (repo) {
-        prompt += `\n\n## Git workflow\nYou are working on branch "${repo.branch}" off "${repo.defaultBranch}". Commit your work to this branch as you go. Never push, merge, or open pull requests — the user ships changes with the Ship button.`;
+        systemPrompt += `\n\n## Git workflow\nYou are working on branch "${repo.branch}" off "${repo.defaultBranch}". Commit your work to this branch as you go. Never push, merge, or open pull requests — the user ships changes with the Ship button.`;
       }
-      return prompt;
+      return systemPrompt;
     };
     // Hoisted so onModeChange can swap the system prompt and append reminders.
     const messages: AgentMessage[] = [
-      { role: "system", content: buildPrompt(options.mode) },
+      { role: "system", content: await buildPrompt(options.mode) },
       ...options.history,
       {
         role: "user",
@@ -373,24 +428,27 @@ export class WebAgentHost {
       );
       if (cached.hit) {
         if (state.abort.signal.aborted || state.doneEmitted) return;
-        state.doneEmitted = true;
-        this.emit(options.threadId, { type: "text-delta", delta: cached.response });
-        this.emit(options.threadId, { type: "usage", totalTokens: 0 });
-        this.emit(options.threadId, {
-          type: "optimization",
-          originalInputTokens: 0,
-          compressedInputTokens: 0,
-          compressionRatio: 1,
-          cachedPromptTokens: 0,
-          toolCacheHits: 0,
-          toolCacheMisses: 0,
-          responseCacheHits: 1,
-          responseCacheMisses: 0,
-          estimatedCostSavingsUsd: 0,
-          sessionCacheHit: 0,
-          sessionCacheMiss: 0,
-        });
-        this.emit(options.threadId, { type: "done", reason: "completed", finalText: cached.response });
+        this.emit(options.threadId, { type: "text-delta", delta: cached.response }, runId);
+        this.emit(options.threadId, { type: "usage", totalTokens: 0 }, runId);
+        this.emit(
+          options.threadId,
+          {
+            type: "optimization",
+            originalInputTokens: 0,
+            compressedInputTokens: 0,
+            compressionRatio: 1,
+            cachedPromptTokens: 0,
+            toolCacheHits: 0,
+            toolCacheMisses: 0,
+            responseCacheHits: 1,
+            responseCacheMisses: 0,
+            estimatedCostSavingsUsd: 0,
+            sessionCacheHit: 0,
+            sessionCacheMiss: 0,
+          },
+          runId,
+        );
+        this.finish(options.threadId, "completed", cached.response, runId);
         return;
       }
     }
@@ -414,7 +472,7 @@ export class WebAgentHost {
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
       evidenceGatesEnabled: options.mode === "delivery",
-      onEvent: (event) => this.forwardEvent(options.threadId, event),
+      onEvent: (event) => this.forwardEvent(options.threadId, event, runId),
       // Cache parity with desktop: compression + prompt caching + stable cache key.
       wire: {
         enableCompression: true,
@@ -432,6 +490,7 @@ export class WebAgentHost {
       storeToolCache: cacheHooks?.storeToolCache,
       imageOutput: (options.imageChatModels ?? []).includes(options.model),
       toolContext: {
+        skills: skillSummaries.map((s) => ({ name: s.name, path: s.path, description: s.description })),
         sessionMeta,
         goalText: options.goalText,
         imageGen: this.imageGenBridge(options, state.abort.signal),
@@ -473,7 +532,7 @@ export class WebAgentHost {
           if (reminder) {
             messages.push({ role: "system", content: `<system_reminder>\n${reminder}\n</system_reminder>` });
           }
-          messages[0] = { role: "system", content: buildPrompt(nextMode) };
+          messages[0] = { role: "system", content: await buildPrompt(nextMode) };
           this.emit(options.threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });
 
           if (change.event === "exit" && change.previous === "plan") {
@@ -503,12 +562,11 @@ export class WebAgentHost {
     }
 
     if (!state.doneEmitted) {
-      state.doneEmitted = true;
-      this.emit(options.threadId, { type: "done", reason: result.reason, finalText: result.finalText });
+      this.finish(options.threadId, result.reason, result.finalText, runId);
     }
   }
 
-  /** Kernel tool catalog + the task tool over built-in and sandbox subagents. */
+  /** Kernel tool catalog + the task tool over sandbox subagents. */
   private async buildRegistry(
     options: WebAgentStartOptions,
     subagents: SubagentDefinition[],
@@ -519,24 +577,26 @@ export class WebAgentHost {
     // No image model in the client's catalog: drop generate_image rather than
     // advertising a tool whose every call would fail.
     if (!this.images || imageModelChoices(options).length === 0) registry.unregister("generate_image");
-    registry.register(
-      createTaskTool({
-        subagents,
-        runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) =>
-          this.runSubagentTask(options, def, prompt, signal),
-        onBackgroundStart: (def, subPrompt) =>
-          jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
-        onBackgroundDone: (jobId, _def, result) => {
-          if (!jobId) return;
-          jobsMgr.updateStatus(
-            jobId,
-            result.ok ? "completed" : "failed",
-            result.ok ? result.report : undefined,
-            result.ok ? undefined : result.report,
-          );
-        },
-      }),
-    );
+    if (subagents.length > 0) {
+      registry.register(
+        createTaskTool({
+          subagents,
+          runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) =>
+            this.runSubagentTask(options, def, prompt, signal),
+          onBackgroundStart: (def, subPrompt) =>
+            jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
+          onBackgroundDone: (jobId, _def, result) => {
+            if (!jobId) return;
+            jobsMgr.updateStatus(
+              jobId,
+              result.ok ? "completed" : "failed",
+              result.ok ? result.report : undefined,
+              result.ok ? undefined : result.report,
+            );
+          },
+        }),
+      );
+    }
     return registry;
   }
 
@@ -684,7 +744,7 @@ export class WebAgentHost {
   }
 
   /** agent-core loop events → the desktop-shaped UI events (same mapping as the desktop host). */
-  private forwardEvent(threadId: string, event: AgentEvent): void {
+  private forwardEvent(threadId: string, event: AgentEvent, runId?: string): void {
     switch (event.type) {
       case "text-delta":
         this.emit(threadId, { type: "text-delta", delta: event.delta });
@@ -713,12 +773,27 @@ export class WebAgentHost {
           callId: event.call.id,
           name: event.call.name,
           summary: "",
-          result: event.result,
+          result: truncateToolResultUi(event.result),
           ok: event.ok,
           denied: event.denied,
           cwd: event.cwd,
-        });
+        }, runId);
         break;
+      case "file-change": {
+        const oversized =
+          event.change.before.length > FILE_DIFF_CAP || event.change.after.length > FILE_DIFF_CAP;
+        this.emit(
+          threadId,
+          {
+            type: "file-change",
+            path: event.change.path,
+            before: oversized ? "" : event.change.before,
+            after: oversized ? "" : event.change.after,
+          },
+          runId,
+        );
+        break;
+      }
       case "todos":
         this.emit(threadId, { type: "todos", todos: event.todos });
         break;
@@ -776,4 +851,18 @@ function imageModelChoices(options: WebAgentStartOptions): ImageModelChoice[] {
     ...(options.imageModels ?? []).map((id) => ({ id, route: "endpoint" as const })),
     ...(options.imageChatModels ?? []).map((id) => ({ id, route: "chat" as const })),
   ];
+}
+
+/** Enabled skills/commands/subagents/hooks for an agent run (desktop parity). */
+export function enabledForRun(snap: CapabilitySnapshot, disabled: Set<string>) {
+  const pluginEnabled = (source: string) =>
+    !source.startsWith("plugin:") || !disabled.has(`plugin:${source.slice("plugin:".length)}`);
+  return {
+    skills: snap.skills.filter((s) => !disabled.has(`skill:${s.name}`) && pluginEnabled(s.source)),
+    commands: snap.commands.filter((c) => !disabled.has(`command:${c.name}`) && pluginEnabled(c.source)),
+    subagents: snap.subagents.filter((s) => !disabled.has(`subagent:${s.name}`) && pluginEnabled(s.source)),
+    hooks: snap.hooks.filter(
+      (h) => !disabled.has(`hook:${h.source}:${h.event}:${shortHash(h.command)}`) && pluginEnabled(h.source),
+    ),
+  };
 }

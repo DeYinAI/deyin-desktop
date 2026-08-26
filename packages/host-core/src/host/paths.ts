@@ -42,7 +42,7 @@ function resolveReal(p: string): string {
     try {
       const realAncestor = realpathSync(cur);
       return tail.length === 0 ? realAncestor : resolve(realAncestor, ...tail.reverse());
-    } catch (err) {
+    } catch {
       const parent = dirname(cur);
       if (parent === cur) return p; // reached filesystem root without a real path
       tail.push(cur.slice(parent.length + 1));
