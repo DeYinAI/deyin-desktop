@@ -2,6 +2,7 @@
 import type { PluginDefinition } from "@deyin/extension-api";
 import { Tools } from "@deyin/tools";
 import {
+  completeStepTool,
   createPlanTool,
   enterPlanModeTool,
   exitPlanModeTool,
@@ -19,6 +20,7 @@ export const PLAN_TOOLS = [
   exitPlanModeTool,
   switchModeTool,
   reportGoalMetTool,
+  completeStepTool,
 ];
 
 export const toolsPlanPlugin: PluginDefinition = {

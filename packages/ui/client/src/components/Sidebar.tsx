@@ -272,6 +272,7 @@ export function Sidebar(props: SidebarProps) {
                   title={expanded ? "Collapse" : "Expand"}
                   onClick={() => toggleProjectExpanded(project.id)}
                 >
+                  {/* Chevron only expands/collapses threads; selection is on project__select. */}
                   <Icon name={expanded ? "chevronDown" : "chevronRight"} size={11} />
                 </button>
                 <button

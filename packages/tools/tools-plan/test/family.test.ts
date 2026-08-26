@@ -15,6 +15,6 @@ test("@deyin/plugin-tools-plan registers its family into the catalog", async () 
   ]);
   assert.deepEqual(
     [...kernel.get(Tools).names()].sort(),
-    ["todo_read","todo_write","create_plan","enter_plan_mode","exit_plan_mode","switch_mode","report_goal_met"].sort(),
+    ["todo_read","todo_write","create_plan","enter_plan_mode","exit_plan_mode","switch_mode","report_goal_met","complete_step"].sort(),
   );
 });

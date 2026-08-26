@@ -23,7 +23,7 @@ export interface CliSubagentToolOptions {
   /** --yes semantics: skip permission prompts for non-readonly subagents. */
   skipAll: boolean;
   resolvePermission: PermissionResolver;
-  onBackgroundDone?: (def: SubagentDefinition, result: { ok: boolean; report: string }) => void;
+  onBackgroundDone?: (jobId: string, def: SubagentDefinition, result: { ok: boolean; report: string }) => void;
 }
 
 /**

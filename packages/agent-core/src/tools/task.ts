@@ -14,8 +14,10 @@ export interface TaskToolOptions {
    * (fresh transcript: subagent system prompt + this prompt only).
    */
   runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) => Promise<TaskRunResult>;
+  /** Called when a background subagent starts; return a job id for the wait tool. */
+  onBackgroundStart?: (def: SubagentDefinition, prompt: string) => string;
   /** Background completion sink (UI notification). */
-  onBackgroundDone?: (def: SubagentDefinition, result: TaskRunResult) => void;
+  onBackgroundDone?: (jobId: string, def: SubagentDefinition, result: TaskRunResult) => void;
 }
 
 /** Shared with context-usage so the subagent catalog can be split from the task schema. */
@@ -65,13 +67,21 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
       }
       const background = typeof args.background === "boolean" ? args.background : def.isBackground;
       if (background) {
+        const jobId = opts.onBackgroundStart?.(def, prompt) ?? "";
         void opts
           .runSubagent(def, prompt, ctx.signal)
-          .then((result) => opts.onBackgroundDone?.(def, result))
+          .then((result) => opts.onBackgroundDone?.(jobId, def, result))
           .catch((err) =>
-            opts.onBackgroundDone?.(def, { ok: false, report: err instanceof Error ? err.message : String(err) }),
+            opts.onBackgroundDone?.(jobId, def, {
+              ok: false,
+              report: err instanceof Error ? err.message : String(err),
+            }),
           );
-        return `Background subagent "${def.name}" started. Its report will surface in the session when it completes; continue with other work.`;
+        const idHint = jobId ? ` (job_id: ${jobId})` : "";
+        return (
+          `Background subagent "${def.name}" started${idHint}. ` +
+          "Use wait with job_ids to collect results, or continue with other work."
+        );
       }
       const result = await opts.runSubagent(def, prompt, ctx.signal);
       return result.ok ? result.report : `Subagent "${def.name}" failed: ${result.report}`;
