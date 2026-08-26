@@ -73,7 +73,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       stderr.write(dim(`[permission] auto-denied ${req.toolName} (${req.summary}); pass --yes to allow\n`));
       return "deny";
     },
-    onBackgroundDone: (def) => stderr.write(dim(`[subagent] background \u201c${def.name}\u201d finished\n`)),
+    onBackgroundDone: (_jobId, def) => stderr.write(dim(`[subagent] background \u201c${def.name}\u201d finished\n`)),
   });
   const mcp: McpConnection[] = await connectMcpServers(ctx.config.mcpServers, tools, {
     onError: (server, err) =>

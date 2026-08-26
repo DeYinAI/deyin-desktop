@@ -173,7 +173,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         ctx,
         skipAll: false,
         resolvePermission: requestPermission,
-        onBackgroundDone: (def) => notice(`Background subagent \u201c${def.name}\u201d finished`, "info"),
+        onBackgroundDone: (_jobId, def) => notice(`Background subagent \u201c${def.name}\u201d finished`, "info"),
       });
       if (!cancelled) {
         for (const c of connections) notice(`mcp ${c.name}: ${c.toolCount} tool(s) connected`);

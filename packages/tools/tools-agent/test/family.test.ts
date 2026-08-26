@@ -15,6 +15,6 @@ test("@deyin/plugin-tools-agent registers its family into the catalog", async ()
   ]);
   assert.deepEqual(
     [...kernel.get(Tools).names()].sort(),
-    ["remember","forget","memory","skill","read_session_context","send_message","await","enter_worktree","exit_worktree","ask_question"].sort(),
+    ["remember","forget","memory","skill","read_session_context","send_message","await","wait","enter_worktree","exit_worktree","ask_question"].sort(),
   );
 });

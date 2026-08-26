@@ -26,6 +26,7 @@ import {
   createTaskTool,
   estimateContextUsage,
   expandCommand,
+  getSessionJobsManager,
   loadContextFiles,
   matchCommand,
   modeReminder,
@@ -490,9 +491,17 @@ export class DesktopAgentHost {
     pending.resolve(JSON.stringify(answers, null, 2));
   }
 
+  /** Surface a startup failure to the renderer when start() rejects unexpectedly. */
+  sendStartupError(threadId: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    this.send(threadId, { type: "error", message });
+    this.send(threadId, { type: "done", reason: "aborted", finalText: "" });
+  }
+
   async start(options: AgentStartOptions): Promise<void> {
     if (this.active.has(options.threadId)) {
       this.send(options.threadId, { type: "error", message: "A run is already in progress for this task." });
+      this.send(options.threadId, { type: "done", reason: "aborted", finalText: "" });
       return;
     }
     const abort = new AbortController();
@@ -610,15 +619,6 @@ export class DesktopAgentHost {
       return [] as PermissionRule[];
     });
     const subagents = caps.subagents;
-    if (subagents.length > 0) {
-      registry.register(
-        createTaskTool({
-          subagents,
-          runSubagent: (def, subPrompt, subSignal) =>
-            this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subSignal),
-        }),
-      );
-    }
     // Connected lazily inside the run's try/finally so a failure between here
     // and the finally cannot leak spawned MCP child processes.
     const mcpConnections: McpConnection[] = [];
@@ -651,6 +651,27 @@ export class DesktopAgentHost {
 
     // Transcript: reuse the in-memory session, else restore/create a persisted one.
     const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
+    const jobsMgr = getSessionJobsManager(session.sessionId, join(app.getPath("userData"), "jobs"));
+    if (subagents.length > 0) {
+      registry.register(
+        createTaskTool({
+          subagents,
+          runSubagent: (def, subPrompt, subSignal) =>
+            this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subSignal),
+          onBackgroundStart: (def, subPrompt) =>
+            jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
+          onBackgroundDone: (jobId, _def, result) => {
+            if (!jobId) return;
+            jobsMgr.updateStatus(
+              jobId,
+              result.ok ? "completed" : "failed",
+              result.ok ? result.report : undefined,
+              result.ok ? undefined : result.report,
+            );
+          },
+        }),
+      );
+    }
     // Attached pictures also land in the thread's image store, so generate_image
     // can edit them by file name instead of drawing something new.
     const attached =
@@ -938,6 +959,16 @@ return;
           registerBackgroundTask: (taskId, promise) => {
             this.backgroundTasks.set(taskId, promise);
             void promise.finally(() => this.backgroundTasks.delete(taskId));
+          },
+          waitForJobs: async (jobIds, blockUntilMs) => {
+            const jobs = await jobsMgr.waitFor(jobIds, blockUntilMs);
+            return jobs.map((j) => ({
+              id: j.id,
+              label: j.label,
+              status: j.status,
+              result: j.result,
+              error: j.error,
+            }));
           },
         },
         wire: {

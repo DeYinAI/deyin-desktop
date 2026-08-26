@@ -6,6 +6,16 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.3 — 2026-08-26
+
+### Highlights
+
+- Core chat & tools stabilization: register `complete_step` and `wait` in the plugin catalog; wire background job collection via `JobsManager`
+- Per-thread composer isolation: concurrent agent runs no longer wedge the composer or share approval/queue state
+- Local Vision (Ollama moondream): optional on-device image description when cloud vision is unavailable
+- Agent startup hardening: duplicate-run and unexpected failures always emit `done` so the UI recovers
+- Catalog parity test guards against silent tool drops after plugin-seam migrations
+
 ## 1.0.2 — 2026-08-25
 
 ### Highlights

@@ -2,6 +2,8 @@ import type { ToolDefinition } from "../types.js";
 import { askQuestionTool } from "./ask-question.js";
 import { awaitTaskTool } from "./await-task.js";
 import { reportGoalMetTool } from "./report-goal-met.js";
+import { completeStepTool } from "./complete-step.js";
+import { createWaitJobsTool } from "./wait-jobs.js";
 import { bashTool } from "./bash.js";
 import { createPlanTool } from "./create-plan.js";
 import { deleteTool } from "./delete.js";
@@ -112,6 +114,8 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   ...GIT_TOOLS,
   fileTreeTool,
   reportGoalMetTool,
+  completeStepTool,
+  createWaitJobsTool(),
   generateImageTool,
 ];
 

@@ -18,6 +18,7 @@ import {
   createRoleRouter,
   createTaskTool,
   expandCommand,
+  getSessionJobsManager,
   matchCommand,
   modeReminder,
   rulesForApprovalMode,
@@ -281,7 +282,8 @@ export class WebAgentHost {
     });
     const permissions = new PermissionEngine(buildPermissions(options.mode));
 
-    const registry = await this.buildRegistry(options, subagents);
+    const jobsMgr = getSessionJobsManager(options.threadId, join(this.root, ".deyin", "jobs"));
+    const registry = await this.buildRegistry(options, subagents, jobsMgr);
     // Attached pictures also land in the session image store, so generate_image
     // can edit them by file name instead of drawing something new.
     const attachedImages =
@@ -411,6 +413,7 @@ export class WebAgentHost {
       maxSteps: 40,
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
+      evidenceGatesEnabled: options.mode === "delivery",
       onEvent: (event) => this.forwardEvent(options.threadId, event),
       // Cache parity with desktop: compression + prompt caching + stable cache key.
       wire: {
@@ -480,6 +483,16 @@ export class WebAgentHost {
           }
           return `Switched to ${nextMode} mode.${change.explanation ? ` ${change.explanation}` : ""}`;
         },
+        waitForJobs: async (jobIds, blockUntilMs) => {
+          const jobs = await jobsMgr.waitFor(jobIds, blockUntilMs);
+          return jobs.map((j) => ({
+            id: j.id,
+            label: j.label,
+            status: j.status,
+            result: j.result,
+            error: j.error,
+          }));
+        },
       },
     });
 
@@ -496,7 +509,11 @@ export class WebAgentHost {
   }
 
   /** Kernel tool catalog + the task tool over built-in and sandbox subagents. */
-  private async buildRegistry(options: WebAgentStartOptions, subagents: SubagentDefinition[]): Promise<ToolRegistry> {
+  private async buildRegistry(
+    options: WebAgentStartOptions,
+    subagents: SubagentDefinition[],
+    jobsMgr: ReturnType<typeof getSessionJobsManager>,
+  ): Promise<ToolRegistry> {
     const kernel = await this.ensureKernel();
     const registry = buildToolRegistry(kernel.get(Tools));
     // No image model in the client's catalog: drop generate_image rather than
@@ -507,6 +524,17 @@ export class WebAgentHost {
         subagents,
         runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) =>
           this.runSubagentTask(options, def, prompt, signal),
+        onBackgroundStart: (def, subPrompt) =>
+          jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
+        onBackgroundDone: (jobId, _def, result) => {
+          if (!jobId) return;
+          jobsMgr.updateStatus(
+            jobId,
+            result.ok ? "completed" : "failed",
+            result.ok ? result.report : undefined,
+            result.ok ? undefined : result.report,
+          );
+        },
       }),
     );
     return registry;

@@ -772,7 +772,10 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Agent runtime. */
   ipcMain.handle(CH.agentStart, (_e, options: AgentStartOptions) => {
     telemetry.record("agent-run");
-    void agentHost.start(options);
+    void agentHost.start(options).catch((err) => {
+      console.error("[deyin] agent start failed:", err);
+      agentHost.sendStartupError(options.threadId, err);
+    });
   });
 ipcMain.on(CH.agentStop, (_e, threadId: string) => agentHost.stop(threadId));
 ipcMain.on(CH.agentApprove, (_e, requestId: string, decision: PermissionDecision) =>

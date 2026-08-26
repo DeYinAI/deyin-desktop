@@ -184,39 +184,10 @@ export function githubReviewCommentForFix(
   const body = suggestionCommentBody(finding, repoPath);
   if (!body) return null;
 
-export function githubReviewCommentForFix(
-  finding: ReviewFinding,
-  repoPath: string,
-): { path: string; body: string; line: number; start_line: number } | null {
-  const fix = finding.suggested_fix;
-  if (!fix) return null;
-  const body = suggestionCommentBody(finding, repoPath);
-  if (!body) return null;
-
   return {
     path: fix.path,
     body,
     start_line: fix.start_line,
     line: fix.end_line,
   };
-}
-  method = "GET",
-  body?: unknown,
-): Promise<unknown> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${githubToken}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`GitHub API error ${method} ${path}: ${res.status} ${text}`);
-  }
-  if (res.status === 204) return null;
-  return res.json();
 }
