@@ -57,12 +57,19 @@ const api: DeyinApi = {
       };
     },
     onLocationChanged: (cb) => {
-      const listener = (_e: unknown, state: import("@deyin/contract").WorkspaceState) => cb(state);
+      let alive = true;
+      const listener = (_e: unknown, state: import("@deyin/contract").WorkspaceState) => {
+        if (alive) cb(state);
+      };
       void ipcRenderer.invoke(CH.workspaceGetLocation).then((state: import("@deyin/contract").WorkspaceState) => {
+        if (!alive) return;
         cb(state);
         ipcRenderer.on(CH.workspaceLocationChanged, listener);
       });
-      return () => ipcRenderer.removeListener(CH.workspaceLocationChanged, listener);
+      return () => {
+        alive = false;
+        ipcRenderer.removeListener(CH.workspaceLocationChanged, listener);
+      };
     },
   },
   git: {

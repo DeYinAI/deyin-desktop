@@ -20,9 +20,7 @@ export const skillTool: ToolDefinition = {
     const skillName = asString(args.skill_name, "skill_name").toLowerCase();
     const extra = asOptionalString(args.context);
     const skills = ctx.skills ?? [];
-    const match =
-      skills.find((s) => s.name.toLowerCase() === skillName) ??
-      skills.find((s) => s.name.toLowerCase().includes(skillName));
+    const match = skills.find((s) => s.name.toLowerCase() === skillName);
     if (!match) {
       const available = skills.map((s) => s.name).join(", ") || "(none)";
       return `Skill "${skillName}" not found. Available skills: ${available}`;

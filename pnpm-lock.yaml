@@ -949,6 +949,9 @@ importers:
 
   packages/ui/client:
     dependencies:
+      '@deyin/agent-core':
+        specifier: workspace:*
+        version: link:../../agent-core
       '@deyin/branding':
         specifier: workspace:*
         version: link:../../branding

@@ -3,6 +3,7 @@ export * from "./paths.js";
 export * from "./skills.js";
 export * from "./builtin-skills.js";
 export * from "./commands.js";
+export * from "./goal-command.js";
 export * from "./subagents.js";
 export * from "./hooks.js";
 export * from "./mcp-config.js";

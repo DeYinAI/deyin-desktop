@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   AuthRequiredError,
   PermissionEngine,
@@ -7,6 +8,7 @@ import {
   createBuiltinRegistry,
   createRoleRouter,
   estimateTokens,
+  getSessionJobsManager,
   loadContextFiles,
   resolveAgent,
   runAgent,
@@ -18,6 +20,7 @@ import {
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import type { CliContext } from "./context.js";
 import { tokenSource } from "./context.js";
+import { loadCliCapabilities, resolveCliPrompt } from "./capabilities.js";
 import { dim, red } from "./output.js";
 import { registerCliSubagentTool } from "./subagents.js";
 
@@ -62,12 +65,15 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   }
 
   const agent = resolveAgent(ctx.config, ctx.config.agent) ?? BUILD_AGENT;
+  const caps = await loadCliCapabilities(ctx.cwd);
   const tools = createBuiltinRegistry();
   // The CLI has no image store or picker, so nothing can render a generated
   // picture: drop the tool rather than let the model promise one.
   tools.unregister("generate_image");
+  let sessionId = "";
   await registerCliSubagentTool(tools, {
     ctx,
+    sessionId: () => sessionId,
     skipAll: opts.yes ?? false,
     resolvePermission: async (req) => {
       stderr.write(dim(`[permission] auto-denied ${req.toolName} (${req.summary}); pass --yes to allow\n`));
@@ -81,7 +87,6 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   });
 
   // Session: resume/continue an existing transcript, or start a fresh one.
-  let sessionId: string;
   let messages: AgentMessage[];
   let newSession = false;
   if (opts.resumeId || opts.continueLast) {
@@ -102,13 +107,19 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     const contextFiles = await loadContextFiles(ctx.cwd);
     const system: AgentMessage = {
       role: "system",
-      content: buildSystemPrompt({ cwd: ctx.cwd, agent, toolNames: tools.names(), contextFiles }),
+      content: buildSystemPrompt({ cwd: ctx.cwd, agent, toolNames: tools.names(), contextFiles, skills: caps.skills }),
     };
     messages = [system];
     ctx.sessions.append(sessionId, system);
   }
 
-  const userMessage: AgentMessage = { role: "user", content: opts.prompt };
+  const resolvedPrompt = resolveCliPrompt(opts.prompt, caps);
+  if (resolvedPrompt.error) {
+    stderr.write(`${red("error:")} ${resolvedPrompt.error}\n`);
+    return EXIT_ERROR;
+  }
+
+  const userMessage: AgentMessage = { role: "user", content: resolvedPrompt.prompt };
   messages.push(userMessage);
   ctx.sessions.append(sessionId, userMessage);
 
@@ -175,6 +186,17 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         return "deny";
       },
       toolContext: {
+        skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
+        waitForJobs: async (jobIds, blockUntilMs) => {
+          const jobs = await getSessionJobsManager(sessionId, join(ctx.dataDir, "jobs")).waitFor(jobIds, blockUntilMs);
+          return jobs.map((j) => ({
+            id: j.id,
+            label: j.label,
+            status: j.status,
+            result: j.result,
+            error: j.error,
+          }));
+        },
         // The configured agent doubles as the composer mode, so role routing
         // picks the plan/ask/delivery model when running under those agents.
         sessionMeta: { mode: agent.name, model: ctx.config.model, cwd: ctx.cwd },

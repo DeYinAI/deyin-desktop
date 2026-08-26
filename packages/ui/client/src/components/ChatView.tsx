@@ -8,7 +8,7 @@ import { subagentDisplayName, subagentStatusLine } from "./SubagentPanel.js";
 import { TodoRows, countVisibleTodos } from "./TodoChecklist.js";
 import { Callout, CodeTag, FlatCard, SectionLabel, SeverityBadge } from "./ui/index.js";
 import type { ThreadEvent } from "../threads.js";
-import { summarizeToolActivity } from "../toolActivity.js";
+import { summarizeActivityBlock } from "../toolActivity.js";
 import { TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 
 /** Distance from the bottom (px) within which we consider the view "pinned". */
@@ -149,14 +149,22 @@ export function ChatView(props: ChatViewProps) {
     );
   }
 
+  const hasStreamOutput =
+    (props.streamText?.length ?? 0) > 0 || (props.streamReasoning?.length ?? 0) > 0;
+
   return (
     <div className="chat" ref={scrollRef} onScroll={syncPinFromScroll}>
       <div className="chat__timeline" ref={timelineRef}>
-        {groupTimelineEvents(props.events).map((group, i) =>
-          group.kind === "tools" ? (
-            <div key={i} className="activity-group">
-              {renderToolStack(group.events, props.onOpenAgentTerminal)}
-            </div>
+        {groupTimelineEvents(props.events, { compactAllActivity: hasStreamOutput }).map((group, i) =>
+          group.kind === "activity" ? (
+            <ActivityBlock
+              key={i}
+              items={group.items}
+              onOpenAgentTerminal={props.onOpenAgentTerminal}
+              onOpenFile={props.onOpenFile}
+              onUndo={props.onUndo}
+              codeDisplay={props.codeDisplay}
+            />
           ) : (
             <EventRow
               key={i}
@@ -237,26 +245,86 @@ export function ChatView(props: ChatViewProps) {
 }
 
 type TimelineGroup =
-  | { kind: "tools"; events: Extract<ThreadEvent, { kind: "tool" }>[]; startIndex: number }
+  | { kind: "activity"; items: ThreadEvent[]; compact: boolean; startIndex: number }
   | { kind: "single"; event: ThreadEvent; eventIndex: number };
 
-/** Collapse consecutive tool events into one stack so shell runs read as one activity block. */
-function groupTimelineEvents(events: ThreadEvent[]): TimelineGroup[] {
+const ACTIVITY_EVENT_KINDS = new Set<ThreadEvent["kind"]>(["reasoning", "tool", "file"]);
+
+function isActivityEvent(event: ThreadEvent): boolean {
+  return ACTIVITY_EVENT_KINDS.has(event.kind);
+}
+
+function isCompactBoundary(event: ThreadEvent): boolean {
+  return event.kind === "assistant" || event.kind === "user" || event.kind === "plan-ready";
+}
+
+/** Collapse consecutive reasoning/tool/file events into one activity block. */
+function groupTimelineEvents(
+  events: ThreadEvent[],
+  opts?: { compactAllActivity?: boolean },
+): TimelineGroup[] {
   const groups: TimelineGroup[] = [];
   for (let i = 0; i < events.length; i++) {
     const event = events[i]!;
-    if (event.kind === "tool") {
+    if (isActivityEvent(event)) {
       const last = groups[groups.length - 1];
-      if (last?.kind === "tools") {
-        last.events.push(event);
-      } else {
-        groups.push({ kind: "tools", events: [event], startIndex: i });
-      }
+      if (last?.kind === "activity") last.items.push(event);
+      else groups.push({ kind: "activity", items: [event], compact: false, startIndex: i });
     } else {
       groups.push({ kind: "single", event, eventIndex: i });
     }
   }
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i];
+    if (group?.kind !== "activity") continue;
+    const next = groups[i + 1];
+    group.compact =
+      opts?.compactAllActivity === true ||
+      (next?.kind === "single" && isCompactBoundary(next.event));
+  }
   return groups;
+}
+
+function activityFiles(items: ThreadEvent[]): Extract<ThreadEvent, { kind: "file" }>[] {
+  return items.filter((item): item is Extract<ThreadEvent, { kind: "file" }> => item.kind === "file");
+}
+
+function activityTools(items: ThreadEvent[]): Extract<ThreadEvent, { kind: "tool" }>[] {
+  return items.filter((item): item is Extract<ThreadEvent, { kind: "tool" }> => item.kind === "tool");
+}
+
+function activityReasonings(items: ThreadEvent[]): Extract<ThreadEvent, { kind: "reasoning" }>[] {
+  return items.filter((item): item is Extract<ThreadEvent, { kind: "reasoning" }> => item.kind === "reasoning");
+}
+
+/** One agent step's tool/thought activity — always one collapsed row (Cursor-style). */
+function ActivityBlock({
+  items,
+  onOpenAgentTerminal,
+  onOpenFile,
+  onUndo,
+  codeDisplay,
+}: {
+  items: ThreadEvent[];
+  compact?: boolean;
+  onOpenAgentTerminal?: () => void;
+  onOpenFile: (path: string) => void;
+  onUndo: (name: string) => void;
+  codeDisplay: ChatCodeDisplay;
+}) {
+  return (
+    <div className="activity-block activity-block--compact">
+      <ActivityGroup
+        events={activityTools(items)}
+        files={activityFiles(items)}
+        reasonings={activityReasonings(items)}
+        onOpenAgentTerminal={onOpenAgentTerminal}
+        onOpenFile={onOpenFile}
+        onUndo={onUndo}
+        codeDisplay={codeDisplay}
+      />
+    </div>
+  );
 }
 
 /** Read-only research tools collapsed into an "N lookups" row once completed. */
@@ -295,46 +363,49 @@ function partitionToolStack(events: Extract<ThreadEvent, { kind: "tool" }>[]): S
   return items;
 }
 
-function renderToolStack(
-  events: Extract<ThreadEvent, { kind: "tool" }>[],
-  onOpenAgentTerminal?: () => void,
-) {
-  return <ActivityGroup events={events} onOpenAgentTerminal={onOpenAgentTerminal} />;
-}
-
 /** Cursor-style one-line tool summary in chat; expand for individual calls. */
 function ActivityGroup({
   events,
+  files = [],
+  reasonings = [],
   onOpenAgentTerminal,
+  onOpenFile,
+  onUndo,
+  codeDisplay,
 }: {
   events: Extract<ThreadEvent, { kind: "tool" }>[];
+  files?: Extract<ThreadEvent, { kind: "file" }>[];
+  reasonings?: Extract<ThreadEvent, { kind: "reasoning" }>[];
   onOpenAgentTerminal?: () => void;
+  onOpenFile: (path: string) => void;
+  onUndo: (name: string) => void;
+  codeDisplay: ChatCodeDisplay;
 }) {
   const [open, setOpen] = useState(false);
-  const wasRunningRef = useRef(false);
-  const summary = summarizeToolActivity(events);
+  const summary = summarizeActivityBlock(events, files, reasonings);
   const anyRunning = events.some((e) => e.ok === undefined);
-
-  useLayoutEffect(() => {
-    if (anyRunning) setOpen(true);
-    else if (wasRunningRef.current) setOpen(false);
-    wasRunningRef.current = anyRunning;
-  }, [anyRunning]);
+  const canExpand = events.length > 0 || files.length > 0 || reasonings.length > 0;
 
   return (
     <div className={`activity-summary${summary.failed ? " activity-summary--failed" : ""}${anyRunning ? " activity-summary--live" : ""}`}>
-      <button type="button" className="activity-summary__row" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="activity-summary__row"
+        onClick={() => canExpand && setOpen((v) => !v)}
+        disabled={!canExpand}
+      >
         <Icon name={summary.icon} size={12} className="activity-summary__icon" />
         <span className="activity-summary__label">
           {summary.label}
-          {summary.overflow > 0 && (
-            <span className="activity-summary__more">+{summary.overflow}</span>
-          )}
+          {summary.overflow > 0 && <span className="activity-summary__more">+{summary.overflow}</span>}
         </span>
-        <Icon name={open ? "chevronDown" : "chevronRight"} size={10} className="activity-summary__chevron" />
+        {canExpand && <Icon name={open ? "chevronDown" : "chevronRight"} size={10} className="activity-summary__chevron" />}
       </button>
       {open && (
         <div className="activity-summary__detail">
+          {reasonings.map((event, i) => (
+            <ThinkingCard key={`reason-${i}`} text={event.text} seconds={event.seconds} />
+          ))}
           {partitionToolStack(events).map((item, j) =>
             item.kind === "tool" ? (
               item.event.name === "bash" ? (
@@ -346,6 +417,9 @@ function ActivityGroup({
               <QuietToolsRow key={j} events={item.events} />
             ),
           )}
+          {files.map((file, i) => (
+            <FileCard key={`file-${i}`} event={file} codeDisplay={codeDisplay} onOpenFile={onOpenFile} onUndo={onUndo} />
+          ))}
         </div>
       )}
     </div>

@@ -277,40 +277,40 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
           emit({ type: "text-delta", delta: event.delta });
         } else if (event.type === "reasoning") {
           emit({ type: "reasoning-delta", delta: event.delta });
-} else {
- content = event.content;
- reasoning = event.reasoning;
- toolCalls = event.toolCalls;
- streamImages = event.images ?? [];
- if (event.usage) {
- usage.promptTokens += event.usage.promptTokens;
- usage.completionTokens += event.usage.completionTokens;
- usage.totalTokens += event.usage.totalTokens;
- if (event.usage.cachedPromptTokens) {
- usage.cachedPromptTokens = (usage.cachedPromptTokens ?? 0) + event.usage.cachedPromptTokens;
- tracker.recordCachedPromptTokens(event.usage.cachedPromptTokens);
- }
- emit({ type: "usage", usage: { ...usage } });
- }
- // Prefix-cache diagnostics: attribute hit/miss tokens to system/tools/log_rewrite
- // churn so the UI and telemetry reflect real provider cache behaviour.
- const shape = computePrefixShape(
- opts.messages.find((m) => m.role === "system"),
- toolSchemas,
- logRewriteVersion,
- schemaTokens,
- );
- const cached = event.usage?.cachedPromptTokens ?? 0;
- const prompt = event.usage?.promptTokens ?? 0;
- const diag = comparePrefixShapes(previousPrefixShape, shape, cached, Math.max(0, prompt - cached));
- previousPrefixShape = shape;
- tracker.recordPrefixShape(shape, diag);
- if (event.compression) {
- tracker.recordCompression(event.compression.originalTokens, event.compression.compressedTokens);
- }
- // Single optimization emit per done event (avoids duplicate IPC for usage + compression).
- emit({ type: "optimization", metrics: tracker.get() });
- }
+        } else {
+          content = event.content;
+          reasoning = event.reasoning;
+          toolCalls = event.toolCalls;
+          streamImages = event.images ?? [];
+          if (event.usage) {
+            usage.promptTokens += event.usage.promptTokens;
+            usage.completionTokens += event.usage.completionTokens;
+            usage.totalTokens += event.usage.totalTokens;
+            if (event.usage.cachedPromptTokens) {
+              usage.cachedPromptTokens = (usage.cachedPromptTokens ?? 0) + event.usage.cachedPromptTokens;
+              tracker.recordCachedPromptTokens(event.usage.cachedPromptTokens);
+            }
+            emit({ type: "usage", usage: { ...usage } });
+          }
+          // Prefix-cache diagnostics: attribute hit/miss tokens to system/tools/log_rewrite
+          // churn so the UI and telemetry reflect real provider cache behaviour.
+          const shape = computePrefixShape(
+            opts.messages.find((m) => m.role === "system"),
+            toolSchemas,
+            logRewriteVersion,
+            schemaTokens,
+          );
+          const cached = event.usage?.cachedPromptTokens ?? 0;
+          const prompt = event.usage?.promptTokens ?? 0;
+          const diag = comparePrefixShapes(previousPrefixShape, shape, cached, Math.max(0, prompt - cached));
+          previousPrefixShape = shape;
+          tracker.recordPrefixShape(shape, diag);
+          if (event.compression) {
+            tracker.recordCompression(event.compression.originalTokens, event.compression.compressedTokens);
+          }
+          // Single optimization emit per done event (avoids duplicate IPC for usage + compression).
+          emit({ type: "optimization", metrics: tracker.get() });
+        }
       }
     } catch (err) {
       if (opts.signal?.aborted || isAbortError(err)) return finish("aborted", step);
@@ -371,7 +371,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         append(toolResult(call, "Aborted by the user before execution."));
       }
     } else {
-      const outcomes = await Promise.all(toolCalls.map((call) => executeCall(call, opts, ctx, emit, tracker, ledger)));
+      const outcomes = await executeSameStepCalls(toolCalls, opts, ctx, emit, tracker, ledger);
       for (let i = 0; i < toolCalls.length; i++) {
         append(toolResult(toolCalls[i]!, outcomes[i]!));
       }
@@ -385,6 +385,45 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     emit({ type: "done", reason });
     return { reason, finalText, usage, steps, optimization: tracker.get() };
   }
+}
+
+/**
+ * Run one step's tool calls, concurrent where that is safe.
+ *
+ * Read-tier tools have no side effects, so a consecutive run of them executes
+ * together. Everything else runs exclusively, in the order the model asked for
+ * it: two `edit` calls against the same file are a read-modify-write race that
+ * silently drops one of the edits, and a shared todo list or evidence ledger has
+ * the same problem. Unknown tools count as exclusive — we cannot classify them.
+ *
+ * Results come back in `toolCalls` order either way, which is what providers
+ * require of the appended tool messages.
+ */
+async function executeSameStepCalls(
+  toolCalls: AgentToolCall[],
+  opts: AgentRunOptions,
+  ctx: ToolContext,
+  emit: (event: AgentEvent) => void,
+  tracker: OptimizationTracker,
+  ledger?: EvidenceLedger,
+): Promise<string[]> {
+  const outcomes = new Array<string>(toolCalls.length);
+  const isRead = (call: AgentToolCall): boolean => opts.tools.get(call.name)?.tier === "read";
+  let i = 0;
+  while (i < toolCalls.length) {
+    if (!isRead(toolCalls[i]!)) {
+      outcomes[i] = await executeCall(toolCalls[i]!, opts, ctx, emit, tracker, ledger);
+      i += 1;
+      continue;
+    }
+    let end = i;
+    while (end < toolCalls.length && isRead(toolCalls[end]!)) end += 1;
+    const batch = toolCalls.slice(i, end);
+    const results = await Promise.all(batch.map((call) => executeCall(call, opts, ctx, emit, tracker, ledger)));
+    for (let k = 0; k < results.length; k++) outcomes[i + k] = results[k]!;
+    i = end;
+  }
+  return outcomes;
 }
 
 function toolResult(call: AgentToolCall, content: string): AgentMessage {

@@ -6,15 +6,17 @@ import type { TerminalEvents } from "./pty.js";
 import { toWslPath, windowsSpawnCwd } from "./wsl-path.js";
 
 interface IPty {
- onData(cb: (data: string) => void): void;
- onExit(cb: (e: { exitCode: number }) => void): void;
- write(data: string): void;
- resize(cols: number, rows: number): void;
- kill(): void;
+  /** Session-leader pid of the spawned shell; also its process-group id. */
+  readonly pid: number;
+  onData(cb: (data: string) => void): void;
+  onExit(cb: (e: { exitCode: number }) => void): void;
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
 }
 
 interface PtyModule {
- spawn(file: string, args: string[], opts: Record<string, unknown>): IPty;
+  spawn(file: string, args: string[], opts: Record<string, unknown>): IPty;
 }
 
 /** Thrown when the persistent PTY cannot be created (no node-pty, no bash on POSIX). */
@@ -36,6 +38,8 @@ const ANSI_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-9;?]*[a-zA-Z]|\([0-9A
 const SCROLLBACK_CAP = 256 * 1024;
 const READY_TIMEOUT_MS = 15_000;
 const INTERRUPT_GRACE_MS = 2_000;
+/** Grace after SIGHUP before the PTY's whole process group is SIGKILLed. */
+const PTY_FORCE_KILL_MS = 500;
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 
@@ -98,6 +102,32 @@ interface AgentShellTarget {
 }
 
 const identity = (p: string): string => p;
+
+/**
+ * SIGKILL a dead PTY's whole process group shortly after its shell was hung up.
+ *
+ * `IPty.kill()` sends SIGHUP to the shell only. A command the shell had started
+ * (`sleep 30`, a dev server) is orphaned still holding the pty slave open, so the
+ * master never sees EOF: node-pty's handle stays active, the process leaks, and a
+ * host that has disposed every shell can still refuse to exit. node-pty puts the
+ * child in its own session, so the negated pid addresses that whole group.
+ *
+ * The timer is unref'd — it must never be the thing keeping the process alive. If
+ * the loop is already clean the process exits first and there is nothing to reap;
+ * if a stuck pty is holding the loop open, this is what releases it.
+ */
+function reapProcessGroup(pid: number | undefined): void {
+  if (process.platform === "win32" || typeof pid !== "number" || pid <= 0) return;
+  const timer = setTimeout(() => {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // ESRCH: the group already exited, which is the outcome we wanted.
+    }
+  }, PTY_FORCE_KILL_MS);
+  timer.unref?.();
+}
+
 
 function posixBash(): AgentShellTarget {
   // Require bash on POSIX: dash/sh has no PS0 so marker capture never starts.
@@ -197,6 +227,11 @@ export class AgentShell {
     this.shellId = opts.shell;
   }
 
+  /** Session-leader pid of the live PTY, or null when no shell is running. */
+  get pid(): number | null {
+    return this.term?.pid ?? null;
+  }
+
   /** Ring-buffer of raw PTY output for late-attaching tabs. */
   getScrollback(): string {
     return this.scrollback;
@@ -249,11 +284,13 @@ export class AgentShell {
     this.ready = false;
     if (!t) return;
     if (opts?.suppressExit) this.suppressExitFor.add(t);
+    const pid = t.pid;
     try {
       t.kill();
     } catch {
       // Keep suppressExitFor entry so a late onExit still suppresses double termExit.
     }
+    reapProcessGroup(pid);
   }
 
   private async spawn(): Promise<void> {

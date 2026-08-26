@@ -19,6 +19,7 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
+    "@deyin/agent-core": "workspace:*",
     "@deyin/branding": "workspace:*",
     "@deyin/contract": "workspace:*",
     "@deyin/host-core": "workspace:*",

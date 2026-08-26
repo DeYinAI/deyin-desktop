@@ -22,7 +22,7 @@ import { AUTOMATION_NEVER_SKIP_PREFIXES, AUTOMATION_NEVER_SKIP_TOOLS } from "../
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "../workspace-trust.js";
 import type { CapabilityService } from "../capabilities.js";
 import type { McpAuthBridge } from "../mcp-auth-bridge.js";
-import { isMcpUnauthorized } from "../mcp-auth-bridge.js";
+import { isMcpUnauthorized, resolveMcpModuleId } from "../mcp-auth-bridge.js";
 
 
 export interface AgentRunContextDeps {
@@ -112,7 +112,15 @@ export async function buildAutomationEnvironment(
       }
       console.warn(`[deyin] MCP server "${serverName}" failed to connect:`, err);
     },
-    ...(mcpAuth ? { getAuthProvider: (name) => mcpAuth.getProvider(name) } : {}),
+    ...(mcpAuth
+      ? {
+          getAuthProvider: (name: string) => {
+            const def = mcpDefs.find((d) => d.name === name);
+            const moduleId = def ? resolveMcpModuleId(def) : undefined;
+            return moduleId ? mcpAuth.getProvider(moduleId) : undefined;
+          },
+        }
+      : {}),
   });
 
   return {

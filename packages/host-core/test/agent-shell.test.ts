@@ -151,3 +151,42 @@ test("scrollback ring buffer is non-empty after commands", { skip: !isPosix }, a
     assert.ok(shell.getScrollback().length > 0);
   });
 });
+
+test("dispose reaps the shell's whole process group", { skip: !isPosix }, async () => {
+  const available = await agentShellAvailable();
+  if (!available) return;
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-agent-shell-"));
+  const shell = new AgentShell({
+    cwd,
+    events: { onData: () => undefined, onExit: () => undefined },
+  });
+  const groupAlive = (pid: number): boolean => {
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    await shell.ensureStarted();
+    const pid = shell.pid;
+    assert.ok(pid !== null && pid > 0, "a started shell must expose its pid");
+
+    // A foreground command outlives the shell's SIGHUP: orphaned, it keeps the
+    // pty slave open, so the master handle would keep the host process alive.
+    const pending = shell.run("sleep 300", { timeoutS: 30 });
+    await new Promise((r) => setTimeout(r, 300));
+    shell.dispose();
+    await pending.catch(() => undefined);
+
+    const deadline = Date.now() + 5_000;
+    while (groupAlive(pid!) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.equal(groupAlive(pid!), false, "the shell's process group must be gone after dispose");
+  } finally {
+    shell.dispose();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

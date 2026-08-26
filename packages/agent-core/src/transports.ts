@@ -311,8 +311,16 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
   }
   if (opts.thinking !== undefined) {
     // Classic extended thinking; newer "adaptive" mode is model-dependent, so
-    // "enabled" + budget is the most widely accepted shape.
-    body.thinking = { type: opts.thinking ? "enabled" : "disabled", budget_tokens: 4096 };
+    // "enabled" + budget is the most widely accepted shape. The *disabled*
+    // variant takes no other field — sending `budget_tokens` with it makes the
+    // Messages API reject the request outright ("extra inputs are not
+    // permitted"), which killed every call whenever thinking was switched off.
+    const maxTokens = body.max_tokens as number;
+    // budget_tokens must stay below max_tokens, and Anthropic's floor is 1024.
+    // A max_tokens cap too small to hold a budget cannot use thinking at all.
+    const budget = Math.min(4096, maxTokens - 1);
+    if (opts.thinking && budget >= 1024) body.thinking = { type: "enabled", budget_tokens: budget };
+    else body.thinking = { type: "disabled" };
   }
   if (opts.effort) body.output_config = { effort: opts.effort };
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
@@ -430,9 +438,15 @@ export class ResponsesAccumulator {
         return null;
       case "response.output_item.added": {
         if (ev.item?.type === "function_call") {
-          const id = ev.item.id ?? ev.item.call_id ?? synthCallId("fc", this.order.length);
-          this.calls.set(id, { id, name: ev.item.name ?? "", arguments: "" });
-          this.order.push(id);
+          // Two different ids ride on this frame: `id` is the output item
+          // (`fc_…`, what later argument deltas reference via `item_id`) and
+          // `call_id` (`call_…`) is what the API expects back on the matching
+          // `function_call_output`. Key the map by the item id, but carry the
+          // call id — sending the item id back is rejected as an unmatched call.
+          const itemId = ev.item.id ?? ev.item.call_id ?? synthCallId("fc", this.order.length);
+          const callId = ev.item.call_id ?? ev.item.id ?? itemId;
+          this.calls.set(itemId, { id: callId, name: ev.item.name ?? "", arguments: "" });
+          this.order.push(itemId);
         }
         return null;
       }
@@ -468,11 +482,17 @@ export class ResponsesAccumulator {
         }
         if (item?.type === "function_call") {
           const id = item.id ?? item.call_id ?? "";
-          const call = (id && this.calls.get(id)) || (item.call_id ? this.calls.get(item.call_id) : undefined);
-          if (call) {
-            if (item.name) call.name = item.name;
-            if (item.arguments) call.arguments = item.arguments;
+          let call = (id && this.calls.get(id)) || (item.call_id ? this.calls.get(item.call_id) : undefined);
+          if (!call) {
+            // Non-streaming gateways skip output_item.added entirely.
+            const itemId = id || synthCallId("fc", this.order.length);
+            call = { id: item.call_id ?? itemId, name: "", arguments: "" };
+            this.calls.set(itemId, call);
+            this.order.push(itemId);
           }
+          if (item.call_id) call.id = item.call_id;
+          if (item.name) call.name = item.name;
+          if (item.arguments) call.arguments = item.arguments;
         }
         return null;
       }

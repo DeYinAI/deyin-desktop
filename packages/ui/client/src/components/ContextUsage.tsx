@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { PortalledPanel } from "./PortalledPanel.js";
 import { Icon } from "./Icon.js";
 import type { AccountUsage, ContextCategoryId, ContextUsageSnapshot } from "@deyin/contract";
 
@@ -52,7 +53,7 @@ export interface ContextUsageProps {
 export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEstimateTokens = 0 }: ContextUsageProps) {
   const [open, setOpen] = useState(false);
   const [account, setAccount] = useState<AccountUsage | null>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLButtonElement>(null);
   const measured = snapshot != null;
 
   // Prefer the live model window so model switches update % without waiting for a new run.
@@ -85,18 +86,11 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
-    document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
   const size = 18;
@@ -119,8 +113,9 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
     : "Context usage not measured yet";
 
   return (
-    <div className="context-usage" ref={rootRef}>
+    <div className="context-usage">
       <button
+        ref={anchorRef}
         type="button"
         className={`context-usage__meter context-usage__meter--${ringTone} ${open ? "context-usage__meter--open" : ""}`}
         title={meterTitle}
@@ -152,9 +147,16 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
         </svg>
       </button>
 
-      {open && (
-        <div className="context-usage__popover" role="dialog" aria-label="Context Usage">
-          <div className="context-usage__header">
+      <PortalledPanel
+        open={open}
+        onClose={() => setOpen(false)}
+        anchorRef={anchorRef}
+        align="end"
+        className="context-usage__popover context-usage__popover--portalled"
+        role="dialog"
+        ariaLabel="Context Usage"
+      >
+        <div className="context-usage__header">
             <span className="context-usage__title">Context Usage</span>
             <button
               type="button"
@@ -285,8 +287,7 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
               )}
             </div>
           )}
-        </div>
-      )}
+      </PortalledPanel>
     </div>
   );
 }

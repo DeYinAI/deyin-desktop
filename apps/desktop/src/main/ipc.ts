@@ -341,6 +341,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     memory,
     review,
     mcpAuth: createMcpAuthBridge(mcpModules, mcpOAuth),
+    security,
     trust,
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
@@ -641,9 +642,16 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     mcpModules.uninstall(id);
     return capabilities.listMcpServers();
   });
-  ipcMain.handle(CH.mcpAuthenticate, (_e, moduleId: string) => mcpOAuth.authenticate(moduleId, moduleMcpUrl(moduleId)));
+  ipcMain.handle(CH.mcpAuthenticate, async (_e, moduleId: string) => {
+    const result = await mcpOAuth.authenticate(moduleId, moduleMcpUrl(moduleId));
+    // Pooled clients still hold the pre-auth credential; drop them so the next
+    // run reconnects with the token that was just granted.
+    agentHost.resetMcpConnections();
+    return result;
+  });
   ipcMain.handle(CH.mcpAuthRevoke, (_e, moduleId: string) => {
     mcpOAuth.revoke(moduleId);
+    agentHost.resetMcpConnections();
     return undefined;
   });
   ipcMain.handle(CH.mcpAuthStatus, () => mcpOAuth.statusForModules(mcpModules.list()));
@@ -962,7 +970,8 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       // Abort in-flight agent runs first so MCP children observe the signal.
       agentHost.stopAll();
       automations.dispose();
-      agentHost.disposeAllShells();
+      // Also hangs up the pooled MCP servers, which now outlive a single run.
+      await agentHost.dispose();
       telemetry.stop();
       await Promise.race([
         telemetry.flush(),

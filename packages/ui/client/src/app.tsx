@@ -29,10 +29,14 @@ import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
 import { resolveVisionModel, visionBlockedMessage } from "./vision.js";
 import {
+  countPendingInteractionsForThread,
   pickRunningThreadToStop,
   resolveChatStreamText,
   shouldQueueFollowUp,
+  shouldShowGlobalStop,
 } from "./composerThreadState.js";
+import { applyGoalCommandText } from "./goal-command.js";
+import { applyGoalToProjects } from "./threadGoal.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { PlansView } from "./components/PlansView.js";
@@ -118,15 +122,6 @@ function clampFraction(value: number): number {
 
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 
-/** Parse the /goal command. Returns the goal text, null for "/goal" with no
- *  text (clear the goal), or undefined when the input is not a /goal command. */
-export function matchGoalCommand(raw: string): string | null | undefined {
-  const m = /^\/goal\s*([\s\S]*)$/i.exec(raw.trim());
-  if (!m) return undefined;
-  const text = m[1]!.trim();
-  return text.length > 0 ? text : null;
-}
-
 type View = "workspace" | "settings" | "upgrade" | "automations";
 
 interface PendingApproval {
@@ -195,7 +190,12 @@ export function App() {
   const [pendingReview, setPendingReview] = useState<PendingChange[]>([]);
   const [securityReport, setSecurityReport] = useState<SecurityFindingsReport | null>(null);
   const [busy, setBusy] = useState(false);
-  const [streamText, setStreamText] = useState<string | null>(null);
+  /**
+   * Plain-chat (and image-generation) stream text, keyed by thread. A single
+   * slot let two chats clobber each other: whichever run finished first cleared
+   * the other's stream and unlocked its composer.
+   */
+  const [plainStreamByThread, setPlainStreamByThread] = useState<Record<string, string>>({});
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null);
   /** Bumped when the sandbox content changes outside root switches (repo connect). */
   const [filesRefreshKey, setFilesRefreshKey] = useState(0);
@@ -208,7 +208,7 @@ export function App() {
   // Per-thread pending UI (parallel chats must not share approval/question slots).
   const [approvalsByThread, setApprovalsByThread] = useState<Record<string, PendingApproval[]>>({});
   const [mcpAuthByThread, setMcpAuthByThread] = useState<Record<string, PendingMcpAuth[]>>({});
-  const [questionByThread, setQuestionByThread] = useState<Record<string, PendingQuestion | null>>({});
+  const [questionByThread, setQuestionByThread] = useState<Record<string, PendingQuestion[]>>({});
   const draftByThreadRef = useRef<Record<string, ComposerDraft>>({});
   const composerDraftRef = useRef<ComposerDraft>(emptyComposerDraft());
   composerDraftRef.current = {
@@ -217,7 +217,22 @@ export function App() {
     linked: composerLinked,
     images: composerImages,
   };
-  const [planApproval, setPlanApproval] = useState<PendingPlanApproval | null>(null);
+  /**
+   * Pending plan approvals, keyed by thread: a plan produced in one chat must
+   * not replace (or pop over) a plan awaiting approval in another.
+   */
+  const [planApprovalByThread, setPlanApprovalByThread] = useState<Record<string, PendingPlanApproval>>({});
+  const setPlanApprovalForThread = useCallback((threadId: string, approval: PendingPlanApproval | null) => {
+    setPlanApprovalByThread((cur) => {
+      if (approval === null) {
+        if (!(threadId in cur)) return cur;
+        const next = { ...cur };
+        delete next[threadId];
+        return next;
+      }
+      return { ...cur, [threadId]: approval };
+    });
+  }, []);
   /** Bumped to pull focus into the composer (declining a plan hands the turn back). */
   const [composerFocus, setComposerFocus] = useState(0);
   const sessionTokenStats = useSessionTokenStats();
@@ -228,8 +243,21 @@ export function App() {
   /** Follow-up queued while a run is active; drained when the run finishes (per thread). */
   const [queuedPromptByThread, setQueuedPromptByThread] = useState<Record<string, string>>({});
   const queuedPromptByThreadRef = useRef<Record<string, string>>({});
-  /** Thread that owns an in-flight plain-chat stream (agent runs use runningThreadId). */
-  const plainChatThreadIdRef = useRef<string | null>(null);
+  /** Synchronous mirror of plainStreamByThread, for reads inside send()/stopRun(). */
+  const plainStreamRef = useRef<Record<string, string>>({});
+  /** Set (or clear, with null) one thread's plain-chat stream text. */
+  const setPlainStreamForThread = useCallback((threadId: string, text: string | null) => {
+    const next = { ...plainStreamRef.current };
+    if (text === null) delete next[threadId];
+    else next[threadId] = text;
+    plainStreamRef.current = next;
+    setPlainStreamByThread(next);
+  }, []);
+  /** This thread's in-flight plain-chat stream text, or null. */
+  const plainStreamFor = useCallback(
+    (threadId: string | null): string | null => (threadId ? plainStreamRef.current[threadId] ?? null : null),
+    [],
+  );
   const setQueuedForThread = useCallback((threadId: string, text: string | null) => {
     const next = { ...queuedPromptByThreadRef.current };
     if (text === null || !text.trim()) delete next[threadId];
@@ -284,11 +312,12 @@ export function App() {
   >({});
   /** Soft compaction warning shown above the composer. */
   const [compactionNoticeByThread, setCompactionNoticeByThread] = useState<Record<string, string | null>>({});
-  /** Interrupt-and-send: start this prompt once the current run's `done` arrives. */
-  const pendingSendNowRef = useRef<{ threadId: string; text: string; mode: ChatMode } | null>(null);
+  /** Interrupt-and-send: start this prompt once the current run's `done` arrives (per thread). */
+  const pendingSendNowByThreadRef = useRef<Record<string, { text: string; mode: ChatMode }>>({});
   /** After the 3s stop watchdog force-clears, ignore the late `done` event. */
   const stopWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const plainChatAbortRef = useRef<AbortController | null>(null);
+  /** In-flight plain-chat aborts, keyed by thread (parallel chats each own one). */
+  const plainChatAbortsRef = useRef(new Map<string, AbortController>());
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
   const activeThreadIdRef = useRef(activeThreadId);
@@ -302,6 +331,7 @@ export function App() {
   composerModelRef.current = { providerId: selectedProviderId, modelId: selectedModel };
   const selectModeRef = useRef<(mode: ChatMode) => void>(() => undefined);
   const startAgentRunRef = useRef<(thread: Thread, text: string, mode: ChatMode) => void>(() => undefined);
+  const applyGoalToThreadRef = useRef<(thread: Thread, goal: string | null) => void>(() => undefined);
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -310,12 +340,24 @@ export function App() {
   const [panelTab, setPanelTab] = useState<PanelTab>("plan");
   /** Subagent run shown in the Agent panel; null follows the newest run. */
   const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
-  const [diff, setDiff] = useState<FileDiff | null>(null);
+  const [diffByThread, setDiffByThread] = useState<Record<string, FileDiff>>({});
   /** Opens a path in the Files panel (markdown links, security findings). */
   const [filesOpenRequest, setFilesOpenRequest] = useState<{ path: string; seq: number } | null>(null);
   const [browserUrl, setBrowserUrl] = useState("");
   /** Agent PTY sessions announced via shell-session, keyed for Terminal tab attach. */
   const [agentTerminals, setAgentTerminals] = useState<{ id: string; label: string; threadId: string }[]>([]);
+
+  const setDiffForThread = useCallback((threadId: string, fileDiff: FileDiff | null) => {
+    setDiffByThread((cur) => {
+      if (fileDiff === null) {
+        if (!(threadId in cur)) return cur;
+        const next = { ...cur };
+        delete next[threadId];
+        return next;
+      }
+      return { ...cur, [threadId]: fileDiff };
+    });
+  }, []);
 
   const openPanelTab = useCallback((tab: PanelTab) => {
     setPanelOpen(true);
@@ -617,13 +659,34 @@ export function App() {
 
   const activeQueuedPrompt =
     activeThreadId !== null ? queuedPromptByThread[activeThreadId]?.trim() ?? null : null;
+  /** The active thread's own plain-chat stream text — never another thread's. */
+  const streamText = activeThreadId !== null ? plainStreamByThread[activeThreadId] ?? null : null;
+  const planApproval = activeThreadId !== null ? planApprovalByThread[activeThreadId] ?? null : null;
   const activeThreadStreaming =
-    activeThreadId !== null &&
-    ((agentRunState?.running ?? false) ||
-      (streamText !== null && plainChatThreadIdRef.current === activeThreadId));
+    activeThreadId !== null && ((agentRunState?.running ?? false) || streamText !== null);
+  const showGlobalStop = shouldShowGlobalStop({
+    runningThreadId,
+    isActiveThreadStreaming: activeThreadStreaming,
+  });
+  const activeDiff = activeThreadId !== null ? (diffByThread[activeThreadId] ?? null) : null;
+  const pendingByThread = useMemo(() => {
+    const ids = new Set([
+      ...Object.keys(approvalsByThread),
+      ...Object.keys(mcpAuthByThread),
+      ...Object.keys(questionByThread),
+    ]);
+    const pending = { approvalsByThread, questionByThread, mcpAuthByThread };
+    const out: Record<string, number> = {};
+    for (const id of ids) {
+      const count = countPendingInteractionsForThread(id, pending);
+      if (count > 0) out[id] = count;
+    }
+    return out;
+  }, [approvalsByThread, mcpAuthByThread, questionByThread]);
   const activeApprovals = activeThreadId !== null ? (approvalsByThread[activeThreadId] ?? []) : [];
   const activeMcpAuthRequests = activeThreadId !== null ? (mcpAuthByThread[activeThreadId] ?? []) : [];
-  const activeQuestion = activeThreadId !== null ? (questionByThread[activeThreadId] ?? null) : null;
+  const activeQuestion =
+    activeThreadId !== null ? (questionByThread[activeThreadId]?.[0] ?? null) : null;
 
   const selectedContextLength = useMemo(() => {
     const fromModels = models.find((m) => m.id === selectedModel)?.contextLength;
@@ -687,6 +750,10 @@ export function App() {
       setSelectedModel(fromDefault.modelId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    setActiveSubagentId(null);
   }, [activeThreadId]);
 
   const patchSettings = useCallback((patch: Partial<DeyinSettings>) => {
@@ -927,6 +994,14 @@ export function App() {
       if (!project) return;
 
       for (const thread of project.threads) {
+        if (agentStateStore.isRunning(thread.id)) {
+          window.deyin.agent?.stop(thread.id);
+        }
+        const plainAbort = plainChatAbortsRef.current.get(thread.id);
+        if (plainAbort) {
+          plainAbort.abort();
+          plainChatAbortsRef.current.delete(thread.id);
+        }
         window.deyin.agent.disposeShell(thread.id);
       }
       const threadIds = new Set(project.threads.map((t) => t.id));
@@ -969,20 +1044,28 @@ export function App() {
     );
   }, []);
 
+  const updateThread = useCallback((threadId: string, patch: Partial<Project["threads"][number]>) => {
+    setProjects((cur) =>
+      cur.map((project) => ({
+        ...project,
+        threads: project.threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread)),
+      })),
+    );
+  }, []);
+
   /** Restore the pre-change content of a file card (uses the tracked diff). */
   const undoFileChange = useCallback(
     (name: string) => {
-      setDiff((cur) => {
-        if (cur && cur.fileName === name) {
-          void window.deyin.files
-            .write(cur.fileName, cur.before)
-            .catch((err: unknown) => console.warn("undo failed", err));
-          return null;
-        }
-        return cur;
-      });
+      if (!activeThreadId) return;
+      const cur = diffByThread[activeThreadId];
+      if (cur && cur.fileName === name) {
+        void window.deyin.files
+          .write(cur.fileName, cur.before)
+          .catch((err: unknown) => console.warn("undo failed", err));
+        setDiffForThread(activeThreadId, null);
+      }
     },
-    [],
+    [activeThreadId, diffByThread, setDiffForThread],
   );
 
   /**
@@ -998,25 +1081,36 @@ export function App() {
             if (cur.some((t) => t.id === effect.terminalId)) return cur;
             return [...cur, { id: effect.terminalId, label: effect.label, threadId: effect.threadId }];
           });
-          if (settingsRef.current?.revealTerminalOnAgentCommand !== false) {
+          // Never yank the panel for a run in a chat the user is not looking at.
+          if (
+            settingsRef.current?.revealTerminalOnAgentCommand !== false &&
+            effect.threadId === activeThreadIdRef.current
+          ) {
             openPanelTab("terminal");
           }
           break;
         }
         case "file-change": {
+          // pendingReview and the Diff tab show the *active* thread. A background
+          // run's edits are re-read from the host when that thread is opened.
+          const isActive = effect.threadId === activeThreadIdRef.current;
           if (effect.renderable) {
             const fileDiff: FileDiff = { fileName: effect.path, before: effect.before, after: effect.after };
             fileDiffsRef.current.set(effect.path, fileDiff);
-            setDiff(fileDiff); // Diff tab always shows the latest change.
+            setDiffForThread(effect.threadId, fileDiff);
+            // Diff tab follows the active thread only.
           }
-          setPendingReview((cur) => cur.filter((c) => c.path !== effect.path || c.status !== "pending"));
+          if (isActive) {
+            setPendingReview((cur) => cur.filter((c) => c.path !== effect.path || c.status !== "pending"));
+          }
           break;
         }
         case "pending-change": {
-          setPendingReview((cur) => [...cur.filter((c) => c.id !== effect.change.id), effect.change]);
           const fileDiff: FileDiff = { fileName: effect.change.path, before: effect.change.before, after: effect.change.after };
           fileDiffsRef.current.set(effect.change.path, fileDiff);
-          setDiff(fileDiff);
+          setDiffForThread(effect.threadId, fileDiff);
+          if (effect.threadId !== activeThreadIdRef.current) break;
+          setPendingReview((cur) => [...cur.filter((c) => c.id !== effect.change.id), effect.change]);
           openPanelTab("diff");
           break;
         }
@@ -1088,6 +1182,9 @@ export function App() {
           break;
         }
         case "permission-request":
+          if (effect.threadId !== activeThreadIdRef.current) {
+            updateThread(effect.threadId, { unread: true });
+          }
           setApprovalsByThread((cur) => {
             const list = cur[effect.threadId] ?? [];
             if (list.some((a) => a.requestId === effect.requestId)) return cur;
@@ -1119,19 +1216,29 @@ export function App() {
           });
           break;
         case "question-request":
-          setQuestionByThread((cur) => ({
-            ...cur,
-            [effect.threadId]: {
-              requestId: effect.requestId,
-              title: effect.title,
-              questions: effect.questions,
-            },
-          }));
+          if (effect.threadId !== activeThreadIdRef.current) {
+            updateThread(effect.threadId, { unread: true });
+          }
+          setQuestionByThread((cur) => {
+            const list = cur[effect.threadId] ?? [];
+            if (list.some((q) => q.requestId === effect.requestId)) return cur;
+            return {
+              ...cur,
+              [effect.threadId]: [
+                ...list,
+                {
+                  requestId: effect.requestId,
+                  title: effect.title,
+                  questions: effect.questions,
+                },
+              ],
+            };
+          });
           break;
         case "plan-created": {
           const planTitle = effect.name || planTitleFromMarkdown(effect.plan);
-          openPanelTab("plan");
-          setPlanApproval({
+          if (effect.threadId === activeThreadIdRef.current) openPanelTab("plan");
+          setPlanApprovalForThread(effect.threadId, {
             threadId: effect.threadId,
             title: planTitle,
             overview: effect.overview,
@@ -1156,15 +1263,19 @@ export function App() {
           break;
         }
         case "plan-panel-open":
-          openPanelTab("plan");
+          if (effect.threadId === activeThreadIdRef.current) openPanelTab("plan");
           break;
         case "mode-changed":
-          if (effect.mode && effect.threadId === activeThreadIdRef.current) {
+          updateThread(effect.threadId, { mode: effect.mode });
+          if (effect.threadId === activeThreadIdRef.current) {
             selectModeRef.current(effect.mode);
           }
           break;
         case "run-complete": {
           const { fold } = effect;
+          if (fold.threadId !== activeThreadIdRef.current) {
+            updateThread(fold.threadId, { unread: true });
+          }
           if (stopWatchdogRef.current) {
             clearTimeout(stopWatchdogRef.current);
             stopWatchdogRef.current = null;
@@ -1181,7 +1292,7 @@ export function App() {
                 ),
               })),
             );
-            if (fold.planFinished) {
+            if (fold.planFinished && fold.threadId === activeThreadIdRef.current) {
               openPanelTab("plan");
             }
           }
@@ -1190,13 +1301,18 @@ export function App() {
           void window.deyin.usage.record({ model: selectedModel, tokens: fold.tokens, newSession: false });
 
           // Interrupt-and-send takes priority over a queued follow-up.
-          const sendNow = pendingSendNowRef.current;
-          pendingSendNowRef.current = null;
+          const sendNow = pendingSendNowByThreadRef.current[fold.threadId];
           if (sendNow) {
-            setQueuedForThread(sendNow.threadId, null);
+            const nextPending = { ...pendingSendNowByThreadRef.current };
+            delete nextPending[fold.threadId];
+            pendingSendNowByThreadRef.current = nextPending;
+            setQueuedForThread(fold.threadId, null);
             const thread =
-              projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === sendNow.threadId) ?? null;
-            if (thread) {
+              projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
+            if (
+              thread &&
+              !applyGoalCommandText(sendNow.text, (goal) => applyGoalToThreadRef.current(thread, goal))
+            ) {
               // Defer so main has removed this thread from `active` before restart.
               queueMicrotask(() => startAgentRunRef.current(thread, sendNow.text, sendNow.mode));
             }
@@ -1208,7 +1324,9 @@ export function App() {
             const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
             if (thread) {
               const mode = thread.mode ?? "agent";
-              queueMicrotask(() => startAgentRunRef.current(thread, queued, mode));
+              if (!applyGoalCommandText(queued, (goal) => applyGoalToThreadRef.current(thread, goal))) {
+                queueMicrotask(() => startAgentRunRef.current(thread, queued, mode));
+              }
             }
           }
           break;
@@ -1217,7 +1335,7 @@ export function App() {
           break;
       }
     },
-    [appendEvents, markOnboard, openPanelTab, selectedModel, setQueuedForThread, clearPendingForThread],
+    [appendEvents, markOnboard, openPanelTab, selectedModel, setQueuedForThread, clearPendingForThread, setPlanApprovalForThread, updateThread, setDiffForThread],
   );
   useAgentStateController({ onSideEffect: handleAgentSideEffect });
 
@@ -1270,14 +1388,20 @@ export function App() {
     })();
   }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, saveDraftForThread, restoreDraftForThread]);
 
-  const updateThread = useCallback((threadId: string, patch: Partial<Project["threads"][number]>) => {
-    setProjects((cur) =>
-      cur.map((project) => ({
-        ...project,
-        threads: project.threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread)),
-      })),
-    );
-  }, []);
+  const applyGoalToThread = useCallback(
+    (thread: Thread, goal: string | null) => {
+      let createdProjectId: string | undefined;
+      setProjects((cur) => {
+        const result = applyGoalToProjects(cur, thread, goal, activeProjectId);
+        createdProjectId = result.createdProjectId;
+        return result.projects;
+      });
+      setActiveThreadId(thread.id);
+      if (createdProjectId) setActiveProjectId(createdProjectId);
+    },
+    [activeProjectId],
+  );
+  applyGoalToThreadRef.current = applyGoalToThread;
 
   /** Fork a new task from the conversation prefix ending at `eventIndex`. */
   const forkThreadAtEvent = useCallback((sourceThreadId: string, eventIndex: number) => {
@@ -1326,7 +1450,10 @@ export function App() {
   );
 
   const resolveThreadModel = useCallback(
-    (_thread: Thread | null | undefined): { providerId: string; modelId: string } => {
+    (thread: Thread | null | undefined): { providerId: string; modelId: string } => {
+      if (thread && thread.id !== activeThreadIdRef.current && thread.model) {
+        return { providerId: thread.providerId ?? "openference", modelId: thread.model };
+      }
       const live = composerModelRef.current;
       if (live.modelId) return live;
       const fromDefault = parseStoredModelRef(settings?.defaultModel ?? null);
@@ -1375,6 +1502,14 @@ export function App() {
           setRenamingThreadId(threadId);
           break;
         case "archive": {
+          if (agentStateStore.isRunning(threadId)) {
+            window.deyin.agent?.stop(threadId);
+          }
+          const plainAbort = plainChatAbortsRef.current.get(threadId);
+          if (plainAbort) {
+            plainAbort.abort();
+            plainChatAbortsRef.current.delete(threadId);
+          }
           updateThread(threadId, { archived: true });
           window.deyin.agent.disposeShell(threadId);
           setAgentTerminals((cur) => cur.filter((t) => t.threadId !== threadId));
@@ -1478,6 +1613,13 @@ export function App() {
       const { providerId: runProviderId, modelId: threadModelId } = resolveThreadModel(thread);
       const runModel = meta?.model ?? threadModelId;
       let agentPrompt = text;
+      if (agentStateStore.isRunning(thread.id)) return;
+      const isFirstMessage = toChatMessages(thread.events).length === 0;
+      appendEvents(thread.id, [
+        { kind: "user", text: meta?.displayText ?? text, attachments, linkedThreadIds },
+        ...(meta?.notice ? [{ kind: "assistant" as const, text: meta.notice }] : []),
+      ]);
+      const runId = agentStateStore.startRun(thread.id, mode);
       try {
         const refs = dedupeContextRefs(attachments.map((a) => ({ kind: a.kind, path: a.path })));
         const resolved = refs.length ? await window.deyin.context.resolve(refs) : [];
@@ -1487,20 +1629,13 @@ export function App() {
       } catch {
         agentPrompt = text;
       }
-
-      const isFirstMessage = toChatMessages(thread.events).length === 0;
-      if (agentStateStore.isRunning(thread.id)) return;
-      appendEvents(thread.id, [
-        { kind: "user", text: meta?.displayText ?? text, attachments, linkedThreadIds },
-        ...(meta?.notice ? [{ kind: "assistant" as const, text: meta.notice }] : []),
-      ]);
-      agentStateStore.startRun(thread.id, mode);
       if (isFirstMessage) void window.deyin.usage.record({ model: runModel, tokens: 0, newSession: true });
       if (!thread.model || thread.providerId !== runProviderId) {
         updateThread(thread.id, { model: runModel, providerId: runProviderId });
       }
       window.deyin.agent.start({
         threadId: thread.id,
+        runId,
         prompt: agentPrompt,
         providerId: runProviderId,
         model: runModel,
@@ -1573,32 +1708,29 @@ export function App() {
 
   /** Abort the in-flight agent (or plain-chat) run and unlock the composer. */
   const stopRun = useCallback(() => {
-    const isActiveComposerBusy =
-      streamText !== null && plainChatThreadIdRef.current === activeThreadId;
+    const isActiveComposerBusy = streamText !== null;
     const threadId = pickRunningThreadToStop({
       activeThreadId,
       runningThreadId,
       isActiveThreadRunning: agentRunState?.running ?? false,
       isActiveComposerBusy,
     });
-    if (plainChatAbortRef.current && plainChatThreadIdRef.current === activeThreadId) {
-      plainChatAbortRef.current.abort();
-      plainChatAbortRef.current = null;
-      plainChatThreadIdRef.current = null;
-      setStreamText(null);
+    // Stop only *this* chat's plain-chat stream; other threads keep running.
+    const activeAbort = activeThreadId ? plainChatAbortsRef.current.get(activeThreadId) : undefined;
+    if (activeAbort && activeThreadId) {
+      activeAbort.abort();
+      plainChatAbortsRef.current.delete(activeThreadId);
+      setPlainStreamForThread(activeThreadId, null);
       return;
     }
     if (!threadId) {
-      if (plainChatThreadIdRef.current === activeThreadId) setStreamText(null);
+      if (activeThreadId) setPlainStreamForThread(activeThreadId, null);
       return;
     }
 
     window.deyin.agent?.stop(threadId);
     clearPendingForThread(threadId);
-    if (plainChatThreadIdRef.current === threadId) {
-      plainChatThreadIdRef.current = null;
-      setStreamText(null);
-    }
+    setPlainStreamForThread(threadId, null);
 
     if (stopWatchdogRef.current) clearTimeout(stopWatchdogRef.current);
     stopWatchdogRef.current = setTimeout(() => {
@@ -1610,22 +1742,40 @@ export function App() {
       appendEvents(threadId, finished);
       clearPendingForThread(threadId);
 
-      const sendNow = pendingSendNowRef.current;
-      pendingSendNowRef.current = null;
+      const sendNow = pendingSendNowByThreadRef.current[threadId];
       if (sendNow) {
-        setQueuedForThread(sendNow.threadId, null);
-        const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === sendNow.threadId) ?? null;
-        if (thread) startAgentRunRef.current(thread, sendNow.text, sendNow.mode);
+        const nextPending = { ...pendingSendNowByThreadRef.current };
+        delete nextPending[threadId];
+        pendingSendNowByThreadRef.current = nextPending;
+        setQueuedForThread(threadId, null);
+        const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
+        if (thread && !applyGoalCommandText(sendNow.text, (goal) => applyGoalToThreadRef.current(thread, goal))) {
+          startAgentRunRef.current(thread, sendNow.text, sendNow.mode);
+        }
         return;
       }
       const queued = queuedPromptByThreadRef.current[threadId]?.trim();
       if (queued) {
         setQueuedForThread(threadId, null);
         const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
-        if (thread) startAgentRunRef.current(thread, queued, thread.mode ?? "agent");
+        if (
+          thread &&
+          !applyGoalCommandText(queued, (goal) => applyGoalToThreadRef.current(thread, goal))
+        ) {
+          startAgentRunRef.current(thread, queued, thread.mode ?? "agent");
+        }
       }
     }, 3_000);
-  }, [activeThreadId, runningThreadId, agentRunState?.running, streamText, appendEvents, setQueuedForThread, clearPendingForThread]);
+  }, [
+    activeThreadId,
+    runningThreadId,
+    agentRunState?.running,
+    streamText,
+    appendEvents,
+    setQueuedForThread,
+    clearPendingForThread,
+    setPlainStreamForThread,
+  ]);
 
   /** Persist manual todo edits and keep the latest timeline todo card in sync. */
   const updatePlanTodos = useCallback(
@@ -1649,8 +1799,7 @@ export function App() {
     [activeThreadId],
   );
 
-  const activeComposerBusy =
-    streamText !== null && plainChatThreadIdRef.current === activeThreadId;
+  const activeComposerBusy = streamText !== null;
 
   /** Plan-ready card "Build": switch the thread to agent mode and execute the plan. */
   const buildFromPlan = useCallback(() => {
@@ -1661,9 +1810,11 @@ export function App() {
       ? `${BUILD_PROMPT}\n\n---\nPlan to implement:\n${plan}\n---`
       : BUILD_PROMPT;
     startAgentRun(activeThread, prompt, "agent");
-    setPlanApproval(null);
-    if (activeThreadId) updateThread(activeThreadId, { planApproved: true });
-  }, [activeThread, activeThreadId, activeComposerBusy, agentRunState?.running, selectMode, startAgentRun, updateThread]);
+    if (activeThreadId) {
+      setPlanApprovalForThread(activeThreadId, null);
+      updateThread(activeThreadId, { planApproved: true });
+    }
+  }, [activeThread, activeThreadId, activeComposerBusy, agentRunState?.running, selectMode, startAgentRun, updateThread, setPlanApprovalForThread]);
 
   /** The newest plan is written but not built, and no gate is on screen: the plan
    *  card carries Build so dismissing the gate never strands the plan. */
@@ -1676,10 +1827,11 @@ export function App() {
 
   /** File card "Open": show that change in the Diff tab (when we still hold it). */
   const openFileDiff = useCallback((path: string) => {
+    if (!activeThreadId) return;
     const fileDiff = fileDiffsRef.current.get(path);
-    if (fileDiff) setDiff(fileDiff);
+    if (fileDiff) setDiffForThread(activeThreadId, fileDiff);
     openPanelTab("diff");
-  }, [openPanelTab]);
+  }, [activeThreadId, openPanelTab, setDiffForThread]);
 
   /** Markdown file refs and security findings: open in the Files panel. */
   const openWorkspaceFile = useCallback((path: string) => {
@@ -1696,14 +1848,17 @@ export function App() {
       model: selectedModel,
       providerId: selectedProviderId,
     };
+    let createdProjectId: string | undefined;
     setProjects((cur) => {
       if (cur.length === 0) {
-        return [{ id: newId("proj"), name: "Workspace", root: null, threads: [newThread] }];
+        createdProjectId = newId("proj");
+        return [{ id: createdProjectId, name: "Workspace", root: null, threads: [newThread] }];
       }
       const target = cur.some((p) => p.id === activeProjectId) ? activeProjectId! : cur[0]!.id;
       return cur.map((p) => (p.id === target ? { ...p, threads: [newThread, ...p.threads] } : p));
     });
     setActiveThreadId(newThread.id);
+    if (createdProjectId) setActiveProjectId(createdProjectId);
     return newThread;
   }, [activeProjectId, composerMode, selectedModel, selectedProviderId]);
 
@@ -1714,33 +1869,36 @@ export function App() {
     // /goal is a client-side command: set (or clear, when no text follows) the
     // thread goal instead of messaging the model. Runs before queueing so it
     // also works while a run is active.
-    const goal = matchGoalCommand(text);
-    if (goal !== undefined) {
-      const thread = activeThread ?? ensureThread();
-      updateThread(thread.id, {
-        goal: goal === null ? undefined : { text: goal, status: "active", setAt: new Date().toISOString() },
-      });
-      appendEvents(thread.id, [{ kind: "goal-set", text: goal }]);
+    const draftThread =
+      activeThread ??
+      ({
+        ...emptyThread(),
+        mode: composerMode,
+        model: selectedModel,
+        providerId: selectedProviderId,
+      } satisfies Thread);
+    if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
       setInput("");
       return;
     }
 
     const thread = activeThread ?? ensureThread();
 
+    const { providerId: runProviderId, modelId: runModelId } = resolveThreadModel(thread);
+
     // While this thread's run is active, Enter/Send queues the follow-up (Cursor-like).
     if (
       shouldQueueFollowUp({
         threadId: thread.id,
         isThreadRunning: agentStateStore.isRunning(thread.id),
-        streamText,
-        busyThreadId: plainChatThreadIdRef.current,
+        streamText: plainStreamFor(thread.id),
+        busyThreadId: thread.id,
       })
     ) {
       setQueuedForThread(thread.id, text);
       setInput("");
       return;
     }
-    const { providerId: runProviderId, modelId: runModelId } = resolveThreadModel(thread);
     updateThread(thread.id, { model: runModelId, providerId: runProviderId });
 
     // Route to the selected provider: primary uses the Openference OAuth token,
@@ -1818,8 +1976,7 @@ export function App() {
       appendEvents(thread.id, [{ kind: "user", text }]);
       setInput("");
       setComposerImages([]);
-      plainChatThreadIdRef.current = thread.id;
-      setStreamText(`Generating image with ${runModelId}…`);
+      setPlainStreamForThread(thread.id, `Generating image with ${runModelId}…`);
       try {
         const result = await window.deyin.images.generate({
           threadId: thread.id,
@@ -1835,8 +1992,7 @@ export function App() {
           { kind: "assistant", text: `Image generation failed: ${err instanceof Error ? err.message : String(err)}` },
         ]);
       } finally {
-        plainChatThreadIdRef.current = null;
-        setStreamText(null);
+        setPlainStreamForThread(thread.id, null);
         void window.deyin.usage.record({ model: runModelId, tokens: 0, newSession: isFirstMessage });
       }
       return;
@@ -1908,14 +2064,13 @@ export function App() {
 
     appendEvents(thread.id, [{ kind: "user", text }]);
     setInput("");
-    setStreamText("");
+    setPlainStreamForThread(thread.id, "");
 
     // Inactivity watchdog: a stalled SSE stream must not wedge the composer
     // (streamText stays non-null, which blocks every later send).
     let timedOut = false;
     const abort = new AbortController();
-    plainChatAbortRef.current = abort;
-    plainChatThreadIdRef.current = thread.id;
+    plainChatAbortsRef.current.set(thread.id, abort);
     const armWatchdog = () =>
       setTimeout(() => {
         timedOut = true;
@@ -1942,7 +2097,7 @@ export function App() {
         clearTimeout(watchdog);
         watchdog = armWatchdog();
         acc += delta;
-        setStreamText(acc);
+        setPlainStreamForThread(thread.id, acc);
       }
       appendEvents(thread.id, [{ kind: "assistant", text: acc }]);
     } catch (err) {
@@ -1954,39 +2109,44 @@ export function App() {
       appendEvents(thread.id, [{ kind: "assistant", text: `Request failed: ${msg}` }]);
     } finally {
       clearTimeout(watchdog);
-      plainChatAbortRef.current = null;
-      plainChatThreadIdRef.current = null;
-      setStreamText(null);
+      // Only drop this thread's controller: a concurrent chat owns its own.
+      if (plainChatAbortsRef.current.get(thread.id) === abort) plainChatAbortsRef.current.delete(thread.id);
+      setPlainStreamForThread(thread.id, null);
       // Real token usage from the provider's final stream frame. Providers that
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread]);
+  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
     const fromInput = input.trim();
     const text = fromInput || queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim() || "";
-    if (!text || !activeThread) return;
+    if (!text) return;
+
+    const draftThread =
+      activeThread ??
+      ({
+        ...emptyThread(),
+        mode: composerMode,
+        model: selectedModel,
+        providerId: selectedProviderId,
+      } satisfies Thread);
 
     // /goal never reaches the model — apply it without interrupting the run.
-    const goal = matchGoalCommand(text);
-    if (goal !== undefined) {
-      updateThread(activeThread.id, {
-        goal: goal === null ? undefined : { text: goal, status: "active", setAt: new Date().toISOString() },
-      });
-      appendEvents(activeThread.id, [{ kind: "goal-set", text: goal }]);
+    if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
       if (fromInput) setInput("");
-      else setQueuedForThread(activeThread.id, null);
+      else setQueuedForThread(draftThread.id, null);
       return;
     }
+
+    if (!activeThread) return;
 
     setInput("");
     setQueuedForThread(activeThread.id, null);
 
     const runActive =
-      agentStateStore.isRunning(activeThread.id) ||
-      (streamText !== null && plainChatThreadIdRef.current === activeThread.id);
+      agentStateStore.isRunning(activeThread.id) || plainStreamFor(activeThread.id) !== null;
     if (!runActive) {
       if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
         startAgentRun(activeThread, text, composerMode);
@@ -1994,13 +2154,27 @@ export function App() {
       return;
     }
 
-    pendingSendNowRef.current = { threadId: activeThread.id, text, mode: composerMode };
+    pendingSendNowByThreadRef.current = {
+      ...pendingSendNowByThreadRef.current,
+      [activeThread.id]: { text, mode: composerMode },
+    };
     stopRun();
-  }, [input, activeThread, streamText, settings, boot, composerMode, startAgentRun, stopRun, appendEvents, updateThread, setQueuedForThread]);
+  }, [input, activeThread, streamText, settings, boot, composerMode, selectedModel, selectedProviderId, startAgentRun, stopRun, setQueuedForThread, plainStreamFor]);
 
   const clearQueue = useCallback(() => {
     if (activeThreadId) setQueuedForThread(activeThreadId, null);
   }, [activeThreadId, setQueuedForThread]);
+
+  /** Run the queued follow-up in a new thread while the current run continues. */
+  const startMultitasking = useCallback(() => {
+    const text = queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim();
+    if (!text || !activeThread) return;
+    setQueuedForThread(activeThread.id, null);
+    saveDraftForThread(activeThread.id);
+    const newThread = ensureThread();
+    if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(newThread, goal))) return;
+    void startAgentRun(newThread, text, composerMode);
+  }, [activeThread, composerMode, ensureThread, setQueuedForThread, startAgentRun, saveDraftForThread]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -2024,7 +2198,7 @@ export function App() {
     activeThreadId,
     agentStreamText: agentRunState?.streamText ?? null,
     streamText,
-    busyThreadId: plainChatThreadIdRef.current,
+    busyThreadId: activeThreadId,
   });
   const isChatEmpty = chatEvents.length === 0 && chatStreamText === null;
 
@@ -2139,6 +2313,7 @@ export function App() {
         {!sidebarOpen && (
           <NavRail
             activeView={view}
+            platform={boot?.platform ?? "desktop"}
             onExpand={() => setSidebarOpen(true)}
             onNewTask={newTask}
             onOpenSearch={() => setSearchOpen(true)}
@@ -2205,6 +2380,7 @@ export function App() {
             setSettingsPage("appearance");
             setView("settings");
           }}
+          pendingByThread={pendingByThread}
         />
         )}
 
@@ -2371,10 +2547,10 @@ export function App() {
                     overview={planApproval.overview}
                     onApprove={buildFromPlan}
                     onRevise={() => {
-                      setPlanApproval(null);
+                      setPlanApprovalForThread(activeThreadId, null);
                       setComposerFocus((n) => n + 1);
                     }}
-                    onDismiss={() => setPlanApproval(null)}
+                    onDismiss={() => setPlanApprovalForThread(activeThreadId, null)}
                     onEdit={
                       planApproval.filePath
                         ? () => void window.deyin.shell.showItem(planApproval.filePath!)
@@ -2388,13 +2564,23 @@ export function App() {
                     questions={activeQuestion.questions}
                     onSubmit={(answers) => {
                       window.deyin.agent?.answerQuestion(activeQuestion.requestId, answers);
-                      setQuestionByThread((cur) => ({ ...cur, [activeThreadId]: null }));
+                      setQuestionByThread((cur) => ({
+                        ...cur,
+                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                          (q) => q.requestId !== activeQuestion.requestId,
+                        ),
+                      }));
                     }}
                     onCancel={() => {
                       window.deyin.agent?.answerQuestion(activeQuestion.requestId, {
                         __cancelled: "AskQuestion was cancelled before answers were returned.",
                       });
-                      setQuestionByThread((cur) => ({ ...cur, [activeThreadId]: null }));
+                      setQuestionByThread((cur) => ({
+                        ...cur,
+                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                          (q) => q.requestId !== activeQuestion.requestId,
+                        ),
+                      }));
                     }}
                   />
                 )}
@@ -2443,8 +2629,9 @@ export function App() {
                   onSend={() => void send()}
                   onSteer={() => void send()}
                   onSendNow={sendNow}
+                  onStartMultitasking={startMultitasking}
                   onClearQueue={clearQueue}
-                  onStop={activeThreadStreaming ? stopRun : undefined}
+                  onStop={showGlobalStop ? stopRun : undefined}
                   onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
                   onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
                   onManageModels={() => {
@@ -2474,6 +2661,18 @@ export function App() {
                   threadsForPicker={activeProject?.threads}
                   activeThreadId={activeThreadId}
                   workspaceRoot={workspaceRoot}
+                  goalText={activeThread?.goal?.status === "active" ? activeThread.goal.text : null}
+                  onSetGoal={(text) => {
+                    const thread =
+                      activeThread ??
+                      ({
+                        ...emptyThread(),
+                        mode: composerMode,
+                        model: selectedModel,
+                        providerId: selectedProviderId,
+                      } satisfies Thread);
+                    applyGoalToThreadRef.current(thread, text);
+                  }}
                 />
               </div>
             </main>
@@ -2503,7 +2702,7 @@ export function App() {
                 <PanelRail
                   activeTab={panelTab}
                   collapsed={!panelOpen}
-                  diffDot={Boolean(diff)}
+                  diffDot={Boolean(activeDiff)}
                   agentCount={subagentRuns.filter((r) => r.status === "running").length}
                   onSelectTab={openPanelTab}
                   onDismiss={dismissPanel}
@@ -2521,7 +2720,7 @@ export function App() {
                 planTodos={activeThread?.todos ?? []}
                 planTodosRunning={agentRunState?.running ?? false}
                 canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && !activeComposerBusy && !(agentRunState?.running ?? false)}
-                diff={diff}
+                diff={activeDiff}
                 browserUrl={browserUrl}
                 browserPartition={browserPartition}
                 codeDisplay={{
@@ -2534,7 +2733,7 @@ export function App() {
                 }}
                 browserControlEnabled={settings?.browserControlEnabled ?? true}
                 onOpenGitDiff={(d) => {
-                  setDiff(d);
+                  if (activeThreadId) setDiffForThread(activeThreadId, d);
                   openPanelTab("diff");
                 }}
                 onNavigate={setBrowserUrl}

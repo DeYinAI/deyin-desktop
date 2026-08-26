@@ -7,25 +7,25 @@ import type { AgentMessage } from "./types.js";
 export type PromptCacheProvider = AgentRunProviderHint;
 
 export interface WireOptions {
- enableCompression?: boolean;
- compressionMode?: CompressionMode;
- enablePromptCaching?: boolean;
- /** Provider that receives cache markers. "openference" follows OpenAI-compatible shape. */
- provider?: PromptCacheProvider;
- /** Model id, used to detect DeepSeek wire quirks (reasoning_content replay). */
- model?: string;
- /** Stable key shared across agent steps for OpenAI-style prompt caching. */
- promptCacheKey?: string;
+  enableCompression?: boolean;
+  compressionMode?: CompressionMode;
+  enablePromptCaching?: boolean;
+  /** Provider that receives cache markers. "openference" follows OpenAI-compatible shape. */
+  provider?: PromptCacheProvider;
+  /** Model id, used to detect DeepSeek wire quirks (reasoning_content replay). */
+  model?: string;
+  /** Stable key shared across agent steps for OpenAI-style prompt caching. */
+  promptCacheKey?: string;
 }
 
 export interface WireBuildResult {
- messages: Record<string, unknown>[];
- compression?: {
- originalTokens: number;
- compressedTokens: number;
- ratio: number;
- results: CompressionResult[];
- };
+  messages: Record<string, unknown>[];
+  compression?: {
+    originalTokens: number;
+    compressedTokens: number;
+    ratio: number;
+    results: CompressionResult[];
+  };
 }
 
 export type { CompressionResult };

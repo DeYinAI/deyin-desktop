@@ -1,8 +1,10 @@
 import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   PermissionEngine,
   createTaskTool,
   discoverSubagents,
+  getSessionJobsManager,
   runSubagent,
   subagentReadonlyRules,
   subagentRoots,
@@ -20,6 +22,8 @@ export async function loadCliSubagents(ctx: CliContext): Promise<SubagentDefinit
 
 export interface CliSubagentToolOptions {
   ctx: CliContext;
+  /** Active session id for background job tracking (may start empty). */
+  sessionId: () => string | null;
   /** --yes semantics: skip permission prompts for non-readonly subagents. */
   skipAll: boolean;
   resolvePermission: PermissionResolver;
@@ -36,6 +40,7 @@ export async function registerCliSubagentTool(tools: ToolRegistry, opts: CliSuba
   const subagents = await loadCliSubagents(opts.ctx);
   if (subagents.length === 0) return;
   const ctx = opts.ctx;
+  const jobsDir = join(ctx.dataDir, "jobs");
   tools.register(
     createTaskTool({
       subagents,
@@ -60,7 +65,27 @@ export async function registerCliSubagentTool(tools: ToolRegistry, opts: CliSuba
           signal,
         });
       },
-      onBackgroundDone: opts.onBackgroundDone,
+      onBackgroundStart: (def, subPrompt) => {
+        const sessionId = opts.sessionId();
+        if (!sessionId) return "";
+        return getSessionJobsManager(sessionId, jobsDir).register({
+          kind: "task",
+          label: def.name,
+          prompt: subPrompt,
+        }).id;
+      },
+      onBackgroundDone: (jobId, def, result) => {
+        const sessionId = opts.sessionId();
+        if (sessionId && jobId) {
+          getSessionJobsManager(sessionId, jobsDir).updateStatus(
+            jobId,
+            result.ok ? "completed" : "failed",
+            result.ok ? result.report : undefined,
+            result.ok ? undefined : result.report,
+          );
+        }
+        opts.onBackgroundDone?.(jobId, def, result);
+      },
     }),
   );
 }

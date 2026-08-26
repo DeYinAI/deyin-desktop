@@ -416,3 +416,91 @@ test("anthropic error frame followed by message_stop surfaces as an error", asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test("responses: a tool call round-trips on call_id, not the output-item id", () => {
+  const acc = new ResponsesAccumulator();
+  feedAcc(acc, [
+    { type: "response.output_item.added", item: { type: "function_call", id: "fc_abc", call_id: "call_123", name: "ls" } },
+    { type: "response.function_call_arguments.delta", item_id: "fc_abc", delta: '{"path":"."}' },
+    { type: "response.output_item.done", item: { type: "function_call", id: "fc_abc", call_id: "call_123", name: "ls", arguments: '{"path":"."}' } },
+  ]);
+  const done = acc.push({ type: "response.completed", response: {} });
+  assert.equal(done?.type, "done");
+  if (done?.type !== "done") return;
+  // The API matches function_call_output on call_id; sending fc_… back is rejected.
+  assert.deepEqual(done.toolCalls, [{ id: "call_123", name: "ls", arguments: '{"path":"."}' }]);
+
+  const wire = toResponsesInput([
+    { role: "user", content: "list" },
+    { role: "assistant", content: "", toolCalls: done.toolCalls },
+    { role: "tool", toolCallId: done.toolCalls[0]!.id, toolName: "ls", content: "x.txt" },
+  ] satisfies AgentMessage[]).input as Record<string, unknown>[];
+  assert.equal(wire.at(-2)?.call_id, "call_123");
+  assert.equal(wire.at(-1)?.call_id, "call_123");
+});
+
+test("responses: a function_call seen only on output_item.done is still collected", () => {
+  const acc = new ResponsesAccumulator();
+  acc.push({
+    type: "response.output_item.done",
+    item: { type: "function_call", id: "fc_1", call_id: "call_9", name: "read", arguments: '{"path":"a"}' },
+  });
+  const done = acc.push({ type: "response.completed", response: {} });
+  assert.equal(done?.type, "done");
+  if (done?.type !== "done") return;
+  assert.deepEqual(done.toolCalls, [{ id: "call_9", name: "read", arguments: '{"path":"a"}' }]);
+});
+
+test("anthropic: thinking disabled sends the bare disabled config", async () => {
+  let captured!: Record<string, unknown>;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response([data({ type: "message_stop" })].join("\n"), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+  try {
+    for await (const _ of streamAnthropicEvents({
+      apiBaseUrl: "https://api.anthropic.com",
+      token: "sk-ant",
+      model: "claude-opus-4-8",
+      messages: [{ role: "user" as const, content: "hi" }],
+      thinking: false,
+    })) {
+      // drain
+    }
+    // budget_tokens alongside "disabled" is rejected by the Messages API.
+    assert.deepEqual(captured.thinking, { type: "disabled" });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("anthropic: the thinking budget stays under max_tokens", async () => {
+  let captured!: Record<string, unknown>;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    captured = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response([data({ type: "message_stop" })].join("\n"), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  }) as typeof fetch;
+  try {
+    for await (const _ of streamAnthropicEvents({
+      apiBaseUrl: "https://api.anthropic.com",
+      token: "sk-ant",
+      model: "claude-opus-4-8",
+      messages: [{ role: "user" as const, content: "hi" }],
+      thinking: true,
+      maxTokens: 2000,
+    })) {
+      // drain
+    }
+    assert.deepEqual(captured.thinking, { type: "enabled", budget_tokens: 1999 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

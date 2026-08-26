@@ -7,12 +7,16 @@ import {
   connectMcpServers,
   createBuiltinRegistry,
   estimateTokens,
+  getSessionJobsManager,
   loadContextFiles,
+  applyGoalCommandText,
+  matchCommand,
   resolveAgent,
   resolveAgents,
   runAgent,
   type AgentEvent,
   type AgentMessage,
+  type CapabilitySnapshot,
   type ContextFile,
   type McpConnection,
   type PermissionDecision,
@@ -23,10 +27,12 @@ import {
 } from "@deyin/agent-core";
 import { listModels, type ModelInfo } from "@deyin/host-core";
 import { loginWithDevice } from "@deyin/oauth-client/node";
-import { Box, Static, Text, useApp, useInput } from "ink";
+import { join } from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Box, Static, Text, useApp, useInput } from "ink";
 import type { CliContext } from "../context.js";
 import { tokenSource } from "../context.js";
+import { loadCliCapabilities, resolveCliPrompt } from "../capabilities.js";
 import { registerCliSubagentTool } from "../subagents.js";
 import { updateNotice } from "../version.js";
 import { Composer } from "./Composer.js";
@@ -48,6 +54,7 @@ const SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "/usage", description: "Show usage statistics" },
   { name: "/memory", description: "List saved background memories" },
   { name: "/remember", description: "Save a note as a project memory (/remember <note>)" },
+  { name: "/goal", description: "Set a verifiable task goal (/goal <objective>)" },
   { name: "/login", description: "Sign in with Openference (device flow)" },
   { name: "/exit", description: "Quit deyin" },
 ];
@@ -101,8 +108,10 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const newSessionRef = useRef(false);
   const toolsRef = useRef<ToolRegistry>(createBuiltinRegistry());
   const abortRef = useRef<AbortController | null>(null);
+  const goalTextRef = useRef<string | undefined>(undefined);
   const historyRef = useRef<string[]>([]);
   const contextFilesRef = useRef<ContextFile[]>([]);
+  const capsRef = useRef<CapabilitySnapshot | null>(null);
   const mcpRef = useRef<McpConnection[]>([]);
   const toolSummaryRef = useRef(new Map<string, string>());
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -164,6 +173,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     let cancelled = false;
     void (async () => {
       contextFilesRef.current = await loadContextFiles(ctx.cwd);
+      capsRef.current = await loadCliCapabilities(ctx.cwd);
       const connections = await connectMcpServers(ctx.config.mcpServers, toolsRef.current, {
         onError: (server, err) =>
           !cancelled && notice(`mcp ${server}: failed to start (${err instanceof Error ? err.message : String(err)})`, "warn"),
@@ -171,6 +181,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       mcpRef.current = connections;
       await registerCliSubagentTool(toolsRef.current, {
         ctx,
+        sessionId: () => sessionIdRef.current,
         skipAll: false,
         resolvePermission: requestPermission,
         onBackgroundDone: (_jobId, def) => notice(`Background subagent \u201c${def.name}\u201d finished`, "info"),
@@ -279,6 +290,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             agent,
             toolNames: toolsRef.current.names(),
             contextFiles: contextFilesRef.current,
+            skills: capsRef.current?.skills,
           }),
         };
         messagesRef.current = [system];
@@ -308,6 +320,27 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           permissions: permEngineRef.current,
           resolvePermission: requestPermission,
           toolContext: {
+            skills: capsRef.current?.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
+            waitForJobs: async (jobIds, blockUntilMs) => {
+              const sessionId = sessionIdRef.current;
+              if (!sessionId) return [];
+              const jobs = await getSessionJobsManager(sessionId, join(ctx.dataDir, "jobs")).waitFor(
+                jobIds,
+                blockUntilMs,
+              );
+              return jobs.map((j) => ({
+                id: j.id,
+                label: j.label,
+                status: j.status,
+                result: j.result,
+                error: j.error,
+              }));
+            },
+            goalText: goalTextRef.current,
+            onGoalReport: (report) => {
+              if (report.met) notice(`Goal met: ${report.reason}`);
+              else notice(`Goal not met: ${report.reason}`, "warn");
+            },
             resolveInteraction: (request) =>
               new Promise<string>((resolve) => {
                 if (request.type !== "ask-question") {
@@ -410,6 +443,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             agent,
             toolNames: toolsRef.current.names(),
             contextFiles: contextFilesRef.current,
+            skills: capsRef.current?.skills,
           });
         }
         notice(`Agent set to ${value}.`);
@@ -490,6 +524,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           abortRef.current?.abort();
           messagesRef.current = [];
           sessionIdRef.current = null;
+          goalTextRef.current = undefined;
           setTodos([]);
           setUsageTokens(0);
           pushItem({ kind: "notice", id: nextId(), text: "\u2500\u2500 new session \u2500\u2500", tone: "info" });
@@ -549,6 +584,18 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           }
           break;
         }
+        case "/goal": {
+          if (
+            applyGoalCommandText(text, (goal) => {
+              goalTextRef.current = goal ?? undefined;
+              notice(goal ? `Goal set: ${goal}` : "Goal cleared.");
+            })
+          ) {
+            break;
+          }
+          notice("Usage: /goal <objective> — send /goal alone to clear", "warn");
+          break;
+        }
         default:
           notice(`Unknown command ${command}. Try /help.`, "warn");
       }
@@ -562,8 +609,29 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       setInput("");
       if (!text) return;
       if (text.startsWith("/")) {
-        handleSlash(text);
-        return;
+        const invocation = matchCommand(text);
+        if (invocation) {
+          const builtinName = `/${invocation.name}`;
+          if (SLASH_COMMANDS.some((c) => c.name === builtinName)) {
+            handleSlash(text);
+            return;
+          }
+          const caps = capsRef.current;
+          if (caps) {
+            const resolved = resolveCliPrompt(text, caps);
+            if (resolved.error) {
+              notice(resolved.error, "warn");
+              return;
+            }
+            if (running) {
+              notice("A run is already in progress (esc to cancel it first).", "warn");
+              return;
+            }
+            historyRef.current.push(text);
+            void startRun(resolved.prompt);
+            return;
+          }
+        }
       }
       if (running) {
         notice("A run is already in progress (esc to cancel it first).", "warn");

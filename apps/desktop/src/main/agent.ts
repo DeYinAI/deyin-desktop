@@ -21,11 +21,12 @@ import {
   ToolRegistry,
   appendHookContext,
   buildSystemPromptParts,
-  connectMcpDefinitions,
+  McpConnectionPool,
   createCodebaseSearchTool,
   createTaskTool,
   estimateContextUsage,
-  expandCommand,
+  resolveCommandInvocation,
+  unknownCommandMessage,
   getSessionJobsManager,
   loadContextFiles,
   matchCommand,
@@ -51,6 +52,7 @@ import {
   subagentEffort,
   hostToolsForSubagent,
   type SystemPromptSections,
+  type ToolDefinition,
   type ToolSessionMeta,
   type ToolShell,
 } from "@deyin/agent-core";
@@ -80,7 +82,9 @@ import { registerBundledHostTools } from "./plugin-host.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
 import type { McpAuthBridge, McpOAuthTarget } from "./mcp-auth-bridge.js";
-import { createMcpAuthenticateTool, isMcpUnauthorized } from "./mcp-auth-bridge.js";
+import type { SecurityFindingsStore } from "./security-findings-store.js";
+import { wrapSecurityMcpTools } from "./security-mcp-hook.js";
+import { createMcpAuthenticateTool, isMcpUnauthorized, resolveMcpModuleId } from "./mcp-auth-bridge.js";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Files bigger than this ship to the renderer without diff content. */
@@ -88,7 +92,7 @@ const FILE_DIFF_CAP = 400_000;
 
 /** Short stable hash for response-cache keying (model|mode|system prompt). */
 function shortHash(text: string): string {
- return createHash("sha256").update(text).digest("hex").slice(0, 16);
+  return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
 /** Ping every window that workspace files changed (git/diff refresh). */
@@ -125,6 +129,7 @@ interface ThreadSession {
 
 interface ActiveRun {
   abort: AbortController;
+  runId: string;
   /** Set when stop() already emitted `done` so the run finally-path does not double-emit. */
   doneEmitted: boolean;
 }
@@ -147,6 +152,8 @@ export interface AgentHostOptions {
   review: PendingReviewQueue;
   /** Native OAuth provider store for MCP modules (token-backed connections). */
   mcpAuth?: McpAuthBridge;
+  /** Security scan findings store (wraps MCP security tools after connect). */
+  security?: SecurityFindingsStore;
   /** Workspace trust decisions (gates hooks.json / mcp.json execution). */
   trust: WorkspaceTrust;
   getWorkspaceRoot: () => string | null;
@@ -187,6 +194,11 @@ export class DesktopAgentHost {
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   private optimizationPluginLoadError: string | null = null;
   private optimizationPluginLoadErrorNotified = false;
+  /**
+   * MCP servers live across runs. Reconnecting per message respawned every stdio
+   * server and redid OAuth discovery on each turn, stalling the start of the run.
+   */
+  private readonly mcpPool = new McpConnectionPool();
 
   constructor(private readonly opts: AgentHostOptions) {
     this.store = new SessionStore(join(app.getPath("userData"), "sessions"));
@@ -275,7 +287,8 @@ export class DesktopAgentHost {
   }
 
   private send(threadId: string, event: AgentUiEvent): void {
-    const envelope: AgentEventEnvelope = { threadId, event };
+    const runId = this.active.get(threadId)?.runId;
+    const envelope: AgentEventEnvelope = { threadId, event, ...(runId ? { runId } : {}) };
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(CH.agentEvent, envelope);
     }
@@ -442,6 +455,26 @@ export class DesktopAgentHost {
     for (const threadId of this.sessions.keys()) this.disposeShell(threadId);
   }
 
+  /** App shutdown: stop every run and hang up the pooled MCP servers. */
+  async dispose(): Promise<void> {
+    this.stopAll();
+    this.disposeAllShells();
+    await this.mcpPool.dispose();
+  }
+
+  /** Force a reconnect for one MCP server (e.g. right after it was authorized). */
+  reconnectMcpServer(name: string): void {
+    void this.mcpPool.invalidate(name);
+  }
+
+  /**
+   * Hang up every pooled MCP server so the next run reconnects. Used after an
+   * authorization change: a pooled client still holds the pre-auth credential.
+   */
+  resetMcpConnections(): void {
+    void this.mcpPool.closeAll();
+  }
+
   isRunning(threadId: string): boolean {
     return this.active.has(threadId);
   }
@@ -505,7 +538,8 @@ export class DesktopAgentHost {
       return;
     }
     const abort = new AbortController();
-    const active: ActiveRun = { abort, doneEmitted: false };
+    const runId = options.runId ?? randomUUID();
+    const active: ActiveRun = { abort, runId, doneEmitted: false };
     this.active.set(options.threadId, active);
     try {
       await this.run(options, abort.signal, active);
@@ -586,13 +620,23 @@ export class DesktopAgentHost {
     // Command / skill expansion (/name args).
     let prompt = options.prompt;
     const invocation = matchCommand(prompt);
-    if (invocation) {
-      const command = caps.commands.find((c) => c.name === invocation.name);
-      const skill = caps.skills.find((s) => s.name === invocation.name);
-      if (command) prompt = expandCommand(command, invocation.args);
-      else if (skill) {
-        prompt = `Read the skill file at ${skill.path} with the read tool and follow it for this task: ${invocation.args || "(no extra arguments)"}`;
+    if (invocation?.name === "goal") {
+      // Client-side /goal; if it reaches the host, treat the args as the task prompt.
+      const args = invocation.args.trim();
+      prompt = args || options.goalText?.trim() || "What should I work on next?";
+    } else {
+      const resolved = resolveCommandInvocation(prompt, caps);
+      if (resolved.kind === "unknown") {
+        // Claim completion before emitting so a racing stop() cannot also emit `done`.
+        active.doneEmitted = true;
+        this.send(options.threadId, {
+          type: "error",
+          message: unknownCommandMessage(resolved.name, resolved.suggestions),
+        });
+        this.send(options.threadId, { type: "done", reason: "aborted", finalText: "" });
+        return;
       }
+      if (resolved.kind !== "none") prompt = resolved.prompt;
     }
 
     // Tools: kernel catalog (bundle:base families) + semantic search + bundled
@@ -644,212 +688,233 @@ export class DesktopAgentHost {
       );
     }
 
-    // OAuth-backed MCP modules use the stored native-OAuth tokens.
+    const mcpConnectOpts = {
+      onError: (serverName: string, err: unknown) => {
+        const def = mcpDefs.find((d) => d.name === serverName);
+        const target = def && mcpAuth ? mcpAuth.oauthTargetFor(def) : null;
+        if (target && isMcpUnauthorized(err)) {
+          console.warn(`[deyin] MCP server "${target.displayName}" skipped — not authenticated.`);
+          emitMcpAuthNeeded(target, `${target.displayName} requires authentication before its tools are available.`);
+          return;
+        }
+        console.warn(`[deyin] MCP server "${serverName}" failed to connect:`, err);
+      },
+      ...(mcpAuth
+        ? {
+            getAuthProvider: (name: string) => {
+              const def = mcpDefs.find((d) => d.name === name);
+              const moduleId = def ? resolveMcpModuleId(def) : undefined;
+              return moduleId ? mcpAuth.getProvider(moduleId) : undefined;
+            },
+          }
+        : {}),
+    };
 
     // Hooks (custom only, from hooks.json files).
     const hooks = caps.hooks;
 
-    // Transcript: reuse the in-memory session, else restore/create a persisted one.
-    const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
-    const jobsMgr = getSessionJobsManager(session.sessionId, join(app.getPath("userData"), "jobs"));
-    if (subagents.length > 0) {
-      registry.register(
-        createTaskTool({
-          subagents,
-          runSubagent: (def, subPrompt, subSignal) =>
-            this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, subSignal),
-          onBackgroundStart: (def, subPrompt) =>
-            jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
-          onBackgroundDone: (jobId, _def, result) => {
-            if (!jobId) return;
-            jobsMgr.updateStatus(
-              jobId,
-              result.ok ? "completed" : "failed",
-              result.ok ? result.report : undefined,
-              result.ok ? undefined : result.report,
-            );
-          },
-        }),
-      );
-    }
-    // Attached pictures also land in the thread's image store, so generate_image
-    // can edit them by file name instead of drawing something new.
-    const attached =
-      options.images?.length && this.opts.images
-        ? storeAttachedImages(this.opts.images, options.threadId, options.images)
-        : { files: [], note: "" };
-    session.messages.push({
-      role: "user",
-      content: prompt + attached.note,
-      ...(options.images?.length ? { images: options.images } : {}),
-    });
-    this.store.append(session.sessionId, { role: "user", content: prompt });
+    let parentMcpTools: ToolDefinition[] = [];
 
-    // Goal mode: the model must be told the objective or report_goal_met can
-    // never fire. Injected as the last pre-request message for salience.
-    if (options.goalText && options.goalText.trim().length > 0) {
-      const goalMsg: AgentMessage = {
-        role: "system",
-        content:
-          `<system_reminder>\nActive goal for this task: ${options.goalText.trim()}\n` +
-          `Work toward this goal and nothing else. When — and only when — the objective is verifiably satisfied, ` +
-          `call report_goal_met with met=true and a short reason. If it is not yet satisfied, keep working; ` +
-          `call report_goal_met with met=false only to report a blocker or that you cannot verify it.\n</system_reminder>`,
-      };
-      session.messages.push(goalMsg);
-      this.store.append(session.sessionId, goalMsg);
-    }
+    try {
+      mcpConnections.push(...(await this.mcpPool.acquire(mcpDefs, registry, mcpConnectOpts)));
 
-    // Two independent axes: the access level (approvalMode chip) provides the base
-    // rules; the composer mode's own restrictions come last so plan/ask stay
-    // read-only even under "full access". Under full access every build-style
-    // mode (agent, delivery) skips prompts entirely — deny rules still win.
-    const buildPermissionOptions = (mode: ChatMode): PermissionEngineOptions => ({
-      agentRules: [...rulesForApprovalMode(options.approvalMode), ...hostRules],
-      configRules: agentForMode(mode).permissions ?? [],
-      skipAll: skipPromptsForApproval(options.approvalMode, mode),
-      neverSkipTools: NEVER_SKIP_TOOLS,
-      neverSkipPrefixes: NEVER_SKIP_PREFIXES,
-      // Thread-scoped, so "Allow for session" survives the next message instead
-      // of dying with this run's engine.
-      sessionGrants: session.permissionGrants,
-    });
-    const permissions = new PermissionEngine(buildPermissionOptions(options.mode));
+      if (this.opts.security) {
+        wrapSecurityMcpTools(registry, options.threadId, this.opts.security, () => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send(CH.securityFindingsChanged, options.threadId);
+          }
+        });
+      }
 
-    // Persistent PTY shell for bash: created lazily on the first bash tool call
-    // (after approval). If node-pty is missing, bash falls back to one-shot spawn.
-    const shellBridge: ToolShell = {
-      run: async (command, runOpts) => {
-        if (session.shellUnavailable) {
-          throw new ShellUnavailableError("AgentShell unavailable");
-        }
-        const shell = await this.ensureShell(options.threadId, session, cwd);
-        if (!shell) {
+      parentMcpTools = registry
+        .names()
+        .filter((n) => n.startsWith("mcp__"))
+        .map((n) => registry.get(n))
+        .filter((t): t is ToolDefinition => t != null);
+
+      // Transcript: reuse the in-memory session, else restore/create a persisted one.
+      // Built after MCP connect so the system prompt lists connected MCP tools.
+      const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
+      const jobsMgr = getSessionJobsManager(session.sessionId, join(app.getPath("userData"), "jobs"));
+      if (subagents.length > 0) {
+        registry.register(
+          createTaskTool({
+            subagents,
+            runSubagent: (def, subPrompt, subSignal) =>
+              this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, parentMcpTools, subSignal),
+            onBackgroundStart: (def, subPrompt) =>
+              jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
+            onBackgroundDone: (jobId, _def, result) => {
+              if (!jobId) return;
+              jobsMgr.updateStatus(
+                jobId,
+                result.ok ? "completed" : "failed",
+                result.ok ? result.report : undefined,
+                result.ok ? undefined : result.report,
+              );
+            },
+          }),
+        );
+      }
+      // Attached pictures also land in the thread's image store, so generate_image
+      // can edit them by file name instead of drawing something new.
+      const attached =
+        options.images?.length && this.opts.images
+          ? storeAttachedImages(this.opts.images, options.threadId, options.images)
+          : { files: [], note: "" };
+      session.messages.push({
+        role: "user",
+        content: prompt + attached.note,
+        ...(options.images?.length ? { images: options.images } : {}),
+      });
+      this.store.append(session.sessionId, { role: "user", content: prompt });
+
+      // Goal mode: the model must be told the objective or report_goal_met can
+      // never fire. Injected as the last pre-request message for salience.
+      if (options.goalText && options.goalText.trim().length > 0) {
+        const goalMsg: AgentMessage = {
+          role: "system",
+          content:
+            `<system_reminder>\nActive goal for this task: ${options.goalText.trim()}\n` +
+            `Work toward this goal and nothing else. When — and only when — the objective is verifiably satisfied, ` +
+            `call report_goal_met with met=true and a short reason. If it is not yet satisfied, keep working; ` +
+            `call report_goal_met with met=false only to report a blocker or that you cannot verify it.\n</system_reminder>`,
+        };
+        session.messages.push(goalMsg);
+        this.store.append(session.sessionId, goalMsg);
+      }
+
+      // Two independent axes: the access level (approvalMode chip) provides the base
+      // rules; the composer mode's own restrictions come last so plan/ask stay
+      // read-only even under "full access". Under full access every build-style
+      // mode (agent, delivery) skips prompts entirely — deny rules still win.
+      const buildPermissionOptions = (mode: ChatMode): PermissionEngineOptions => ({
+        agentRules: [...rulesForApprovalMode(options.approvalMode), ...hostRules],
+        configRules: agentForMode(mode).permissions ?? [],
+        skipAll: skipPromptsForApproval(options.approvalMode, mode),
+        neverSkipTools: NEVER_SKIP_TOOLS,
+        neverSkipPrefixes: NEVER_SKIP_PREFIXES,
+        // Thread-scoped, so "Allow for session" survives the next message instead
+        // of dying with this run's engine.
+        sessionGrants: session.permissionGrants,
+      });
+      const permissions = new PermissionEngine(buildPermissionOptions(options.mode));
+
+      // Persistent PTY shell for bash: created lazily on the first bash tool call
+      // (after approval). If node-pty is missing, bash falls back to one-shot spawn.
+      const shellBridge: ToolShell = {
+        run: async (command, runOpts) => {
           if (session.shellUnavailable) {
             throw new ShellUnavailableError("AgentShell unavailable");
           }
-          // Epoch discard (e.g. archive during create) — must NOT be ShellUnavailableError
-          // or bash would fall through to spawn and double-exec the command.
-          throw new Error("Agent shell was disposed before it became ready");
-        }
-        return shell.run(command, runOpts);
-      },
-    };
-
-    try {
- mcpConnections.push(
-   ...(await connectMcpDefinitions(
-     mcpDefs,
-     registry,
-     {
-       onError: (serverName, err) => {
-         const def = mcpDefs.find((d) => d.name === serverName);
-         const target = def && mcpAuth ? mcpAuth.oauthTargetFor(def) : null;
-         if (target && isMcpUnauthorized(err)) {
-           console.warn(`[deyin] MCP server "${target.displayName}" skipped — not authenticated.`);
-           return;
-         }
-         console.warn(`[deyin] MCP server "${serverName}" failed to connect:`, err);
-       },
-       ...(mcpAuth ? { getAuthProvider: (name) => mcpAuth.getProvider(name) } : {}),
-     },
-   )),
- );
-const optPlugin = await this.ensureOptimizationPlugin();
- if (
- this.opts.settings.get().optimizationPluginEnabled &&
- !optPlugin &&
- this.optimizationPluginLoadError &&
- !this.optimizationPluginLoadErrorNotified
- ) {
- this.optimizationPluginLoadErrorNotified = true;
- this.send(options.threadId, {
- type: "error",
- message: `Optimization plugin failed to load: ${this.optimizationPluginLoadError}`,
- });
- }
- const cacheHooks = optPlugin ? bindAgentCacheHooks(optPlugin) : null;
- const systemPromptHash = shortHash(session.messages[0]?.content ?? "");
- const historyHash = shortHash(
- session.messages
- .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
- .slice(-8)
- .map((m) => {
- if (m.role === "tool") {
- const body = typeof m.content === "string" ? m.content : "";
- return `tool:${m.toolName ?? ""}:${body.slice(0, 200)}`;
- }
- return `${m.role}:${typeof m.content === "string" ? m.content : ""}`;
- })
- .join("\n"),
- );
- const responseCacheContext = {
- model: options.model,
- mode: options.mode,
- systemPromptHash,
- historyHash,
- };
- const responseCacheWorkspace = `${cwd}|${options.threadId}`;
- if (optPlugin) {
- const cached = await optPlugin.beforeAgentRun(optPlugin.runtime, prompt, responseCacheWorkspace, responseCacheContext);
- if (cached.hit) {
- // Claim completion before side effects so stop() cannot interleave an aborted done
- // while we still persist/emit a completed cache replay.
- if (signal.aborted || active.doneEmitted) return;
- active.doneEmitted = true;
- if (signal.aborted) {
- this.send(options.threadId, { type: "done", reason: "aborted", finalText: "" });
- return;
- }
- const assistantMsg = { role: "assistant" as const, content: cached.response };
- session.messages.push(assistantMsg);
- this.store.append(session.sessionId, assistantMsg);
- this.send(options.threadId, {
-   type: "context-snapshot",
-   snapshot: estimateContextUsage({
-     contextLength: this.opts.getContextLength(options.providerId, options.model) ?? 0,
-     messages: session.messages,
-     systemSections: session.systemSections,
-     tools: registry.toWire(),
-        wire: {
-          enableCompression: true,
-          compressionMode: "balanced",
-          enablePromptCaching: true,
-          provider: resolveWireProvider({
-            providerId: options.providerId,
-            model: options.model,
-            cwd,
-            apiFormat: provider?.apiFormat,
-          }),
-          model: options.model,
+          const shell = await this.ensureShell(options.threadId, session, cwd);
+          if (!shell) {
+            if (session.shellUnavailable) {
+              throw new ShellUnavailableError("AgentShell unavailable");
+            }
+            // Epoch discard (e.g. archive during create) — must NOT be ShellUnavailableError
+            // or bash would fall through to spawn and double-exec the command.
+            throw new Error("Agent shell was disposed before it became ready");
+          }
+          return shell.run(command, runOpts);
         },
-     cached: true,
-   }),
- });
-this.send(options.threadId, { type: "text-delta", delta: cached.response });
-// Surface 0-token usage + optimization metrics for the cache hit so the
-// renderer's run footer / usage accounting reflects the saved LLM call.
-this.send(options.threadId, {
-  type: "usage",
-  totalTokens: 0,
-});
-this.send(options.threadId, {
-  type: "optimization",
-  originalInputTokens: 0,
-  compressedInputTokens: 0,
-  compressionRatio: 1,
-  cachedPromptTokens: 0,
-  toolCacheHits: 0,
-  toolCacheMisses: 0,
-  responseCacheHits: 1,
-  responseCacheMisses: 0,
-  estimatedCostSavingsUsd: 0,
-});
-this.send(options.threadId, { type: "done", reason: "completed", finalText: cached.response });
-await runHooks(hooks, "stop", "stop", { reason: "completed", cwd, fromCache: true });
-return;
- }
- }
+      };
+
+      const optPlugin = await this.ensureOptimizationPlugin();
+      if (
+        this.opts.settings.get().optimizationPluginEnabled &&
+        !optPlugin &&
+        this.optimizationPluginLoadError &&
+        !this.optimizationPluginLoadErrorNotified
+      ) {
+        this.optimizationPluginLoadErrorNotified = true;
+        this.send(options.threadId, {
+          type: "error",
+          message: `Optimization plugin failed to load: ${this.optimizationPluginLoadError}`,
+        });
+      }
+      const cacheHooks = optPlugin ? bindAgentCacheHooks(optPlugin) : null;
+      const systemPromptHash = shortHash(session.messages[0]?.content ?? "");
+      const historyHash = shortHash(
+        session.messages
+          .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "tool")
+          .slice(-8)
+          .map((m) => {
+            if (m.role === "tool") {
+              const body = typeof m.content === "string" ? m.content : "";
+              return `tool:${m.toolName ?? ""}:${body.slice(0, 200)}`;
+            }
+            return `${m.role}:${typeof m.content === "string" ? m.content : ""}`;
+          })
+          .join("\n"),
+      );
+      const responseCacheContext = {
+        model: options.model,
+        mode: options.mode,
+        systemPromptHash,
+        historyHash,
+      };
+      const responseCacheWorkspace = `${cwd}|${options.threadId}`;
+      if (optPlugin) {
+        const cached = await optPlugin.beforeAgentRun(optPlugin.runtime, prompt, responseCacheWorkspace, responseCacheContext);
+        if (cached.hit) {
+          // Claim completion before side effects so stop() cannot interleave an aborted done
+          // while we still persist/emit a completed cache replay.
+          if (signal.aborted || active.doneEmitted) return;
+          active.doneEmitted = true;
+          if (signal.aborted) {
+            this.send(options.threadId, { type: "done", reason: "aborted", finalText: "" });
+            return;
+          }
+          const assistantMsg = { role: "assistant" as const, content: cached.response };
+          session.messages.push(assistantMsg);
+          this.store.append(session.sessionId, assistantMsg);
+          this.send(options.threadId, {
+            type: "context-snapshot",
+            snapshot: estimateContextUsage({
+              contextLength: this.opts.getContextLength(options.providerId, options.model) ?? 0,
+              messages: session.messages,
+              systemSections: session.systemSections,
+              tools: registry.toWire(),
+              wire: {
+                enableCompression: true,
+                compressionMode: "balanced",
+                enablePromptCaching: true,
+                provider: resolveWireProvider({
+                  providerId: options.providerId,
+                  model: options.model,
+                  cwd,
+                  apiFormat: provider?.apiFormat,
+                }),
+                model: options.model,
+              },
+              cached: true,
+            }),
+          });
+          this.send(options.threadId, { type: "text-delta", delta: cached.response });
+          // Surface 0-token usage + optimization metrics for the cache hit so the
+          // renderer's run footer / usage accounting reflects the saved LLM call.
+          this.send(options.threadId, {
+            type: "usage",
+            totalTokens: 0,
+          });
+          this.send(options.threadId, {
+            type: "optimization",
+            originalInputTokens: 0,
+            compressedInputTokens: 0,
+            compressionRatio: 1,
+            cachedPromptTokens: 0,
+            toolCacheHits: 0,
+            toolCacheMisses: 0,
+            responseCacheHits: 1,
+            responseCacheMisses: 0,
+            estimatedCostSavingsUsd: 0,
+          });
+          this.send(options.threadId, { type: "done", reason: "completed", finalText: cached.response });
+          await runHooks(hooks, "stop", "stop", { reason: "completed", cwd, fromCache: true });
+          return;
+        }
+      }
 
       const liveMeta: ToolSessionMeta = {
         threadId: options.threadId,
@@ -1085,56 +1150,58 @@ return;
                 toolName: event.toolName,
               });
               break;
-case "usage":
- this.send(options.threadId, {
-   type: "usage",
-   totalTokens: event.usage.totalTokens,
-   promptTokens: event.usage.promptTokens,
-   completionTokens: event.usage.completionTokens,
-   cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
- });
- break;
- case "context-snapshot": {
- this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
- // Soft compaction warning: crossed 50% once per run (renderer shows a hint).
- if (event.snapshot.percent >= 50 && !session.softWarningSent) {
-   session.softWarningSent = true;
-   this.send(options.threadId, {
-     type: "compaction",
-     truncatedToolResults: 0,
-     truncatedToolArgs: 0,
-     droppedMessages: 0,
-     softWarning: true,
-   });
- }
- break;
- }
- case "optimization":
- this.send(options.threadId, {
- type: "optimization",
- originalInputTokens: event.metrics.originalInputTokens,
- compressedInputTokens: event.metrics.compressedInputTokens,
- compressionRatio: event.metrics.compressionRatio,
- cachedPromptTokens: event.metrics.cachedPromptTokens,
- toolCacheHits: event.metrics.toolCacheHits,
- toolCacheMisses: event.metrics.toolCacheMisses,
- responseCacheHits: event.metrics.responseCacheHits,
- responseCacheMisses: event.metrics.responseCacheMisses,
- estimatedCostSavingsUsd: event.metrics.estimatedCostSavingsUsd,
- sessionCacheHit: event.metrics.sessionCacheHit,
- sessionCacheMiss: event.metrics.sessionCacheMiss,
- cacheHitRate: event.metrics.cacheDiagnostics?.hitRate,
- prefixChanged: event.metrics.cacheDiagnostics?.prefixChanged,
- changeReasons: event.metrics.cacheDiagnostics?.changeReasons,
- });
- break;
+            case "usage":
+              this.send(options.threadId, {
+                type: "usage",
+                totalTokens: event.usage.totalTokens,
+                promptTokens: event.usage.promptTokens,
+                completionTokens: event.usage.completionTokens,
+                cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
+              });
+              break;
+            case "context-snapshot": {
+              this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
+              // Soft compaction warning: crossed 50% once per run (renderer shows a hint).
+              if (event.snapshot.percent >= 50 && !session.softWarningSent) {
+                session.softWarningSent = true;
+                this.send(options.threadId, {
+                  type: "compaction",
+                  truncatedToolResults: 0,
+                  truncatedToolArgs: 0,
+                  droppedMessages: 0,
+                  softWarning: true,
+                });
+              }
+              break;
+            }
+            case "optimization":
+              this.send(options.threadId, {
+                type: "optimization",
+                originalInputTokens: event.metrics.originalInputTokens,
+                compressedInputTokens: event.metrics.compressedInputTokens,
+                compressionRatio: event.metrics.compressionRatio,
+                cachedPromptTokens: event.metrics.cachedPromptTokens,
+                toolCacheHits: event.metrics.toolCacheHits,
+                toolCacheMisses: event.metrics.toolCacheMisses,
+                responseCacheHits: event.metrics.responseCacheHits,
+                responseCacheMisses: event.metrics.responseCacheMisses,
+                estimatedCostSavingsUsd: event.metrics.estimatedCostSavingsUsd,
+                sessionCacheHit: event.metrics.sessionCacheHit,
+                sessionCacheMiss: event.metrics.sessionCacheMiss,
+                cacheHitRate: event.metrics.cacheDiagnostics?.hitRate,
+                prefixChanged: event.metrics.cacheDiagnostics?.prefixChanged,
+                changeReasons: event.metrics.cacheDiagnostics?.changeReasons,
+              });
+              break;
           }
         },
       });
 
-if (optPlugin && result.finalText) {
- await optPlugin.afterAgentRun(optPlugin.runtime, prompt, result.finalText, responseCacheWorkspace, responseCacheContext).catch(() => undefined);
- }
+      if (optPlugin && result.finalText) {
+        await optPlugin
+          .afterAgentRun(optPlugin.runtime, prompt, result.finalText, responseCacheWorkspace, responseCacheContext)
+          .catch(() => undefined);
+      }
 
       await runHooks(hooks, "stop", "stop", { reason: result.reason, cwd });
       if (!active.doneEmitted) {
@@ -1142,6 +1209,8 @@ if (optPlugin && result.finalText) {
         this.send(options.threadId, { type: "done", reason: result.reason, finalText: result.finalText });
       }
     } finally {
+      // Pooled connections stay up for the next message; `close()` is a no-op
+      // here and the pool is hung up on app shutdown (see dispose()).
       for (const conn of mcpConnections) void conn.close().catch(() => undefined);
     }
   }
@@ -1153,9 +1222,12 @@ if (optPlugin && result.finalText) {
     prompt: string,
     apiBaseUrl: string,
     getToken: () => Promise<string | null>,
+    parentMcpTools: ToolDefinition[],
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; report: string }> {
-    return this.subagentLimiter.run(() => this.runSubagentUncapped(parent, def, prompt, apiBaseUrl, getToken, signal));
+    return this.subagentLimiter.run(() =>
+      this.runSubagentUncapped(parent, def, prompt, apiBaseUrl, getToken, parentMcpTools, signal),
+    );
   }
 
   private async runSubagentUncapped(
@@ -1164,6 +1236,7 @@ if (optPlugin && result.finalText) {
     prompt: string,
     apiBaseUrl: string,
     getToken: () => Promise<string | null>,
+    parentMcpTools: ToolDefinition[],
     signal?: AbortSignal,
   ): Promise<{ ok: boolean; report: string }> {
     const subagentId = randomUUID();
@@ -1215,6 +1288,7 @@ if (optPlugin && result.finalText) {
       }),
       resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
       extraTools: [
+        ...parentMcpTools,
         ...(this.opts.settings.get().indexingEnabled
           ? [createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK))]
           : []),

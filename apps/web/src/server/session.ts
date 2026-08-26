@@ -135,6 +135,8 @@ export class Session {
             images: options.images,
             imageModels: options.imageModels,
             imageChatModels: options.imageChatModels,
+            runId: options.runId,
+            disabledCaps: options.disabledCaps,
             provider: options.provider,
             roleModels: options.roleModels,
             roleProviders: options.roleProviders,
@@ -144,6 +146,9 @@ export class Session {
         }
         case "agent.stop":
           this.agentHost.stop(msg.threadId);
+          break;
+        case "agent.disposeShell":
+          this.agentHost.disposeShell(msg.threadId);
           break;
         case "agent.approve":
           this.agentHost.approve(msg.requestId, msg.decision);

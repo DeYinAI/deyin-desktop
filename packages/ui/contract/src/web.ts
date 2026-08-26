@@ -65,8 +65,13 @@ export type ClientMessage =
       imageModels?: string[];
       /** Chat model ids that return pictures inside their completion. */
       imageChatModels?: string[];
+      /** Must match the renderer's active run id (stale-event filtering). */
+      runId?: string;
+      /** Capability ids the user disabled in settings. */
+      disabledCaps?: string[];
     }
   | { type: "agent.stop"; threadId: string }
+  | { type: "agent.disposeShell"; threadId: string }
   | { type: "agent.approve"; requestId: string; decision: "allow" | "allow-always" | "deny" }
   | { type: "agent.answer"; requestId: string; answers: Record<string, string | string[]> }
   | { type: "term.create"; id: number; opts: TerminalCreateOptions }

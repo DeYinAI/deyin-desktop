@@ -941,6 +941,8 @@ export type AgentUiEvent =
 
 export interface AgentEventEnvelope {
   threadId: string;
+  /** When set, must match the renderer's active run for this thread or the event is dropped. */
+  runId?: string;
   event: AgentUiEvent;
 }
 
@@ -976,6 +978,10 @@ export interface AgentStartOptions {
    * for image output when the selected model is one of these.
    */
   imageChatModels?: string[];
+  /** Must match the renderer's active run id so stale events are ignored after stop/restart. */
+  runId?: string;
+  /** Capability ids the user disabled in settings (skill:, command:, subagent:, …). */
+  disabledCaps?: string[];
 }
 
 /* Model providers ---------------------------------------------------------- */

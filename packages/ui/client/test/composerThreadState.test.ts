@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  countPendingInteractionsForThread,
   pickRunningThreadToStop,
   resolveChatStreamText,
   shouldQueueFollowUp,
+  shouldShowGlobalStop,
 } from "../src/composerThreadState.js";
 
 test("shouldQueueFollowUp: queues only when the target thread is running or busy", () => {
@@ -103,4 +105,28 @@ test("pickRunningThreadToStop: prefers active thread when it is running or busy"
     }),
     "thread-a",
   );
+});
+
+test("shouldShowGlobalStop: any running thread or active streaming", () => {
+  assert.equal(
+    shouldShowGlobalStop({ runningThreadId: "thread-a", isActiveThreadStreaming: false }),
+    true,
+  );
+  assert.equal(
+    shouldShowGlobalStop({ runningThreadId: null, isActiveThreadStreaming: true }),
+    true,
+  );
+  assert.equal(
+    shouldShowGlobalStop({ runningThreadId: null, isActiveThreadStreaming: false }),
+    false,
+  );
+});
+
+test("countPendingInteractionsForThread supports question queues", () => {
+  const pending = {
+    approvalsByThread: { t: [{ id: 1 }] },
+    questionByThread: { t: [{ id: 1 }, { id: 2 }] },
+    mcpAuthByThread: {},
+  };
+  assert.equal(countPendingInteractionsForThread("t", pending), 3);
 });

@@ -5,6 +5,7 @@ import { UpdateBanner } from "./UpdateBanner.js";
 interface NavRailProps {
   /** Which top-level view is showing, so its rail button reads as selected. */
   activeView?: "workspace" | "settings" | "upgrade" | "automations";
+  platform?: "desktop" | "web";
   onExpand: () => void;
   onNewTask: () => void;
   onOpenSearch: () => void;
@@ -21,12 +22,14 @@ export function NavRail(props: NavRailProps) {
   const items: { icon: IconName; label: string; onClick: () => void; active?: boolean }[] = [
     { icon: "sparkles", label: t("nav.newTask"), onClick: props.onNewTask },
     { icon: "search", label: t("nav.search"), onClick: props.onOpenSearch },
-    {
-      icon: "automation",
-      label: t("nav.automations"),
-      onClick: props.onOpenAutomations,
-      active: props.activeView === "automations",
-    },
+    ...(props.platform !== "web"
+      ? [{
+          icon: "automation" as IconName,
+          label: t("nav.automations"),
+          onClick: props.onOpenAutomations,
+          active: props.activeView === "automations",
+        }]
+      : []),
     { icon: "customize", label: t("nav.customize"), onClick: props.onOpenCustomize },
   ];
 
