@@ -97,9 +97,9 @@ Tag `v*` on `main` to trigger [`.github/workflows/release.yml`](../.github/workf
 
 1. **create-release** — draft GitHub Release on this repo + mirror draft on
    `DeYinAI/deyin-releases` (needs `RELEASES_TOKEN`)
-2. **build** — Linux **and** Windows Electron installers from **dell-runner only**
-   (Wine + .NET cross-publish; no Windows self-hosted runner required)
-3. **cli** — cross-compiled CLI binaries attached to the same release
+2. **build** — Linux + Windows Electron installers from **dell-runner** (Wine + .NET cross-publish)
+3. **build-mac** — macOS DMG(s) from **mac-runner** (self-hosted Mac; optional until registered)
+4. **cli** — cross-compiled CLI binaries attached to the same release
 
 Manual smoke build without a tag: **Actions → Release → Run workflow**
 (`workflow_dispatch`).

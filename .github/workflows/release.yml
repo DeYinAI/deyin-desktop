@@ -112,11 +112,10 @@ jobs:
           draft: true
           files: |
             apps/desktop/release/*.exe
-            apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
             apps/desktop/release/*.blockmap
-            apps/desktop/release/*.yml
+            apps/desktop/release/latest*.yml
 
       - name: Attach installers to public releases repo
         if: startsWith(github.ref, 'refs/tags/v')
@@ -129,15 +128,107 @@ jobs:
           draft: true
           files: |
             apps/desktop/release/*.exe
-            apps/desktop/release/*.dmg
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
             apps/desktop/release/*.blockmap
-            apps/desktop/release/*.yml
+            apps/desktop/release/latest*.yml
 
+  build-mac:
+    needs: create-release
+    if: >-
+      always() &&
+      !cancelled() &&
+      (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
+    runs-on: [self-hosted, macOS, release-mac]
+    continue-on-error: true
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Bootstrap macOS runner toolchain
+        run: |
+          export PATH="${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
+          if ! command -v bun >/dev/null 2>&1 || ! xcode-select -p >/dev/null 2>&1; then
+            bash scripts/ci/setup-mac-runner.sh
+          fi
+          for dir in "${HOME}/.bun/bin" /opt/homebrew/bin /usr/local/bin; do
+            if [[ -d "$dir" ]]; then
+              echo "$dir" >> "$GITHUB_PATH"
+            fi
+          done
+
+      - name: Check macOS runner prerequisites
+        run: bash scripts/ci/check-mac-runner.sh
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared packages
+        run: pnpm --filter "./packages/**" --filter "!@deyin/native-core" build
+
+      - name: Build native-core (optional)
+        run: |
+          if command -v cargo >/dev/null 2>&1; then
+            pnpm --filter @deyin/native-core build
+          else
+            echo "cargo not found; TS fallbacks will be used"
+          fi
+
+      - name: Package macOS DMG(s)
+        run: bash scripts/ci/package-desktop-mac.sh both
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+      - name: Attach macOS installers to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
+
+      - name: Attach macOS installers to public releases repo
+        if: startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
+        uses: softprops/action-gh-release@v3
+        with:
+          repository: DeYinAI/deyin-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest-mac.yml
+
+  publish:
+    needs: [build, build-mac, cli]
+    if: >-
+      always() &&
+      !cancelled() &&
+      startsWith(github.ref, 'refs/tags/v') &&
+      needs.build.result == 'success' &&
+      needs.cli.result == 'success'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
       # electron-updater only sees published releases on the public feed.
       - name: Publish public update feed
-        if: startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}

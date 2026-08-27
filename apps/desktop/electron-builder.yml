@@ -59,6 +59,7 @@ mac:
   target: [dmg]
   icon: build/icon.icns
   category: public.app-category.developer-tools
+  artifactName: Deyin-${version}-${arch}.${ext}
   # Skip code signing on CI (no Apple cert). electron-builder's empty-password
   # fallback can fail the build; null disables signing cleanly for an unsigned
   # DMG. Set an identity + notarization secrets to ship a signed build.
