@@ -1,0 +1,53 @@
+# Reverse proxy for chat.openference.com (Deyin web).
+# Requires the host-server listening on :8790 (see docker-compose.yml or systemd).
+#
+# TLS: Caddy obtains certificates automatically when ports 80/443 are reachable.
+# For Cloudflare Tunnel, terminate TLS at the tunnel and proxy to Caddy on :8080.
+
+chat.openference.com {
+	encode gzip
+
+	# Model proxy + built-in search (Bearer token required).
+	handle /api/* {
+		reverse_proxy host-server:8790
+	}
+
+	# WebSocket host RPC (files, terminal, agent loop).
+	handle /host {
+		reverse_proxy host-server:8790
+	}
+
+	handle /health {
+		reverse_proxy host-server:8790
+	}
+
+	# Static SPA (includes /auth/callback client-side route).
+	handle {
+		root * /srv/deyin/client
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Local / staging without TLS (docker-compose dev profile).
+:8080 {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy host-server:8790
+	}
+
+	handle /host {
+		reverse_proxy host-server:8790
+	}
+
+	handle /health {
+		reverse_proxy host-server:8790
+	}
+
+	handle {
+		root * /srv/deyin/client
+		try_files {path} /index.html
+		file_server
+	}
+}

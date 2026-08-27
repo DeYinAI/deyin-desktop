@@ -62,12 +62,15 @@ import type {
   TermCreateResult,
   WebAgentProviderRouting,
 } from "@deyin/contract/web";
+import { isChatOnlyHosted } from "./chat-only.js";
 
+const CHAT_ONLY = isChatOnlyHosted();
 const OAUTH_ISSUER = (import.meta.env.VITE_DEYIN_OAUTH_ISSUER as string) ?? "http://localhost:8788";
 const CLIENT_ID = (import.meta.env.VITE_DEYIN_CLIENT_ID as string) ?? "deyin-desktop";
 const SCOPES = ["openid", "profile", "email", "offline_access", "model:invoke"];
 const REDIRECT_URI = `${location.origin}/auth/callback`;
 const API_BASE = `${location.origin}/api`;
+const SSO_URL = `${OAUTH_ISSUER.replace(/\/+$/, "")}/auth/sso`;
 /** Drop host RPCs that exceed this without a reply (mirrors desktop IPC patience). */
 const INVOKE_TIMEOUT_MS = 120_000;
 
@@ -331,6 +334,32 @@ function toProfile(u: { sub: string; email?: string; name?: string; picture?: st
   return { sub: u.sub, email: u.email, name: u.name, picture: u.picture, plan: u.plan };
 }
 
+interface HostedMeResponse {
+  id: number;
+  email: string;
+  avatarUrl?: string;
+  firstName?: string;
+  lastName?: string;
+  plan?: string;
+}
+
+/** Profile lookup for chat-only: same-origin `/api/me` (avoids openference.com CORS). */
+async function fetchHostedMe(): Promise<UserProfile | null> {
+  const token = await oauth.getAccessToken().catch(() => null);
+  if (!token) return null;
+  const res = await fetch(`${API_BASE}/me`, { headers: { authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const data = (await res.json()) as HostedMeResponse;
+  const name = [data.firstName, data.lastName].filter(Boolean).join(" ") || undefined;
+  return {
+    sub: String(data.id),
+    email: data.email,
+    name,
+    picture: data.avatarUrl,
+    plan: data.plan,
+  };
+}
+
 /* Client-local persistence: settings, capabilities, providers and usage live in
  * localStorage on the web (per-browser), mirroring the desktop's file-backed stores. */
 
@@ -425,13 +454,17 @@ export function createBrowserTransport(): DeyinApi {
       let user: UserProfile | null = null;
       let workspaceRoot: string | null = null;
       if (await oauth.isAuthenticated()) {
-        user = await oauth.getUser().then(toProfile).catch(() => null);
-        // Connect the host socket so we learn the per-session sandbox root.
-        try {
-          await host.ensure();
-          workspaceRoot = host.workspaceRoot;
-        } catch {
-          workspaceRoot = null;
+        user = CHAT_ONLY
+          ? await fetchHostedMe()
+          : await oauth.getUser().then(toProfile).catch(() => null);
+        if (!CHAT_ONLY) {
+          // Connect the host socket so we learn the per-session sandbox root.
+          try {
+            await host.ensure();
+            workspaceRoot = host.workspaceRoot;
+          } catch {
+            workspaceRoot = null;
+          }
         }
       }
       return {
@@ -440,13 +473,19 @@ export function createBrowserTransport(): DeyinApi {
         workspaceRoot,
         version: "web",
         platform: "web",
+        chatOnly: CHAT_ONLY,
       };
     },
     auth: {
       async connect(): Promise<UserProfile> {
+        if (CHAT_ONLY) {
+          const redirect = encodeURIComponent(`${location.origin}/`);
+          location.assign(`${SSO_URL}?redirect=${redirect}`);
+          return new Promise<never>(() => {});
+        }
         // Full-page redirect; the profile is resolved after the callback + reload.
-        location.href = await beginBrowserLogin(oauth, REDIRECT_URI);
-        return new Promise<never>(() => {}); // never resolves; page navigates away
+        location.assign(await beginBrowserLogin(oauth, REDIRECT_URI));
+        return new Promise<never>(() => {});
       },
       async logout(): Promise<void> {
         await oauth.logout();
@@ -454,6 +493,7 @@ export function createBrowserTransport(): DeyinApi {
       },
       async getUser(): Promise<UserProfile | null> {
         if (!(await oauth.isAuthenticated())) return null;
+        if (CHAT_ONLY) return fetchHostedMe();
         return oauth.getUser().then(toProfile).catch(() => null);
       },
       getAccessToken: () => oauth.getAccessToken().catch(() => null),
@@ -617,9 +657,18 @@ export function createBrowserTransport(): DeyinApi {
       },
     },
     settings: {
-      get: async () => readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS),
+      get: async () => {
+        const stored = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS);
+        if (CHAT_ONLY && stored.agentMode === "agent") {
+          return { ...stored, agentMode: "chat" as const };
+        }
+        return stored;
+      },
       set: async (patch) => {
         const next = { ...readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS), ...patch };
+        if (CHAT_ONLY && next.agentMode === "agent") {
+          next.agentMode = "chat";
+        }
         writeLocal("deyin.settings", next);
         return next;
       },
@@ -949,7 +998,10 @@ export function createBrowserTransport(): DeyinApi {
       get: async () => computeStats(readLocal<UsageDay[]>("deyin.usage", [])),
       record: async (event) => recordUsage(event),
       account: () =>
-        fetchAccountUsage({ oauthIssuer: OAUTH_ISSUER }, () => oauth.getAccessToken().catch(() => null)),
+        fetchAccountUsage(
+          { oauthIssuer: CHAT_ONLY ? location.origin : OAUTH_ISSUER },
+          () => oauth.getAccessToken().catch(() => null),
+        ),
     },
     plans: {
       list: () => fetchPublicPlans({ oauthIssuer: OAUTH_ISSUER }),

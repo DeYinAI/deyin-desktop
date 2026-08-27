@@ -1,14 +1,13 @@
 import { useMemo, useState } from "react";
 import { Icon, type IconName } from "../Icon.js";
-import { EmptyState, PageHeader, SectionHeader, Segmented, UnderlineTabs } from "./controls.js";
+import { PageHeader, SectionHeader, Segmented, UnderlineTabs } from "./controls.js";
+import { AccountUsagePanel, fmtUsage } from "./AccountUsagePanel.js";
 import type { AccountUsage, UsageStats } from "@deyin/contract";
 
 const CHART_COLORS = ["#4f7cff", "#3fb950", "#a371f7", "#d29922", "#ff7b72", "#39c5cf"];
 
 function fmt(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
+  return fmtUsage(n);
 }
 
 function dayKey(d: Date): string {
@@ -140,65 +139,12 @@ export function UsageStatsPage({ stats, account, signedIn, onRefreshAccount, ref
 
       {tab === "plan" && (
         <>
-          {!account ? (
-            <EmptyState
-              icon="user"
-              title={signedIn ? "Account usage is unavailable right now." : "Sign in to see plan usage"}
-              hint={
-                signedIn
-                  ? "You are offline or the Openference service is unreachable. Use refresh to retry."
-                  : "Sign in with Openference to see server-side plan usage here."
-              }
-            />
-          ) : (
-            <>
-              <SectionHeader
-                title="Openference account"
-                note={account.planName ?? undefined}
-                actions={
-                  account.weeklyResetAt ? (
-                    <span className="section-head__note">
-                      Weekly quota resets {new Date(account.weeklyResetAt).toLocaleString()}
-                    </span>
-                  ) : undefined
-                }
-              />
-              <div className="stat-grid">
-                <StatCard icon="arrowUp" label="Requests today" value={fmt(account.todayRequests)} />
-                {account.requestsPerWindow !== null && (
-                  <StatCard
-                    icon="clock"
-                    label={
-                      account.windowHours
-                        ? `Requests this ${account.windowHours}h`
-                        : "Requests this window"
-                    }
-                    value={fmt(Math.round(account.windowQuotaUsed))}
-                    note={`of ${fmt(account.requestsPerWindow)}`}
-                  />
-                )}
-                {/* Quota-used, not the raw call count: per-model multipliers mean
-                    that is what the limit beside it is enforced against. */}
-                <StatCard
-                  icon="chart"
-                  label="Requests this week"
-                  value={fmt(Math.round(account.weekQuotaUsed))}
-                  note={account.requestsPerWeek ? `of ${fmt(account.requestsPerWeek)}` : undefined}
-                />
-                <StatCard
-                  icon="clock"
-                  label="Tokens this week"
-                  value={fmt(account.weekTokens)}
-                  note={account.tokensPerWeek ? `of ${fmt(account.tokensPerWeek)}` : undefined}
-                />
-                <StatCard icon="list" label="All-time requests" value={fmt(account.totalRequests)} />
-                <StatCard icon="cpu" label="All-time tokens" value={fmt(account.totalTokens)} />
-                {account.creditsUsd !== null && (
-                  <StatCard icon="star" label="Credits" value={`$${account.creditsUsd.toFixed(2)}`} />
-                )}
-              </div>
-            </>
-          )}
+          <AccountUsagePanel
+            account={account}
+            signedIn={signedIn}
+            onRefresh={onRefreshAccount}
+            refreshing={refreshing}
+          />
 
           <div className="usage-card">
             <div className="usage-card__title">Token optimization</div>

@@ -114,6 +114,8 @@ interface ComposerProps {
   onSetGoal?: (text: string | null) => void;
   /** Bumped by the host to pull focus into the input (e.g. after declining a plan). */
   focusSignal?: number;
+  /** Hosted web chat-only: plain messages, no agent controls. */
+  plainChat?: boolean;
 }
 
 const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "hand" | "eye" }> = {
@@ -670,15 +672,17 @@ export function Composer(props: ComposerProps) {
         className="composer__input"
         rows={1}
         placeholder={
-          props.mode === "plan"
-            ? t("composer.placeholderPlan")
-            : props.mode === "ask"
-              ? t("composer.placeholderAsk")
-              : props.mode === "delivery"
-                ? t("composer.placeholderDelivery")
-                : props.hasEvents
-                  ? t("composer.placeholderFollowUp")
-                  : t("composer.placeholder")
+          props.plainChat
+            ? t("composer.placeholderPlainChat")
+            : props.mode === "plan"
+              ? t("composer.placeholderPlan")
+              : props.mode === "ask"
+                ? t("composer.placeholderAsk")
+                : props.mode === "delivery"
+                  ? t("composer.placeholderDelivery")
+                  : props.hasEvents
+                    ? t("composer.placeholderFollowUp")
+                    : t("composer.placeholder")
         }
         value={props.value}
         onChange={(e) => {
@@ -689,6 +693,7 @@ export function Composer(props: ComposerProps) {
         onPaste={onPaste}
       />
       <div className="composer__row">
+        {!props.plainChat ? (
         <AnchoredMenu
           open={plusOpen}
           onToggle={() => {
@@ -725,8 +730,9 @@ export function Composer(props: ComposerProps) {
             Insert / command
           </button>
         </AnchoredMenu>
+        ) : null}
 
-        {props.mode && props.onSelectMode && (
+        {!props.plainChat && props.mode && props.onSelectMode && (
           <AnchoredMenu
             open={modeOpen}
             onToggle={() => {
@@ -766,6 +772,7 @@ export function Composer(props: ComposerProps) {
           </AnchoredMenu>
         )}
 
+        {!props.plainChat ? (
         <AnchoredMenu
           open={accessOpen}
           onToggle={() => {
@@ -798,6 +805,7 @@ export function Composer(props: ComposerProps) {
             </button>
           ))}
         </AnchoredMenu>
+        ) : null}
 
         <div className="composer__spacer" />
 
@@ -832,7 +840,7 @@ export function Composer(props: ComposerProps) {
           </button>
         )}
 
-        {props.onSetGoal && (
+        {!props.plainChat && props.onSetGoal && (
           <button
             type="button"
             className={`chip ${props.goalText ? "chip--mode" : ""}`}

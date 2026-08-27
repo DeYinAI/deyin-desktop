@@ -60,9 +60,13 @@ export function applyEdits(content: string, edits: EditSpec[]): { next: string; 
       replacements += result.replacements;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      if (edits.length === 1) throw new Error(reason);
+      if (edits.length === 1) {
+        if (error instanceof Error) throw error;
+        throw new Error(reason, { cause: error });
+      }
       throw new Error(
         `edits[${index}] failed: ${reason} No edits were applied — later edits match against the file as earlier edits leave it, so re-check the whole batch.`,
+        { cause: error },
       );
     }
   }

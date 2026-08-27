@@ -27,7 +27,10 @@ pnpm --filter @deyin/web dev         # http://localhost:5273
 ```
 
 The dev client is registered as a redirect URI (`http://localhost:5273/auth/callback`) on
-the seeded `deyin-desktop` client, so "Connect with Openference" works end to end.
+the `deyin-web` OAuth client. Production uses `https://chat.openference.com/auth/callback`
+(migration `0321_oauth_deyin_web_chat_redirect` on Openference).
+
+See [DEPLOY.md](./DEPLOY.md) for chat.openference.com cutover.
 
 ## Production shape
 

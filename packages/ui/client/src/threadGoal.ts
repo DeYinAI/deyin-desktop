@@ -16,6 +16,7 @@ export function applyGoalToProjects(
   thread: Thread,
   goal: string | null,
   activeProjectId: string | null,
+  defaultProjectName = "Workspace",
 ): GoalProjectsUpsertResult {
   const patch = goalPatchFromCommand(goal);
   const goalEvent: ThreadEvent = { kind: "goal-set", text: goal };
@@ -26,7 +27,7 @@ export function applyGoalToProjects(
   if (!exists) {
     if (next.length === 0) {
       createdProjectId = newId("proj");
-      next = [{ id: createdProjectId, name: "Workspace", root: null, threads: [thread] }];
+      next = [{ id: createdProjectId, name: defaultProjectName, root: null, threads: [thread] }];
     } else {
       const target = next.some((p) => p.id === activeProjectId) ? activeProjectId! : next[0]!.id;
       next = next.map((p) => (p.id === target ? { ...p, threads: [thread, ...p.threads] } : p));

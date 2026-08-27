@@ -132,6 +132,7 @@ interface SettingsViewProps {
   workspaceRoot: string | null;
   activeThreadId?: string | null;
   platform?: "desktop" | "web";
+  chatOnly?: boolean;
   /** Live models for the primary provider, passed through to Model settings. */
   liveModels: import("@deyin/contract").ModelInfo[];
   providers: ProviderInfo[];
@@ -162,11 +163,13 @@ export function SettingsView(props: SettingsViewProps) {
   }, []);
 
   useEffect(() => {
-    if (page === "data") {
-      void window.deyin.usage.get().then(setUsage);
+    if (page === "data" || (page === "account" && props.chatOnly)) {
+      if (page === "data") {
+        void window.deyin.usage.get().then(setUsage);
+      }
       void window.deyin.usage.account().then(setAccountUsage).catch(() => setAccountUsage(null));
     }
-  }, [page]);
+  }, [page, props.chatOnly]);
 
   const refreshAccount = useCallback(async () => {
     setAccountRefreshing(true);
@@ -224,9 +227,14 @@ export function SettingsView(props: SettingsViewProps) {
   // resources, so the web build hides them entry by entry (a group can mix
   // shared and desktop-only pages, as Account and SSH hosts do).
   const DESKTOP_ONLY: SettingsPage[] = ["integrations", "skills", "workspace", "sshHosts"];
+  const CHAT_ONLY_HIDDEN: SettingsPage[] = ["modelRoles", "data", "indexing"];
+  const hiddenPages = new Set<SettingsPage>([
+    ...(isWeb ? DESKTOP_ONLY : []),
+    ...(props.chatOnly ? CHAT_ONLY_HIDDEN : []),
+  ]);
   const visibleNav = NAV.map((group) => ({
     ...group,
-    entries: isWeb ? group.entries.filter((e) => !DESKTOP_ONLY.includes(e.page)) : group.entries,
+    entries: group.entries.filter((e) => !hiddenPages.has(e.page)),
   })).filter((group) => group.entries.length > 0);
 
   return (
@@ -234,7 +242,7 @@ export function SettingsView(props: SettingsViewProps) {
       <aside className="settings__nav">
         <button className="settings__back" onClick={props.onBack}>
           <Icon name="arrowLeft" size={13} />
-          {t("nav.backToWorkspace")}
+          {props.chatOnly ? "Back to chat" : t("nav.backToWorkspace")}
         </button>
         {visibleNav.map((group, i) => (
           <div key={i} className="settings__nav-group">
@@ -262,7 +270,13 @@ export function SettingsView(props: SettingsViewProps) {
         <Suspense fallback={<div className="settings-page" />}>
         {page === "general" && (
           <div className="settings-page">
-            <GeneralPage settings={props.settings} version={props.version} platform={props.platform} onChange={props.onChangeSettings} />
+            <GeneralPage
+              settings={props.settings}
+              version={props.version}
+              platform={props.platform}
+              chatOnly={props.chatOnly}
+              onChange={props.onChangeSettings}
+            />
           </div>
         )}
         {page === "appearance" && (
@@ -355,7 +369,15 @@ export function SettingsView(props: SettingsViewProps) {
           <IndexingPage workspaceRoot={props.workspaceRoot} settings={props.settings} onChange={props.onChangeSettings} />
         )}
         {page === "account" && (
-          <IdentityPage user={props.user} onConnect={props.onConnect} onOpenUsage={() => setPage("data")} />
+          <IdentityPage
+            user={props.user}
+            onConnect={props.onConnect}
+            onOpenUsage={() => setPage("data")}
+            chatOnly={props.chatOnly}
+            accountUsage={accountUsage}
+            onRefreshAccount={() => void refreshAccount()}
+            accountRefreshing={accountRefreshing}
+          />
         )}
         {/* SSH targets for remote automation runs; its own page, desktop-only. */}
         {page === "sshHosts" && <SshHostsPage />}

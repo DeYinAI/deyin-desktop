@@ -82,6 +82,11 @@ export interface Bootstrap {
   version: string;
   /** Which runtime hosts the renderer: the Electron shell or a browser tab. */
   platform: "desktop" | "web";
+  /**
+   * Hosted web at chat.openference.com: plain chat only (no host-server, no
+   * agent tools). Full agent runs in the desktop app.
+   */
+  chatOnly?: boolean;
   /** User home directory, for `~`-shortening workspace paths in the UI. */
   homeDir?: string | null;
 }

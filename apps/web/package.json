@@ -8,7 +8,9 @@
     "dev": "vite",
     "dev:server": "tsx watch src/server/index.ts",
     "build": "vite build && pnpm build:server",
+    "build:chat": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
+    "deploy:chat": "pnpm build:chat && wrangler deploy --config wrangler.chat.jsonc",
     "start:server": "node dist/server/index.js",
     "typecheck": "tsc -p tsconfig.web.json --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "tsx --test test/*.test.ts"
@@ -28,18 +30,20 @@
     "@deyin/ui": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "ws": "^8.18.0"
+    "ws": "^8.21.3"
   },
   "optionalDependencies": {
     "node-pty": "^1.0.0"
   },
-  "devDependencies": {
+    "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250214.0",
+    "wrangler": "^4.0.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^4.3.4",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.12",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
   }

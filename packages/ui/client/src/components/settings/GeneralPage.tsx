@@ -8,6 +8,7 @@ interface Props {
   settings: DeyinSettings;
   version: string;
   platform?: "desktop" | "web";
+  chatOnly?: boolean;
   onChange: (patch: Partial<DeyinSettings>) => void;
 }
 
@@ -15,7 +16,7 @@ function fill(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
 
-export function GeneralPage({ settings, version, platform, onChange }: Props) {
+export function GeneralPage({ settings, version, platform, chatOnly, onChange }: Props) {
   const t = useT();
   const isDesktop = platform !== "web" && typeof window.deyin?.updates?.check === "function";
   const [updateState, setUpdateState] = useState<UpdatesState | null>(null);
@@ -94,12 +95,14 @@ export function GeneralPage({ settings, version, platform, onChange }: Props) {
             </SettingCard>
           </>
         ) : null}
+        {!chatOnly ? (
         <SettingCard title={t("general.agentMode")} description={t("general.agentModeDesc")}>
           <Toggle
             checked={settings.agentMode === "agent"}
             onChange={(v) => onChange({ agentMode: v ? "agent" : "chat" })}
           />
         </SettingCard>
+        ) : null}
         <SettingCard title={t("general.autoVisionRouting")} description={t("general.autoVisionRoutingDesc")}>
           <Toggle checked={settings.autoVisionRouting ?? false} onChange={(v) => onChange({ autoVisionRouting: v })} />
         </SettingCard>

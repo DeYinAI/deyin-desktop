@@ -4,7 +4,7 @@ import {
   goalFieldsFromCommand,
   isGoalCommand,
   matchGoalCommand,
-} from "@deyin/agent-core";
+} from "@deyin/agent-core/goal-command";
 
 export { applyGoalCommandText, isGoalCommand, matchGoalCommand };
 

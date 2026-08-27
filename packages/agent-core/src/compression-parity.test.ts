@@ -16,7 +16,7 @@ interface NativeCore {
   compressWireTextEx(content: string, mode: string, toolName: string, preserveErrors: boolean): { compressed: string };
 }
 
-let napi: NativeCore | null = null;
+let napi: NativeCore | null;
 try {
   napi = createRequire(import.meta.url)("@deyin/native-core") as NativeCore;
 } catch {

@@ -408,6 +408,21 @@ code {
   padding: 0 6px;
 }
 
+.titlebar__cobrand {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.titlebar__cobrand-sep {
+  color: var(--color-text-faint);
+  font-size: 11px;
+  font-weight: 300;
+  line-height: 1;
+  opacity: 0.55;
+  user-select: none;
+}
+
 .titlebar__thread {
   font-size: 13px;
   font-weight: 600;
@@ -5236,6 +5251,9 @@ body.is-resizing-ew {
   color: var(--color-text-faint);
   margin: 8px 0 0;
   line-height: 1.5;
+}
+.welcome__hint--error {
+  color: var(--color-danger, #e57373);
 }
 
 /* Search overlay ------------------------------------------------------------ */

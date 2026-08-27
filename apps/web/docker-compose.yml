@@ -1,0 +1,36 @@
+# Local / staging stack. Build the web app first, then start:
+#
+#   cd /path/to/deyin-desktop
+#   export VITE_DEYIN_OAUTH_ISSUER=https://openference.com
+#   export VITE_DEYIN_CLIENT_ID=deyin-web
+#   pnpm --filter @deyin/web... build
+#   cd apps/web && docker compose up --build
+#
+# Open http://localhost:8080
+
+services:
+  host-server:
+    build:
+      context: ../..
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_DEYIN_OAUTH_ISSUER: ${VITE_DEYIN_OAUTH_ISSUER:-https://openference.com}
+        VITE_DEYIN_CLIENT_ID: ${VITE_DEYIN_CLIENT_ID:-deyin-web}
+    environment:
+      DEYIN_OAUTH_ISSUER: ${DEYIN_OAUTH_ISSUER:-https://openference.com}
+      DEYIN_API_BASE_URL: ${DEYIN_API_BASE_URL:-https://api.openference.com/v1}
+      PORT: "8790"
+    expose:
+      - "8790"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./dist/client:/srv/deyin/client:ro
+    depends_on:
+      - host-server
+    restart: unless-stopped

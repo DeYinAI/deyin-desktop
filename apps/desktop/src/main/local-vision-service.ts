@@ -18,7 +18,7 @@ export const LOCAL_VISION_PLUGIN_NAME = "local-vision";
 function pluginConfig(agents: AgentsStore): { baseUrl: string; model: string } {
   const secrets = agents.getPluginSecrets(LOCAL_VISION_PLUGIN_NAME);
   const rawBase = secrets.OLLAMA_BASE_URL?.trim() || DEFAULT_OLLAMA_BASE_URL;
-  let baseUrl = DEFAULT_OLLAMA_BASE_URL;
+  let baseUrl: string;
   try {
     baseUrl = resolveLocalOllamaBaseUrl(rawBase);
   } catch (err) {
@@ -48,7 +48,7 @@ export class LocalVisionService {
     const rawBase = secrets.OLLAMA_BASE_URL?.trim() || DEFAULT_OLLAMA_BASE_URL;
     const model = secrets.OLLAMA_VISION_MODEL?.trim() || DEFAULT_LOCAL_VISION_MODEL;
     const { installed, enabled } = await this.pluginRow();
-    let baseUrl = rawBase;
+    let baseUrl: string;
     try {
       baseUrl = resolveLocalOllamaBaseUrl(rawBase);
     } catch {

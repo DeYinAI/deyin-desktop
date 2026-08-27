@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../Icon.js";
 import { PageHeader } from "./controls.js";
-import type { IdentityInfo, IdentitySyncResult, UserProfile } from "@deyin/contract";
+import { AccountUsagePanel } from "./AccountUsagePanel.js";
+import type { AccountUsage, IdentityInfo, IdentitySyncResult, UserProfile } from "@deyin/contract";
 
 interface Props {
   user: UserProfile | null;
   /** In-app sign-in CTA for the signed-out state. */
   onConnect: () => void;
-  /** Jump to the Usage stats page. */
+  /** Jump to the Usage stats page (desktop / full web). */
   onOpenUsage: () => void;
+  /** Hosted chat-only: show Openference usage stats inline (data page is hidden). */
+  chatOnly?: boolean;
+  accountUsage?: AccountUsage | null;
+  onRefreshAccount?: () => void;
+  accountRefreshing?: boolean;
 }
 
 /** "a few seconds ago"-style age label for ISO timestamps. */
@@ -77,7 +83,11 @@ export function IdentityPage(props: Props) {
     <div className="settings-page">
       <PageHeader
         title="Account"
-        description="Your Openference account, plan and workstation sync."
+        description={
+          props.chatOnly
+            ? "Your Openference account, plan, and usage."
+            : "Your Openference account, plan and workstation sync."
+        }
       >
         {signedIn ? (
           <span className="badge badge--ok">Signed in</span>
@@ -123,12 +133,16 @@ export function IdentityPage(props: Props) {
               />
             </div>
             <div className="usage-card__foot identity-actions">
+              {!props.chatOnly && (
               <button className="chip chip--small" disabled={syncing} onClick={() => void syncNow()}>
                 <Icon name="refresh" size={11} /> {syncing ? "Syncing…" : "Sync now"}
               </button>
+              )}
+              {!props.chatOnly && (
               <button className="chip chip--small" onClick={props.onOpenUsage}>
                 <Icon name="chart" size={11} /> API usage
               </button>
+              )}
               {identity?.oauthIssuer && (
                 <button
                   className="chip chip--small"
@@ -156,6 +170,18 @@ export function IdentityPage(props: Props) {
           </div>
         )}
       </div>
+
+      {props.chatOnly && signedIn && (
+        <div className="usage-card">
+          <AccountUsagePanel
+            embedded
+            account={props.accountUsage ?? null}
+            signedIn={signedIn}
+            onRefresh={props.onRefreshAccount}
+            refreshing={props.accountRefreshing}
+          />
+        </div>
+      )}
     </div>
   );
 }
