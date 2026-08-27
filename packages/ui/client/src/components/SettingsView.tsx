@@ -240,25 +240,29 @@ export function SettingsView(props: SettingsViewProps) {
   return (
     <div className="settings">
       <aside className="settings__nav">
-        <button className="settings__back" onClick={props.onBack}>
-          <Icon name="arrowLeft" size={13} />
-          {props.chatOnly ? "Back to chat" : t("nav.backToWorkspace")}
-        </button>
-        {visibleNav.map((group, i) => (
-          <div key={i} className="settings__nav-group">
-            <div className="sidebar__section">{t(group.sectionKey)}</div>
-            {group.entries.map((entry) => (
-              <button
-                key={entry.page}
-                className={`nav-item ${page === entry.page ? "nav-item--active" : ""}`}
-                onClick={() => setPage(entry.page)}
-              >
-                <Icon name={entry.icon} size={14} />
-                <span>{t(entry.labelKey)}</span>
-              </button>
-            ))}
-          </div>
-        ))}
+        <div className="settings__nav-inner">
+          <button className="nav-item settings__back" onClick={props.onBack}>
+            <Icon name="arrowLeft" size={14} />
+            <span>{props.chatOnly ? "Back to chat" : t("nav.backToWorkspace")}</span>
+          </button>
+          {visibleNav.map((group, i) => (
+            <div key={i} className="settings__nav-group">
+              <div className="settings__section">{t(group.sectionKey)}</div>
+              <nav className="settings__nav-items">
+                {group.entries.map((entry) => (
+                  <button
+                    key={entry.page}
+                    className={`nav-item ${page === entry.page ? "nav-item--active" : ""}`}
+                    onClick={() => setPage(entry.page)}
+                  >
+                    <Icon name={entry.icon} size={14} />
+                    <span>{t(entry.labelKey)}</span>
+                  </button>
+                ))}
+              </nav>
+            </div>
+          ))}
+        </div>
         {!isWeb ? (
           <div className="settings__update">
             <UpdateBanner variant="sidebar" />
