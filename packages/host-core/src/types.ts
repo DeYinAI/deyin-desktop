@@ -1,4 +1,5 @@
 import type { DeyinConfig } from "./config.js";
+import type { ImageModelParams } from "./image-model-params.js";
 
 export interface UserProfile {
   sub: string;
@@ -499,6 +500,8 @@ export interface DeyinSettings {
   subagentEfforts: Record<string, string>;
   /** Per-model reasoning mode: "providerId::modelId" -> off | low | medium | high. */
   modelEfforts: Record<string, string>;
+  /** Per-model image generation tuning: "providerId::modelId" -> diffusion params. */
+  imageModelParams: Record<string, ImageModelParams>;
   /** Default step cap for subagent runs (frontmatter max_steps overrides). */
   subagentMaxSteps: number;
   /** Max subagent runs executing in parallel (1-32). */
@@ -544,6 +547,11 @@ export interface DeyinSettings {
    * plugin (Ollama) or pick a vision model manually instead.
    */
   autoVisionRouting: boolean;
+  /**
+   * When the user asks for a picture on a text-only model, route the message to
+   * an image model automatically instead of letting the chat model refuse.
+   */
+  autoImageGeneration: boolean;
   /** Last version whose What's New modal was shown. */
   whatsNewSeenVersion: string | null;
 }
@@ -985,6 +993,8 @@ export interface AgentStartOptions {
   imageChatModels?: string[];
   /** Must match the renderer's active run id so stale events are ignored after stop/restart. */
   runId?: string;
+  /** Model context window (tokens); web client supplies this, desktop resolves server-side. */
+  contextLength?: number;
   /** Capability ids the user disabled in settings (skill:, command:, subagent:, …). */
   disabledCaps?: string[];
 }

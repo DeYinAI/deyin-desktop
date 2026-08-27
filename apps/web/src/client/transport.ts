@@ -19,6 +19,8 @@ import {
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
   generateImages,
+  imageParamsToExtra,
+  modelImageCapability,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import { browserImageDataUrl, readBrowserImage, saveBrowserImage } from "./browser-image-store.js";
@@ -797,6 +799,7 @@ export function createBrowserTransport(): DeyinApi {
           imageModels: options.imageModels ?? catalogImages.imageModels,
           imageChatModels: options.imageChatModels ?? catalogImages.imageChatModels,
           runId: options.runId,
+          contextLength: options.contextLength,
           disabledCaps: options.disabledCaps ?? readDisabledCaps(),
           provider: {
             baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
@@ -878,14 +881,24 @@ export function createBrowserTransport(): DeyinApi {
           authHeader: provider?.authHeader,
         };
         if (CHAT_ONLY) {
+          const capability = modelImageCapability(request.model);
+          const route = capability === "none" ? "endpoint" : capability;
+          const extra = imageParamsToExtra({
+            negativePrompt: request.negativePrompt,
+            numSteps: request.numSteps,
+            guidance: request.guidance,
+            seed: request.seed,
+            strength: request.strength,
+          });
           const generated = await generateImages({
             apiBaseUrl: routing.baseUrl,
             token: routing.token,
             model: request.model,
+            route,
             prompt: request.prompt,
             size: request.size ?? "1024x1024",
             n: request.n ?? 1,
-            ...(request.negativePrompt ? { extra: { negative_prompt: request.negativePrompt } } : {}),
+            ...(Object.keys(extra).length > 0 ? { extra } : {}),
           });
           const images = await Promise.all(
             generated.map(async (image) => {
@@ -911,6 +924,10 @@ export function createBrowserTransport(): DeyinApi {
           size: request.size,
           n: request.n,
           negativePrompt: request.negativePrompt,
+          numSteps: request.numSteps,
+          guidance: request.guidance,
+          seed: request.seed,
+          strength: request.strength,
           provider: routing,
         }));
       },

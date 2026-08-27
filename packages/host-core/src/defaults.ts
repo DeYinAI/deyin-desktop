@@ -1,7 +1,8 @@
+import { pickImageModelParamsRecord } from "./image-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 16;
+export const SETTINGS_SCHEMA_VERSION = 18;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -20,6 +21,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   subagentModels: {},
   subagentEfforts: {},
   modelEfforts: {},
+  imageModelParams: {},
   subagentMaxSteps: 20,
   subagentConcurrency: 6,
   approvalMode: "full-access",
@@ -45,6 +47,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   memoryEnabled: true,
   reviewMode: "off",
   autoVisionRouting: false,
+  autoImageGeneration: true,
   whatsNewSeenVersion: null,
 };
 
@@ -82,6 +85,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     merged.modelEfforts,
     (v): v is string => v === "off" || v === "low" || v === "medium" || v === "high",
   );
+  merged.imageModelParams = pickImageModelParamsRecord(merged.imageModelParams);
   if (typeof merged.browserControlEnabled !== "boolean") {
     merged.browserControlEnabled = DEFAULT_SETTINGS.browserControlEnabled;
   }
@@ -112,6 +116,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
   if (typeof merged.autoVisionRouting !== "boolean") merged.autoVisionRouting = DEFAULT_SETTINGS.autoVisionRouting;
+  if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration = DEFAULT_SETTINGS.autoImageGeneration;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
   if (!["dark", "light", "system", "warm"].includes(merged.theme)) merged.theme = "dark";

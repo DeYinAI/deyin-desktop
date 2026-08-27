@@ -216,6 +216,17 @@ export interface GitHubAuthState {
   login: string | null;
 }
 
+/** Tunable diffusion parameters for text-to-image models (SDXL, FLUX, etc.). */
+export interface ImageModelParams {
+  size?: string;
+  numSteps?: number;
+  guidance?: number;
+  seed?: number;
+  negativePrompt?: string;
+  /** img2img strength (0–1); only used when input images are supplied. */
+  strength?: number;
+}
+
 /** One text-to-image run requested from the chat or the agent. */
 export interface ImageGenerateRequest {
   threadId: string;
@@ -227,6 +238,10 @@ export interface ImageGenerateRequest {
   size?: string;
   n?: number;
   negativePrompt?: string;
+  numSteps?: number;
+  guidance?: number;
+  seed?: number;
+  strength?: number;
 }
 
 export interface GeneratedImageInfo {

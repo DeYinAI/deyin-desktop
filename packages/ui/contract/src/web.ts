@@ -67,6 +67,8 @@ export type ClientMessage =
       imageChatModels?: string[];
       /** Must match the renderer's active run id (stale-event filtering). */
       runId?: string;
+      /** Model context window in tokens (from the client catalog). */
+      contextLength?: number;
       /** Capability ids the user disabled in settings. */
       disabledCaps?: string[];
     }
@@ -90,6 +92,10 @@ export type ClientMessage =
       size?: string;
       n?: number;
       negativePrompt?: string;
+      numSteps?: number;
+      guidance?: number;
+      seed?: number;
+      strength?: number;
       provider: WebAgentProviderRouting;
     };
 
