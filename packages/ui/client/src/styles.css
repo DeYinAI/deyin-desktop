@@ -8275,24 +8275,57 @@ body.is-resizing-ns {
 .inline-image {
   margin: 12px 0;
 }
-.inline-image__figure {
+.inline-image__open {
+  display: block;
   margin: 0;
+  padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--color-surface-elevated);
   max-width: 640px;
+  cursor: zoom-in;
+}
+.inline-image__open:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 .inline-image__img {
   display: block;
   width: 100%;
   height: auto;
 }
-.inline-image__caption {
-  padding: 6px 10px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-  border-top: 1px solid var(--color-border);
+.inline-image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.82);
+}
+.inline-image-lightbox__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: min(1200px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+.inline-image-lightbox__img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+.inline-image-lightbox__actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
 }
 
 /* Phase 4: event-sourced UI enhancements ----------------------------------- */

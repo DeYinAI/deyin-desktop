@@ -1992,9 +1992,8 @@ export function App() {
           model: runModelId,
           providerId: runProviderId,
         });
-        const alt = text.slice(0, 120).replace(/"/g, "'");
-        const body = result.images.map((img) => `::deyin-inline-image{file="${img.file}" alt="${alt}"}`).join("\n");
-        appendEvents(thread.id, [{ kind: "assistant", text: `${body}\n\n*${runModelId}*` }]);
+        const body = result.images.map((img) => `::deyin-inline-image{file="${img.file}"}`).join("\n");
+        appendEvents(thread.id, [{ kind: "assistant", text: body }]);
       } catch (err) {
         appendEvents(thread.id, [
           { kind: "assistant", text: `Image generation failed: ${err instanceof Error ? err.message : String(err)}` },

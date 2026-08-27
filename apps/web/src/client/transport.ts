@@ -18,8 +18,10 @@ import {
   redactObject,
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
+  generateImages,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
+import { browserImageDataUrl, readBrowserImage, saveBrowserImage } from "./browser-image-store.js";
 import type { DeyinApi } from "@deyin/contract";
 import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
 import type {
@@ -845,18 +847,22 @@ export function createBrowserTransport(): DeyinApi {
       read: async () => "",
     },
     images: {
-      save: (threadId, input) =>
-        host.invoke<{ file: string }>((id: number) => ({
-          type: "images.save",
-          id,
-          threadId,
-          base64: input.base64,
-          mediaType: input.mediaType,
-        })),
-      read: async (threadId, file) => {
-        const result = await host.invoke<{ dataUrl: string }>((id: number) => ({ type: "images.read", id, threadId, file }));
-        return result.dataUrl;
-      },
+      save: CHAT_ONLY
+        ? async (threadId, input) => saveBrowserImage(threadId, input)
+        : (threadId, input) =>
+            host.invoke<{ file: string }>((id: number) => ({
+              type: "images.save",
+              id,
+              threadId,
+              base64: input.base64,
+              mediaType: input.mediaType,
+            })),
+      read: CHAT_ONLY
+        ? async (threadId, file) => browserImageDataUrl(await readBrowserImage(threadId, file))
+        : async (threadId, file) => {
+            const result = await host.invoke<{ dataUrl: string }>((id: number) => ({ type: "images.read", id, threadId, file }));
+            return result.dataUrl;
+          },
       generate: async (request) => {
         const provider = readProviders().find((p) => p.id === request.providerId);
         const keys = readKeys();
@@ -864,6 +870,37 @@ export function createBrowserTransport(): DeyinApi {
         const token = primary ? ((await oauth.getAccessToken().catch(() => null)) ?? "") : (keys[provider.id] ?? "");
         if (!token && !primary && !provider?.local) {
           throw new Error(`No API key stored for ${provider?.name ?? request.providerId}.`);
+        }
+        const routing = {
+          baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
+          token,
+          apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
+          authHeader: provider?.authHeader,
+        };
+        if (CHAT_ONLY) {
+          const generated = await generateImages({
+            apiBaseUrl: routing.baseUrl,
+            token: routing.token,
+            model: request.model,
+            prompt: request.prompt,
+            size: request.size ?? "1024x1024",
+            n: request.n ?? 1,
+            ...(request.negativePrompt ? { extra: { negative_prompt: request.negativePrompt } } : {}),
+          });
+          const images = await Promise.all(
+            generated.map(async (image) => {
+              const saved = await saveBrowserImage(request.threadId, {
+                base64: image.base64,
+                mediaType: image.mediaType,
+              });
+              return {
+                file: saved.file,
+                mediaType: saved.mediaType,
+                ...(image.revisedPrompt ? { revisedPrompt: image.revisedPrompt } : {}),
+              };
+            }),
+          );
+          return { images, model: request.model } satisfies ImageGenerateResult;
         }
         return await host.invoke<ImageGenerateResult>((id: number) => ({
           type: "images.generate",
@@ -874,12 +911,7 @@ export function createBrowserTransport(): DeyinApi {
           size: request.size,
           n: request.n,
           negativePrompt: request.negativePrompt,
-          provider: {
-            baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
-            token,
-            apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
-            authHeader: provider?.authHeader,
-          },
+          provider: routing,
         }));
       },
     },
