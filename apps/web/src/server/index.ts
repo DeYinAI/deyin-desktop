@@ -4,7 +4,7 @@ import { WebSocketServer } from "ws";
 import { Session } from "./session.js";
 
 const PORT = Number(process.env.PORT ?? 8790);
-const OAUTH_ISSUER = process.env.DEYIN_OAUTH_ISSUER ?? "https://api.openference.com";
+const OAUTH_ISSUER = process.env.DEYIN_OAUTH_ISSUER ?? "https://openference.com";
 const OPENFERENCE_API = process.env.DEYIN_API_BASE_URL ?? "https://api.openference.com/v1";
 
 /**

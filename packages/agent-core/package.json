@@ -16,6 +16,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./goal-command": {
+      "types": "./dist/capabilities/goal-command.d.ts",
+      "import": "./dist/capabilities/goal-command.js"
     }
   },
   "files": [
@@ -40,7 +44,7 @@
   "devDependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
     "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.12",
     "typescript": "^5.6.3"
   }
 }

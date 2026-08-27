@@ -76,7 +76,7 @@ export async function detectEnv(): Promise<EnvInfo> {
   const os = platform();
   const shells: ShellInfo[] = [];
   let wslDistros: string[] = [];
-  let wsl2 = false;
+  let wsl2: boolean;
 
   if (os === "win32") {
     wslDistros = await listWslDistros();

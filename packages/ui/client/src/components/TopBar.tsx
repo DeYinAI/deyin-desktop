@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "./Icon.js";
-import { Logo } from "./Logo.js";
+import { CoBrandLogos } from "./CoBrandLogos.js";
 import { ThreadMenu, type ThreadAction } from "./ThreadMenu.js";
 
 interface TopBarProps {
   platform: "desktop" | "web";
+  /** Hosted chat-only web: hide workspace folder chip and agent panel toggles. */
+  chatOnly?: boolean;
   threadId: string | null;
   threadTitle: string;
   threadPinned: boolean;
@@ -50,19 +52,28 @@ function formatCompact(n: number): string {
 export function TopBar(props: TopBarProps) {
   const isDesktop = props.platform === "desktop";
   const isMac = isDesktop && navigator.platform.toLowerCase().includes("mac");
+  const chatOnly = props.chatOnly === true;
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
 
   return (
     <header className="titlebar">
       <div className={`titlebar__left ${isMac ? "titlebar__left--mac" : ""}`}>
-        <span className="titlebar__logo"><Logo size={20} /></span>
+        <span className="titlebar__logo"><CoBrandLogos size={20} /></span>
         <span className="titlebar__thread">{props.threadTitle}</span>
+        {!chatOnly && (
         <button className="titlebar__project" onClick={props.onOpenFolder} title="Open folder">
           <Icon name="folder" size={13} />
           <span>{props.projectName}</span>
         </button>
+        )}
         <div className="menu">
-          <button className="icon-btn" title="Task actions" onClick={() => setMenuOpen((v) => !v)}>
+          <button
+            ref={menuBtnRef}
+            className="icon-btn"
+            title="Task actions"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
             <Icon name="dots" size={14} />
           </button>
           {menuOpen && props.threadId && (
@@ -71,6 +82,7 @@ export function TopBar(props: TopBarProps) {
               pinned={props.threadPinned}
               platform={props.platform}
               workspaceRoot={props.workspaceRoot}
+              anchorRef={menuBtnRef}
               onAction={(action) => props.onThreadAction(props.threadId!, action)}
               onClose={() => setMenuOpen(false)}
             />
@@ -110,6 +122,8 @@ export function TopBar(props: TopBarProps) {
             </span>
           </span>
         )}
+        {!chatOnly && (
+        <>
         <button
           className={`icon-btn ${props.terminalOpen ? "icon-btn--active" : ""}`}
           title="Toggle terminal"
@@ -124,6 +138,8 @@ export function TopBar(props: TopBarProps) {
         >
           <Icon name="panel" size={15} />
         </button>
+        </>
+        )}
 
         {isDesktop && !isMac && (
           <div className="titlebar__winctl">

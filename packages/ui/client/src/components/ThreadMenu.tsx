@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
+import { createPortal } from "react-dom";
 import { Icon, type IconName } from "./Icon.js";
+import { useAnchoredMenuPosition } from "../hooks/useAnchoredMenuPosition.js";
 
 export type ThreadAction = "pin" | "rename" | "archive" | "unread" | "trajectory";
 
@@ -8,6 +16,8 @@ interface ThreadMenuProps {
   pinned: boolean;
   platform: "desktop" | "web";
   workspaceRoot: string | null;
+  /** Anchor button for dropdown mode (TopBar). Portals to body with viewport clamping. */
+  anchorRef?: RefObject<HTMLElement | null>;
   /** Fixed screen position (context menu); omitted when anchored to a button. */
   position?: { x: number; y: number };
   onAction: (action: ThreadAction) => void;
@@ -20,17 +30,58 @@ interface KnownPaths {
   config: string;
 }
 
+const VIEWPORT_EDGE = 8;
+
+function clampFixedPosition(
+  x: number,
+  y: number,
+  panel: DOMRect,
+): { x: number; y: number } {
+  return {
+    x: Math.max(VIEWPORT_EDGE, Math.min(x, window.innerWidth - VIEWPORT_EDGE - panel.width)),
+    y: Math.max(VIEWPORT_EDGE, Math.min(y, window.innerHeight - VIEWPORT_EDGE - panel.height)),
+  };
+}
+
 /** Context menu for a task/thread: organize actions, copy paths, diagnostics. */
 export function ThreadMenu(props: ThreadMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [paths, setPaths] = useState<KnownPaths | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [diagState, setDiagState] = useState<"idle" | "sending" | "ok" | "error">("idle");
+  const [fixedPos, setFixedPos] = useState<{ x: number; y: number } | null>(null);
   const isDesktop = props.platform === "desktop";
+  const portalled = Boolean(props.anchorRef || props.position);
+
+  const anchorPos = useAnchoredMenuPosition(
+    Boolean(props.anchorRef && !props.position),
+    props.anchorRef ?? { current: null },
+    ref,
+    { align: "end" },
+  );
 
   useEffect(() => {
     if (isDesktop) void window.deyin.paths.get().then(setPaths).catch(() => undefined);
   }, [isDesktop]);
+
+  useLayoutEffect(() => {
+    if (!props.position || props.anchorRef) {
+      setFixedPos(null);
+      return;
+    }
+    const place = () => {
+      const panel = ref.current?.getBoundingClientRect();
+      if (!panel) return;
+      setFixedPos(clampFixedPosition(props.position!.x, props.position!.y, panel));
+    };
+    place();
+    const raf = requestAnimationFrame(place);
+    window.addEventListener("resize", place);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", place);
+    };
+  }, [props.position, props.anchorRef]);
 
   useEffect(() => {
     const close = (e: MouseEvent) => {
@@ -88,6 +139,19 @@ export function ThreadMenu(props: ThreadMenuProps) {
   const taskPath = paths ? `${paths.userData}/tasks/${props.threadId}` : props.threadId;
   const logPath = paths ? `${paths.logs}/deyin.log` : "deyin.log";
 
+  const showOpenInFileManager = isDesktop && Boolean(props.workspaceRoot);
+  const showCopyPath = Boolean(props.workspaceRoot);
+  const showCopyTaskPath = isDesktop && Boolean(paths);
+  const showCopyLogPath = isDesktop && Boolean(paths);
+  const showGoToConfig = isDesktop && Boolean(paths);
+  const showSendDiagnostics = isDesktop;
+  const showPathSection =
+    showOpenInFileManager ||
+    showCopyPath ||
+    showCopyTaskPath ||
+    showCopyLogPath ||
+    showGoToConfig;
+
   const item = (icon: IconName, label: string, onClick: () => void, disabled = false) => (
     <button className="menu__item" onClick={onClick} disabled={disabled} style={disabled ? { opacity: 0.4 } : undefined}>
       <Icon name={icon} size={13} />
@@ -95,46 +159,45 @@ export function ThreadMenu(props: ThreadMenuProps) {
     </button>
   );
 
-  return (
+  const panelStyle = props.anchorRef && anchorPos
+    ? { top: anchorPos.top, left: anchorPos.left, visibility: "visible" as const }
+    : props.position
+      ? {
+          position: "fixed" as const,
+          left: fixedPos?.x ?? props.position.x,
+          top: fixedPos?.y ?? props.position.y,
+          right: "auto" as const,
+        }
+      : undefined;
+
+  const panel = (
     <div
       ref={ref}
-      className="menu__panel threadmenu"
-      style={
-        props.position
-          ? { position: "fixed", left: props.position.x, top: props.position.y, right: "auto" }
-          : undefined
-      }
+      className={`menu__panel threadmenu${portalled ? " menu__panel--anchored" : ""}`}
+      style={panelStyle}
     >
       {item("pin", props.pinned ? "Unpin task" : "Pin task", () => act("pin"))}
       {item("pencil", "Rename task", () => act("rename"))}
       {item("archive", "Archive task", () => act("archive"))}
       {item("dots", "Mark as unread", () => act("unread"))}
-      <div className="modelmenu__rule" />
-      {item(
-        "folder",
-        "Open in file manager",
-        () => {
+      {showPathSection && <div className="modelmenu__rule" />}
+      {showOpenInFileManager &&
+        item("folder", "Open in file manager", () => {
           if (props.workspaceRoot) window.deyin.shell.showItem(props.workspaceRoot);
           props.onClose();
-        },
-        !isDesktop || !props.workspaceRoot,
-      )}
-      {item("copy", "Copy path", () => copy("Copy path", props.workspaceRoot ?? ""), !props.workspaceRoot)}
-      {item("copy", "Copy task path", () => copy("Copy task path", taskPath))}
-      {item("copy", "Copy log path", () => copy("Copy log path", logPath), !isDesktop)}
+        })}
+      {showCopyPath && item("copy", "Copy path", () => copy("Copy path", props.workspaceRoot!))}
+      {showCopyTaskPath && item("copy", "Copy task path", () => copy("Copy task path", taskPath))}
+      {showCopyLogPath && item("copy", "Copy log path", () => copy("Copy log path", logPath))}
       {item("copy", "Copy session ID", () => copy("Copy session ID", props.threadId))}
-      {item(
-        "gear",
-        "Go to config",
-        () => {
-          if (isDesktop && paths) window.deyin.shell.showItem(paths.config);
+      {showGoToConfig &&
+        item("gear", "Go to config", () => {
+          if (paths) window.deyin.shell.showItem(paths.config);
           props.onClose();
-        },
-        !isDesktop,
-      )}
+        })}
       <div className="modelmenu__rule" />
       {item("route", "View model trajectory", () => act("trajectory"))}
-      {item("shield", diagLabel, sendDiagnostics, !isDesktop || diagState === "sending")}
+      {showSendDiagnostics && item("shield", diagLabel, sendDiagnostics, diagState === "sending")}
       {item("flag", "Report issue", () => {
         const url = "https://github.com/deyin-app/deyin/issues/new";
         if (isDesktop) window.deyin.shell.openExternal(url);
@@ -143,4 +206,6 @@ export function ThreadMenu(props: ThreadMenuProps) {
       })}
     </div>
   );
+
+  return portalled ? createPortal(panel, document.body) : panel;
 }

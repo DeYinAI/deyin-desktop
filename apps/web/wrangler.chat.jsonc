@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/cloudflare/workers-sdk/main/packages/wrangler/config-schema.json",
+  "name": "deyin-chat-web",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-01-01",
+  "assets": {
+    "directory": "dist/client",
+    "not_found_handling": "single-page-application",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    { "pattern": "chat.openference.com", "custom_domain": true }
+  ],
+  "vars": {
+    "OPENFERENCE_API_URL": "https://api.openference.com/v1",
+    "OPENFERENCE_SITE_URL": "https://openference.com"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

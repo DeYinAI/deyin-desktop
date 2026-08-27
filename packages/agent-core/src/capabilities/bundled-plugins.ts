@@ -64,7 +64,7 @@ export function materializeBundledPlugins(bundledSrcDir: string, pluginsDir: str
     const name = manifest.name ?? entry.name;
     const dest = join(pluginsDir, `bundled-${name}`);
     const metaPath = join(dest, ".deyin-install.json");
-    let existing: InstallMeta | null = null;
+    let existing: InstallMeta | null;
     try {
       existing = JSON.parse(readFileSync(metaPath, "utf8")) as InstallMeta;
     } catch {

@@ -377,7 +377,8 @@ export function App() {
   }, []);
 
   const terminalVisible = panelOpen && panelTab === "terminal";
-  const panelVisible = panelOpen || panelRail;
+  const panelVisible = (panelOpen || panelRail) && !(boot?.chatOnly ?? false);
+  const chatOnlyHosted = boot?.chatOnly ?? false;
 
   /* Panel width. The wrap (rail + panel) is laid out in pixels derived from the
      content area's measured width, so the chat column always keeps CHAT_MIN_PX
@@ -803,6 +804,7 @@ export function App() {
   }, [terminalVisible, markOnboard]);
 
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const refreshSession = useCallback(async () => {
     const profile = await window.deyin.auth.getUser();
@@ -811,11 +813,10 @@ export function App() {
   }, []);
 
   const connect = useCallback(async () => {
+    setConnectError(null);
     setBusy(true);
     setConnecting(true);
     try {
-      // Deep-link flow returns null (completes via the auth:changed event);
-      // the loopback/dev flow returns the profile directly.
       const profile = await window.deyin.auth.connect();
       if (profile) {
         setUser(profile);
@@ -824,6 +825,7 @@ export function App() {
       }
     } catch (err) {
       console.error("Connect failed", err);
+      setConnectError(err instanceof Error ? err.message : "Sign-in failed. Try again.");
       setConnecting(false);
     } finally {
       setBusy(false);
@@ -1371,7 +1373,7 @@ export function App() {
       const createdId = createdProject?.id ?? null;
       setProjects((cur) => {
         if (cur.length === 0) {
-          return [{ id: newId("proj"), name: "Workspace", root: null, threads: [thread] }];
+          return [{ id: newId("proj"), name: chatOnlyHosted || boot?.platform === "web" ? "Chat" : "Workspace", root: null, threads: [thread] }];
         }
         const target =
           createdId && cur.some((p) => p.id === createdId)
@@ -1392,7 +1394,13 @@ export function App() {
     (thread: Thread, goal: string | null) => {
       let createdProjectId: string | undefined;
       setProjects((cur) => {
-        const result = applyGoalToProjects(cur, thread, goal, activeProjectId);
+        const result = applyGoalToProjects(
+          cur,
+          thread,
+          goal,
+          activeProjectId,
+          chatOnlyHosted || boot?.platform === "web" ? "Chat" : "Workspace",
+        );
         createdProjectId = result.createdProjectId;
         return result.projects;
       });
@@ -1852,7 +1860,7 @@ export function App() {
     setProjects((cur) => {
       if (cur.length === 0) {
         createdProjectId = newId("proj");
-        return [{ id: createdProjectId, name: "Workspace", root: null, threads: [newThread] }];
+        return [{ id: createdProjectId, name: chatOnlyHosted || boot?.platform === "web" ? "Chat" : "Workspace", root: null, threads: [newThread] }];
       }
       const target = cur.some((p) => p.id === activeProjectId) ? activeProjectId! : cur[0]!.id;
       return cur.map((p) => (p.id === target ? { ...p, threads: [newThread, ...p.threads] } : p));
@@ -2002,7 +2010,7 @@ export function App() {
     // the selected composer mode; falls back to the plain text stream when
     // switched off. Images require the agent runtime (vision content parts).
     const images: AgentImageInput[] = composerImages.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
-    if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
+    if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent && !chatOnlyHosted) {
       // Vision: cloud auto-route (opt-in), manual vision model pick, or Local Vision plugin.
       let runModel = runModelId;
       let visionNotice: string | undefined;
@@ -2148,7 +2156,7 @@ export function App() {
     const runActive =
       agentStateStore.isRunning(activeThread.id) || plainStreamFor(activeThread.id) !== null;
     if (!runActive) {
-      if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent) {
+      if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent && !chatOnlyHosted) {
         startAgentRun(activeThread, text, composerMode);
       }
       return;
@@ -2187,7 +2195,8 @@ export function App() {
   );
 
   const projectName =
-    activeProject?.name ?? (workspaceRoot ? workspaceRoot.split(/[\\/]/).pop() ?? "Workspace" : "No workspace");
+    activeProject?.name ??
+    (workspaceRoot ? workspaceRoot.split(/[\\/]/).pop() ?? (chatOnlyHosted ? "Chat" : "Workspace") : chatOnlyHosted ? "Chat" : "No workspace");
 
   // Same inputs ChatView uses for its empty branch — drives the centered
   // new-chat layout (logo hero + repo chip + composer).
@@ -2204,23 +2213,40 @@ export function App() {
 
   const language = settings?.language ?? "en";
 
-  // Signed-out desktop users see the Welcome screen first, unless they chose
-  // the API-key path (persisted as settings.welcomeDismissed). While settings
-  // load, keep showing Welcome to avoid a workspace flash. (Web signs in via a
-  // full-page redirect, so it never sits in this state.)
-  if (boot && boot.platform === "desktop" && !user && !settings?.welcomeDismissed) {
+  // Signed-out users see Welcome first. Desktop can skip via API-key path
+  // (settings.welcomeDismissed). Hosted chat-only web always requires sign-in.
+  const showWelcome =
+    boot &&
+    !user &&
+    (boot.chatOnly || (boot.platform === "desktop" && !settings?.welcomeDismissed));
+  if (showWelcome) {
     return (
       <AppProviders language={language}>
         <Welcome
           busy={busy}
           connecting={connecting}
+          connectError={connectError}
           onConnect={() => void connect()}
-          onUseApiKey={() => {
-            // Let them in signed out; custom providers work with stored API keys.
-            patchSettings({ welcomeDismissed: true });
-            setSettingsPage("models");
-            setView("settings");
-          }}
+          onUseApiKey={
+            boot.chatOnly
+              ? undefined
+              : () => {
+                  patchSettings({ welcomeDismissed: true });
+                  setSettingsPage("models");
+                  setView("settings");
+                }
+          }
+          footerHint={
+            boot.chatOnly ? (
+              <>
+                Chat on the web. For coding agents, terminal, and git — use the{" "}
+                <a href="https://github.com/DeYinAI/deyin-desktop/releases" target="_blank" rel="noreferrer">
+                  Deyin desktop app
+                </a>
+                .
+              </>
+            ) : undefined
+          }
         />
       </AppProviders>
     );
@@ -2232,6 +2258,7 @@ export function App() {
         <div className="app">
           <SettingsView
           platform={boot?.platform === "web" ? "web" : "desktop"}
+          chatOnly={boot?.chatOnly}
             key={settingsPage}
             initialPage={settingsPage}
             settings={settings}
@@ -2280,6 +2307,7 @@ export function App() {
     <div className="app">
       <TopBar
         platform={boot?.platform ?? "desktop"}
+        chatOnly={chatOnlyHosted}
         threadId={activeThreadId}
         threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
         threadPinned={activeThread?.pinned ?? false}
@@ -2403,11 +2431,13 @@ export function App() {
           <div className="app__columns" ref={attachColumns}>
             <main className={`chat-column${isChatEmpty ? " chat-column--empty" : ""}`}>
               <div className="chat-column__bar">
-                <EnvironmentBadge
-                  env={env}
-                  onPickShell={() => openPanelTab("terminal")}
-                />
-                {boot?.platform === "web" && (
+                {!chatOnlyHosted && (
+                  <EnvironmentBadge
+                    env={env}
+                    onPickShell={() => openPanelTab("terminal")}
+                  />
+                )}
+                {boot?.platform === "web" && !chatOnlyHosted && (
                   <RepoBar
                     repoState={repoState}
                     busy={repoBusy}
@@ -2423,7 +2453,7 @@ export function App() {
               <ChatView
                 events={chatEvents}
                 streamText={chatStreamText}
-                streamReasoning={agentRunState?.streamReasoning ?? null}
+                streamReasoning={chatOnlyHosted ? null : (agentRunState?.streamReasoning ?? null)}
                 greetingName={greetingName}
                 threadKey={activeThreadId}
                 codeDisplay={{
@@ -2434,21 +2464,29 @@ export function App() {
                   showLineNumbers: settings?.showLineNumbers ?? true,
                   wrapLongLines: settings?.wrapLongLines ?? false,
                 }}
-                onOpenFile={openFileDiff}
-                onOpenWorkspaceFile={openWorkspaceFile}
+                onOpenFile={chatOnlyHosted ? undefined : openFileDiff}
+                onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
                 workspaceRoot={workspaceRoot}
-                onUndo={undoFileChange}
-                onBuild={buildFromPlan}
-                canBuildPlan={planCardBuildable}
-                planMarkdown={activeThread?.planMarkdown ?? null}
-                onOpenPlan={() => {
-                  openPanelTab("plan");
-                }}
-                planArtifact={planArtifact}
-                onOpenSubagent={(id) => {
-                  setActiveSubagentId(id);
-                  openPanelTab("agent");
-                }}
+                onUndo={chatOnlyHosted ? undefined : undoFileChange}
+                onBuild={chatOnlyHosted ? undefined : buildFromPlan}
+                canBuildPlan={chatOnlyHosted ? false : planCardBuildable}
+                planMarkdown={chatOnlyHosted ? null : (activeThread?.planMarkdown ?? null)}
+                onOpenPlan={
+                  chatOnlyHosted
+                    ? undefined
+                    : () => {
+                        openPanelTab("plan");
+                      }
+                }
+                planArtifact={chatOnlyHosted ? null : planArtifact}
+                onOpenSubagent={
+                  chatOnlyHosted
+                    ? undefined
+                    : (id) => {
+                        setActiveSubagentId(id);
+                        openPanelTab("agent");
+                      }
+                }
                 onForkAtEvent={(eventIndex) => {
                   if (activeThreadId) forkThreadAtEvent(activeThreadId, eventIndex);
                 }}
@@ -2461,14 +2499,16 @@ export function App() {
                   });
                 }}
                 onOpenAgentTerminal={
-                  agentTerminals.some((t) => t.threadId === activeThreadId)
-                    ? () => openPanelTab("terminal")
-                    : undefined
+                  chatOnlyHosted
+                    ? undefined
+                    : agentTerminals.some((t) => t.threadId === activeThreadId)
+                      ? () => openPanelTab("terminal")
+                      : undefined
                 }
                 threadTitles={Object.fromEntries((activeProject?.threads ?? []).map((t) => [t.id, t.title]))}
               />
 
-              {(activeThread?.todos?.length ?? 0) > 0 && (
+              {!chatOnlyHosted && (activeThread?.todos?.length ?? 0) > 0 && (
                 <div className="chat-column__tasks">
                   <TaskList
                     todos={activeThread!.todos!}
@@ -2481,12 +2521,14 @@ export function App() {
               )}
 
               <div className="chat-column__composer">
-                {activeThread?.goal?.status === "active" && (
+                {!chatOnlyHosted && activeThread?.goal?.status === "active" && (
                   <div className="goal-card">
                     <Icon name="flag" size={14} />
                     <span>{activeThread.goal.text}</span>
                   </div>
                 )}
+                {!chatOnlyHosted && (
+                  <>
                 <ReviewBanner
                   changes={pendingReview.filter((c) => c.status === "pending")}
                   onApprove={approveReview}
@@ -2525,8 +2567,6 @@ export function App() {
                     onDecision={(decision) => {
                       const answered = activeApprovals[0]!;
                       window.deyin.agent?.approve(answered.requestId, decision);
-                      // "Allow for session" covers every queued request for the
-                      // same tool, so the user is not asked N times in a row.
                       const covered =
                         decision === "allow-always"
                           ? activeApprovals.filter((a) => a !== answered && a.toolName === answered.toolName)
@@ -2584,6 +2624,9 @@ export function App() {
                     }}
                   />
                 )}
+                  </>
+                )}
+                {!chatOnlyHosted && (
                 <WorkspaceBar
                   platform={boot?.platform === "web" ? "web" : "desktop"}
                   projects={projects}
@@ -2607,30 +2650,38 @@ export function App() {
                     openPanelTab("git");
                   }}
                 />
+                )}
                 <Composer
+                  plainChat={chatOnlyHosted}
                   focusSignal={composerFocus}
                   value={input}
                   models={models}
                   selectedModel={selectedModel}
                   approvalMode={settings?.approvalMode ?? "full-access"}
-                  mode={(settings?.agentMode ?? "agent") === "agent" ? composerMode : undefined}
+                  mode={
+                    chatOnlyHosted
+                      ? undefined
+                      : (settings?.agentMode ?? "agent") === "agent"
+                        ? composerMode
+                        : undefined
+                  }
                   deliveryModeEnabled={false}
                   thinking={settings?.thinking ?? true}
                   thinkingDefault={settings?.thinking ?? true}
                   modelEfforts={settings?.modelEfforts}
                   canSend={input.trim().length > 0}
                   streaming={activeThreadStreaming}
-                  runStatus={agentRunState?.running ? agentRunState.status ?? null : null}
-                  queuedPrompt={activeQueuedPrompt}
+                  runStatus={chatOnlyHosted ? null : agentRunState?.running ? agentRunState.status ?? null : null}
+                  queuedPrompt={chatOnlyHosted ? null : activeQueuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
                   selectedProviderId={selectedProviderId}
                   onChange={setInput}
                   onSend={() => void send()}
-                  onSteer={() => void send()}
-                  onSendNow={sendNow}
-                  onStartMultitasking={startMultitasking}
-                  onClearQueue={clearQueue}
+                  onSteer={chatOnlyHosted ? undefined : () => void send()}
+                  onSendNow={chatOnlyHosted ? undefined : sendNow}
+                  onStartMultitasking={chatOnlyHosted ? undefined : startMultitasking}
+                  onClearQueue={chatOnlyHosted ? undefined : clearQueue}
                   onStop={showGlobalStop ? stopRun : undefined}
                   onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
                   onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
@@ -2638,8 +2689,10 @@ export function App() {
                     setSettingsPage("models");
                     setView("settings");
                   }}
-                  onSelectApproval={(mode: ApprovalMode) => patchSettings({ approvalMode: mode })}
-                  onSelectMode={selectMode}
+                  onSelectApproval={
+                    chatOnlyHosted ? undefined : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
+                  }
+                  onSelectMode={chatOnlyHosted ? undefined : selectMode}
                   onToggleThinking={(on) => patchSettings({ thinking: on })}
                   onSetModelEffort={(providerId, modelId, mode: ModelReasoningMode | undefined) => {
                     const key = modelEffortKey(providerId, modelId);
@@ -2651,28 +2704,38 @@ export function App() {
                   contextSnapshot={activeContextSnapshot}
                   contextLength={selectedContextLength}
                   threadKey={activeThreadId}
-                  compactionNotice={activeCompactionNotice}
-                  attachments={composerAttachments}
-                  onAttachmentsChange={setComposerAttachments}
-                  images={composerImages}
-                  onImagesChange={setComposerImages}
-                  linkedThreads={composerLinked}
-                  onLinkedThreadsChange={setComposerLinked}
+                  compactionNotice={chatOnlyHosted ? null : activeCompactionNotice}
+                  attachments={chatOnlyHosted ? [] : composerAttachments}
+                  onAttachmentsChange={chatOnlyHosted ? undefined : setComposerAttachments}
+                  images={chatOnlyHosted ? [] : composerImages}
+                  onImagesChange={chatOnlyHosted ? undefined : setComposerImages}
+                  linkedThreads={chatOnlyHosted ? [] : composerLinked}
+                  onLinkedThreadsChange={chatOnlyHosted ? undefined : setComposerLinked}
                   threadsForPicker={activeProject?.threads}
                   activeThreadId={activeThreadId}
                   workspaceRoot={workspaceRoot}
-                  goalText={activeThread?.goal?.status === "active" ? activeThread.goal.text : null}
-                  onSetGoal={(text) => {
-                    const thread =
-                      activeThread ??
-                      ({
-                        ...emptyThread(),
-                        mode: composerMode,
-                        model: selectedModel,
-                        providerId: selectedProviderId,
-                      } satisfies Thread);
-                    applyGoalToThreadRef.current(thread, text);
-                  }}
+                  goalText={
+                    chatOnlyHosted
+                      ? null
+                      : activeThread?.goal?.status === "active"
+                        ? activeThread.goal.text
+                        : null
+                  }
+                  onSetGoal={
+                    chatOnlyHosted
+                      ? undefined
+                      : (text) => {
+                          const thread =
+                            activeThread ??
+                            ({
+                              ...emptyThread(),
+                              mode: composerMode,
+                              model: selectedModel,
+                              providerId: selectedProviderId,
+                            } satisfies Thread);
+                          applyGoalToThreadRef.current(thread, text);
+                        }
+                  }
                 />
               </div>
             </main>

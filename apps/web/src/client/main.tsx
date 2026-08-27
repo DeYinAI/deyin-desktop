@@ -4,9 +4,10 @@ import { cssVariables } from "@deyin/branding";
 import { App } from "@deyin/ui";
 import "@deyin/ui/styles.css";
 import { createBrowserTransport, maybeCompleteLogin } from "./transport.js";
+import { maybeBootstrapSsoSession } from "./sso-session.js";
 
 async function main() {
-  // If we're on the OAuth callback route, finish the exchange and return home.
+  await maybeBootstrapSsoSession();
   await maybeCompleteLogin();
 
   // Provide the same API the desktop preload exposes, backed by WebSocket + HTTP.

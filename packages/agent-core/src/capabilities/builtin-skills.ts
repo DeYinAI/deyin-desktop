@@ -819,7 +819,7 @@ export function materializeBuiltinSkills(dir: string): number {
   const expected = new Set(BUILTIN_SKILLS.map((s) => s.name));
 
   // Drop stale skills from older versions so they stop being discovered.
-  let entries: string[] = [];
+  let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch {
@@ -836,7 +836,7 @@ export function materializeBuiltinSkills(dir: string): number {
     const skillDir = join(dir, skill.name);
     const file = join(skillDir, "SKILL.md");
     const next = renderBuiltinSkill(skill);
-    let current: string | null = null;
+    let current: string | null;
     try {
       current = readFileSync(file, "utf8");
     } catch {

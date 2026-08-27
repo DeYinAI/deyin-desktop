@@ -4,6 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Deyin</title>
+    <script>
+      // Replace legacy Openference Chat Workbox SW and drop precached bundles.
+      (function () {
+        var reloadKey = "deyin.pwa-migrated";
+        function reloadOnce() {
+          if (sessionStorage.getItem(reloadKey)) return;
+          sessionStorage.setItem(reloadKey, "1");
+          location.reload();
+        }
+        if ("serviceWorker" in navigator) {
+          void navigator.serviceWorker.getRegistrations().then(function (regs) {
+            if (!regs.length) return;
+            return Promise.all(regs.map(function (r) { return r.unregister(); })).then(reloadOnce);
+          });
+        }
+        if ("caches" in window) {
+          void caches.keys().then(function (keys) {
+            return Promise.all(
+              keys.map(function (key) {
+                if (/openference|chat|workbox|precache/i.test(key)) return caches.delete(key);
+              }),
+            );
+          });
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

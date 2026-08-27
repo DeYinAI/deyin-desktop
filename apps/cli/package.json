@@ -30,14 +30,14 @@
     "@deyin/agent-core": "workspace:*",
     "@deyin/host-core": "workspace:*",
     "@deyin/oauth-client": "workspace:*",
-    "citty": "^0.1.6",
+    "citty": "^0.2.2",
     "ink": "^5.2.0",
     "react": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.12",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.12",
     "typescript": "^5.6.3"
   }
 }

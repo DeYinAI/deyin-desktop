@@ -1,14 +1,17 @@
+import type { ReactNode } from "react";
 import { Logo } from "./Logo.js";
 
 interface WelcomeProps {
   busy: boolean;
   connecting: boolean;
+  connectError?: string | null;
   onConnect: () => void;
-  onUseApiKey: () => void;
+  onUseApiKey?: () => void;
+  footerHint?: ReactNode;
 }
 
 /** First-run sign-in screen shown while signed out (centered card). */
-export function Welcome({ busy, connecting, onConnect, onUseApiKey }: WelcomeProps) {
+export function Welcome({ busy, connecting, connectError, onConnect, onUseApiKey, footerHint }: WelcomeProps) {
   return (
     <div className="welcome">
       <div className="welcome__card">
@@ -22,15 +25,19 @@ export function Welcome({ busy, connecting, onConnect, onUseApiKey }: WelcomePro
           <Logo size={16} />
           <span>{connecting ? "Waiting for browser…" : "Connect with Openference"}</span>
         </button>
-        <button className="welcome__btn" disabled={busy} onClick={onUseApiKey}>
-          Use API key
-        </button>
+        {onUseApiKey ? (
+          <button className="welcome__btn" disabled={busy} onClick={onUseApiKey}>
+            Use API key
+          </button>
+        ) : null}
 
         {connecting && (
           <p className="welcome__hint">
             Finish signing in in your browser. This window updates automatically.
           </p>
         )}
+        {connectError ? <p className="welcome__hint welcome__hint--error">{connectError}</p> : null}
+        {footerHint ? <p className="welcome__hint">{footerHint}</p> : null}
       </div>
     </div>
   );
