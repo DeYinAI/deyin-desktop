@@ -1,4 +1,4 @@
-/** Openference mark — inlined for offline render (matches chat-openference BrandLogo.Color). */
+/** Openference mark — inlined for offline render (matches openference.com/brand/icons/openference-color.svg). */
 export function OpenferenceLogo({ size = 20 }: { size?: number }) {
   return (
     <svg
@@ -10,12 +10,12 @@ export function OpenferenceLogo({ size = 20 }: { size?: number }) {
       xmlns="http://www.w3.org/2000/svg"
     >
       <path
-        fill="#6366f1"
+        fill="#5c74b8"
         fillRule="evenodd"
         clipRule="evenodd"
-        d="M12 3.5 19.36 7.75v8.5L12 20.5 4.64 16.25V7.75L12 3.5ZM12 6.5l4.76 2.75v5.5L12 17.5l-4.76-2.75v-5.5L12 6.5Z"
+        d="M12 5C15 5 18 7 20 13C18 19 15 21 12 21C9 21 6 19 4 13C6 7 9 5 12 5ZM8.4 11.6A1 1 0 0 1 10.4 11.6L10.4 14.4A1 1 0 0 1 8.4 14.4ZM13.6 11.6A1 1 0 0 1 15.6 11.6L15.6 14.4A1 1 0 0 1 13.6 14.4Z"
       />
-      <circle cx="12" cy="12" r="2" fill="#6366f1" />
+      <circle cx="12" cy="4.5" r="1.3" fill="#5c74b8" />
     </svg>
   );
 }
