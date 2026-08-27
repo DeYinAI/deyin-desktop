@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Icon } from "./Icon.js";
+import { useMenuDismiss } from "../hooks/useMenuDismiss.js";
 import type { EnvInfo } from "@deyin/contract";
 
 interface EnvironmentBadgeProps {
@@ -10,6 +11,9 @@ interface EnvironmentBadgeProps {
 /** Top-bar badge showing the active execution environment (Local / WSL2 / web sandbox). */
 export function EnvironmentBadge({ env, onPickShell }: EnvironmentBadgeProps) {
   const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useMenuDismiss(open, () => setOpen(false), anchorRef, panelRef);
 
   if (!env) {
     return (
@@ -31,13 +35,18 @@ export function EnvironmentBadge({ env, onPickShell }: EnvironmentBadgeProps) {
 
   return (
     <div className="menu">
-      <button className="env-badge" title={`Host: ${env.hostname} (${env.arch})`} onClick={() => setOpen((v) => !v)}>
+      <button
+        ref={anchorRef}
+        className="env-badge"
+        title={`Host: ${env.hostname} (${env.arch})`}
+        onClick={() => setOpen((v) => !v)}
+      >
         <Icon name="cpu" size={12} />
         <span>{label}</span>
         <Icon name="chevronDown" size={10} />
       </button>
       {open && (
-        <div className="menu__panel">
+        <div className="menu__panel" ref={panelRef}>
           <div className="menu__header">Environment</div>
           <div className="menu__info">
             <div>Host: {env.hostname}</div>
