@@ -8,7 +8,7 @@ import {
   migrateSettings,
   type StoredProviderBase,
 } from "./defaults.js";
-import { classifyModelKinds, isImageModel } from "./images.js";
+import { classifyModelKinds, modelImageCapability } from "./images.js";
 import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { Storage } from "./storage.js";
@@ -307,20 +307,22 @@ export class AgentsStore {
       const models = (Array.isArray(body.data) ? body.data : [])
         .filter((m): m is { id: string; context_length?: number; vision?: unknown; capabilities?: unknown } => typeof m.id === "string" && m.id.length > 0)
         .map((m) => {
-          const image = isImageModel(m.id, m);
+          const capability = modelImageCapability(m.id, m);
+          const endpointOnly = capability === "endpoint";
           const reasoning = parseModelReasoningMeta(m);
           return {
             id: m.id,
             name: m.id,
             contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
             // Image models take a prompt, not a conversation: never route vision to them.
-            vision: image
+            vision: endpointOnly
               ? false
               : modelSupportsVision(m.id, {
                   vision: typeof m.vision === "boolean" || typeof m.vision === "number" || typeof m.vision === "string" ? m.vision : undefined,
                   capabilities: m.capabilities,
                 }),
-            kind: image ? ("image" as const) : ("chat" as const),
+            kind: endpointOnly ? ("image" as const) : ("chat" as const),
+            ...(capability === "chat" ? { imageOutput: true } : {}),
             ...(reasoning ? { reasoning } : {}),
           };
         });
