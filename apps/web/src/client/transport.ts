@@ -9,12 +9,12 @@ import {
   computeStats,
   fetchAccountUsage,
   fetchPublicPlans,
-  modelSupportsVision,
   selectPlan,
   fetchBillingOverview,
   fetchBillingPublishableKey,
   completeCrossCurrencyUpgrade,
   abortCrossCurrencyUpgrade,
+  listModels,
   redactObject,
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
@@ -508,15 +508,8 @@ export function createBrowserTransport(): DeyinApi {
       async list() {
         const token = await oauth.getAccessToken().catch(() => null);
         if (!token) return [];
-        const res = await fetch(`${API_BASE}/models`, { headers: { authorization: `Bearer ${token}` } });
-        if (!res.ok) return [];
-        const body = (await res.json()) as { data?: { id: string; context_length?: number; vision?: boolean; capabilities?: unknown }[] };
-        return (body.data ?? []).map((m) => ({
-          id: m.id,
-          name: m.id,
-          contextLength: m.context_length,
-          vision: modelSupportsVision(m.id, m),
-        }));
+        // Same catalog mapping as desktop (modelImageCapability → kind/imageOutput).
+        return listModels({ apiBaseUrl: API_BASE }, () => Promise.resolve(token));
       },
       // The web fetches live every time (no local cache file), so refresh = list.
       refresh() {
