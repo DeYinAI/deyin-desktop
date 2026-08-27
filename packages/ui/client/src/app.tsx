@@ -2464,10 +2464,10 @@ export function App() {
                   showLineNumbers: settings?.showLineNumbers ?? true,
                   wrapLongLines: settings?.wrapLongLines ?? false,
                 }}
-                onOpenFile={chatOnlyHosted ? undefined : openFileDiff}
+                onOpenFile={chatOnlyHosted ? () => {} : openFileDiff}
                 onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
                 workspaceRoot={workspaceRoot}
-                onUndo={chatOnlyHosted ? undefined : undoFileChange}
+                onUndo={chatOnlyHosted ? () => {} : undoFileChange}
                 onBuild={chatOnlyHosted ? undefined : buildFromPlan}
                 canBuildPlan={chatOnlyHosted ? false : planCardBuildable}
                 planMarkdown={chatOnlyHosted ? null : (activeThread?.planMarkdown ?? null)}
@@ -2690,7 +2690,7 @@ export function App() {
                     setView("settings");
                   }}
                   onSelectApproval={
-                    chatOnlyHosted ? undefined : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
+                    chatOnlyHosted ? () => {} : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
                   }
                   onSelectMode={chatOnlyHosted ? undefined : selectMode}
                   onToggleThinking={(on) => patchSettings({ thinking: on })}
