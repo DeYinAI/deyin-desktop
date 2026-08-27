@@ -82,6 +82,10 @@ const en = {
   "chat.feedbackUp": "Good response",
   "chat.feedbackDown": "Bad response",
   "chat.copied": "Copied",
+  "chat.copyCode": "Copy code",
+  "chat.showAllCode": "Show all",
+  "chat.collapseCode": "Collapse",
+  "chat.codeLines": "lines",
   "plan.gate.question": "Implement this plan?",
   "plan.gate.yes": "Yes, implement this plan",
   "plan.gate.no": "No, and tell Deyin what to do differently",
@@ -154,6 +158,9 @@ const en = {
   "general.autoVisionRouting": "Auto route to cloud vision",
   "general.autoVisionRoutingDesc":
     "When you attach images on a text-only model, switch to the first vision model in your plan. Off by default — install the Local Vision plugin (Ollama + moondream, ~1.7 GB) or pick a vision model manually instead.",
+  "general.autoImageGeneration": "Auto generate images",
+  "general.autoImageGenerationDesc":
+    "When you ask for a picture on a text-only model, route the prompt to an image model in your plan (FLUX, SDXL, gpt-image, Gemini flash-image). On by default.",
   "general.automationsCatchUp": "Catch up missed automations",
   "general.automationsCatchUpDesc": "Run scheduled automations once on startup if the app was closed during the scheduled time.",
   "general.keepRunningInBackground": "Keep running in background",
@@ -483,6 +490,10 @@ const zh: Partial<Record<MessageKey, string>> = {
   "chat.feedbackUp": "回复有帮助",
   "chat.feedbackDown": "回复无帮助",
   "chat.copied": "已复制",
+  "chat.copyCode": "复制代码",
+  "chat.showAllCode": "展开全部",
+  "chat.collapseCode": "收起",
+  "chat.codeLines": "行",
   "plan.gate.question": "开始执行这个方案吗？",
   "plan.gate.yes": "是，执行这个方案",
   "plan.gate.no": "不，我要告诉 Deyin 该怎么改",
@@ -542,6 +553,9 @@ const zh: Partial<Record<MessageKey, string>> = {
   "general.autoVisionRouting": "自动路由到云端视觉模型",
   "general.autoVisionRoutingDesc":
     "在纯文本模型上附加图片时，自动切换到你计划中的第一个视觉模型。默认关闭——可安装 Local Vision 插件（Ollama + moondream，约 1.7 GB）或手动选择视觉模型。",
+  "general.autoImageGeneration": "自动生成图片",
+  "general.autoImageGenerationDesc":
+    "在纯文本模型上请求图片时，自动将提示词路由到你计划中的图片模型（FLUX、SDXL、gpt-image、Gemini flash-image）。默认开启。",
   "general.privacy": "隐私",
   "general.telemetry": "使用统计",
   "general.telemetryDesc": "共享匿名功能使用数据（绝不包含代码、路径或提示词）。默认关闭。",
@@ -820,6 +834,10 @@ const de: Partial<Record<MessageKey, string>> = {
   "chat.feedbackUp": "Gute Antwort",
   "chat.feedbackDown": "Schlechte Antwort",
   "chat.copied": "Kopiert",
+  "chat.copyCode": "Code kopieren",
+  "chat.showAllCode": "Alles anzeigen",
+  "chat.collapseCode": "Einklappen",
+  "chat.codeLines": "Zeilen",
   "plan.gate.question": "Diesen Plan umsetzen?",
   "plan.gate.yes": "Ja, diesen Plan umsetzen",
   "plan.gate.no": "Nein — Deyin sagen, was anders soll",
@@ -879,6 +897,9 @@ const de: Partial<Record<MessageKey, string>> = {
   "general.autoVisionRouting": "Automatisch zu Cloud-Vision routen",
   "general.autoVisionRoutingDesc":
     "Bei Bildanhängen auf einem reinen Textmodell zum ersten Vision-Modell deines Plans wechseln. Standard aus — Local-Vision-Plugin (Ollama + moondream, ~1,7 GB) installieren oder Vision-Modell manuell wählen.",
+  "general.autoImageGeneration": "Bilder automatisch erzeugen",
+  "general.autoImageGenerationDesc":
+    "Wenn du auf einem reinen Textmodell nach einem Bild fragst, wird die Eingabe an ein Bildmodell in deinem Plan geroutet (FLUX, SDXL, gpt-image, Gemini flash-image). Standard an.",
   "general.privacy": "Privatsphäre",
   "general.telemetry": "Nutzungstelemetrie",
   "general.telemetryDesc": "Anonyme Nutzungsdaten teilen (niemals Code, Pfade oder Prompts). Standardmäßig aus.",

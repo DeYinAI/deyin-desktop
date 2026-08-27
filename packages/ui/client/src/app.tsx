@@ -10,9 +10,13 @@ import {
   resolveModelReasoning,
   locationKey,
   projectLocation,
-  touchProjectOpened,
+  detectImageGenerationIntent,
+  imageGenerationBlockedMessage,
+  pickImageModelForGeneration,
+  imageModelParamsKey,
+  resolveImageModelParams,
 } from "@deyin/host-core/shared";
-import type { ModelReasoningMode, WorkspaceLocation } from "@deyin/host-core/shared";
+import type { ModelReasoningMode, WorkspaceLocation, ImageModelParams } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { AppProviders } from "./providers.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
@@ -37,6 +41,7 @@ import {
 } from "./composerThreadState.js";
 import { applyGoalCommandText } from "./goal-command.js";
 import { applyGoalToProjects } from "./threadGoal.js";
+import { estimateContextFromThreadEvents } from "./contextEstimate.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { PlansView } from "./components/PlansView.js";
@@ -696,8 +701,32 @@ export function App() {
     return provider?.models.find((m) => m.id === selectedModel)?.contextLength;
   }, [models, providers, selectedModel, selectedProviderId]);
 
-  const activeContextSnapshot =
-    activeThreadId !== null ? (contextByThread[activeThreadId] ?? null) : null;
+  const selectedModelKind = useMemo(
+    () => models.find((m) => m.id === selectedModel)?.kind,
+    [models, selectedModel],
+  );
+
+  const savedImageParams = useMemo(() => {
+    const key = imageModelParamsKey(selectedProviderId, selectedModel);
+    return settings?.imageModelParams?.[key];
+  }, [selectedProviderId, selectedModel, settings?.imageModelParams]);
+
+  const activeContextSnapshot = useMemo((): ContextUsageSnapshot | null => {
+    if (activeThreadId === null) return null;
+    const fromThread = contextByThread[activeThreadId];
+    if (fromThread) return fromThread;
+    const fromRun = agentRunState?.contextSnapshot ?? null;
+    if (fromRun) return fromRun;
+    const events = activeThread?.events ?? [];
+    if (events.length === 0 || !selectedContextLength) return null;
+    return estimateContextFromThreadEvents(events, selectedContextLength);
+  }, [
+    activeThread?.events,
+    activeThreadId,
+    agentRunState?.contextSnapshot,
+    contextByThread,
+    selectedContextLength,
+  ]);
   const activeCacheMetrics = activeThreadId !== null ? (cacheByThread[activeThreadId] ?? null) : null;
   const activeCompactionNotice =
     activeThreadId !== null ? (compactionNoticeByThread[activeThreadId] ?? null) : null;
@@ -1647,6 +1676,7 @@ export function App() {
         prompt: agentPrompt,
         providerId: runProviderId,
         model: runModel,
+        contextLength: selectedContextLength,
         ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, runProviderId, runModel),
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
@@ -1664,7 +1694,7 @@ export function App() {
         agentStateStore.dispatch({ threadId: thread.id, event: { type: "done", reason: "aborted", finalText: "" } });
       });
     },
-    [appendEvents, resolveThreadModel, settings, updateThread],
+    [appendEvents, resolveThreadModel, selectedContextLength, settings, updateThread],
   );
   startAgentRunRef.current = startAgentRun;
 
@@ -1977,20 +2007,34 @@ export function App() {
       }
     }
 
-    // Text-to-image model picked in the composer: the prompt goes straight to the
-    // images endpoint — these models have no chat completion to stream. The result
-    // is stored per thread and embedded with the inline-image directive.
-    if (isImageRun) {
+    // Text-to-image model picked in the composer, or auto-routed from image intent:
+    // the prompt goes straight to the images endpoint — these models have no chat
+    // completion to stream. The result is stored per thread and embedded with the
+    // inline-image directive.
+    const autoImageGen = settings?.autoImageGeneration ?? true;
+    const imageIntent =
+      !isImageRun && autoImageGen && composerImages.length === 0 ? detectImageGenerationIntent(text) : null;
+    const autoImageModel = imageIntent ? pickImageModelForGeneration(modelList) : undefined;
+    const directImageModelId = isImageRun ? runModelId : autoImageModel?.id;
+    const directImagePrompt = isImageRun ? text : imageIntent?.prompt;
+
+    if (directImageModelId && directImagePrompt) {
       appendEvents(thread.id, [{ kind: "user", text }]);
       setInput("");
       setComposerImages([]);
-      setPlainStreamForThread(thread.id, `Generating image with ${runModelId}…`);
+      setPlainStreamForThread(thread.id, `Generating image with ${directImageModelId}…`);
       try {
+        const imageParams = resolveImageModelParams(directImageModelId, savedImageParams);
         const result = await window.deyin.images.generate({
           threadId: thread.id,
-          prompt: text,
-          model: runModelId,
+          prompt: directImagePrompt,
+          model: directImageModelId,
           providerId: runProviderId,
+          size: imageParams.size,
+          negativePrompt: imageParams.negativePrompt,
+          numSteps: imageParams.numSteps,
+          guidance: imageParams.guidance,
+          seed: imageParams.seed,
         });
         const body = result.images.map((img) => `::deyin-inline-image{file="${img.file}"}`).join("\n");
         appendEvents(thread.id, [{ kind: "assistant", text: body }]);
@@ -2000,8 +2044,13 @@ export function App() {
         ]);
       } finally {
         setPlainStreamForThread(thread.id, null);
-        void window.deyin.usage.record({ model: runModelId, tokens: 0, newSession: isFirstMessage });
+        void window.deyin.usage.record({ model: directImageModelId, tokens: 0, newSession: isFirstMessage });
       }
+      return;
+    }
+
+    if (imageIntent && !autoImageModel) {
+      appendEvents(thread.id, [{ kind: "assistant", text: imageGenerationBlockedMessage() }]);
       return;
     }
 
@@ -2166,7 +2215,7 @@ export function App() {
       [activeThread.id]: { text, mode: composerMode },
     };
     stopRun();
-  }, [input, activeThread, streamText, settings, boot, composerMode, selectedModel, selectedProviderId, startAgentRun, stopRun, setQueuedForThread, plainStreamFor]);
+  }, [input, activeThread, streamText, settings, boot, composerMode, selectedModel, selectedProviderId, savedImageParams, startAgentRun, stopRun, setQueuedForThread, plainStreamFor]);
 
   const clearQueue = useCallback(() => {
     if (activeThreadId) setQueuedForThread(activeThreadId, null);
@@ -2700,6 +2749,22 @@ export function App() {
                     else delete next[key];
                     patchSettings({ modelEfforts: next });
                   }}
+                  imageModelSettings={
+                    selectedModelKind === "image"
+                      ? {
+                          providerId: selectedProviderId,
+                          modelId: selectedModel,
+                          saved: savedImageParams,
+                          onChange: (providerId, modelId, params: ImageModelParams) => {
+                            const key = imageModelParamsKey(providerId, modelId);
+                            const next = { ...(settings?.imageModelParams ?? {}) };
+                            if (Object.keys(params).length === 0) delete next[key];
+                            else next[key] = params;
+                            patchSettings({ imageModelParams: next });
+                          },
+                        }
+                      : undefined
+                  }
                   contextSnapshot={activeContextSnapshot}
                   contextLength={selectedContextLength}
                   threadKey={activeThreadId}

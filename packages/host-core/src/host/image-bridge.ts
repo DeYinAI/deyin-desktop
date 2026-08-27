@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, extname, isAbsolute, resolve, sep } from "node:path";
 import { fetchImageAsBase64, generateImages, modelImageCapability, type ImageCapability } from "../images.js";
+import { imageParamsToExtra } from "../image-model-params.js";
 import { ImageStore } from "./image-store.js";
 
 /** One image model the signed-in catalog offers, with how it must be called. */
@@ -37,6 +38,10 @@ export interface ImageBridgeRequest {
   size?: string;
   n?: number;
   negativePrompt?: string;
+  numSteps?: number;
+  guidance?: number;
+  seed?: number;
+  strength?: number;
   inputImages?: string[];
   saveTo?: string;
 }
@@ -119,6 +124,13 @@ export function createImageBridge(deps: ImageBridgeDeps) {
       if (token === null) throw new Error("Signed out — sign in to generate images.");
 
       const inputImages = (request.inputImages ?? []).map(readInput);
+      const extra = imageParamsToExtra({
+        negativePrompt: request.negativePrompt,
+        numSteps: request.numSteps,
+        guidance: request.guidance,
+        seed: request.seed,
+        strength: request.strength,
+      });
       const generated = await generateImages({
         apiBaseUrl: deps.apiBaseUrl,
         token,
@@ -128,7 +140,7 @@ export function createImageBridge(deps: ImageBridgeDeps) {
         size: request.size ?? "1024x1024",
         n: request.n ?? 1,
         ...(inputImages.length > 0 ? { inputImages } : {}),
-        ...(request.negativePrompt ? { extra: { negative_prompt: request.negativePrompt } } : {}),
+        ...(Object.keys(extra).length > 0 ? { extra } : {}),
         ...(deps.signal ? { signal: deps.signal } : {}),
       });
 

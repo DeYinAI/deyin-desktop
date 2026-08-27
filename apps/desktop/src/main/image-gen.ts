@@ -1,5 +1,6 @@
-import { generateImages, type ImageStore } from "@deyin/host-core";
-import type { GeneratedImageInfo, ImageGenerateResult } from "@deyin/contract";
+import { generateImages, modelImageCapability, type ImageStore } from "@deyin/host-core";
+import { imageParamsToExtra } from "@deyin/host-core";
+import type { GeneratedImageInfo, ImageGenerateRequest, ImageGenerateResult } from "@deyin/contract";
 
 /** Where a generation request sends its HTTP call, and with which credential. */
 export interface ImageRouting {
@@ -7,15 +8,7 @@ export interface ImageRouting {
   getToken: () => Promise<string | null>;
 }
 
-export interface ImageRunRequest {
-  threadId: string;
-  prompt: string;
-  model: string;
-  size?: string;
-  n?: number;
-  negativePrompt?: string;
-  signal?: AbortSignal;
-}
+export type ImageRunRequest = ImageGenerateRequest & { signal?: AbortSignal };
 
 /**
  * One text-to-image run: call the provider's images endpoint, then persist each
@@ -30,14 +23,24 @@ export async function runImageGeneration(
 ): Promise<ImageGenerateResult> {
   const token = await routing.getToken();
   if (token === null) throw new Error("Signed out — sign in to Openference to generate images.");
+  const capability = modelImageCapability(req.model);
+  const route = capability === "none" ? "endpoint" : capability;
+  const extra = imageParamsToExtra({
+    negativePrompt: req.negativePrompt,
+    numSteps: req.numSteps,
+    guidance: req.guidance,
+    seed: req.seed,
+    strength: req.strength,
+  });
   const generated = await generateImages({
     apiBaseUrl: routing.apiBaseUrl,
     token,
     model: req.model,
+    route,
     prompt: req.prompt,
     size: req.size ?? "1024x1024",
     n: req.n ?? 1,
-    ...(req.negativePrompt ? { extra: { negative_prompt: req.negativePrompt } } : {}),
+    ...(Object.keys(extra).length > 0 ? { extra } : {}),
     ...(req.signal ? { signal: req.signal } : {}),
   });
   const images: GeneratedImageInfo[] = generated.map((image) => {

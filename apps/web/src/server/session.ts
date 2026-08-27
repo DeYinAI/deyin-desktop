@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { GitWatcher, ImageStore, generateImages, git as gitService, imageDataUrl, runGit } from "@deyin/host-core";
+import { GitWatcher, ImageStore, generateImages, git as gitService, imageDataUrl, imageParamsToExtra, modelImageCapability, runGit } from "@deyin/host-core";
 import type { ClientMessage, ServerMessage } from "@deyin/contract/web";
 import { SessionHost } from "./host.js";
 import { WebAgentHost, type WebAgentStartOptions } from "./agent-host.js";
@@ -136,6 +136,7 @@ export class Session {
             imageModels: options.imageModels,
             imageChatModels: options.imageChatModels,
             runId: options.runId,
+            contextLength: options.contextLength,
             disabledCaps: options.disabledCaps,
             provider: options.provider,
             roleModels: options.roleModels,
@@ -183,14 +184,24 @@ export class Session {
         }
         case "images.generate": {
           if (!this.images) throw new Error("Session not ready.");
+          const capability = modelImageCapability(msg.model);
+          const route = capability === "none" ? "endpoint" : capability;
+          const extra = imageParamsToExtra({
+            negativePrompt: msg.negativePrompt,
+            numSteps: msg.numSteps,
+            guidance: msg.guidance,
+            seed: msg.seed,
+            strength: msg.strength,
+          });
           const generated = await generateImages({
             apiBaseUrl: msg.provider.baseUrl,
             token: msg.provider.token,
             model: msg.model,
+            route,
             prompt: msg.prompt,
             size: msg.size ?? "1024x1024",
             n: msg.n ?? 1,
-            ...(msg.negativePrompt ? { extra: { negative_prompt: msg.negativePrompt } } : {}),
+            ...(Object.keys(extra).length > 0 ? { extra } : {}),
           });
           const images = generated.map((image) => {
             const saved = this.images!.save(msg.threadId, { base64: image.base64, mediaType: image.mediaType });

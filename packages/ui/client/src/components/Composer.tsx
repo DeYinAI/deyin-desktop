@@ -5,6 +5,7 @@ import { AnchoredMenu } from "./AnchoredMenu.js";
 import { ContextUsage } from "./ContextUsage.js";
 import { Icon, type IconName } from "./Icon.js";
 import { ModelPicker } from "./ModelPicker.js";
+import { ImageModelSettingsMenu } from "./ImageModelSettingsMenu.js";
 import { PortalledPanel } from "./PortalledPanel.js";
 import type {
   ApprovalMode,
@@ -16,7 +17,7 @@ import type {
   ModelInfo,
   Thread,
 } from "@deyin/contract";
-import type { ModelReasoningMode } from "@deyin/host-core/shared";
+import type { ModelReasoningMode, ImageModelParams } from "@deyin/host-core/shared";
 
 /** An image attached to the next message, read as base64 (works on web + desktop). */
 export interface ComposerImage {
@@ -64,6 +65,13 @@ interface ComposerProps {
   thinkingDefault?: boolean;
   modelEfforts?: Record<string, string>;
   onSetModelEffort?: (providerId: string, modelId: string, mode: ModelReasoningMode | undefined) => void;
+  /** Per-model diffusion tuning when a text-to-image model is selected. */
+  imageModelSettings?: {
+    providerId: string;
+    modelId: string;
+    saved?: ImageModelParams;
+    onChange: (providerId: string, modelId: string, params: ImageModelParams) => void;
+  };
   onToggleThinking?: (on: boolean) => void;
   canSend: boolean;
   streaming: boolean;
@@ -828,6 +836,15 @@ export function Composer(props: ComposerProps) {
           thinkingDefault={props.thinkingDefault}
           onSetModelEffort={props.onSetModelEffort}
         />
+
+        {props.imageModelSettings ? (
+          <ImageModelSettingsMenu
+            providerId={props.imageModelSettings.providerId}
+            modelId={props.imageModelSettings.modelId}
+            saved={props.imageModelSettings.saved}
+            onChange={props.imageModelSettings.onChange}
+          />
+        ) : null}
 
         {props.onToggleThinking && (
           <button
