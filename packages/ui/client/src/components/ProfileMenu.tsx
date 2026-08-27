@@ -45,11 +45,16 @@ function SubmenuRow(props: {
   label: string;
   open: boolean;
   onOpen: () => void;
+  onClose: () => void;
   onToggle: () => void;
   children: ReactNode;
 }) {
   return (
-    <div className="menu__sub" onMouseEnter={props.onOpen}>
+    <div
+      className={`menu__sub${props.open ? " menu__sub--open" : ""}`}
+      onMouseEnter={props.onOpen}
+      onMouseLeave={props.onClose}
+    >
       <button type="button" className="menu__item" onClick={props.onToggle}>
         <Icon name={props.icon} size={13} />
         <span className="menu__item__label">{props.label}</span>
@@ -89,8 +94,8 @@ export function ProfileMenu({
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setOpen(false);
-        setSubmenu(null);
+        if (submenu) setSubmenu(null);
+        else setOpen(false);
       }
     };
     document.addEventListener("mousedown", close);
@@ -99,7 +104,7 @@ export function ProfileMenu({
       document.removeEventListener("mousedown", close);
       document.removeEventListener("keydown", esc);
     };
-  }, [open]);
+  }, [open, submenu]);
 
   if (!user) {
     const pending = busy || connecting;
@@ -127,6 +132,8 @@ export function ProfileMenu({
 
   const pickSubmenu = (id: SubmenuId) => setSubmenu((cur) => (cur === id ? null : id));
 
+  const closeSubmenu = (id: SubmenuId) => setSubmenu((cur) => (cur === id ? null : cur));
+
   const themeOptions: { value: DeyinSettings["theme"]; labelKey: "appearance.dark" | "appearance.light" | "appearance.system" }[] = [
     { value: "dark", labelKey: "appearance.dark" },
     { value: "light", labelKey: "appearance.light" },
@@ -151,8 +158,11 @@ export function ProfileMenu({
         </span>
       </button>
       {open && (
-        <div className="menu__panel menu__panel--up profilemenu">
-          <div className="profile-card">
+        <div
+          className="menu__panel menu__panel--up profilemenu"
+          onMouseLeave={() => setSubmenu(null)}
+        >
+          <div className="profile-card" onMouseEnter={() => setSubmenu(null)}>
             <div className="profile-card__name">{user.name ?? "Deyin user"}</div>
             <div className="profile-card__email">{user.email}</div>
             {planLabel && <span className="plan-badge">{planLabel}</span>}
@@ -163,6 +173,7 @@ export function ProfileMenu({
             label={t("profile.language")}
             open={submenu === "language"}
             onOpen={() => setSubmenu("language")}
+            onClose={() => closeSubmenu("language")}
             onToggle={() => pickSubmenu("language")}
           >
             {LOCALES.map((locale) => (
@@ -186,6 +197,7 @@ export function ProfileMenu({
             label={t("profile.appTheme")}
             open={submenu === "theme"}
             onOpen={() => setSubmenu("theme")}
+            onClose={() => closeSubmenu("theme")}
             onToggle={() => pickSubmenu("theme")}
           >
             {themeOptions.map((opt) => (
@@ -209,6 +221,7 @@ export function ProfileMenu({
             label={t("profile.interfaceZoom")}
             open={submenu === "zoom"}
             onOpen={() => setSubmenu("zoom")}
+            onClose={() => closeSubmenu("zoom")}
             onToggle={() => pickSubmenu("zoom")}
           >
             {ZOOM_PRESETS.map((preset) => (
@@ -227,11 +240,12 @@ export function ProfileMenu({
             ))}
           </SubmenuRow>
 
-          <div className="modelmenu__rule" />
+          <div className="modelmenu__rule" onMouseEnter={() => setSubmenu(null)} />
 
           <button
             type="button"
             className="menu__item"
+            onMouseEnter={() => setSubmenu(null)}
             onClick={() => {
               closeMenu();
               onOpenUsage();
@@ -244,6 +258,7 @@ export function ProfileMenu({
           <button
             type="button"
             className={`menu__item ${freePlan ? "menu__item--accent" : ""}`}
+            onMouseEnter={() => setSubmenu(null)}
             onClick={() => {
               closeMenu();
               onOpenPlans();
@@ -255,11 +270,12 @@ export function ProfileMenu({
             </span>
           </button>
 
-          <div className="modelmenu__rule" />
+          <div className="modelmenu__rule" onMouseEnter={() => setSubmenu(null)} />
 
           <button
             type="button"
             className="menu__item"
+            onMouseEnter={() => setSubmenu(null)}
             onClick={() => {
               closeMenu();
               onLogout();
