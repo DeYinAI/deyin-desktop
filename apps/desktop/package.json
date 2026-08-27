@@ -19,6 +19,7 @@
     "package": "pnpm run build && electron-builder --publish never --config electron-builder.yml",
     "package:linux": "pnpm run build && electron-builder --linux --publish never --config electron-builder.yml",
     "package:win": "bash ../../scripts/ci/publish-computer-use-host-win.sh && pnpm run build && electron-builder --win --x64 --publish never --config electron-builder.yml",
+    "package:mac": "pnpm run build && electron-builder --mac --arm64 --x64 --publish never --config electron-builder.yml",
     "prepackage:dir": "pnpm --filter @deyin/branding make-icons",
     "package:dir": "pnpm run build && electron-builder --dir --config electron-builder.yml"
   },

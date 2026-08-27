@@ -7,7 +7,8 @@ CI verify, PR AI review, and release packaging run on **self-hosted Linux** mach
 
 | Runner | OS | Labels | Workloads |
 |--------|-----|--------|-----------|
-| **dell-runner** | Linux | `self-hosted`, `Linux`, `X64` | CI verify, AI review, release builds |
+| **dell-runner** | Linux | `self-hosted`, `Linux`, `X64` | CI verify, AI review, Linux + Windows release builds |
+| **mac-runner** | macOS | `self-hosted`, `macOS`, `release-mac` | macOS DMG release builds (requires a Mac — cannot cross-compile from Linux) |
 | **win-runner** | Windows | `self-hosted`, `X64`, `Windows` | Deprecated — not used by workflows |
 
 **Bottleneck:** one Linux runner serves every workflow. Add more machines with the same labels to parallelize.
@@ -20,14 +21,18 @@ Any new Linux runner uses the **same labels** as dell-runner. GitHub distributes
 
 For **CI-only** capacity (verify + AI review), Node 22 + pnpm + git is enough.
 
-For **release** jobs too (Linux + Windows installers), install the full toolchain:
+For **release** jobs too (Linux + Windows installers on dell-runner; macOS DMG on mac-runner), install the full toolchain:
 
 ```bash
 git clone git@github.com:DeYinAI/deyin-desktop.git
 cd deyin-desktop
-sudo bash scripts/ci/setup-dell-runner.sh
+sudo bash scripts/ci/setup-dell-runner.sh   # Linux host (Wine, .NET, Bun)
 bash scripts/ci/check-dell-runner.sh
 ```
+
+**macOS DMG builds** require a separate Mac with `bash scripts/ci/setup-mac-runner.sh` and
+`RUNNER_NAME=mac-runner bash scripts/ci/register-mac-runner.sh`. electron-builder cannot
+produce macOS installers from the Linux dell-runner.
 
 ### 2. Register
 
