@@ -15,7 +15,9 @@ fi
 CONFIG="electron-builder.yml"
 
 build_vite() {
-  echo "==> electron-vite build (deps already built in CI; skip prebuild to avoid native-core)"
+  echo "==> Build desktop dependencies (excluding native-core)"
+  pnpm --filter "@deyin/desktop^..." --filter "!@deyin/native-core" build
+  echo "==> electron-vite build"
   pnpm --filter @deyin/desktop exec electron-vite build
 }
 
