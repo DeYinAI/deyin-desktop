@@ -103,6 +103,10 @@ export interface ToolContext {
   resolveInteraction?: (request: InteractionRequest) => Promise<string>;
   /** Fired when create_plan writes a plan artifact. */
   onPlanCreated?: (plan: PlanArtifact) => void;
+  /** Host bridge for create_page (one-page website artifacts). */
+  pageArtifact?: PageArtifactBridge;
+  /** Fired when create_page writes a page artifact. */
+  onPageCreated?: (page: PageArtifact) => void;
   /**
    * Directory where create_plan writes plan markdown. Defaults to
    * ~/.deyin/plans; sandboxed hosts override it to keep plans inside the
@@ -252,6 +256,24 @@ export interface PlanArtifact {
   plan: string;
   filePath?: string;
   todos?: TodoItem[];
+}
+
+export interface PageArtifact {
+  title: string;
+  fileName: string;
+  filePath?: string;
+  html: string;
+  preview?: string;
+}
+
+/** Host bridge for create_page — stores full HTML per thread. */
+export interface PageArtifactBridge {
+  write(request: {
+    threadId: string;
+    file: string;
+    html: string;
+    title?: string;
+  }): Promise<{ fileName: string; filePath?: string; html: string }>;
 }
 
 export interface DiscoveredSkill {

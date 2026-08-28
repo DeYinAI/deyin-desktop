@@ -72,6 +72,7 @@ import { McpOAuthService } from "./mcp-oauth.js";
 import { SecurityService } from "./security.js";
 import { scanDiffViaMcp } from "./security-scan.js";
 import { VisualizeService } from "./visualize.js";
+import { PageService } from "./page.js";
 import { ImageService } from "./images.js";
 import { runImageGeneration, type ImageRouting } from "./image-gen.js";
 import { LocalVisionService } from "./local-vision-service.js";
@@ -272,6 +273,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   /* Security findings + host tool services. */
   const security = new SecurityService();
   const visualize = new VisualizeService();
+  const pages = new PageService();
   const images = new ImageService();
   const localVision = new LocalVisionService(pluginsDir, agents);
 
@@ -336,6 +338,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     browser,
     computerUse,
     visualize,
+    pages,
     images,
     terminals,
     memory,
@@ -711,6 +714,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
 
   /* Visualizations. */
   ipcMain.handle(CH.visualizeRead, (_e, threadId: string, fileName: string) => visualize.readFragment(threadId, fileName));
+  ipcMain.handle(CH.pageRead, (_e, threadId: string, fileName: string) => pages.readPage(threadId, fileName));
 
   /* Generated images: store, read back as a data URL, and run a model directly. */
   ipcMain.handle(CH.imagesSave, (_e, threadId: string, input: { base64: string; mediaType?: string }) => ({

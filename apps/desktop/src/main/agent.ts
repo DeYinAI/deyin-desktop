@@ -48,6 +48,7 @@ import {
   type McpConnection,
   type PermissionDecision,
   type PlanArtifact,
+  type PageArtifact,
   type SubagentDefinition,
   subagentEffort,
   hostToolsForSubagent,
@@ -76,6 +77,7 @@ import type { BrowserControlService } from "./browser.js";
 import type { ComputerUseService } from "./computer-use.js";
 import type { CapabilityService } from "./capabilities.js";
 import type { VisualizeService } from "./visualize.js";
+import type { PageService } from "./page.js";
 import type { ImageService } from "./images.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
@@ -143,6 +145,8 @@ export interface AgentHostOptions {
   browser: BrowserControlService;
   computerUse: ComputerUseService;
   visualize?: VisualizeService;
+  /** One-page website artifact store (create_page tool). */
+  pages?: PageService;
   /** Generated-image store (generate_image tool + direct image-model runs). */
   images?: ImageService;
   terminals: TerminalManager;
@@ -995,6 +999,16 @@ export class DesktopAgentHost {
           },
           resolveInteraction: (request) => this.resolveInteraction(options.threadId, request),
           onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
+          pageArtifact: this.opts.pages
+            ? {
+                write: async ({ threadId, file, html }) => {
+                  const written = this.opts.pages!.writePage(threadId, file, html);
+                  const content = this.opts.pages!.readPage(threadId, written.title);
+                  return { fileName: written.title, filePath: written.file, html: content };
+                },
+              }
+            : undefined,
+          onPageCreated: (page) => this.onPageCreated(options.threadId, page),
           onModeChange: async (change) => {
             const result = await this.handleModeChange(
               options.threadId,
@@ -1441,6 +1455,16 @@ export class DesktopAgentHost {
       overview: plan.overview,
       plan: plan.plan,
       filePath: plan.filePath,
+    });
+  }
+
+  private onPageCreated(threadId: string, page: PageArtifact): void {
+    this.send(threadId, {
+      type: "page-created",
+      title: page.title,
+      fileName: page.fileName,
+      filePath: page.filePath,
+      preview: page.preview,
     });
   }
 

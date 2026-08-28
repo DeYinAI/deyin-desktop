@@ -37,6 +37,9 @@ interface WorkspacePanelProps {
   /** Files tab open request (path + seq so repeat clicks re-open). */
   filesOpenRequest?: { path: string; seq: number } | null;
   planMarkdown: string;
+  /** One-page website artifact for the Preview tab. */
+  pageTitle?: string;
+  pageFileName?: string;
   /** Structured todos for the Plan tab footer (from thread.todos). */
   planTodos?: AgentTodoItem[];
   /** True while the agent run for the active thread is streaming. */
@@ -83,7 +86,12 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
   // The icon rail to the left is the tab switcher; the header only names the
   // view that rail selected, so the tab list is not drawn twice.
   const tab = panelTabDef(props.activeTab);
-  const title = props.activeTab === "diff" && props.diff ? props.diff.fileName : tab.label;
+  const title =
+    props.activeTab === "diff" && props.diff
+      ? props.diff.fileName
+      : props.activeTab === "preview" && props.pageTitle?.trim()
+        ? props.pageTitle.trim()
+        : tab.label;
   return (
     <section className="wspanel">
       <div className="wspanel__tabs">
@@ -142,6 +150,14 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           canBuild={props.canBuildPlan ?? false}
           onBuild={props.onBuildPlan}
           onTodosChange={props.onPlanTodosChange}
+        />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "preview"}>
+        <PreviewTab
+          active={props.activeTab === "preview"}
+          threadId={props.threadId ?? null}
+          title={props.pageTitle}
+          fileName={props.pageFileName}
         />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "diff"}>
@@ -420,6 +436,78 @@ function DiffTab({
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+    </>
+  );
+}
+
+/* Preview tab (one-page website artifacts) --------------------------------- */
+
+function encodeSrcdoc(html: string): string {
+  return html.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function PreviewTab({
+  active,
+  threadId,
+  title,
+  fileName,
+}: {
+  active: boolean;
+  threadId: string | null;
+  title?: string;
+  fileName?: string;
+}) {
+  const t = useT();
+  const [html, setHtml] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!active || !threadId || !fileName?.trim()) {
+      setHtml(null);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    void window.deyin.page
+      .read(threadId, fileName)
+      .then((content) => {
+        if (!cancelled) {
+          setHtml(content);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [active, threadId, fileName]);
+
+  const srcdoc = html ? encodeSrcdoc(html) : null;
+  const heading = title?.trim() || fileName?.trim();
+
+  return (
+    <>
+      {heading && (
+        <div className="wspanel__subbar">
+          <Icon name="layout" size={13} />
+          <span className="wspanel__title-text">{heading}</span>
+        </div>
+      )}
+      <div className="wspanel__body wspanel__browser">
+        {!fileName?.trim() && <div className="hint">{t("preview.empty")}</div>}
+        {error && <div className="hint hint--bad">{error}</div>}
+        {fileName?.trim() && !error && !srcdoc && <div className="hint">{t("preview.loading")}</div>}
+        {srcdoc && (
+          <iframe
+            className="preview-frame"
+            title={heading ?? "Preview"}
+            sandbox="allow-scripts allow-same-origin allow-forms"
+            srcDoc={srcdoc}
+          />
         )}
       </div>
     </>

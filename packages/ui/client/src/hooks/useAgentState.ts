@@ -138,7 +138,9 @@ export type AgentSideEffect =
       }>;
     }
   | { type: "plan-created"; threadId: string; name: string; overview?: string; plan: string; filePath?: string }
+  | { type: "page-created"; threadId: string; title: string; fileName: string; filePath?: string; preview?: string }
   | { type: "plan-panel-open"; threadId: string }
+  | { type: "page-panel-open"; threadId: string }
   | { type: "mode-changed"; threadId: string; mode: ChatMode }
   | { type: "shell-session"; threadId: string; terminalId: string; label: string }
   | {
@@ -734,6 +736,28 @@ class AgentStateStore {
             title: planTitle,
             fileName: planFileNameFromTitle(planTitle || "plan"),
             preview: planPreviewFromMarkdown(event.plan),
+          },
+        ];
+        this.notifyStructural();
+        break;
+      }
+      case "page-created": {
+        this.emit({
+          type: "page-created",
+          threadId,
+          title: event.title,
+          fileName: event.fileName,
+          filePath: event.filePath,
+          preview: event.preview,
+        });
+        this.emit({ type: "page-panel-open", threadId });
+        t.runEvents = [
+          ...t.runEvents,
+          {
+            kind: "page-ready",
+            title: event.title,
+            fileName: event.fileName,
+            preview: event.preview,
           },
         ];
         this.notifyStructural();

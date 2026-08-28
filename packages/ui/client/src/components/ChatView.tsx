@@ -47,6 +47,8 @@ interface ChatViewProps {
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
   onOpenPlan?: () => void;
+  /** Page-ready card: open the Preview panel. */
+  onOpenPreview?: () => void;
   /** Plan written but not built yet and no gate on screen: the card offers Build. */
   canBuildPlan?: boolean;
   /** Full plan markdown of the active thread — enables Copy on the newest plan card. */
@@ -178,6 +180,7 @@ export function ChatView(props: ChatViewProps) {
               onUndo={props.onUndo}
               onBuild={props.onBuild}
               onOpenPlan={props.onOpenPlan}
+              onOpenPreview={props.onOpenPreview}
               planLatest={isLastPlanReady(props.events, group.event)}
               canBuildPlan={props.canBuildPlan}
               planMarkdown={props.planMarkdown}
@@ -255,7 +258,7 @@ function isActivityEvent(event: ThreadEvent): boolean {
 }
 
 function isCompactBoundary(event: ThreadEvent): boolean {
-  return event.kind === "assistant" || event.kind === "user" || event.kind === "plan-ready";
+  return event.kind === "assistant" || event.kind === "user" || event.kind === "plan-ready" || event.kind === "page-ready";
 }
 
 /** Collapse consecutive reasoning/tool/file events into one activity block. */
@@ -479,6 +482,7 @@ function EventRow({
   onUndo,
   onBuild,
   onOpenPlan,
+  onOpenPreview,
   planLatest,
   canBuildPlan,
   planMarkdown,
@@ -499,6 +503,7 @@ function EventRow({
   onUndo: (name: string) => void;
   onBuild?: () => void;
   onOpenPlan?: () => void;
+  onOpenPreview?: () => void;
   /** True when this is the newest plan card in the timeline (owns Copy/Build). */
   planLatest?: boolean;
   /** The newest plan is written but not built yet. */
@@ -567,6 +572,16 @@ function EventRow({
           onOpenPlan={onOpenPlan}
           codeTheme={codeTheme}
           codeDisplay={codeDisplay}
+        />
+      );
+
+    case "page-ready":
+      return (
+        <PageCard
+          title={event.title}
+          fileName={event.fileName}
+          preview={event.preview}
+          onOpenPreview={onOpenPreview}
         />
       );
 
@@ -987,6 +1002,85 @@ function PlanCard({
           )}
         </span>
       </div>
+      </div>
+    </FlatCard>
+  );
+}
+
+/** Page artifact in chat: opens the full one-page website in the Preview panel. */
+function PageCard({
+  title,
+  fileName,
+  preview,
+  onOpenPreview,
+}: {
+  title?: string;
+  fileName?: string;
+  preview?: string;
+  onOpenPreview?: () => void;
+}) {
+  const t = useT();
+  const name = fileName?.trim() || "page.html";
+  const heading = title?.trim() && title.trim() !== name ? title.trim() : name;
+  const body = preview?.trim() ?? "";
+  const open = () => onOpenPreview?.();
+
+  return (
+    <FlatCard className={`plan-card page-card${onOpenPreview ? " plan-card--clickable" : ""}`}>
+      <div
+        role={onOpenPreview ? "button" : undefined}
+        tabIndex={onOpenPreview ? 0 : undefined}
+        title={onOpenPreview ? t("chat.openPreview") : undefined}
+        onClick={onOpenPreview ? open : undefined}
+        onKeyDown={
+          onOpenPreview
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  open();
+                }
+              }
+            : undefined
+        }
+      >
+        <div className="plan-card__head">
+          <Icon name="layout" size={13} className="plan-card__glyph" />
+          <span className="plan-card__kind">{t("chat.page")}</span>
+          <span className="plan-card__status">{t("chat.pageReady")}</span>
+          <span className="plan-card__actions" onClick={(e) => e.stopPropagation()}>
+            {onOpenPreview && (
+              <button
+                type="button"
+                className="plan-card__iconbtn"
+                onClick={open}
+                aria-label={t("chat.openPreview")}
+                title={t("chat.openPreview")}
+              >
+                <Icon name="panel" size={12} />
+              </button>
+            )}
+          </span>
+        </div>
+
+        <div className="plan-card__body">
+          <div className="plan-card__title">{heading}</div>
+          {body ? (
+            <div className="plan-card__preview page-card__preview">{body}</div>
+          ) : (
+            <div className="plan-card__hint">{t("chat.pageFileDesc")}</div>
+          )}
+        </div>
+
+        <div className="plan-card__foot" onClick={(e) => e.stopPropagation()}>
+          <span className="plan-card__file">{name}</span>
+          <span className="plan-card__foot-actions">
+            {onOpenPreview && (
+              <button type="button" className="chip chip--small" onClick={open}>
+                {t("chat.openPreview")}
+              </button>
+            )}
+          </span>
+        </div>
       </div>
     </FlatCard>
   );

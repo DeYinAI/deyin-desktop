@@ -150,6 +150,8 @@ export type ThreadEvent =
   | { kind: "plan"; steps: PlanStep[]; badge?: string }
   /** Compact plan artifact in chat; full markdown lives in the Plan tab. */
   | { kind: "plan-ready"; title?: string; fileName?: string; preview?: string }
+  /** One-page website artifact in chat; full HTML lives in the Preview tab. */
+  | { kind: "page-ready"; title?: string; fileName?: string; preview?: string }
   | {
       kind: "file";
       name: string;
@@ -248,6 +250,9 @@ export interface Thread {
   planMarkdown?: string;
   /** Path to the latest plan artifact on disk. */
   planFilePath?: string;
+  /** Latest one-page website artifact for the Preview tab. */
+  pageTitle?: string;
+  pageFileName?: string;
   /** Latest agent todo list; feeds the pinned task list above the composer. */
   todos?: AgentTodoItem[];
   pinned?: boolean;
@@ -920,6 +925,13 @@ export type AgentUiEvent =
      overview?: string;
      plan: string;
      filePath?: string;
+   }
+ | {
+     type: "page-created";
+     title: string;
+     fileName: string;
+     filePath?: string;
+     preview?: string;
    }
  | { type: "mode-changed"; mode: ChatMode; previousMode?: ChatMode; reminder?: string }
  /** A step ran on a different model than the previous one (per-phase routing). */

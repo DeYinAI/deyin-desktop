@@ -227,6 +227,9 @@ agent: {
   visualize: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.visualizeRead, threadId, fileName),
   },
+  page: {
+    read: (threadId, fileName) => ipcRenderer.invoke(CH.pageRead, threadId, fileName),
+  },
   images: {
     save: (threadId, input) => ipcRenderer.invoke(CH.imagesSave, threadId, input),
     read: (threadId, fileName) => ipcRenderer.invoke(CH.imagesRead, threadId, fileName),

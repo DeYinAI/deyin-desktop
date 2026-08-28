@@ -83,6 +83,8 @@ export type ClientMessage =
   | { type: "term.kill"; termId: string }
   | { type: "images.save"; id: number; threadId: string; base64: string; mediaType?: string }
   | { type: "images.read"; id: number; threadId: string; file: string }
+  | { type: "visualize.read"; id: number; threadId: string; file: string }
+  | { type: "page.read"; id: number; threadId: string; file: string }
   | {
       type: "images.generate";
       id: number;

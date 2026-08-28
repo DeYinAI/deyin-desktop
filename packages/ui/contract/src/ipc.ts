@@ -222,6 +222,7 @@ export const CH = {
   computerUseAppApprovalRequest: "deyin:computerUse:appApproval-request",
   computerUseAppApprovalRespond: "deyin:computerUse:appApproval-respond",
   visualizeRead: "deyin:visualize:read",
+  pageRead: "deyin:page:read",
   imagesSave: "deyin:images:save",
   imagesRead: "deyin:images:read",
   imagesGenerate: "deyin:images:generate",
@@ -539,6 +540,10 @@ export interface DeyinApi {
     respondAppApproval(requestId: string, decision: "always" | "once" | "deny"): void;
   };
   visualize: {
+    read(threadId: string, fileName: string): Promise<string>;
+  };
+  page: {
+    /** Stored one-page website HTML for the Preview panel. */
     read(threadId: string, fileName: string): Promise<string>;
   };
   images: {

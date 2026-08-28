@@ -2,12 +2,14 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { GitWatcher, ImageStore, generateImages, git as gitService, imageDataUrl, imageParamsToExtra, modelImageCapability, runGit } from "@deyin/host-core";
+import { GitWatcher, generateImages, git as gitService, imageDataUrl, imageParamsToExtra, isValidArtifactUserSub, modelImageCapability, runGit } from "@deyin/host-core";
 import type { ClientMessage, ServerMessage } from "@deyin/contract/web";
 import { SessionHost } from "./host.js";
 import { WebAgentHost, type WebAgentStartOptions } from "./agent-host.js";
 import { RepoManager } from "./repo.js";
 import { introspect } from "./introspect.js";
+import { GatedArtifactStore } from "./gated-artifacts.js";
+import { getSharedArtifactObjectStore } from "./artifacts-backend.js";
 
 /** git.call ops that mutate state — each completion pushes git.changed to the client. */
 const GIT_MUTATION_OPS = new Set([
@@ -35,7 +37,7 @@ export class Session {
   private host?: SessionHost;
   private agentHost?: WebAgentHost;
   private repo?: RepoManager;
-  private images?: ImageStore;
+  private artifacts?: GatedArtifactStore;
   private gitWatcher?: GitWatcher;
   private authed = false;
 
@@ -63,10 +65,16 @@ export class Session {
         this.ws.close();
         return;
       }
+      const r2 = getSharedArtifactObjectStore();
+      const userSub = result.sub;
+      if (r2 && !isValidArtifactUserSub(userSub)) {
+        this.send({ type: "auth.err", message: "Signed-in user id is required for artifact storage." });
+        this.ws.close();
+        return;
+      }
       const root = await mkdtemp(join(tmpdir(), "deyin-session-"));
       this.host = new SessionHost(root, (m) => this.send(m));
-      // Generated images live inside the sandbox, like every other session artifact.
-      this.images = new ImageStore(join(root, ".deyin", "images"));
+      this.artifacts = new GatedArtifactStore(userSub ?? "local-dev", root, r2);
       this.repo = new RepoManager(root, {}, (stage, line) => this.send({ type: "repo.progress", stage, line }));
       this.agentHost = new WebAgentHost(
         root,
@@ -74,7 +82,7 @@ export class Session {
         (envelope) => this.send({ type: "agent.event", envelope }),
         (m) => this.send(m),
         () => this.repo?.branchInfo() ?? null,
-        this.images,
+        this.artifacts,
       );
       // Catch agent/terminal git activity and let the client refetch state.
       this.gitWatcher = new GitWatcher(() => this.send({ type: "git.changed" }));
@@ -172,18 +180,29 @@ export class Session {
           break;
         }
         case "images.save": {
-          if (!this.images) throw new Error("Session not ready.");
-          const saved = this.images.save(msg.threadId, { base64: msg.base64, mediaType: msg.mediaType });
+          if (!this.artifacts) throw new Error("Session not ready.");
+          const saved = await this.artifacts.saveImage(msg.threadId, { base64: msg.base64, mediaType: msg.mediaType });
           this.send({ type: "reply", id: msg.id, ok: true, result: { file: saved.file } });
           break;
         }
         case "images.read": {
-          if (!this.images) throw new Error("Session not ready.");
-          this.send({ type: "reply", id: msg.id, ok: true, result: { dataUrl: imageDataUrl(this.images.read(msg.threadId, msg.file)) } });
+          if (!this.artifacts) throw new Error("Session not ready.");
+          const image = await this.artifacts.readImage(msg.threadId, msg.file);
+          this.send({ type: "reply", id: msg.id, ok: true, result: { dataUrl: imageDataUrl(image) } });
+          break;
+        }
+        case "visualize.read": {
+          if (!this.artifacts) throw new Error("Session not ready.");
+          this.send({ type: "reply", id: msg.id, ok: true, result: { html: await this.artifacts.readPage(msg.threadId, msg.file) } });
+          break;
+        }
+        case "page.read": {
+          if (!this.artifacts) throw new Error("Session not ready.");
+          this.send({ type: "reply", id: msg.id, ok: true, result: { html: await this.artifacts.readPage(msg.threadId, msg.file) } });
           break;
         }
         case "images.generate": {
-          if (!this.images) throw new Error("Session not ready.");
+          if (!this.artifacts) throw new Error("Session not ready.");
           const capability = modelImageCapability(msg.model);
           const route = capability === "none" ? "endpoint" : capability;
           const extra = imageParamsToExtra({
@@ -204,7 +223,8 @@ export class Session {
             ...(Object.keys(extra).length > 0 ? { extra } : {}),
           });
           const images = generated.map((image) => {
-            const saved = this.images!.save(msg.threadId, { base64: image.base64, mediaType: image.mediaType });
+            const saved = this.artifacts!.images.save(msg.threadId, { base64: image.base64, mediaType: image.mediaType });
+            void this.artifacts!.mirrorImageSave(msg.threadId, saved.file).catch(() => undefined);
             return {
               file: saved.file,
               mediaType: saved.mediaType,

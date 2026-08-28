@@ -3226,7 +3226,8 @@ body.is-resizing-ew {
   flex: 1;
   min-height: 0;
 }
-.wspanel__browser iframe {
+.wspanel__browser iframe,
+.preview-frame {
   width: 100%;
   height: 100%;
   border: none;
@@ -7375,6 +7376,14 @@ body.is-resizing-ns {
 .plan-card__preview .markdown ul,
 .plan-card__preview .markdown ol {
   margin: 0 0 6px;
+}
+.page-card__preview {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  max-height: 4.5rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 60%, transparent);
 }
 .plan-card__foot {
   display: flex;

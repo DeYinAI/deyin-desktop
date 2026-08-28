@@ -1293,8 +1293,28 @@ export function App() {
           );
           break;
         }
+        case "page-created":
+          if (effect.threadId === activeThreadIdRef.current) openPanelTab("preview");
+          setProjects((cur) =>
+            cur.map((project) => ({
+              ...project,
+              threads: project.threads.map((th) =>
+                th.id === effect.threadId
+                  ? {
+                      ...th,
+                      pageTitle: effect.title,
+                      pageFileName: effect.fileName,
+                    }
+                  : th,
+              ),
+            })),
+          );
+          break;
         case "plan-panel-open":
           if (effect.threadId === activeThreadIdRef.current) openPanelTab("plan");
+          break;
+        case "page-panel-open":
+          if (effect.threadId === activeThreadIdRef.current) openPanelTab("preview");
           break;
         case "mode-changed":
           updateThread(effect.threadId, { mode: effect.mode });
@@ -2526,6 +2546,13 @@ export function App() {
                         openPanelTab("plan");
                       }
                 }
+                onOpenPreview={
+                  chatOnlyHosted
+                    ? undefined
+                    : () => {
+                        openPanelTab("preview");
+                      }
+                }
                 planArtifact={chatOnlyHosted ? null : planArtifact}
                 onOpenSubagent={
                   chatOnlyHosted
@@ -2844,6 +2871,8 @@ export function App() {
                 planMarkdown={
                   livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")
                 }
+                pageTitle={activeThread?.pageTitle}
+                pageFileName={activeThread?.pageFileName}
                 planTodos={activeThread?.todos ?? []}
                 planTodosRunning={agentRunState?.running ?? false}
                 canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && !activeComposerBusy && !(agentRunState?.running ?? false)}
