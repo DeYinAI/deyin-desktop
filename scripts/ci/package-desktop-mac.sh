@@ -15,8 +15,8 @@ fi
 CONFIG="electron-builder.yml"
 
 build_vite() {
-  echo "==> electron-vite build"
-  pnpm --filter @deyin/desktop run build
+  echo "==> electron-vite build (deps already built in CI; skip prebuild to avoid native-core)"
+  pnpm --filter @deyin/desktop exec electron-vite build
 }
 
 package_mac() {
