@@ -5,10 +5,11 @@ import { Icon } from "./Icon.js";
 
 interface InlineHtmlPagePreviewProps {
   html: string;
+  onOpenPreview?: () => void;
 }
 
 /** Sandboxed iframe preview for a full HTML page pasted in assistant markdown. */
-export function InlineHtmlPagePreview({ html }: InlineHtmlPagePreviewProps) {
+export function InlineHtmlPagePreview({ html, onOpenPreview }: InlineHtmlPagePreviewProps) {
   const t = useT();
   const [open, setOpen] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
@@ -35,6 +36,17 @@ export function InlineHtmlPagePreview({ html }: InlineHtmlPagePreviewProps) {
       <div className="inline-page-preview__bar">
         <span className="inline-page-preview__title">{title}</span>
         <div className="inline-page-preview__actions">
+          {onOpenPreview && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon"
+              onClick={onOpenPreview}
+              title={t("chat.openPreview")}
+              aria-label={t("chat.openPreview")}
+            >
+              <Icon name="panel" size={14} />
+            </button>
+          )}
           <button
             type="button"
             className="btn btn--ghost btn--icon"

@@ -545,6 +545,8 @@ export interface DeyinApi {
   page: {
     /** Stored one-page website HTML for the Preview panel. */
     read(threadId: string, fileName: string): Promise<string>;
+    /** Chat-only web: persist HTML extracted from assistant markdown. */
+    save?(threadId: string, input: { html: string; fileName?: string; title?: string }): Promise<{ file: string }>;
   };
   images: {
     /** Persist generated image bytes for a thread; returns the embed file name. */
