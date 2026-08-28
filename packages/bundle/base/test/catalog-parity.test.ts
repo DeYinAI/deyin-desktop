@@ -19,6 +19,7 @@ const CORE_TOOL_NAMES = [
   "todo_write",
   "todo_read",
   "create_plan",
+  "create_page",
   "enter_plan_mode",
   "exit_plan_mode",
   "switch_mode",

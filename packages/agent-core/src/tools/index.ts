@@ -6,6 +6,7 @@ import { completeStepTool } from "./complete-step.js";
 import { createWaitJobsTool } from "./wait-jobs.js";
 import { bashTool } from "./bash.js";
 import { createPlanTool } from "./create-plan.js";
+import { createPageTool } from "./create-page.js";
 import { deleteTool } from "./delete.js";
 import { editTool } from "./edit.js";
 import { globTool } from "./glob.js";
@@ -42,6 +43,7 @@ export { todoTool, renderTodos } from "./todo.js";
 export { todoReadTool } from "./todo-read.js";
 export { askQuestionTool } from "./ask-question.js";
 export { createPlanTool } from "./create-plan.js";
+export { createPageTool } from "./create-page.js";
 export { enterPlanModeTool, exitPlanModeTool, switchModeTool, modeReminder } from "./mode-tools.js";
 export { skillTool } from "./skill.js";
 export { readSessionContextTool } from "./read-session-context.js";
@@ -102,6 +104,7 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   createForgetTool(),
   createMemoryTool(),
   createPlanTool,
+  createPageTool,
   enterPlanModeTool,
   exitPlanModeTool,
   switchModeTool,

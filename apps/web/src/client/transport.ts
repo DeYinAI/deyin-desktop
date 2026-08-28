@@ -847,7 +847,26 @@ export function createBrowserTransport(): DeyinApi {
       onActive: () => () => undefined,
     },
     visualize: {
-      read: async () => "",
+      read: async (threadId, file) => {
+        const result = await host.invoke<{ html: string }>((id: number) => ({
+          type: "visualize.read",
+          id,
+          threadId,
+          file,
+        }));
+        return result.html;
+      },
+    },
+    page: {
+      read: async (threadId, file) => {
+        const result = await host.invoke<{ html: string }>((id: number) => ({
+          type: "page.read",
+          id,
+          threadId,
+          file,
+        }));
+        return result.html;
+      },
     },
     images: {
       save: CHAT_ONLY
@@ -1046,7 +1065,7 @@ export function createBrowserTransport(): DeyinApi {
         ),
     },
     plans: {
-      list: () => fetchPublicPlans({ oauthIssuer: OAUTH_ISSUER }),
+      list: () => fetchPublicPlans({ oauthIssuer: OAUTH_ISSUER, apiBase: API_BASE }),
     },
     billing: {
       overview: () =>

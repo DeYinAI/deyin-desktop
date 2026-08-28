@@ -12,6 +12,7 @@ export const PANEL_TABS: PanelTabDef[] = [
   { id: "files", label: "Files", icon: "folderOpen" },
   { id: "terminal", label: "Terminal", icon: "terminal" },
   { id: "plan", label: "Plan", icon: "map" },
+  { id: "preview", label: "Preview", icon: "layout" },
   { id: "diff", label: "Diff", icon: "diff" },
   { id: "git", label: "Git", icon: "gitBranch" },
   { id: "browser", label: "Browser", icon: "globe" },

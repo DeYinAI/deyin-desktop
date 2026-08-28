@@ -2,13 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import {
   AgentShell,
-  ImageStore,
   SessionEventJournal,
   TerminalManager,
   createImageBridge,
   storeAttachedImages,
   type ImageModelChoice,
 } from "@deyin/host-core";
+import type { GatedArtifactStore } from "./gated-artifacts.js";
 import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
 import {
   PermissionEngine,
@@ -27,6 +27,7 @@ import {
   runSubagent,
   skipPromptsForApproval,
   subagentReadonlyRules,
+  estimateContextUsage,
   type AgentEvent,
   type AgentMessage,
   type CapabilitySnapshot,
@@ -87,6 +88,8 @@ export interface WebAgentStartOptions {
   imageChatModels?: string[];
   /** Must match the renderer's active run id so stale events are ignored after stop/restart. */
   runId?: string;
+  /** Model context window from the client catalog (tokens). */
+  contextLength?: number;
   /** Capability ids the user disabled in settings (skill:, command:, subagent:, …). */
   disabledCaps?: string[];
 }
@@ -130,8 +133,8 @@ export class WebAgentHost {
     private readonly emitTerminal: (msg: { type: "term.data"; termId: string; data: string } | { type: "term.exit"; termId: string; exitCode: number }) => void,
     /** Live repo branch info (null until a repository is connected). */
     private readonly repoInfo: () => { branch: string; defaultBranch: string } | null = () => null,
-    /** Sandbox-scoped store for images the agent generates. */
-    private readonly images?: ImageStore,
+    /** User-gated image/page artifacts (local cache + optional R2). */
+    private readonly artifacts?: GatedArtifactStore,
   ) {
     this.journal = new SessionEventJournal(join(this.root, "journal"));
   }
@@ -334,9 +337,14 @@ export class WebAgentHost {
     // Attached pictures also land in the session image store, so generate_image
     // can edit them by file name instead of drawing something new.
     const attachedImages =
-      options.images?.length && this.images
-        ? storeAttachedImages(this.images, options.threadId, options.images)
+      options.images?.length && this.artifacts
+        ? storeAttachedImages(this.artifacts.images, options.threadId, options.images)
         : { files: [], note: "" };
+    if (this.artifacts && attachedImages.files.length > 0) {
+      for (const file of attachedImages.files) {
+        void this.artifacts.mirrorImageSave(options.threadId, file).catch(() => undefined);
+      }
+    }
     const skillSummaries = runCaps.skills;
     const buildPrompt = async (mode: ChatMode): Promise<string> => {
       const parts = buildSystemPromptParts({
@@ -376,6 +384,7 @@ export class WebAgentHost {
         getToken: async () => options.provider.token,
         apiFormat: options.provider.apiFormat,
         authHeader: options.provider.authHeader,
+        contextLength: options.contextLength,
       },
       resolveProvider: (providerId) => {
         const routing = options.roleProviders?.[providerId];
@@ -387,6 +396,8 @@ export class WebAgentHost {
           authHeader: routing.authHeader,
         };
       },
+      getContextLength: (_providerId, model) =>
+        model === options.model ? options.contextLength : undefined,
     });
 
     const optPlugin = await this.ensureOptimizationPlugin();
@@ -428,6 +439,27 @@ export class WebAgentHost {
       );
       if (cached.hit) {
         if (state.abort.signal.aborted || state.doneEmitted) return;
+        messages.push({ role: "assistant", content: cached.response });
+        this.emit(
+          options.threadId,
+          {
+            type: "context-snapshot",
+            snapshot: estimateContextUsage({
+              contextLength: options.contextLength ?? 0,
+              messages,
+              tools: registry.toWire(),
+              wire: {
+                enableCompression: true,
+                compressionMode: "balanced",
+                enablePromptCaching: true,
+                provider: wireProvider,
+                model: options.model,
+              },
+              cached: true,
+            }),
+          },
+          runId,
+        );
         this.emit(options.threadId, { type: "text-delta", delta: cached.response }, runId);
         this.emit(options.threadId, { type: "usage", totalTokens: 0 }, runId);
         this.emit(
@@ -460,6 +492,7 @@ export class WebAgentHost {
       authHeader: options.provider.authHeader,
       model: options.model,
       router,
+      contextLength: options.contextLength,
       thinking: options.thinking,
       effort: options.effort,
       messages,
@@ -517,6 +550,22 @@ export class WebAgentHost {
             overview: plan.overview,
             plan: plan.plan,
             filePath: plan.filePath,
+          }),
+        pageArtifact: this.artifacts
+          ? {
+              write: async ({ threadId, file, html }) => {
+                const written = await this.artifacts!.writePage(threadId, file, html);
+                return { fileName: written.title, filePath: written.file, html: written.html };
+              },
+            }
+          : undefined,
+        onPageCreated: (page) =>
+          this.emit(options.threadId, {
+            type: "page-created",
+            title: page.title,
+            fileName: page.fileName,
+            filePath: page.filePath,
+            preview: page.preview,
           }),
         onModeChange: async (change) => {
           const previous = (sessionMeta.mode as ChatMode | undefined) ?? options.mode;
@@ -576,7 +625,7 @@ export class WebAgentHost {
     const registry = buildToolRegistry(kernel.get(Tools));
     // No image model in the client's catalog: drop generate_image rather than
     // advertising a tool whose every call would fail.
-    if (!this.images || imageModelChoices(options).length === 0) registry.unregister("generate_image");
+    if (!this.artifacts || imageModelChoices(options).length === 0) registry.unregister("generate_image");
     if (subagents.length > 0) {
       registry.register(
         createTaskTool({
@@ -660,18 +709,31 @@ export class WebAgentHost {
    * back over `images.read` to render the picture inline.
    */
   private imageGenBridge(options: WebAgentStartOptions, signal: AbortSignal): ImageGenBridge | undefined {
-    const store = this.images;
-    if (!store) return undefined;
-    return createImageBridge({
-      store,
+    const artifacts = this.artifacts;
+    if (!artifacts) return undefined;
+    const bridge = createImageBridge({
+      store: artifacts.images,
       threadId: options.threadId,
       apiBaseUrl: options.provider.baseUrl,
       getToken: async () => options.provider.token,
       models: () => imageModelChoices(options),
-      // Generated pictures may be saved into the session sandbox on request.
       cwd: this.root,
       signal,
     });
+    return {
+      async generate(request) {
+        const refs = await bridge.generate(request);
+        for (const ref of refs) {
+          await artifacts.mirrorImageSave(options.threadId, ref.file);
+        }
+        return refs;
+      },
+      async save(image) {
+        const ref = await bridge.save(image);
+        await artifacts.mirrorImageSave(options.threadId, ref.file);
+        return ref;
+      },
+    };
   }
 
   /** The thread's shared "allow for session" set, created on first use. */
