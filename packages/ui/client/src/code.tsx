@@ -5,6 +5,10 @@
  * the common languages without shipping a highlighting engine.
  */
 
+import { useCallback, useRef, useState, type CSSProperties } from "react";
+import { Icon } from "./components/Icon.js";
+import { useT } from "./i18n.js";
+
 export type TokenType = "kw" | "str" | "num" | "com" | "fn" | "type" | "plain";
 
 export interface CodeTheme {
@@ -117,6 +121,11 @@ export function tokenize(code: string): Token[] {
 
 /* Components ------------------------------------------------------------------ */
 
+const COLLAPSE_THRESHOLD = 16;
+const COLLAPSED_LINES = 12;
+/** Expanded blocks scroll inside the chat instead of stretching the whole thread. */
+const EXPANDED_MAX_HEIGHT = "min(70vh, 560px)";
+
 export interface CodeBlockProps {
   code: string;
   theme: CodeTheme;
@@ -125,39 +134,135 @@ export interface CodeBlockProps {
   wrapLongLines: boolean;
   /** Fence language tag, shown in the block header when present. */
   lang?: string;
+  /** Allow long blocks in chat to collapse behind a "Show all" control. */
+  collapsible?: boolean;
+  /** Start collapsed when collapsible (e.g. HTML source under a live preview). */
+  defaultCollapsed?: boolean;
+}
+
+function renderLines(
+  lines: string[],
+  theme: CodeTheme,
+  showLineNumbers: boolean,
+  startIndex = 0,
+) {
+  return lines.map((line, i) => (
+    <span className="codeblock__line" key={startIndex + i}>
+      {showLineNumbers && <span className="codeblock__no">{startIndex + i + 1}</span>}
+      <span className="codeblock__text">
+        {tokenize(line).map((token, j) =>
+          token.type === "plain" ? (
+            token.text
+          ) : (
+            <span key={j} style={{ color: theme.colors[token.type] }}>
+              {token.text}
+            </span>
+          ),
+        )}
+        {"\n"}
+      </span>
+    </span>
+  ));
 }
 
 export function CodeBlock(props: CodeBlockProps) {
+  const t = useT();
+  const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(() => {
+    if (!(props.collapsible ?? false)) return true;
+    if (props.defaultCollapsed) return false;
+    const lineCount = props.code.replace(/\n$/, "").split("\n").length;
+    return lineCount <= COLLAPSE_THRESHOLD;
+  });
+  const rootRef = useRef<HTMLDivElement>(null);
+
   const lines = props.code.replace(/\n$/, "").split("\n");
+  const canCollapse = (props.collapsible ?? false) && lines.length > COLLAPSE_THRESHOLD;
+  const collapsed = canCollapse && !expanded;
+  const visibleLines = collapsed ? lines.slice(0, COLLAPSED_LINES) : lines;
+  const langLabel = props.lang?.trim() || "text";
+
+  const copy = useCallback(() => {
+    void navigator.clipboard?.writeText(props.code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    });
+  }, [props.code]);
+
+  const expand = useCallback(() => {
+    setExpanded(true);
+    requestAnimationFrame(() => {
+      rootRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, []);
+
   return (
-    <div className="codeblock" style={{ background: props.theme.bg, color: props.theme.fg }}>
-      {props.lang && <div className="codeblock__lang">{props.lang}</div>}
-      <pre
-        className="codeblock__pre"
-        style={{
-          fontSize: props.fontSize,
-          whiteSpace: props.wrapLongLines ? "pre-wrap" : "pre",
-          overflowX: props.wrapLongLines ? "hidden" : "auto",
-        }}
+    <div
+      ref={rootRef}
+      className={`codeblock${collapsed ? " codeblock--collapsed" : ""}${expanded && canCollapse ? " codeblock--expanded" : ""}`}
+      style={
+        {
+          background: props.theme.bg,
+          color: props.theme.fg,
+          "--codeblock-bg": props.theme.bg,
+        } as CSSProperties
+      }
+    >
+      <div className="codeblock__header">
+        <span className="codeblock__lang">{langLabel}</span>
+        <div className="codeblock__actions">
+          {canCollapse && (
+            <button
+              type="button"
+              className="codeblock__btn"
+              onClick={() => {
+                if (expanded) setExpanded(false);
+                else expand();
+              }}
+              aria-expanded={expanded}
+              title={expanded ? t("chat.collapseCode") : t("chat.showAllCode")}
+            >
+              <Icon name={expanded ? "minimize" : "maximize"} size={13} />
+              <span>{expanded ? t("chat.collapseCode") : t("chat.showAllCode")}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="codeblock__btn"
+            onClick={copy}
+            aria-label={copied ? t("chat.copied") : t("chat.copyCode")}
+            title={copied ? t("chat.copied") : t("chat.copyCode")}
+          >
+            <Icon name={copied ? "check" : "copy"} size={13} />
+            <span>{copied ? t("chat.copied") : t("chat.copyCode")}</span>
+          </button>
+        </div>
+      </div>
+      <div
+        className="codeblock__body"
+        style={expanded && canCollapse ? { maxHeight: EXPANDED_MAX_HEIGHT } : undefined}
       >
-        {lines.map((line, i) => (
-          <span className="codeblock__line" key={i}>
-            {props.showLineNumbers && <span className="codeblock__no">{i + 1}</span>}
-            <span className="codeblock__text">
-              {tokenize(line).map((token, j) =>
-                token.type === "plain" ? (
-                  token.text
-                ) : (
-                  <span key={j} style={{ color: props.theme.colors[token.type] }}>
-                    {token.text}
-                  </span>
-                ),
-              )}
-              {"\n"}
-            </span>
-          </span>
-        ))}
-      </pre>
+        <pre
+          className="codeblock__pre"
+          style={{
+            fontSize: props.fontSize,
+            whiteSpace: props.wrapLongLines ? "pre-wrap" : "pre",
+            overflowX: props.wrapLongLines ? "hidden" : "auto",
+          }}
+        >
+          {renderLines(visibleLines, props.theme, props.showLineNumbers)}
+        </pre>
+        {collapsed && (
+          <button
+            type="button"
+            className="codeblock__expand"
+            onClick={expand}
+            aria-expanded={false}
+          >
+            {t("chat.showAllCode")} ({lines.length} {t("chat.codeLines")})
+          </button>
+        )}
+      </div>
     </div>
   );
 }

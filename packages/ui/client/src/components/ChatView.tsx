@@ -8,6 +8,8 @@ import { subagentDisplayName, subagentStatusLine } from "./SubagentPanel.js";
 import { TodoRows, countVisibleTodos } from "./TodoChecklist.js";
 import { Callout, CodeTag, FlatCard, SectionLabel, SeverityBadge } from "./ui/index.js";
 import type { ThreadEvent } from "../threads.js";
+import { extractHtmlPageFromMarkdownLoose } from "../htmlPage.js";
+import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { summarizeActivityBlock } from "../toolActivity.js";
 import { TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 
@@ -719,9 +721,11 @@ function AssistantMessage({
   };
 
   const showActions = !streaming && text.trim().length > 0;
+  const htmlPage = !streaming ? extractHtmlPageFromMarkdownLoose(text) : null;
 
   return (
     <div className={`assistant-message${streaming ? " assistant-message--streaming" : ""}`}>
+      {htmlPage && <InlineHtmlPagePreview html={htmlPage} />}
       <div className="assistant-text">
         <Markdown
           text={text}

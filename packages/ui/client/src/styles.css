@@ -5953,6 +5953,12 @@ body.is-resizing-ns {
 .codeblock--collapsed .codeblock__pre {
   padding-bottom: 36px;
 }
+.codeblock--expanded .codeblock__body {
+  overflow-y: auto;
+}
+.codeblock--expanded .codeblock__pre {
+  overflow: visible;
+}
 .codeblock__expand {
   position: absolute;
   left: 0;
@@ -8430,6 +8436,60 @@ body.is-resizing-ns {
   min-height: 240px;
   border: 0;
   background: #fff;
+}
+
+/* Full HTML page preview in chat (chat-only + pasted ```html pages) ------------ */
+.inline-page-preview {
+  margin: 10px 0 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-surface);
+}
+.inline-page-preview--collapsed {
+  padding: 4px 0;
+}
+.inline-page-preview--fullscreen {
+  position: fixed;
+  inset: 12px;
+  z-index: 80;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+}
+.inline-page-preview__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-surface));
+}
+.inline-page-preview__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-page-preview__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.inline-page-preview__frame {
+  width: 100%;
+  height: min(52vh, 420px);
+  border: none;
+  background: #fff;
+}
+.inline-page-preview--fullscreen .inline-page-preview__frame {
+  flex: 1;
+  height: auto;
+  min-height: 0;
 }
 
 /* Inline generated images ----------------------------------------------------- */
