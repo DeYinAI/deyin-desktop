@@ -139,8 +139,9 @@ jobs:
       always() &&
       !cancelled() &&
       (needs.create-release.result == 'success' || needs.create-release.result == 'skipped')
-    runs-on: [self-hosted, macOS, release-mac]
-    continue-on-error: true
+    # GitHub-hosted until a self-hosted Mac registers with label release-mac.
+    # Swap to [self-hosted, macOS, release-mac] when mac-runner is online.
+    runs-on: macos-14
     timeout-minutes: 120
     permissions:
       contents: write
@@ -154,19 +155,9 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Bootstrap macOS runner toolchain
-        run: |
-          export PATH="${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
-          if ! command -v bun >/dev/null 2>&1 || ! xcode-select -p >/dev/null 2>&1; then
-            bash scripts/ci/setup-mac-runner.sh
-          fi
-          for dir in "${HOME}/.bun/bin" /opt/homebrew/bin /usr/local/bin; do
-            if [[ -d "$dir" ]]; then
-              echo "$dir" >> "$GITHUB_PATH"
-            fi
-          done
+      - uses: oven-sh/setup-bun@v2
 
-      - name: Check macOS runner prerequisites
+      - name: Check macOS build prerequisites
         run: bash scripts/ci/check-mac-runner.sh
 
       - name: Install
