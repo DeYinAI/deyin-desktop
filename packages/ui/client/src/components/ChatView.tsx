@@ -553,6 +553,7 @@ function EventRow({
           threadId={threadId}
           workspaceRoot={workspaceRoot}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
+          onOpenPreview={onOpenPreview}
           feedback={messageFeedback}
           onFork={onForkAtEvent ? () => onForkAtEvent(eventIndex) : undefined}
           onFeedback={onMessageFeedback}
@@ -693,6 +694,7 @@ function AssistantMessage({
   threadId,
   workspaceRoot,
   onOpenWorkspaceFile,
+  onOpenPreview,
   streaming = false,
   feedback,
   onFork,
@@ -704,6 +706,7 @@ function AssistantMessage({
   threadId?: string | null;
   workspaceRoot?: string | null;
   onOpenWorkspaceFile?: (path: string) => void;
+  onOpenPreview?: () => void;
   streaming?: boolean;
   feedback?: "up" | "down";
   onFork?: () => void;
@@ -725,7 +728,7 @@ function AssistantMessage({
 
   return (
     <div className={`assistant-message${streaming ? " assistant-message--streaming" : ""}`}>
-      {htmlPage && <InlineHtmlPagePreview html={htmlPage} />}
+      {htmlPage && <InlineHtmlPagePreview html={htmlPage} onOpenPreview={onOpenPreview} />}
       <div className="assistant-text">
         <Markdown
           text={text}

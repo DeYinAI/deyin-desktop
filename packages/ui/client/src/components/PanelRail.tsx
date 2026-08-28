@@ -9,6 +9,8 @@ interface PanelRailProps {
   diffDot?: boolean;
   /** Running subagent count (Agent tab badge). */
   agentCount?: number;
+  /** Chat-only web: show only the Preview tab. */
+  previewOnly?: boolean;
   onSelectTab: (tab: PanelTab) => void;
   /** Hide the rail entirely (chat goes full width). */
   onDismiss?: () => void;
@@ -16,10 +18,11 @@ interface PanelRailProps {
 
 /** Vertical icon strip for the right workspace panel — visible when collapsed or expanded. */
 export function PanelRail(props: PanelRailProps) {
+  const tabs = props.previewOnly ? PANEL_TABS.filter((tab) => tab.id === "preview") : PANEL_TABS;
   return (
     <nav className={`panel-rail${props.collapsed ? " panel-rail--solo" : ""}`} aria-label="Workspace views">
       <div className="panel-rail__tabs">
-        {PANEL_TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = props.activeTab === tab.id;
           const dot = tab.id === "diff" && props.diffDot;
           const badge = tab.id === "agent" && (props.agentCount ?? 0) > 0 ? props.agentCount : undefined;

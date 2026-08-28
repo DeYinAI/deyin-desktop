@@ -58,6 +58,7 @@ import { ProjectPicker, type ProjectPickerAction } from "./components/project-pi
 import { NavRail } from "./components/NavRail.js";
 import { PanelRail } from "./components/PanelRail.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
+import { persistChatOnlyPageFromMarkdown } from "./chatOnlyPage.js";
 import { ReviewBanner } from "./components/ReviewBanner.js";
 import { highSeverityFindings } from "./components/SecurityFindingsPanel.js";
 import type { FileDiff } from "./diff.js";
@@ -170,6 +171,7 @@ function emptyComposerDraft(): ComposerDraft {
 
 export function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
+  const chatOnlyHosted = boot?.chatOnly ?? false;
   const [user, setUser] = useState<UserProfile | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [settings, setSettings] = useState<DeyinSettings | null>(null);
@@ -367,9 +369,9 @@ export function App() {
   const openPanelTab = useCallback((tab: PanelTab) => {
     setPanelOpen(true);
     setPanelRail(true);
-    setPanelTab(tab);
+    setPanelTab(chatOnlyHosted ? "preview" : tab);
     setView("workspace");
-  }, []);
+  }, [chatOnlyHosted]);
 
   const collapsePanel = useCallback(() => {
     setPanelOpen(false);
@@ -382,8 +384,7 @@ export function App() {
   }, []);
 
   const terminalVisible = panelOpen && panelTab === "terminal";
-  const panelVisible = (panelOpen || panelRail) && !(boot?.chatOnly ?? false);
-  const chatOnlyHosted = boot?.chatOnly ?? false;
+  const panelVisible = (panelOpen || panelRail) && (!chatOnlyHosted || panelRail);
 
   /* Panel width. The wrap (rail + panel) is laid out in pixels derived from the
      content area's measured width, so the chat column always keeps CHAT_MIN_PX
@@ -1083,6 +1084,20 @@ export function App() {
       })),
     );
   }, []);
+
+  const registerChatOnlyPage = useCallback(
+    async (threadId: string, markdown: string) => {
+      if (!chatOnlyHosted) return;
+      const artifact = await persistChatOnlyPageFromMarkdown(threadId, markdown);
+      if (!artifact) return;
+      updateThread(threadId, { pageTitle: artifact.title, pageFileName: artifact.fileName });
+      appendEvents(threadId, [
+        { kind: "page-ready", title: artifact.title, fileName: artifact.fileName, preview: artifact.preview },
+      ]);
+      if (threadId === activeThreadIdRef.current) openPanelTab("preview");
+    },
+    [appendEvents, chatOnlyHosted, openPanelTab, updateThread],
+  );
 
   /** Restore the pre-change content of a file card (uses the tracked diff). */
   const undoFileChange = useCallback(
@@ -2176,6 +2191,7 @@ export function App() {
         setPlainStreamForThread(thread.id, acc);
       }
       appendEvents(thread.id, [{ kind: "assistant", text: acc }]);
+      if (acc.trim()) void registerChatOnlyPage(thread.id, acc);
     } catch (err) {
       const msg = timedOut
         ? "Request timed out — no data from the model for 45s. Try again."
@@ -2192,7 +2208,7 @@ export function App() {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
+  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(() => {
@@ -2546,13 +2562,7 @@ export function App() {
                         openPanelTab("plan");
                       }
                 }
-                onOpenPreview={
-                  chatOnlyHosted
-                    ? undefined
-                    : () => {
-                        openPanelTab("preview");
-                      }
-                }
+                onOpenPreview={() => openPanelTab("preview")}
                 planArtifact={chatOnlyHosted ? null : planArtifact}
                 onOpenSubagent={
                   chatOnlyHosted
@@ -2856,6 +2866,7 @@ export function App() {
                 <PanelRail
                   activeTab={panelTab}
                   collapsed={!panelOpen}
+                  previewOnly={chatOnlyHosted}
                   diffDot={Boolean(activeDiff)}
                   agentCount={subagentRuns.filter((r) => r.status === "running").length}
                   onSelectTab={openPanelTab}

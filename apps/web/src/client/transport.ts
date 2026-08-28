@@ -24,6 +24,7 @@ import {
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import { browserImageDataUrl, readBrowserImage, saveBrowserImage } from "./browser-image-store.js";
+import { readBrowserPage, saveBrowserPage } from "./browser-page-store.js";
 import type { DeyinApi } from "@deyin/contract";
 import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
 import type {
@@ -858,15 +859,20 @@ export function createBrowserTransport(): DeyinApi {
       },
     },
     page: {
-      read: async (threadId, file) => {
-        const result = await host.invoke<{ html: string }>((id: number) => ({
-          type: "page.read",
-          id,
-          threadId,
-          file,
-        }));
-        return result.html;
-      },
+      read: CHAT_ONLY
+        ? async (threadId, file) => readBrowserPage(threadId, file)
+        : async (threadId, file) => {
+            const result = await host.invoke<{ html: string }>((id: number) => ({
+              type: "page.read",
+              id,
+              threadId,
+              file,
+            }));
+            return result.html;
+          },
+      save: CHAT_ONLY
+        ? async (threadId, input) => saveBrowserPage(threadId, { html: input.html, fileName: input.fileName })
+        : undefined,
     },
     images: {
       save: CHAT_ONLY
