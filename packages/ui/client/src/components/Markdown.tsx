@@ -2,6 +2,7 @@ import { Children, isValidElement, type ReactElement, type ReactNode } from "rea
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { CodeBlock, type CodeTheme } from "../code.js";
+import { isFullHtmlDocument } from "../htmlPage.js";
 import { splitInlineEmbeds } from "../embeds.js";
 import { looksLikeFilePath, resolveWorkspaceFilePath } from "../filePath.js";
 import type { ChatCodeDisplay } from "./ChatView.js";
@@ -83,6 +84,8 @@ function MarkdownBlock({ text, theme, display, workspaceRoot, onOpenWorkspaceFil
         components={{
           pre({ children }) {
             const { code, lang } = codeChild(children);
+            const langNorm = lang.toLowerCase();
+            const fullPage = isFullHtmlDocument(code);
             return (
               <CodeBlock
                 code={code}
@@ -91,6 +94,8 @@ function MarkdownBlock({ text, theme, display, workspaceRoot, onOpenWorkspaceFil
                 fontSize={display.fontSize}
                 showLineNumbers={display.showLineNumbers}
                 wrapLongLines={display.wrapLongLines}
+                collapsible
+                defaultCollapsed={fullPage && (langNorm === "html" || langNorm === "htm" || langNorm === "")}
               />
             );
           },
@@ -115,11 +120,18 @@ function MarkdownBlock({ text, theme, display, workspaceRoot, onOpenWorkspaceFil
           blockquote({ children }) {
             return <div className="ui-callout markdown-callout">{children}</div>;
           },
+          h1({ children }) {
+            return <h1 className="md-section-heading md-section-heading--title">{children}</h1>;
+          },
           h2({ children }) {
             return <h2 className="md-section-heading">{children}</h2>;
           },
           h3({ children }) {
             return <h3 className="md-section-heading md-section-heading--sub">{children}</h3>;
+          },
+          img({ src, alt }) {
+            if (!src) return null;
+            return <img src={src} alt={alt ?? ""} className="md-image" loading="lazy" />;
           },
           table({ children }) {
             return (
