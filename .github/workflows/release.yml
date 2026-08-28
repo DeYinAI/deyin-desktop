@@ -88,7 +88,7 @@ jobs:
       - name: Build native-core (optional)
         run: |
           if command -v cargo >/dev/null 2>&1; then
-            pnpm --filter @deyin/native-core build
+            pnpm --filter @deyin/native-core build || echo "native-core build skipped; TS fallbacks will be used"
           else
             echo "cargo not found; TS fallbacks will be used"
           fi
@@ -169,7 +169,7 @@ jobs:
       - name: Build native-core (optional)
         run: |
           if command -v cargo >/dev/null 2>&1; then
-            pnpm --filter @deyin/native-core build
+            pnpm --filter @deyin/native-core build || echo "native-core build skipped; TS fallbacks will be used"
           else
             echo "cargo not found; TS fallbacks will be used"
           fi

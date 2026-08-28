@@ -34,6 +34,13 @@ bash scripts/ci/check-dell-runner.sh
 `RUNNER_NAME=mac-runner bash scripts/ci/register-mac-runner.sh`. electron-builder cannot
 produce macOS installers from the Linux dell-runner.
 
+**Docker on Dell cannot substitute for a Mac.** A Linux container registers as a Linux runner
+(`self-hosted`, `Linux`) — GitHub will never assign macOS jobs to it. macOS-in-Docker/KVM on
+non-Apple hardware violates Apple's EULA, is fragile for electron-builder, and is not supported
+here. Use Docker on Dell only for extra **Linux** CI workers (`register-linux-runner.sh`).
+
+Until **mac-runner** exists, release macOS jobs run on GitHub-hosted `macos-14` (billable minutes).
+
 ### 2. Register
 
 Token: **GitHub → DeYinAI/deyin-desktop → Settings → Actions → Runners → New self-hosted runner**.
