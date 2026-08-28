@@ -13,6 +13,8 @@ require_cmd() {
   fi
 }
 
+# GitHub-hosted macOS runners include Node via actions/setup-node; bun via setup-bun.
+# Self-hosted mac-runner: run setup-mac-runner.sh once on the Mac host.
 export PATH="${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:${PATH}"
 
 echo "==> macOS runner prerequisites"
