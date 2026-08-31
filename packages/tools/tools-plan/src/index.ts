@@ -3,6 +3,7 @@ import type { PluginDefinition } from "@deyin/extension-api";
 import { Tools } from "@deyin/tools";
 import {
   completeStepTool,
+  createPageTool,
   createPlanTool,
   enterPlanModeTool,
   exitPlanModeTool,
@@ -16,6 +17,7 @@ export const PLAN_TOOLS = [
   todoTool,
   todoReadTool,
   createPlanTool,
+  createPageTool,
   enterPlanModeTool,
   exitPlanModeTool,
   switchModeTool,
