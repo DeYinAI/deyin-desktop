@@ -27,6 +27,10 @@ export default {
       return handleUserMe(request, env);
     }
 
+    if (url.pathname === "/api/public/plans") {
+      return handlePublicPlans(request, env);
+    }
+
     if (url.pathname.startsWith("/api/")) {
       return proxyToOpenference(request, env);
     }
@@ -99,6 +103,23 @@ async function handleMe(request: Request, env: Env): Promise<Response> {
     avatarUrl: basic.user.avatarUrl,
     firstName: basic.user.firstName,
     lastName: basic.user.lastName,
+  });
+}
+
+/** Public pricing catalog (no auth); same-origin proxy avoids browser CORS to openference.com. */
+async function handlePublicPlans(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return Response.json({ error: "method_not_allowed" }, { status: 405 });
+  }
+  const site = env.OPENFERENCE_SITE_URL.replace(/\/+$/, "");
+  const upstream = await fetch(`${site}/api/public/plans${new URL(request.url).search}`, {
+    method: request.method,
+  });
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      "content-type": upstream.headers.get("content-type") ?? "application/json",
+    },
   });
 }
 

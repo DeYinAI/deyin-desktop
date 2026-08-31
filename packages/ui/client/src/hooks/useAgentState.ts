@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AgentEventEnvelope, ChatMode, ContextUsageSnapshot, DiffSnippetLine, ThreadEvent } from "@deyin/contract";
-import { TOOL_RESULT_UI_CAP, truncateToolResultUi } from "@deyin/contract";
+import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, truncateToolResultUi } from "@deyin/contract";
 import {
   isBetterPlanDoc,
   looksLikePlan,
@@ -851,7 +851,7 @@ class AgentStateStore {
           });
         }
         if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
-        if (event.reason === "max-steps") finished.push({ kind: "thought", label: "Stopped after reaching the step limit" });
+        if (event.reason === "max-steps") finished.push({ kind: "thought", label: STEP_LIMIT_LABEL });
         const opt = t.optimization;
         if (
           opt &&

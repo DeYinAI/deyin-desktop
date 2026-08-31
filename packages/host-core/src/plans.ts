@@ -67,10 +67,20 @@ function normalizePlan(raw: PlansApiPlan): PublicPlan {
 /**
  * Fetch the public plan catalog from Openference. No auth required; the
  * endpoint is edge-cached. Returns null when unreachable.
+ *
+ * Pass `apiBase` (e.g. `${location.origin}/api`) in browser builds so the
+ * request goes through the web host-server proxy and avoids cross-origin CORS.
  */
-export async function fetchPublicPlans(opts: { oauthIssuer: string }): Promise<PublicPlan[] | null> {
+export async function fetchPublicPlans(opts: {
+  oauthIssuer: string;
+  apiBase?: string;
+}): Promise<PublicPlan[] | null> {
   try {
-    const res = await fetch(`${opts.oauthIssuer.replace(/\/$/, "")}/api/public/plans`);
+    const apiBase = opts.apiBase?.replace(/\/$/, "");
+    const url = apiBase
+      ? `${apiBase}/public/plans`
+      : `${opts.oauthIssuer.replace(/\/$/, "")}/api/public/plans`;
+    const res = await fetch(url);
     if (!res.ok) return null;
     const body = (await res.json()) as PlansApiResponse;
     if (!Array.isArray(body.plans)) return null;

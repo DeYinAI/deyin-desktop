@@ -36,8 +36,13 @@ const ANY_MARKER_RE = /\x1b\]6969;[be](?:;-?\d+)?\x07/g;
 const ANSI_RE = /\x1b(?:\][^\x07\x1b]*(?:\x07|\x1b\\)|\[[0-9;?]*[a-zA-Z]|\([0-9A-Za-z])/g;
 
 const SCROLLBACK_CAP = 256 * 1024;
+/** One-shot spawn sync (marker install + sentinel echo). */
+const SPAWN_SYNC_TIMEOUT_MS = 8_000;
+/** Prompt wait during command interrupt / post-spawn cd. */
 const READY_TIMEOUT_MS = 15_000;
 const INTERRUPT_GRACE_MS = 2_000;
+/** Brief pause after PTY spawn so login banners finish before PS0/PS1 setup. */
+const SPAWN_BANNER_MS = 100;
 /** Grace after SIGHUP before the PTY's whole process group is SIGKILLed. */
 const PTY_FORCE_KILL_MS = 500;
 const DEFAULT_COLS = 120;
@@ -194,6 +199,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Mirrors into deyin.log on desktop via console mirroring. */
+function shellLog(level: "debug" | "warn", message: string): void {
+  if (level === "debug" && process.env.DEYIN_AGENT_SHELL_DEBUG !== "1") return;
+  const line = `[agent-shell] ${message}`;
+  if (level === "warn") console.warn(line);
+  else console.log(line);
+}
+
 /**
  * Persistent PTY-backed shell owned by one agent thread. Commands run serially;
  * cwd/env persist between calls. Output is streamed both to TerminalEvents (for
@@ -336,39 +349,34 @@ export class AgentShell {
       for (const h of this.exitHandlers) h();
     });
 
+    const syncStarted = Date.now();
+    shellLog("debug", `spawn ${target.kind} via ${target.file} (cwd ${startCwd})`);
+
     // Let the shell finish its login banner before we overwrite the prompt.
-    await sleep(300);
+    await sleep(SPAWN_BANNER_MS);
     if (this.disposed || this.term !== term) {
       if (this.term === term) this.killTerm({ suppressExit: false });
       throw new Error("AgentShell disposed during spawn");
     }
 
     this.writeMarkerSetup(term);
-    // The setup line itself runs as a command and should emit the new PS1 marker.
-    try {
-      await this.waitForPrompt(READY_TIMEOUT_MS);
-    } catch {
-      // Continue to the sentinel sync below.
-    }
-    if (this.disposed || this.term !== term) {
-      if (this.term === term) this.killTerm({ suppressExit: false });
-      throw new Error("AgentShell disposed during spawn");
-    }
 
-    // Sync past any leftover queued input by waiting for a unique sentinel
-    // echo and the prompt marker that follows it (same listener, so a single
-    // burst containing both cannot race past us).
+    // One readiness probe: install OSC markers, echo a unique sentinel, and
+    // wait for that echo plus the following prompt marker in a single listener
+    // so stale end-markers from the login banner cannot false-positive.
     const sentinel = `__DEYIN_READY_${Date.now()}__`;
     try {
-      const synced = this.waitForSentinelPrompt(sentinel, READY_TIMEOUT_MS);
+      const synced = this.waitForSentinelPrompt(sentinel, SPAWN_SYNC_TIMEOUT_MS);
       if (this.kind === "powershell") {
         term.write(`Write-Output '${sentinel}'\r`);
       } else {
         term.write(`echo ${sentinel}\n`);
       }
       await synced;
-    } catch {
-      // Still mark ready — subsequent runs may work even if sync was noisy.
+      shellLog("debug", `spawn sync ok in ${Date.now() - syncStarted}ms`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      shellLog("warn", `spawn sync failed (${message}); marking shell ready anyway`);
     }
     if (this.disposed || this.term !== term) {
       if (this.term === term) this.killTerm({ suppressExit: false });

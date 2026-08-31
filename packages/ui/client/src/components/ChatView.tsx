@@ -11,10 +11,11 @@ import type { ThreadEvent } from "../threads.js";
 import { extractHtmlPageFromMarkdownLoose } from "../htmlPage.js";
 import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { summarizeActivityBlock } from "../toolActivity.js";
-import { TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
+import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 
 /** Distance from the bottom (px) within which we consider the view "pinned". */
 const PIN_THRESHOLD = 64;
+
 
 export interface ChatCodeDisplay {
   themeLight: string;
@@ -65,6 +66,8 @@ interface ChatViewProps {
   onOpenAgentTerminal?: () => void;
   /** Open the workspace Agent panel on a subagent run (subagent cards). */
   onOpenSubagent?: (id: string) => void;
+  /** Continue button on the step-limit divider: resume the run. */
+  onContinue?: () => void;
   /** Fork the thread at a timeline event index (assistant messages). */
   onForkAtEvent?: (eventIndex: number) => void;
   /** Optional message feedback (telemetry / analytics). */
@@ -189,6 +192,7 @@ export function ChatView(props: ChatViewProps) {
               threadTitles={props.threadTitles}
               threadId={props.threadKey}
               onOpenSubagent={props.onOpenSubagent}
+ onContinue={props.onContinue}
               messageFeedback={messageFeedback[group.eventIndex]}
               onForkAtEvent={props.onForkAtEvent}
               onMessageFeedback={(rating) => {
@@ -491,6 +495,7 @@ function EventRow({
   threadTitles,
   threadId,
   onOpenSubagent,
+ onContinue,
   messageFeedback,
   onForkAtEvent,
   onMessageFeedback,
@@ -518,10 +523,13 @@ function EventRow({
   threadId?: string | null;
   /** Open the workspace Agent panel on this subagent run. */
   onOpenSubagent?: (id: string) => void;
+ /** Resume the run from a step-limit stop. */
+ onContinue?: () => void;
   messageFeedback?: "up" | "down";
   onForkAtEvent?: (eventIndex: number) => void;
   onMessageFeedback?: (rating: "up" | "down") => void;
 }) {
+ const t = useT();
   switch (event.kind) {
     case "user": {
       const chips: string[] = (event.attachments ?? []).map((a) => `@${a.label ?? a.path}`);
@@ -642,6 +650,24 @@ function EventRow({
       );
 
     case "thought":
+      if (event.label === STEP_LIMIT_LABEL) {
+        return (
+        <div className="divider-note">
+          <span className="divider-note__line" />
+          <span className="divider-note__label">
+            <Icon name="clock" size={12} />
+            {t("chat.stepLimit")}
+            {onContinue && (
+              <button type="button" className="chip chip--small chip--accent" onClick={onContinue}>
+                <Icon name="play" size={11} />
+                {t("chat.continue")}
+              </button>
+            )}
+          </span>
+          <span className="divider-note__line" />
+        </div>
+        );
+      }
       return <StatusLine icon={statusIconForLabel(event.label)} label={event.label} />;
 
     case "worked":

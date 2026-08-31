@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -109,4 +109,40 @@ test("security_scan_diff returns validated report", async () => {
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("security_scan_repo maps WSL POSIX path onto the workspace", async () => {
+ // Simulate the WSL agent: the server workspace is a Windows UNC path
+ // (\\\\wsl.localhost\\\\<distro>...) while the caller passes the POSIX twin that
+ // shares its suffix (/home/...). assertInsideWorkspace must map one to the
+ // other instead of rejecting the scan outright.
+ const B = String.fromCharCode(92); // backslash
+ const wsPosix = "/home/anh/projects/demo";
+ const unc = B + B + "wsl.localhost" + B + "Ubuntu-22.04" + wsPosix.replace(/\//g, B);
+ const workspaceDir = join(tmpdir(), "deyin-sec-wsl-");
+ mkdirSync(workspaceDir, { recursive: true });
+ try {
+ writeFileSync(join(workspaceDir, "leak.js"), 'const password = "hunter2-hunter2";\n', "utf8");
+ // A path outside the workspace is still rejected after mapping fails.
+ await assert.rejects(
+ () => rpc({ DEYIN_WORKSPACE: unc }, "tools/call", {
+ name: "security_scan_repo",
+ arguments: { root: "/etc" },
+ }),
+ /inside workspace/,
+ );
+ // On Windows hosts the UNC resolves to a real directory, so the scan
+ // succeeds and reports findings. On POSIX CI the UNC is not a real path;
+ // walk() returns an empty file list and the report is still valid JSON
+ // with zero findings - the important part is the boundary check passing.
+ const result = (await rpc({ DEYIN_WORKSPACE: unc }, "tools/call", {
+ name: "security_scan_repo",
+ arguments: { root: wsPosix },
+ }, 4)) as { content: { text: string }[] };
+ const report = JSON.parse(result.content[0]!.text) as { version: string; findings: { ruleId: string }[] };
+ assert.equal(report.version, "1");
+ assert.ok(Array.isArray(report.findings));
+ } finally {
+ rmSync(workspaceDir, { recursive: true, force: true });
+ }
 });

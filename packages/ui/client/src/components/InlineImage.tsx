@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Icon } from "./Icon.js";
 
 interface InlineImageProps {
   threadId: string;
@@ -75,18 +76,26 @@ export function InlineImage({ threadId, file, alt }: InlineImageProps) {
             onClick={() => setExpanded(false)}
           >
             <div className="inline-image-lightbox__panel" onClick={(event) => event.stopPropagation()}>
-              <img className="inline-image-lightbox__img" src={src} alt={alt ?? file} />
-              <div className="inline-image-lightbox__actions">
-                <button
-                  type="button"
-                  className="btn btn--outline btn--small"
-                  onClick={() => downloadDataUrl(src, file)}
-                >
-                  Download
-                </button>
-                <button type="button" className="btn btn--ghost btn--small" onClick={() => setExpanded(false)}>
-                  Close
-                </button>
+              <div className="inline-image-lightbox__frame">
+                <img className="inline-image-lightbox__img" src={src} alt={alt ?? file} />
+                <div className="inline-image-lightbox__toolbar">
+                  <button
+                    type="button"
+                    className="inline-image-lightbox__btn"
+                    aria-label="Download image"
+                    onClick={() => downloadDataUrl(src, file)}
+                  >
+                    <Icon name="download" size={18} />
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-image-lightbox__btn"
+                    aria-label="Close"
+                    onClick={() => setExpanded(false)}
+                  >
+                    <Icon name="close" size={18} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>,

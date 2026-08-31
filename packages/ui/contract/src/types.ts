@@ -162,6 +162,9 @@ export interface SecurityFindingsReport {
 /** UI cap for tool result content (both streaming tail and final tool-end result). */
 export const TOOL_RESULT_UI_CAP = 64_000;
 
+/** Thought-label emitted when an agent run stops at the step cap; ChatView keys its Continue divider on it. */
+export const STEP_LIMIT_LABEL = "Stopped after reaching the step limit";
+
 /* Web repo workflow (connect a git repo → work branch → ship) ----------------- */
 
 export interface RepoConnectRequest {
