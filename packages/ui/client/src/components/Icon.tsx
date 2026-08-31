@@ -59,6 +59,12 @@ const PATHS: Record<string, JSX.Element> = {
   steer: <path d="M12 4H5.5v6.5M5.5 10.5L3 8" />,
   arrowDown: <path d="M8 3v10M12 9l-4 4-4-4" />,
   close: <path d="M4 4l8 8M12 4l-8 8" />,
+  download: (
+    <>
+      <path d="M8 2.5v7M5.5 7.5L8 10l2.5-2.5" />
+      <path d="M3 12.5h10" />
+    </>
+  ),
   minimize: <path d="M3 8.5h10" />,
   maximize: <rect x="3.5" y="3.5" width="9" height="9" rx="1" />,
   dots: (

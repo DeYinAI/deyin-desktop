@@ -19,8 +19,9 @@ test("create_page writes artifact and fires onPageCreated", async () => {
       },
       {
         cwd: "/",
+        todos: [],
         pageArtifact: {
-          write: async ({ threadId, file, html, title }) => {
+          write: async ({ threadId, file, html }) => {
             const written = store.writePage(threadId, file, html);
             const content = store.readPage(threadId, written.title);
             return { fileName: written.title, filePath: written.file, html: content };
@@ -46,7 +47,7 @@ test("create_page writes artifact and fires onPageCreated", async () => {
 test("create_page without bridge returns error", async () => {
   const result = await createPageTool.execute(
     { title: "X", html: "<p>y</p>" },
-    { cwd: "/", sessionMeta: { threadId: "t", mode: "agent", approvalMode: "ask-first", model: "test", cwd: "/" } },
+    { cwd: "/", todos: [], sessionMeta: { threadId: "t", mode: "agent", approvalMode: "ask-first", model: "test", cwd: "/" } },
   );
   assert.match(result, /not available/);
 });

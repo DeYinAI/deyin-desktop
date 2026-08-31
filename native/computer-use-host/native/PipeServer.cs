@@ -19,13 +19,26 @@ public sealed class PipeServer
   {
     while (!cancellationToken.IsCancellationRequested)
     {
-      await using var pipe = new NamedPipeServerStream(
+      var pipe = new NamedPipeServerStream(
         _pipeName,
         PipeDirection.InOut,
         NamedPipeServerStream.MaxAllowedServerInstances,
         PipeTransmissionMode.Byte,
         PipeOptions.Asynchronous);
-      await pipe.WaitForConnectionAsync(cancellationToken);
+      try
+      {
+          await pipe.WaitForConnectionAsync(cancellationToken);
+      }
+      catch
+      {
+          // Cancelled or transient failure: this instance never got a client.
+          await pipe.DisposeAsync();
+          throw;
+      }
+      // Ownership transfers to the handler, which disposes the pipe once the
+      // client disconnects. Disposing here (e.g. `await using`) would race the
+      // handler and tear down the pipe mid-session, breaking every request
+      // with EPIPE/ObjectDisposedException on the client side.
       _ = Task.Run(() => HandleClientAsync(pipe, cancellationToken), cancellationToken);
     }
   }
@@ -52,6 +65,7 @@ public sealed class PipeServer
     finally
     {
       try { pipe.Disconnect(); } catch { /* ignore */ }
+      await pipe.DisposeAsync();
     }
   }
 }

@@ -130,7 +130,7 @@ export function loadCliConfig(opts: {
     apiBaseUrl: DEFAULT_CONFIG.apiBaseUrl,
     clientId: DEFAULT_CONFIG.clientId,
     thinking: true,
-    maxSteps: 40,
+    maxSteps: 100,
     permissions: [],
     roleModels: {},
     subagentModels: {},

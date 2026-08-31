@@ -100,6 +100,8 @@ interface ComposerProps {
   contextSnapshot?: ContextUsageSnapshot | null;
   /** Fallback context window from the selected model. */
   contextLength?: number;
+  /** Open the full usage page (settings → Agent data) from the Context panel. */
+  onOpenUsage?: () => void;
   /** Active thread id — resets the Context Usage popover on switch. */
   threadKey?: string | null;
   /** Run status from event-sourced agent state. */
@@ -822,6 +824,7 @@ export function Composer(props: ComposerProps) {
           contextLength={props.contextLength}
           threadKey={props.threadKey}
           attachmentEstimateTokens={attachmentEstimateTokens}
+          onOpenUsage={props.onOpenUsage}
         />
 
         <ModelPicker

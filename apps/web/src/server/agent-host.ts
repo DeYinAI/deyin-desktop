@@ -501,7 +501,7 @@ export class WebAgentHost {
       todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
       resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
       cwd: this.root,
-      maxSteps: 40,
+      maxSteps: 100,
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
       evidenceGatesEnabled: options.mode === "delivery",

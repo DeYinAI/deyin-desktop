@@ -31,13 +31,28 @@ function findingId(ruleId, file, line) {
 }
 
 function assertInsideWorkspace(root) {
-  if (!WORKSPACE) throw new Error("DEYIN_WORKSPACE is not configured.");
-  const resolved = resolve(root);
-  const workspace = resolve(WORKSPACE);
-  if (resolved !== workspace && !resolved.startsWith(workspace + sep)) {
-    throw new Error(`Scan root must be inside workspace (${workspace}).`);
-  }
-  return resolved;
+ if (!WORKSPACE) throw new Error("DEYIN_WORKSPACE is not configured.");
+ const workspace = resolve(WORKSPACE);
+ let candidate = resolve(root);
+ if (candidate !== workspace && !candidate.startsWith(workspace + sep)) {
+ // The agent may run inside WSL and pass POSIX paths (/home/...) while this
+ // server receives a \\wsl.localhost\\<distro>... workspace. Map a POSIX path
+ // onto the workspace when the workspace string visibly ends with it. The
+ // suffix match runs on the raw WORKSPACE (not the resolved form) so the
+ // check also works on POSIX hosts where resolve() would mangle the UNC.
+ if (/^[\\/]/.test(root)) {
+ const posix = root.replace(/\//g, "\\");
+ const wsLower = WORKSPACE.toLowerCase();
+ const posixLower = posix.toLowerCase();
+ if (wsLower.endsWith(posixLower)) {
+ candidate = resolve(WORKSPACE.slice(0, wsLower.length - posixLower.length) + posix);
+ }
+ }
+ if (candidate !== workspace && !candidate.startsWith(workspace + sep)) {
+ throw new Error(`Scan root must be inside workspace (${workspace}).`);
+ }
+ }
+ return candidate;
 }
 
 function validateReport(report) {

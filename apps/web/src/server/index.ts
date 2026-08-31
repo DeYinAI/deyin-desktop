@@ -23,6 +23,10 @@ const httpServer = createServer((req, res) => {
     void handleSearch(req, res);
     return;
   }
+  if (req.url?.startsWith("/api/public/plans")) {
+    void proxyPublicPlans(req, res);
+    return;
+  }
   if (req.url?.startsWith("/api/")) {
     void proxyToOpenference(req, res);
     return;
@@ -54,6 +58,33 @@ wss.on("connection", (ws) => {
   ws.on("close", () => session.dispose());
   ws.on("error", () => session.dispose());
 });
+
+/** Public pricing catalog (no auth); browser cannot call the issuer origin directly (CORS). */
+async function proxyPublicPlans(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "method_not_allowed" }));
+    return;
+  }
+
+  const search = new URL(req.url ?? "", "http://localhost").search;
+  const upstream = await fetch(`${OAUTH_ISSUER.replace(/\/$/, "")}/api/public/plans${search}`, {
+    method: req.method,
+  });
+
+  res.writeHead(upstream.status, {
+    "content-type": upstream.headers.get("content-type") ?? "application/json",
+  });
+  if (upstream.body) {
+    const reader = upstream.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+  }
+  res.end();
+}
 
 async function proxyToOpenference(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const upstreamPath = req.url!.replace(/^\/api/, "");

@@ -21,22 +21,24 @@ function formatTokens(n: number): string {
 }
 
 /** Quota consumption is fractional once per-model multipliers apply; the
- *  meters read as call counts, so round before display. */
+ * meters read as call counts, so round before display. */
 function formatRequests(n: number): string {
   return Math.round(n).toLocaleString();
 }
 
-/** Countdown to a quota reset. Weekly resets are days away and rolling-window
- *  resets are minutes away, so the unit pair shifts with the distance. */
-function formatReset(iso: string): string {
+/** Compact reset hint for the quota grid (e.g. "2h 05m" or "Sep 5"). Rolling
+ * windows reset within hours; weekly resets are days away, so those show the
+ * calendar date instead of a long countdown. */
+function formatResetShort(iso: string): string {
   const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return "resets soon";
+  if (ms <= 0) return "soon";
   const minutes = Math.floor(ms / 60_000);
   const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  if (days > 0) return `resets in ${days}d ${hours % 24}h`;
-  if (hours > 0) return `resets in ${hours}h ${minutes % 60}m`;
-  return `resets in ${minutes}m`;
+  if (hours >= 24) {
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  if (hours > 0) return `${hours}h ${String(minutes % 60).padStart(2, "0")}m`;
+  return `${minutes}m`;
 }
 
 export interface ContextUsageProps {
@@ -47,10 +49,18 @@ export interface ContextUsageProps {
   threadKey?: string | null;
   /** Rough token estimate for pending @ attachments (chars / 4). */
   attachmentEstimateTokens?: number;
+  /** Open the full usage page (settings → Agent data) from the panel header. */
+  onOpenUsage?: () => void;
 }
 
 /** Circular meter + Cursor-style Context Usage popover above the composer. */
-export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEstimateTokens = 0 }: ContextUsageProps) {
+export function ContextUsage({
+  snapshot,
+  contextLength,
+  threadKey,
+  attachmentEstimateTokens = 0,
+  onOpenUsage,
+}: ContextUsageProps) {
   const [open, setOpen] = useState(false);
   const [account, setAccount] = useState<AccountUsage | null>(null);
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -157,145 +167,160 @@ export function ContextUsage({ snapshot, contextLength, threadKey, attachmentEst
         ariaLabel="Context Usage"
       >
         <div className="context-usage__header">
-            <span className="context-usage__title">Context Usage</span>
-            <button
-              type="button"
-              className="context-usage__close"
-              aria-label="Close"
-              onClick={() => setOpen(false)}
-            >
-              <Icon name="close" size={14} />
-            </button>
-          </div>
+          <span className="context-usage__title">Context Usage</span>
+          <button
+            type="button"
+            className="context-usage__close"
+            aria-label="Close"
+            onClick={() => setOpen(false)}
+          >
+            <Icon name="close" size={14} />
+          </button>
+        </div>
 
-          <div className="context-usage__summary">
-            <span className="context-usage__percent">
-              {measured ? `${percent}% Full` : "Not measured"}
-            </span>
-            <span className="context-usage__tokens">
-              {!measured
-                ? "Send a message to estimate"
-                : limit > 0
-                  ? `~${formatTokens(used)} / ${formatTokens(limit)} Tokens`
-                  : `~${formatTokens(used)} Tokens`}
-            </span>
-          </div>
+        <div className="context-usage__summary">
+          <span className="context-usage__percent">
+            {measured ? `${percent}% Full` : "Not measured"}
+          </span>
+          <span className="context-usage__tokens">
+            {!measured
+              ? "Send a message to estimate"
+              : limit > 0
+                ? `~${formatTokens(used)} / ${formatTokens(limit)} Tokens`
+                : `~${formatTokens(used)} Tokens`}
+          </span>
+        </div>
 
-          <div className="context-usage__bar" aria-hidden>
-            {!measured || categories.length === 0 ? (
-              <div className="context-usage__bar-empty" />
-            ) : (
-              categories.map((c) => (
-                <div
-                  key={c.id}
-                  className="context-usage__seg"
-                  style={{
-                    flexGrow: Math.max(c.tokens, 1),
-                    background: CATEGORY_COLORS[c.id],
-                  }}
-                  title={`${c.label}: ${formatTokens(c.tokens)}`}
-                />
-              ))
-            )}
-            {measured && limit > used && (
+        <div className="context-usage__bar" aria-hidden>
+          {!measured || categories.length === 0 ? (
+            <div className="context-usage__bar-empty" />
+          ) : (
+            categories.map((c) => (
               <div
-                className="context-usage__seg context-usage__seg--free"
-                style={{ flexGrow: Math.max(limit - used, 1) }}
+                key={c.id}
+                className="context-usage__seg"
+                style={{
+                  flexGrow: Math.max(c.tokens, 1),
+                  background: CATEGORY_COLORS[c.id],
+                }}
+                title={`${c.label}: ${formatTokens(c.tokens)}`}
               />
-            )}
+            ))
+          )}
+          {measured && limit > used && (
+            <div
+              className="context-usage__seg context-usage__seg--free"
+              style={{ flexGrow: Math.max(limit - used, 1) }}
+            />
+          )}
+        </div>
+
+        <ul className="context-usage__list">
+          {categories.map((c) => (
+            <li key={c.id} className="context-usage__row">
+              <span
+                className="context-usage__dot"
+                style={{ background: CATEGORY_COLORS[c.id] }}
+                aria-hidden
+              />
+              <span className="context-usage__label">{c.label}</span>
+              <span className="context-usage__count">{formatTokens(c.tokens)}</span>
+            </li>
+          ))}
+          {categories.length === 0 && (
+            <li className="context-usage__row context-usage__row--empty">
+              <span className="context-usage__label">
+                {measured ? "No context categories" : "No context measured yet"}
+              </span>
+            </li>
+          )}
+        </ul>
+
+        {snapshot?.cache && (
+          <div className="context-usage__cache-row">
+            <span>Average cache hit rate</span>
+            <span className="context-usage__cache-value">
+              {Math.round(snapshot.cache.hitRate * 100)}%
+            </span>
           </div>
+        )}
 
-          <ul className="context-usage__list">
-            {categories.map((c) => (
-              <li key={c.id} className="context-usage__row">
-                <span
-                  className="context-usage__dot"
-                  style={{ background: CATEGORY_COLORS[c.id] }}
-                  aria-hidden
-                />
-                <span className="context-usage__label">{c.label}</span>
-                <span className="context-usage__count">{formatTokens(c.tokens)}</span>
-              </li>
-            ))}
-            {categories.length === 0 && (
-              <li className="context-usage__row context-usage__row--empty">
-                <span className="context-usage__label">
-                  {measured ? "No context categories" : "No context measured yet"}
-                </span>
-              </li>
-            )}
-          </ul>
-
-          {account && (
-            <div className="context-usage__plan">
-              <div className="context-usage__plan-head">
-                <span className="context-usage__plan-title">Openference</span>
-                {account.planName && <span className="context-usage__plan-badge">{account.planName}</span>}
-                <span className="context-usage__plan-spacer" />
-                <span className="context-usage__plan-today">
-                  {account.todayRequests.toLocaleString()} today
-                </span>
-              </div>
+        {account && (
+          <div className="context-usage__plan">
+            <div className="context-usage__plan-head">
+              <span className="context-usage__plan-title">Usage remaining</span>
+              {account.planName && <span className="context-usage__plan-badge">{account.planName}</span>}
+              <span className="context-usage__plan-spacer" />
+              {onOpenUsage && (
+                <button
+                  type="button"
+                  className="context-usage__more"
+                  onClick={() => {
+                    setOpen(false);
+                    onOpenUsage();
+                  }}
+                >
+                  More
+                  <Icon name="chevronRight" size={11} />
+                </button>
+              )}
+            </div>
+            <div className="context-usage__quota-grid">
               {account.requestsPerWindow !== null && (
-                <PlanMeter
-                  label={
-                    account.windowHours
-                      ? `Requests this ${account.windowHours}h`
-                      : "Requests this window"
-                  }
+                <QuotaCell
+                  label={account.windowHours ? `${account.windowHours} hours` : "Window"}
                   used={account.windowQuotaUsed}
                   limit={account.requestsPerWindow}
                   formatValue={formatRequests}
                   resetAt={account.windowResetAt}
                 />
               )}
-              <PlanMeter
-                label="Requests this week"
+              <QuotaCell
+                label="Weekly"
                 used={account.weekQuotaUsed}
                 limit={account.requestsPerWeek}
                 formatValue={formatRequests}
+                resetAt={account.weeklyResetAt}
               />
-              <PlanMeter
-                label="Tokens this week"
+              <QuotaCell
+                label="Tokens"
                 used={account.weekTokens}
                 limit={account.tokensPerWeek}
                 formatValue={formatTokens}
               />
-              {(account.weeklyResetAt || account.creditsUsd !== null) && (
-                <div className="context-usage__plan-foot">
-                  {account.weeklyResetAt && <span>{formatReset(account.weeklyResetAt)}</span>}
-                  {account.creditsUsd !== null && <span>${account.creditsUsd.toFixed(2)} credits</span>}
-                </div>
-              )}
             </div>
-          )}
+            {account.creditsUsd !== null && (
+              <div className="context-usage__plan-foot">${account.creditsUsd.toFixed(2)} credits</div>
+            )}
+          </div>
+        )}
 
-          {(attachmentHeavy || snapshot?.cached || wireSaved > 0 || snapshot?.cache) && (
-            <div className="context-usage__footer">
-              {attachmentHeavy && <span>Large attachments may exceed the context budget</span>}
-              {snapshot?.cached && <span>Served from response cache</span>}
-              {wireSaved > 0 && <span>Wire compression saved ~{formatTokens(wireSaved)}</span>}
-              {snapshot?.cache && snapshot.cache.sessionHit + snapshot.cache.sessionMiss > 0 && (
-                <span>
-                  Prefix cache: {Math.round(snapshot.cache.hitRate * 100)}% hit (
-                  {formatTokens(snapshot.cache.sessionHit)} cached /{" "}
-                  {formatTokens(snapshot.cache.sessionMiss)} new)
-                  {snapshot.cache.prefixChanged && snapshot.cache.changeReasons?.length
-                    ? ` · churn: ${snapshot.cache.changeReasons.join(", ")}`
-                    : ""}
-                </span>
-              )}
-            </div>
-          )}
+        {(attachmentHeavy || snapshot?.cached || wireSaved > 0 || snapshot?.cache) && (
+          <div className="context-usage__footer">
+            {attachmentHeavy && <span>Large attachments may exceed the context budget</span>}
+            {snapshot?.cached && <span>Served from response cache</span>}
+            {wireSaved > 0 && <span>Wire compression saved ~{formatTokens(wireSaved)}</span>}
+            {snapshot?.cache && snapshot.cache.sessionHit + snapshot.cache.sessionMiss > 0 && (
+              <span>
+                Prefix cache: {Math.round(snapshot.cache.hitRate * 100)}% hit (
+                {formatTokens(snapshot.cache.sessionHit)} cached /{" "}
+                {formatTokens(snapshot.cache.sessionMiss)} new)
+                {snapshot.cache.prefixChanged && snapshot.cache.changeReasons?.length
+                  ? ` · churn: ${snapshot.cache.changeReasons.join(", ")}`
+                  : ""}
+              </span>
+            )}
+          </div>
+        )}
       </PortalledPanel>
     </div>
   );
 }
 
-/** One Openference quota row: label, used/limit, a thin progress bar and an
- *  optional reset countdown (rolling windows reset far more often than weekly
- *  quotas, so their row carries its own). */
-function PlanMeter({
+/** One "Usage remaining" cell: label on top, percent with a compact reset hint,
+ * then a thin meter. Percent reads quota consumed against the plan limit, with
+ * tone escalation as the quota runs low. */
+function QuotaCell({
   label,
   used,
   limit,
@@ -311,19 +336,22 @@ function PlanMeter({
   const percent = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
   const tone = percent === null ? "none" : percent >= 90 ? "critical" : percent >= 70 ? "warn" : "ok";
   return (
-    <div className="context-usage__meter-row">
-      <div className="context-usage__meter-top">
-        <span className="context-usage__meter-label">{label}</span>
-        <span className="context-usage__meter-count">
-          {percent !== null ? `${formatValue(used)} / ${formatValue(limit!)} · ${percent}%` : formatValue(used)}
+    <div className="context-usage__quota">
+      <div className="context-usage__quota-label">{label}</div>
+      <div className="context-usage__quota-value">
+        <span className="context-usage__quota-percent">
+          {percent !== null ? `${percent}%` : formatValue(used)}
         </span>
+        {resetAt && <span className="context-usage__quota-reset">· {formatResetShort(resetAt)}</span>}
       </div>
-      <div className="context-usage__meter-bar" aria-hidden>
+      <div className="context-usage__quota-bar" aria-hidden>
         {percent !== null && (
-          <div className={`context-usage__meter-fill context-usage__meter-fill--${tone}`} style={{ width: `${percent}%` }} />
+          <div
+            className={`context-usage__quota-fill context-usage__quota-fill--${tone}`}
+            style={{ width: `${percent}%` }}
+          />
         )}
       </div>
-      {resetAt && <div className="context-usage__meter-foot">{formatReset(resetAt)}</div>}
     </div>
   );
 }

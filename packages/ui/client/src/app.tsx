@@ -15,6 +15,7 @@ import {
   pickImageModelForGeneration,
   imageModelParamsKey,
   resolveImageModelParams,
+ touchProjectOpened,
 } from "@deyin/host-core/shared";
 import type { ModelReasoningMode, WorkspaceLocation, ImageModelParams } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
@@ -127,6 +128,7 @@ function clampFraction(value: number): number {
 }
 
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
+const CONTINUE_PROMPT = "Continue the task from where you stopped. Check the todo list and workspace state first, then finish the remaining work.";
 
 type View = "workspace" | "settings" | "upgrade" | "automations";
 
@@ -1889,7 +1891,13 @@ export function App() {
     }
   }, [activeThread, activeThreadId, activeComposerBusy, agentRunState?.running, selectMode, startAgentRun, updateThread, setPlanApprovalForThread]);
 
-  /** The newest plan is written but not built, and no gate is on screen: the plan
+  /** Step-limit divider "Continue": resume the interrupted run with a nudge. */
+const continueFromStepLimit = useCallback(() => {
+ if (!activeThread || activeComposerBusy || agentRunState?.running) return;
+ startAgentRun(activeThread, CONTINUE_PROMPT, activeThread.mode ?? "agent");
+}, [activeThread, activeComposerBusy, agentRunState?.running, startAgentRun]);
+
+/** The newest plan is written but not built, and no gate is on screen: the plan
    *  card carries Build so dismissing the gate never strands the plan. */
   const planCardBuildable =
     Boolean(activeThread?.planMarkdown?.trim()) &&
@@ -2572,6 +2580,7 @@ export function App() {
                         openPanelTab("agent");
                       }
                 }
+                onContinue={chatOnlyHosted ? undefined : continueFromStepLimit}
                 onForkAtEvent={(eventIndex) => {
                   if (activeThreadId) forkThreadAtEvent(activeThreadId, eventIndex);
                 }}
@@ -2774,6 +2783,14 @@ export function App() {
                     setSettingsPage("models");
                     setView("settings");
                   }}
+                  onOpenUsage={
+                    chatOnlyHosted
+                      ? undefined
+                      : () => {
+                          setSettingsPage("data");
+                          setView("settings");
+                        }
+                  }
                   onSelectApproval={
                     chatOnlyHosted ? () => {} : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
                   }

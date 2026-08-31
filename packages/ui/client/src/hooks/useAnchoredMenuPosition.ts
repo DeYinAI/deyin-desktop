@@ -36,7 +36,8 @@ export function useAnchoredMenuPosition(
       const p = panelRef.current?.getBoundingClientRect();
       if (!a || !p) return;
 
-      const panelH = p.height;
+      const maxPanelH = window.innerHeight - 2 * EDGE;
+      const panelH = Math.min(p.height, maxPanelH);
       const panelW = matchAnchorWidth ? a.width : p.width;
       const spaceBelow = window.innerHeight - EDGE - (a.bottom + gap);
       const spaceAbove = a.top - gap - EDGE;
@@ -59,10 +60,18 @@ export function useAnchoredMenuPosition(
     const raf = requestAnimationFrame(place);
     window.addEventListener("resize", place);
     window.addEventListener("scroll", place, true);
+    const panel = panelRef.current;
+    const ro =
+      panel &&
+      new ResizeObserver(() => {
+        place();
+      });
+    if (ro && panel) ro.observe(panel);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
+      ro?.disconnect();
     };
   }, [open, anchorRef, panelRef, align, matchAnchorWidth, gap]);
 
