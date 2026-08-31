@@ -222,12 +222,18 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
-      # electron-updater only sees published releases on the public feed.
+      # electron-updater polls GET /releases/latest — must set make_latest or GitHub
+      # keeps an older release (e.g. v1.0.7) as "latest" and clients never see updates.
       - name: Publish public update feed
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --repo DeYinAI/deyin-releases --draft=false
+        run: |
+          release_id="$(gh api "repos/DeYinAI/deyin-releases/releases/tags/${{ github.ref_name }}" --jq .id)"
+          gh api -X PATCH "repos/DeYinAI/deyin-releases/releases/${release_id}" \
+            --input - <<EOF
+          {"draft": false, "make_latest": true}
+          EOF
 
   cli:
     needs: create-release
