@@ -27,7 +27,7 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@stripe/stripe-js": "^9.14.0",
     "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^5.5.0",
+    "@xterm/xterm": "^6.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
