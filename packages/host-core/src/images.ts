@@ -58,7 +58,7 @@ interface Modalities {
 }
 
 /** Does one modality token name images? ("image", "image/png", "IMAGE") */
-function isImageToken(token: string): boolean {
+export function isImageToken(token: string): boolean {
   const t = token.trim().toLowerCase();
   return t === "image" || t === "images" || t.startsWith("image/");
 }
@@ -69,7 +69,7 @@ function isTextToken(token: string): boolean {
 }
 
 /** Split "text+image->text+image" / "text->image" into sides. */
-function parseArrowModality(value: string): { input: string[]; output: string[] } | null {
+export function parseArrowModality(value: string): { input: string[]; output: string[] } | null {
   const match = /^([^-<>]*)(?:->|→|=>)(.+)$/.exec(value.trim());
   if (!match) return null;
   const split = (side: string) => side.split(/[+,|/]/).map((s) => s.trim()).filter(Boolean);
