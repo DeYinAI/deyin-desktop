@@ -166,18 +166,32 @@ test("a region boundary never orphans a tool result", () => {
   }
 });
 
-test("stands down when a pass would reclaim too little to be worth the cache break", () => {
-  // Just over the compaction line, but made of small tool results: clearing them
-  // costs a full prefix-cache re-read to save almost nothing.
+test("does nothing at all below the compaction line", () => {
+  // The property the whole design rests on: under pressure the transcript is
+  // left byte-identical, so the provider's cached prefix keeps hitting.
   const messages = transcript(40, 40);
-  const contextLength = Math.ceil(estimateTokens(messages) / COMPACT_RATIO) - 1;
+  const contextLength = Math.ceil(estimateTokens(messages) / (COMPACT_RATIO - 0.1));
   const before = JSON.stringify(messages);
 
   const decision = decideCompaction({ messages, contextLength, trigger: "pressure" });
   assert.equal(decision.action, "none");
   assert.equal(JSON.stringify(messages), before);
+});
 
-  // Sanity: the transcript really was over the trigger.
+test("stands down when a pass would reclaim too little to be worth the cache break", () => {
+  // Over the line, but the pressure is the tool schemas, not the transcript.
+  // Compacting here would cost a full prefix-cache re-read to save almost
+  // nothing — and would re-fire on the next step, since the schemas never
+  // shrink. Standing down is the only stable answer.
+  const messages = transcript(4, 40);
+  const contextLength = 20_000;
+  const schemaTokens = 18_000;
+  const before = JSON.stringify(messages);
+
+  const decision = decideCompaction({ messages, contextLength, schemaTokens, trigger: "pressure" });
+  assert.equal(decision.action, "none");
+  assert.equal(JSON.stringify(messages), before);
+
   const plan = planPrune(messages);
   assert.ok(plan.reclaimedTokens < contextLength * MIN_RECLAIM_RATIO);
 });

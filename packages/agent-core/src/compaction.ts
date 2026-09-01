@@ -33,6 +33,20 @@ export const FORCE_RATIO = 0.9;
 export const MIN_RECLAIM_RATIO = 0.1;
 /** Verbatim recent history, as a token budget rather than a message count. */
 export const TAIL_TOKENS = 16_384;
+/**
+ * Cap on the verbatim tail as a share of the window.
+ *
+ * A flat 16k tail assumes a large context window. On a 32k model it would keep
+ * half the window verbatim and leave almost nothing foldable, so compaction
+ * would find no worthwhile region and let the request overflow instead.
+ */
+export const TAIL_FRACTION = 0.25;
+
+/** The verbatim tail budget for a given context window. */
+export function tailBudgetFor(contextLength: number): number {
+  if (contextLength <= 0) return TAIL_TOKENS;
+  return Math.max(1, Math.min(TAIL_TOKENS, Math.floor(contextLength * TAIL_FRACTION)));
+}
 /** Fixed cap for a pruned stale tool result. Fixed, so the pass is idempotent. */
 export const STALE_TOOL_RESULT_CAP = 3_000;
 /** Errors are dense and rarely re-derivable, so they keep more of themselves. */
@@ -268,7 +282,8 @@ export interface CompactionPolicyInput {
 export type CompactionAction =
   | { action: "none"; ratio: number; notice: boolean }
   | { action: "prune"; ratio: number; plan: PrunePlan }
-  | { action: "fold"; ratio: number; plan: PrunePlan; region: CompactionRegion }
+  /** No plan: a fold discards the whole region, so pruning inside it is wasted work. */
+  | { action: "fold"; ratio: number; region: CompactionRegion }
   | { action: "exhausted"; ratio: number };
 
 /**
@@ -303,7 +318,8 @@ export function decideCompaction(input: CompactionPolicyInput): CompactionAction
 
   const window = Math.max(1, input.contextLength);
   const minReclaim = Math.floor(window * MIN_RECLAIM_RATIO);
-  const plan = planPrune(input.messages);
+  const tailBudget = tailBudgetFor(input.contextLength);
+  const plan = planPrune(input.messages, { tailBudget });
 
   // Would pruning alone bring us back under the line, and is it worth the
   // cache invalidation? Overflow skips the economics gate: any reduction beats
@@ -314,10 +330,12 @@ export function decideCompaction(input: CompactionPolicyInput): CompactionAction
     return { action: "prune", ratio, plan };
   }
 
-  const region = selectRegion(input.messages);
-  const foldReclaim = plan.reclaimedTokens + region.tokens;
+  // A fold removes the whole region, pruned or not — `planPrune` works over
+  // exactly the same span, so its savings are a subset of the region's, not an
+  // addition to them.
+  const region = selectRegion(input.messages, tailBudget);
   const forced = manual || overflow || ratio >= FORCE_RATIO;
-  if (region.end <= region.start || (!forced && foldReclaim < minReclaim)) {
+  if (region.end <= region.start || (!forced && region.tokens < minReclaim)) {
     // Nothing worth folding. Take the prune if there was one, else stand down
     // and let the log keep growing — a cache-stable prefix is worth more than a
     // marginal saving.
@@ -325,7 +343,7 @@ export function decideCompaction(input: CompactionPolicyInput): CompactionAction
     return { action: "none", ratio, notice: ratio >= NOTICE_RATIO };
   }
 
-  return { action: "fold", ratio, plan, region };
+  return { action: "fold", ratio, region };
 }
 
 // ---------------------------------------------------------------------------
@@ -423,8 +441,18 @@ export function summaryMessage(summary: string): AgentMessage {
 }
 
 /**
+ * The verbatim tail a manual `/compact` keeps.
+ *
+ * Deliberately tighter than the automatic tail: the user asked for space back
+ * now, so holding 16k of recent history verbatim would routinely leave nothing
+ * to fold and make the command look broken.
+ */
+export const MANUAL_TAIL_TOKENS = 4_096;
+
+/**
  * Manual `/compact`: fold everything foldable and return the new transcript.
- * Does not mutate the caller's array.
+ * Does not mutate the caller's array. Returns the input unchanged when there is
+ * no safe region to fold, so callers can report that honestly.
  */
 export async function compactWithModel(opts: {
   apiBaseUrl: string;
@@ -432,15 +460,16 @@ export async function compactWithModel(opts: {
   model: string;
   messages: AgentMessage[];
   focus?: string;
+  tailTokens?: number;
   apiFormat?: ProviderApiFormat;
   authHeader?: boolean;
   signal?: AbortSignal;
 }): Promise<AgentMessage[]> {
   const messages = [...opts.messages];
-  const region = selectRegion(messages);
-  if (region.end <= region.start) return messages;
-  await foldRegion({ ...opts, messages, region });
-  return messages;
+  const region = selectRegion(messages, opts.tailTokens ?? MANUAL_TAIL_TOKENS);
+  if (region.end <= region.start) return opts.messages;
+  const fold = await foldRegion({ ...opts, messages, region });
+  return fold.droppedMessages > 0 ? messages : opts.messages;
 }
 
 // ---------------------------------------------------------------------------

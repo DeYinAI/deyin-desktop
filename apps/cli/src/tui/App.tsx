@@ -471,12 +471,17 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     const beforeTokens = estimateTokens(messagesRef.current);
     notice("Compacting conversation\u2026");
     try {
-      messagesRef.current = await compactWithModel({
+      const compacted = await compactWithModel({
         apiBaseUrl: ctx.config.apiBaseUrl,
         token,
         model,
         messages: messagesRef.current,
       });
+      if (compacted === messagesRef.current) {
+        notice("Nothing older than the recent tail to compact yet.", "warn");
+        return;
+      }
+      messagesRef.current = compacted;
       const meta = ctx.sessions.create({ cwd: ctx.cwd, model, agent: agentName });
       sessionIdRef.current = meta.id;
       for (const message of messagesRef.current) ctx.sessions.append(meta.id, message);

@@ -391,3 +391,61 @@ test("the request prefix grows append-only when context stays under pressure", a
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("folds once under real pressure, then keeps the new prefix stable", async () => {
+  // A tiny context window plus oversized tool results forces the full ladder:
+  // prune, then fold. The point is that it happens ONCE — the old loop
+  // compacted on every step and pushed a notice each time, which is the wall of
+  // "Context compacted" rows this replaces.
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-fold-"));
+  writeFileSync(join(cwd, "big.txt"), "lorem ipsum dolor sit amet ".repeat(4000));
+  const server = await startMockOpenAI((i) =>
+    i < 6 ? toolCallResponse(`call_${i}`, "read", { path: "big.txt" }) : textResponse("done"),
+  );
+  // Small enough that the builtin tool schemas plus a few file reads blow past
+  // FORCE_RATIO, which is what makes this exercise the fold rather than a prune.
+
+  try {
+    const messages: AgentMessage[] = [
+      { role: "system", content: "You are a test agent." },
+      { role: "user", content: "read big.txt repeatedly" },
+    ];
+    const events: { kind: string; reclaimed: number }[] = [];
+    await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      contextLength: 4_000,
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "compaction") {
+          events.push({ kind: event.kind, reclaimed: event.reclaimedTokens });
+        }
+      },
+    });
+
+    const mutations = events.filter((e) => e.kind === "prune" || e.kind === "fold");
+    assert.ok(mutations.length > 0, "pressure this high must compact at least once");
+    assert.ok(mutations.length <= 3, `compacted ${mutations.length} times; expected a handful, not one per step`);
+    for (const m of mutations) {
+      assert.ok(m.reclaimed > 0, `${m.kind} reported no reclaimed tokens`);
+    }
+    // The system prompt is never part of a compacted region.
+    assert.equal(messages[0]?.role, "system");
+    assert.equal(messages[0]?.content, "You are a test agent.");
+    // The opening user turn is pinned, so the model keeps the task definition.
+    assert.equal(messages[1]?.content, "read big.txt repeatedly");
+    // The fold left a structured briefing behind in its place.
+    assert.ok(
+      messages.some((m) => m.role === "user" && m.content.includes("<compaction-summary>")),
+      "a fold should leave a compaction-summary node on the surface",
+    );
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
