@@ -4,6 +4,7 @@ import type { FileNode } from "@deyin/contract";
 import { CodeBlock, themeByName } from "../code.js";
 import type { CodeDisplaySettings } from "./panelTypes.js";
 import { Icon } from "./Icon.js";
+import { useConfirm } from "./ConfirmDialog.js";
 
 const BINARY_EXT = new Set([
   ".png",
@@ -117,15 +118,9 @@ export function FilesTab(props: FilesTabProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [treeLoading, setTreeLoading] = useState(false);
-  /**
-   * Non-blocking discard-unsaved-changes prompt. `window.confirm` blocks the
-   * Electron renderer main thread (and traps backgrounded windows); we keep a
-   * pending-action descriptor and resolve it from a modal instead.
-   */
-  const [pendingDiscard, setPendingDiscard] = useState<
-    | { message: string; onConfirm: () => void; onCancel: () => void }
-    | null
-  >(null);
+  // Discard prompts use the app-wide confirm card (prompt dock, above the
+  // composer) — never blocking `window.confirm`.
+  const { confirm } = useConfirm();
   const openGenRef = useRef(0);
   const treeGenRef = useRef(0);
   const expandGenRef = useRef(new Map<string, number>());
@@ -207,22 +202,21 @@ export function FilesTab(props: FilesTabProps) {
 
     if (stableSwitch && dirtyRef.current) {
       const name = selectedPathRef.current?.split(/[\\/]/).pop() ?? "file";
-      setPendingDiscard({
+      void confirm({
+        title: "Discard unsaved changes?",
         message: `Workspace changed. Discard unsaved changes${name ? ` to ${name}` : ""}?`,
-        onConfirm: () => {
-          setPendingDiscard(null);
+        confirmLabel: "Discard",
+        cancelLabel: "Keep changes",
+        destructive: true,
+      }).then((discard) => {
+        if (discard) {
           clearEditor();
-          treeGenRef.current += 1;
-          expandGenRef.current.clear();
-          void refreshTreeRef.current();
-        },
-        onCancel: () => {
-          setPendingDiscard(null);
+        } else {
           enterDraftMode();
-          treeGenRef.current += 1;
-          expandGenRef.current.clear();
-          void refreshTreeRef.current();
-        },
+        }
+        treeGenRef.current += 1;
+        expandGenRef.current.clear();
+        void refreshTreeRef.current();
       });
       return;
     }
@@ -340,13 +334,13 @@ export function FilesTab(props: FilesTabProps) {
     async (path: string) => {
       if (path === selectedPath && !draftMode) return;
       if (dirtyRef.current) {
-        setPendingDiscard({
-          message: "Discard unsaved changes?",
-          onConfirm: () => {
-            setPendingDiscard(null);
-            void openFileInternal(path);
-          },
-          onCancel: () => setPendingDiscard(null),
+        void confirm({
+          message: `Discard unsaved changes to ${path.split(/[\\/]/).pop() ?? path}?`,
+          confirmLabel: "Discard",
+          cancelLabel: "Keep changes",
+          destructive: true,
+        }).then((discard) => {
+          if (discard) void openFileInternal(path);
         });
         return;
       }
@@ -545,29 +539,6 @@ export function FilesTab(props: FilesTabProps) {
         </div>
       </div>
 
-      {pendingDiscard && (
-        <div className="approval" role="dialog" aria-modal="true">
-          <div className="approval__box">
-            <div className="approval__title">
-              <Icon name="shield" size={15} />
-              Discard unsaved changes?
-            </div>
-            <div className="approval__summary">{pendingDiscard.message}</div>
-            <div className="approval__actions">
-              <button
-                className="btn btn--outline"
-                onClick={pendingDiscard.onCancel}
-                autoFocus
-              >
-                Keep changes
-              </button>
-              <button className="btn" onClick={pendingDiscard.onConfirm}>
-                Discard
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

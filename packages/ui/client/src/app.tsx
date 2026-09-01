@@ -22,9 +22,11 @@ import { streamChat } from "./api/openference.js";
 import { AppProviders } from "./providers.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
 import { AppApprovalDialog } from "./components/AppApprovalDialog.js";
+import { WorkspaceTrustDialog } from "./components/WorkspaceTrustDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
 import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { McpAuthCard } from "./components/McpAuthCard.js";
+import { PromptDockSlot } from "./components/PromptDock.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
 import { ChatView } from "./components/ChatView.js";
@@ -2117,7 +2119,7 @@ const continueFromStepLimit = useCallback(() => {
           appendEvents(thread.id, [
             {
               kind: "assistant",
-              text: "Your plan doesn't include a vision-capable model yet. Remove the attached images, or pick a vision model from the model menu.",
+              text: "No vision-capable model is available on this provider. Remove the attached images, or pick a vision model from the model menu.",
             },
           ]);
           return;
@@ -2615,6 +2617,7 @@ const continueFromStepLimit = useCallback(() => {
               )}
 
               <div className="chat-column__composer">
+                <PromptDockSlot />
                 {!chatOnlyHosted && activeThread?.goal?.status === "active" && (
                   <div className="goal-card">
                     <Icon name="flag" size={14} />
@@ -3043,6 +3046,7 @@ const continueFromStepLimit = useCallback(() => {
       <BrowserOverlay />
       <ComputerUseOverlay />
       <AppApprovalDialog />
+        <WorkspaceTrustDialog />
     </div>
     </AppProviders>
   );

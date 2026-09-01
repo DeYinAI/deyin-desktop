@@ -16,7 +16,8 @@ export interface CustomAgentConfig {
   prompt: string;
   model?: string;
   permissions?: PermissionRule[];
-  maxSteps?: number;
+  /** Step cap for this agent; null = unlimited. */
+ maxSteps?: number | null;
 }
 
 /** Shape of ~/.deyin/config.json and <project>/deyin.json (all fields optional). */
@@ -27,7 +28,8 @@ export interface DeyinCliConfigFile {
   apiBaseUrl?: string;
   clientId?: string;
   thinking?: boolean;
-  maxSteps?: number;
+  /** Step cap; null = unlimited. */
+  maxSteps?: number | null;
   permissions?: PermissionRule[];
   /**
    * Per-phase model overrides: role -> model id. Roles are "implement", "plan",
@@ -51,7 +53,8 @@ export interface ResolvedCliConfig {
   apiBaseUrl: string;
   clientId: string;
   thinking: boolean;
-  maxSteps: number;
+  /** Step cap; null = unlimited. */
+  maxSteps: number | null;
   permissions: PermissionRule[];
   roleModels: Record<string, string>;
   subagentModels: Record<string, string>;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { RepoShipResult, RepoStateResult } from "@deyin/contract";
 import { Icon } from "./Icon.js";
 import { useGitStatus } from "./GitBranchBadge.js";
+import { PromptDock } from "./PromptDock.js";
 
 interface RepoBarProps {
   /** Live repo state for the session sandbox (null before the first state probe). */
@@ -241,29 +242,27 @@ function ShipButton(props: RepoBarProps) {
       )}
 
       {result && (
-        <div className="approval" role="dialog" aria-modal="true">
-          <div className="approval__box">
-            <div className="approval__title">
+        <PromptDock>
+          <div className={`inline-card${result.ok ? "" : " inline-card--danger"}`} role="status">
+            <span className="inline-card__icon">
               <Icon name={result.ok ? "check" : "flag"} size={15} />
-              {result.ok ? "Merged" : "Ship needs attention"}
+            </span>
+            <div className="inline-card__text">
+              <div className="inline-card__title">
+                {result.ok ? "Merged" : "Ship needs attention"}
+              </div>
+              <div className="inline-card__body">
+                {result.ok ? (
+                  <>
+                    <strong>{result.branch}</strong> was merged into{" "}
+                    <strong>{result.defaultBranch}</strong>.
+                  </>
+                ) : (
+                  result.message
+                )}
+              </div>
             </div>
-            <div className="approval__summary">
-              {result.ok ? (
-                <>
-                  <strong>{result.branch}</strong> was merged into <strong>{result.defaultBranch}</strong> and pushed.
-                  {result.commits.length > 0 && (
-                    <ul className="repo-ship__commits">
-                      {result.commits.slice(0, 8).map((c, i) => (
-                        <li key={i}>{c}</li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              ) : (
-                result.message
-              )}
-            </div>
-            <div className="approval__actions">
+            <div className="inline-card__actions">
               {result.prUrl && (
                 <a className="btn btn--outline" href={result.prUrl} target="_blank" rel="noreferrer">
                   Open pull request <Icon name="external" size={12} />
@@ -280,7 +279,7 @@ function ShipButton(props: RepoBarProps) {
               </button>
             </div>
           </div>
-        </div>
+        </PromptDock>
       )}
     </>
   );

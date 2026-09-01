@@ -37,7 +37,8 @@ export async function runLocalAutomation(
 ): Promise<LocalRunResult> {
   const { automation, prompt, cwd, onEvent, signal } = opts;
   const env = await buildAutomationEnvironment(deps, cwd, automation.providerId);
-  const system = await buildAutomationSystemPrompt(deps, cwd, env.registry);
+  const settings = deps.settings.get();
+ const system = await buildAutomationSystemPrompt(deps, cwd, env.registry);
   const messages: AgentMessage[] = [
     { role: "system", content: system },
     { role: "user", content: prompt },
@@ -47,7 +48,6 @@ export async function runLocalAutomation(
   // the task tool — the automation registry has no task tool, and runSubagent
   // already gives the child a clean context and its own toolset.
   if (opts.subagent) {
-    const settings = deps.settings.get();
     const def = opts.subagent;
     const result = await runSubagent(def, prompt, {
       cwd,
@@ -86,6 +86,8 @@ export async function runLocalAutomation(
       apiBaseUrl: env.provider.apiBaseUrl,
       getToken: env.provider.getToken,
       model: automation.model,
+      // Honor the user's step-limit setting (null = unlimited) for unattended runs too.
+      maxSteps: settings.agentMaxSteps,
       contextLength: deps.getContextLength(automation.providerId, automation.model),
       messages,
       tools: env.registry,

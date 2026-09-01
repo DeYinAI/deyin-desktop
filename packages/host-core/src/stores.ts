@@ -9,7 +9,7 @@ import {
   type StoredProviderBase,
 } from "./defaults.js";
 import { classifyModelKinds, modelImageCapability } from "./images.js";
-import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
+import { listModels, visionCapability, type TokenSource } from "./models.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { Storage } from "./storage.js";
 import type {
@@ -29,6 +29,24 @@ import type {
 import { applyEvent, computeStats } from "./usage.js";
 
 /** File-backed user settings at <storage.dir>/settings.json, migrated on load. */
+interface ProviderCatalogEntry {
+  id: string;
+  context_length?: unknown;
+  max_output_tokens?: unknown;
+  vision?: unknown;
+  capabilities?: unknown;
+  type?: unknown;
+  modality?: unknown;
+  modalities?: unknown;
+  input_modalities?: unknown;
+  output_modalities?: unknown;
+  /** OpenRouter-style nested modality block. */
+  architecture?: unknown;
+  reasoning?: unknown;
+  supported_parameters?: unknown;
+}
+
+
 export class SettingsStore {
   private cache: DeyinSettings;
 
@@ -281,7 +299,8 @@ export class AgentsStore {
     return providerKeys + pluginVars;
   }
 
-  /** Fetch the provider's /models catalog and persist it as the provider's model list. */
+/** Raw entry from a custom provider's OpenAI-compatible /models catalog. */
+/** Fetch the provider's /models catalog and persist it as the provider's model list. */
   async fetchModels(id: string): Promise<ProviderTestResult> {
     const provider = this.state.providers.find((p) => p.id === id);
     if (!provider?.baseUrl) return { ok: false, message: "No base URL configured." };
@@ -292,20 +311,9 @@ export class AgentsStore {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return { ok: false, status: res.status, message: `HTTP ${res.status}` };
-      const body = (await res.json().catch(() => ({}))) as {
-        data?: {
-          id?: unknown;
-          context_length?: unknown;
-          max_output_tokens?: unknown;
-          vision?: unknown;
-          capabilities?: unknown;
-          type?: unknown;
-          modality?: unknown;
-          output_modalities?: unknown;
-        }[];
-      };
+ const body = (await res.json().catch(() => ({}))) as { data?: ProviderCatalogEntry[] };
       const models = (Array.isArray(body.data) ? body.data : [])
-        .filter((m): m is { id: string; context_length?: number; vision?: unknown; capabilities?: unknown } => typeof m.id === "string" && m.id.length > 0)
+        .filter((m): m is ProviderCatalogEntry => typeof m.id === "string" && m.id.length > 0)
         .map((m) => {
           const capability = modelImageCapability(m.id, m);
           const endpointOnly = capability === "endpoint";
@@ -315,12 +323,9 @@ export class AgentsStore {
             name: m.id,
             contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
             // Image models take a prompt, not a conversation: never route vision to them.
-            vision: endpointOnly
-              ? false
-              : modelSupportsVision(m.id, {
-                  vision: typeof m.vision === "boolean" || typeof m.vision === "number" || typeof m.vision === "string" ? m.vision : undefined,
-                  capabilities: m.capabilities,
-                }),
+          // Unknown capability stays undefined so the renderer keeps the
+          // user's selection and lets the API decide (vision: false must be earned).
+          vision: endpointOnly ? false : visionCapability(m.id, m),
             kind: endpointOnly ? ("image" as const) : ("chat" as const),
             ...(capability === "chat" ? { imageOutput: true } : {}),
             ...(reasoning ? { reasoning } : {}),

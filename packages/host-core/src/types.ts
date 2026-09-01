@@ -24,7 +24,7 @@ export interface ModelInfo {
   name: string;
   contextLength?: number;
   maxOutputTokens?: number;
-  /** Accepts image inputs (catalog metadata or a curated id heuristic). */
+  /** Accepts image inputs: true/false when known, undefined when the catalog does not say (API decides). */
   vision?: boolean;
   /** "image" models generate pictures (text-to-image) instead of chat text. */
   kind?: "chat" | "image";
@@ -509,6 +509,12 @@ export interface DeyinSettings {
   imageModelParams: Record<string, ImageModelParams>;
   /** Default step cap for subagent runs (frontmatter max_steps overrides). */
   subagentMaxSteps: number;
+ /**
+ * Step cap for main agent runs (request + tool execution rounds). null runs
+ * unlimited — the loop only stops when the model stops calling tools. The
+ * settings UI presents this as "Step limit: 40 / 60 / … / Unlimited".
+ */
+ agentMaxSteps: number | null;
   /** Max subagent runs executing in parallel (1-32). */
   subagentConcurrency: number;
   approvalMode: ApprovalMode;
@@ -1009,6 +1015,11 @@ export interface AgentStartOptions {
   contextLength?: number;
   /** Capability ids the user disabled in settings (skill:, command:, subagent:, …). */
   disabledCaps?: string[];
+ /**
+ * Step cap for the run (request + tool execution rounds), from the user's
+ * step-limit setting. null = unlimited; omitted = loop default (40).
+ */
+ maxSteps?: number | null;
 }
 
 /* Model providers ---------------------------------------------------------- */
@@ -1017,7 +1028,7 @@ export interface ProviderModel {
   id: string;
   name: string;
   contextLength?: number;
-  /** Accepts image inputs (catalog metadata or a curated id heuristic). */
+  /** Accepts image inputs: true/false when known, undefined when the catalog does not say (API decides). */
   vision?: boolean;
   /** "image" models generate pictures (text-to-image) instead of chat text. */
   kind?: "chat" | "image";

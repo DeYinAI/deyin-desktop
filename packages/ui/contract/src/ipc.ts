@@ -221,6 +221,8 @@ export const CH = {
   computerUseGetHostStatus: "deyin:computerUse:getHostStatus",
   computerUseAppApprovalRequest: "deyin:computerUse:appApproval-request",
   computerUseAppApprovalRespond: "deyin:computerUse:appApproval-respond",
+  workspaceTrustRequest: "deyin:workspace:trust-request",
+  workspaceTrustRespond: "deyin:workspace:trust-respond",
   visualizeRead: "deyin:visualize:read",
   pageRead: "deyin:page:read",
   imagesSave: "deyin:images:save",
@@ -538,6 +540,15 @@ export interface DeyinApi {
     onActive(cb: (active: boolean) => void): () => void;
     onAppApprovalRequest(cb: (req: { requestId: string; appId: string; action: string }) => void): () => void;
     respondAppApproval(requestId: string, decision: "always" | "once" | "deny"): void;
+  };
+  /**
+   * Workspace trust gate (desktop only). The main process raises it before a
+   * run executes a workspace's .deyin hooks / MCP config; the renderer shows
+   * the same inline prompt card used for tool permissions.
+   */
+  workspaceTrust?: {
+    onRequest(cb: (req: { requestId: string; root: string }) => void): () => void;
+    respond(requestId: string, decision: "trust" | "skip"): void;
   };
   visualize: {
     read(threadId: string, fileName: string): Promise<string>;

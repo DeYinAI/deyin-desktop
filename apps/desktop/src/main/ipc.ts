@@ -793,6 +793,9 @@ ipcMain.on(CH.agentStop, (_e, threadId: string) => agentHost.stop(threadId));
 ipcMain.on(CH.agentApprove, (_e, requestId: string, decision: PermissionDecision) =>
  agentHost.approve(requestId, decision),
 );
+ipcMain.on(CH.workspaceTrustRespond, (_e, requestId: string, decision: "trust" | "skip") =>
+  agentHost.respondTrust(requestId, decision),
+);
 ipcMain.on(CH.agentAnswerQuestion, (_e, requestId: string, answers: Record<string, string | string[]>) =>
  agentHost.answerQuestion(requestId, answers),
 );

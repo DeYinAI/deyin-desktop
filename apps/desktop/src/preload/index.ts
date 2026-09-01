@@ -224,6 +224,15 @@ agent: {
     respondAppApproval: (requestId, decision) =>
       ipcRenderer.send(CH.computerUseAppApprovalRespond, requestId, decision),
   },
+  workspaceTrust: {
+    onRequest: (cb) => {
+      const listener = (_e: unknown, req: { requestId: string; root: string }) => cb(req);
+      ipcRenderer.on(CH.workspaceTrustRequest, listener);
+      return () => ipcRenderer.removeListener(CH.workspaceTrustRequest, listener);
+    },
+    respond: (requestId, decision) =>
+      ipcRenderer.send(CH.workspaceTrustRespond, requestId, decision),
+  },
   visualize: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.visualizeRead, threadId, fileName),
   },
