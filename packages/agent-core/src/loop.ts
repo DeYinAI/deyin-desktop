@@ -335,9 +335,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       return false;
     }
 
-    // Prune first, always: it is free, it is idempotent, and if it is enough the
-    // fold's extra model call never happens.
-    const pruned = applyPrune(opts.messages, decision.plan);
+    // Prune is the cheap pass and runs alone; a fold discards the same region
+    // wholesale, so pruning inside it first would be wasted work.
+    const pruned =
+      decision.action === "prune"
+        ? applyPrune(opts.messages, decision.plan)
+        : { truncatedToolResults: 0, truncatedToolArgs: 0, reclaimedTokens: 0 };
     let droppedMessages = 0;
     let reclaimedTokens = pruned.reclaimedTokens;
     let summary: string | undefined;
