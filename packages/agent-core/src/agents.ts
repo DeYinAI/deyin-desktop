@@ -9,7 +9,8 @@ export interface AgentDefinition {
   permissions?: PermissionRule[];
   /** Preferred model; falls back to the run's model when absent. */
   model?: string;
-  maxSteps?: number;
+  /** Step cap for this agent; null = unlimited. */
+  maxSteps?: number | null;
 }
 
 export const BUILD_AGENT: AgentDefinition = {

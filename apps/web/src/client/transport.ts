@@ -759,7 +759,9 @@ export function createBrowserTransport(): DeyinApi {
         }
         // Per-phase model routing: resolve an endpoint + key for every provider a
         // role model targets, so the server can route a role to another provider.
-        const roleModels = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS).roleModels ?? {};
+        // Step-limit setting rides along with agent.start (null = unlimited).
+ const agentMaxSteps = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS).agentMaxSteps;
+ const roleModels = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS).roleModels ?? {};
         const roleProviders: Record<string, WebAgentProviderRouting> = {};
         for (const ref of Object.values(roleModels)) {
           const sep = typeof ref === "string" ? ref.indexOf("::") : -1;
@@ -802,6 +804,7 @@ export function createBrowserTransport(): DeyinApi {
           runId: options.runId,
           contextLength: options.contextLength,
           disabledCaps: options.disabledCaps ?? readDisabledCaps(),
+ maxSteps: agentMaxSteps,
           provider: {
             baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
             token,

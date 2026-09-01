@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
-import { addImage, imagesFromMessage, type StreamImage } from "@deyin/host-core";
+import { addImage, fetchWithTransientRetry, imagesFromMessage, type StreamImage } from "@deyin/host-core";
 import type { ReasoningEffort } from "@deyin/host-core/shared";
 import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
 import {
@@ -149,7 +149,7 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     const headers: Record<string, string> = { "content-type": "application/json" };
     // Local providers (Ollama) run without a key: skip the auth header.
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTransientRetry(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -158,7 +158,7 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
 
     if (!res.ok || !res.body) {
       const detail = await res.text().catch(() => "");
-      throw new Error(`Chat request failed (${res.status}). ${detail}`.trim().slice(0, 2000));
+      throw new Error(`Chat request failed (${res.status}). ${detail.trim().slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000));
     }
 
     const parser = new StreamAccumulator(built.compression);

@@ -594,6 +594,81 @@ Keep it under a page; link paths rather than pasting long code.
 `,
   },
 
+/* Configuration ------------------------------------------------------------- */
+{
+name: "add-provider",
+description:
+ "Add a model provider to Deyin config — credentials, base URL and model catalog — instead of manual entry in Settings. Use when the user asks to add a provider, add credentials or an API key, connect OpenAI/Anthropic/Groq/OpenRouter/Ollama or any custom endpoint, or wire models into the config.",
+content: `
+# Add a Provider
+
+Wire a model provider into Deyin by writing its config directly: base URL, credentials and the model catalog — the same records the Settings → Models UI creates, so the provider appears there as a first-class citizen.
+
+## 1. Collect the inputs
+
+- Inputs: provider name, baseUrl, apiKey, apiFormat. Infer what you can; ask only for what is missing.
+- Known providers — never ask for these URLs (id → baseUrl, all chat-completions unless noted):
+  deepseek → https://api.deepseek.com · openai → https://api.openai.com/v1 · anthropic → https://api.anthropic.com (apiFormat "anthropic") · google → https://generativelanguage.googleapis.com/v1beta/openai · openrouter → https://openrouter.ai/api/v1 · groq → https://api.groq.com/openai/v1 · xai → https://api.x.ai/v1 · mistral → https://api.mistral.ai/v1 · ollama → http://localhost:11434/v1 (local, no key).
+- Unknown provider: websearch its API base URL and confirm with the user before writing.
+- Missing API key: ask for it — never invent one. Local providers (Ollama) need none.
+- apiFormat: "chat-completions" (default), "responses" (OpenAI Responses API) or "anthropic". For "anthropic" also set authHeader: true unless it is a gateway that expects a Bearer header.
+
+## 2. Locate the config
+
+Providers live in agents.json in the desktop app data dir (file perms 0600):
+
+- Windows: %APPDATA%\@deyin\desktop\agents.json
+- macOS: ~/Library/Application Support/@deyin/desktop/agents.json
+- Linux: ~/.config/@deyin/desktop/agents.json
+
+Use ~/.deyin/agents.json (or $DEYIN_DATA_DIR) only for CLI-only setups or when the desktop dir does not exist. settings.json in the same dir holds defaultModel as "providerId::modelId". Read the file before editing; use file tools when the path is accessible, bash otherwise.
+
+## 3. Edit agents.json
+
+If the file is missing, start from {"disabledCaps": [], "providers": [], "providerSeedVersion": 3} — the app re-merges its built-in presets on next start. Derive the id like the app does: name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ("Together AI" → "together-ai"). If a provider with that id already exists, stop and tell the user.
+
+New custom provider:
+
+~~~json
+{
+  "id": "together-ai",
+  "name": "Together AI",
+  "kind": "custom",
+  "enabled": true,
+  "baseUrl": "https://api.together.xyz/v1",
+  "apiFormat": "chat-completions",
+  "connectionModes": ["API key"],
+  "activeMode": "API key",
+  "models": [],
+  "disabledModels": [],
+  "keyCipher": "plain:THE-REAL-KEY"
+}
+~~~
+
+Known providers ship as disabled presets (matching id, preset: true): set enabled: true and add keyCipher, leaving their other fields alone. The key goes in as "plain:<key>" — the app's own fallback when OS keychain encryption is unavailable; it reads plain: keys fine. Never echo the full key back. Never touch records with "kind": "primary" (the Openference entry), and keep JSON valid — preserve every other record.
+
+## 4. Search the model catalog
+
+Probe the OpenAI-compatible catalog with the real key:
+
+~~~bash
+BASE_URL='https://api.groq.com/openai/v1'
+KEY='the-key' # never paste real keys into logs or the reply
+curl -sS -H "Authorization: Bearer $KEY" "$BASE_URL/models"
+~~~
+
+An OpenAI-shaped reply is {"data": [{"id": "..."}]}. Map each entry to {"id": m, "name": m} in provider.models (skip ids listed in disabledModels); copy context_length into contextLength when present. Leave models: [] when the probe fails, needs a different path, or returns a non-OpenAI shape, and say the model list will fill in from Settings → Models. For apiFormat "anthropic", try GET {baseUrl}/v1/models with x-api-key and anthropic-version headers before giving up.
+
+## 5. Restart and verify
+
+The app loads agents.json only at startup, so ask the user to restart Deyin (or restart it for them). Then verify: re-read agents.json and confirm the record is present and valid; in Settings → Models the provider shows as connected with its models listed. Report provider name, id and model count, plus anything skipped.
+
+## Example
+
+"add my Groq key gsk_..." → groq is a preset: set enabled: true plus keyCipher, probe https://api.groq.com/openai/v1/models, write the model ids into models, ask for a restart, confirm the provider shows connected.
+`,
+},
+
   /* Git / process ---------------------------------------------------------- */
   {
     name: "split-to-prs",

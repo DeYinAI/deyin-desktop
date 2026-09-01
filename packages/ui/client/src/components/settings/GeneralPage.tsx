@@ -16,6 +16,8 @@ function fill(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
 
+const STEP_LIMIT_CHOICES = [40, 60, 100, 200, 500];
+
 export function GeneralPage({ settings, version, platform, chatOnly, onChange }: Props) {
   const t = useT();
   const isDesktop = platform !== "web" && typeof window.deyin?.updates?.check === "function";
@@ -103,6 +105,40 @@ export function GeneralPage({ settings, version, platform, chatOnly, onChange }:
           />
         </SettingCard>
         ) : null}
+ {!chatOnly ? (
+ <SettingCard title={t("general.stepLimit")} description={t("general.stepLimitDesc")}>
+ <select
+ className="select"
+ value={settings.agentMaxSteps === null || settings.agentMaxSteps === undefined
+ ? "unlimited"
+ : STEP_LIMIT_CHOICES.includes(settings.agentMaxSteps)
+ ? String(settings.agentMaxSteps)
+ : String(settings.agentMaxSteps)}
+ onChange={(e) => {
+ const v = e.target.value;
+ if (v === "unlimited") {
+ onChange({ agentMaxSteps: null });
+ return;
+ }
+ const n = Number(v);
+ if (Number.isFinite(n) && n > 0) {
+ onChange({ agentMaxSteps: n });
+ }
+ }}
+ >
+ {STEP_LIMIT_CHOICES.map((n) => (
+ <option key={n} value={String(n)}>{n}</option>
+ ))}
+ {/* Keep a stored non-preset value (e.g. from a manual settings.json edit) selectable. */}
+ {settings.agentMaxSteps !== null &&
+ settings.agentMaxSteps !== undefined &&
+ !STEP_LIMIT_CHOICES.includes(settings.agentMaxSteps) ? (
+ <option value={String(settings.agentMaxSteps)}>{settings.agentMaxSteps}</option>
+ ) : null}
+ <option value="unlimited">{t("general.stepLimitUnlimited")}</option>
+ </select>
+ </SettingCard>
+ ) : null}
         <SettingCard title={t("general.autoVisionRouting")} description={t("general.autoVisionRoutingDesc")}>
           <Toggle checked={settings.autoVisionRouting ?? false} onChange={(v) => onChange({ autoVisionRouting: v })} />
         </SettingCard>

@@ -92,6 +92,8 @@ export interface WebAgentStartOptions {
   contextLength?: number;
   /** Capability ids the user disabled in settings (skill:, command:, subagent:, …). */
   disabledCaps?: string[];
+ /** Step cap for this run; null = unlimited (from the client's step-limit setting). */
+ maxSteps?: number | null;
 }
 
 interface ActiveRun {
@@ -501,7 +503,8 @@ export class WebAgentHost {
       todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
       resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
       cwd: this.root,
-      maxSteps: 100,
+      // Client step-limit setting (older web clients send none → keep the old cap).
+      maxSteps: options.maxSteps ?? 100,
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
       evidenceGatesEnabled: options.mode === "delivery",

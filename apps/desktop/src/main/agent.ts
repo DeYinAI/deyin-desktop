@@ -1,7 +1,7 @@
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { BrowserWindow, app, dialog } from "electron";
+import { BrowserWindow, app } from "electron";
 import {
   AgentShell,
   ShellUnavailableError,
@@ -186,6 +186,10 @@ export class DesktopAgentHost {
   private readonly pendingQuestions = new Map<
     string,
     { threadId: string; resolve: (answers: string) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+  private readonly pendingTrust = new Map<
+    string,
+    { resolve: (decision: "trust" | "skip") => void; timer: ReturnType<typeof setTimeout> }
   >();
   private readonly agentInbox = new Map<string, string[]>();
   private readonly backgroundTasks = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
@@ -463,6 +467,8 @@ export class DesktopAgentHost {
   async dispose(): Promise<void> {
     this.stopAll();
     this.disposeAllShells();
+    for (const [, pending] of this.pendingTrust) clearTimeout(pending.timer);
+    this.pendingTrust.clear();
     await this.mcpPool.dispose();
   }
 
@@ -500,6 +506,11 @@ export class DesktopAgentHost {
       this.pendingQuestions.delete(requestId);
       clearTimeout(pending.timer);
       pending.resolve("AskQuestion was cancelled before answers were returned.");
+    }
+    for (const [requestId, pending] of [...this.pendingTrust]) {
+      this.pendingTrust.delete(requestId);
+      clearTimeout(pending.timer);
+      pending.resolve("skip");
     }
 
     run.abort.abort();
@@ -568,23 +579,7 @@ export class DesktopAgentHost {
     // untrusted workspace's hooks and MCP servers are skipped for this run.
     const root = this.opts.getWorkspaceRoot();
     if (root && workspaceHasDeyinArtifacts(root) && !this.opts.trust.isTrusted(root)) {
-      let trusted = false;
-      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-      if (win) {
-        const choice = dialog.showMessageBoxSync(win, {
-          type: "warning",
-          title: "Trust this workspace?",
-          message: `Trust "${root}"?`,
-          detail:
-            "This workspace contains Deyin configuration (.deyin/hooks.json or .deyin/mcp.json) that can run " +
-            "commands when you send a message. Trust it only if you trust where this code came from.",
-          buttons: ["Trust workspace and continue", "Skip workspace config"],
-          defaultId: 1,
-          cancelId: 1,
-          noLink: true,
-        });
-        trusted = choice === 0;
-      }
+        const trusted = (await this.askTrust(root)) === "trust";
       if (trusted) {
         this.opts.trust.trust(root);
         this.opts.capabilities.invalidate();
@@ -958,6 +953,8 @@ export class DesktopAgentHost {
         authHeader: provider?.authHeader,
         model: options.model,
         router,
+        // User-configurable step cap (null = unlimited; see GeneralPage step limit).
+        maxSteps: settings.agentMaxSteps,
         contextLength: this.opts.getContextLength(options.providerId, options.model),
         messages: session.messages,
         tools: registry,
@@ -1424,6 +1421,34 @@ export class DesktopAgentHost {
       this.pendingPermissions.set(requestId, { threadId, resolve, timer });
       this.send(threadId, { type: "permission-request", requestId, toolName, summary });
     });
+  }
+
+  /**
+   * Workspace trust gate, bridged to the renderer as the same inline prompt
+   * card used for tool permissions (replaces the native message box). Times
+   * out to "skip" so an unattended window never blocks the run forever.
+   */
+  private askTrust(root: string): Promise<"trust" | "skip"> {
+    return new Promise<"trust" | "skip">((resolve) => {
+      const requestId = randomUUID();
+      const timer = setTimeout(() => {
+        this.pendingTrust.delete(requestId);
+        resolve("skip");
+      }, PERMISSION_TIMEOUT_MS);
+      this.pendingTrust.set(requestId, { resolve, timer });
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(CH.workspaceTrustRequest, { requestId, root });
+      }
+    });
+  }
+
+  /** Renderer decision for the workspace trust prompt. */
+  respondTrust(requestId: string, decision: "trust" | "skip"): void {
+    const pending = this.pendingTrust.get(requestId);
+    if (!pending) return;
+    this.pendingTrust.delete(requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(decision);
   }
 
   private askQuestion(threadId: string, request: Extract<InteractionRequest, { type: "ask-question" }>): Promise<string> {

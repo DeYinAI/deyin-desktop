@@ -54,6 +54,60 @@ export interface FileDiff {
   after: string;
 }
 
+export type SideBySideCellType = "context" | "add" | "del" | "empty";
+
+/** One half of a side-by-side row: a real line, or an empty filler. */
+export interface SideBySideCell {
+  type: SideBySideCellType;
+  text: string;
+  /** Line number in that side's file; null for filler cells. */
+  no: number | null;
+}
+
+export interface SideBySideRow {
+  /** Old file (before). */
+  left: SideBySideCell;
+  /** New file (after). */
+  right: SideBySideCell;
+}
+
+/**
+ * Pairs a line diff into side-by-side rows: old file on the left, new file on
+ * the right. `computeLineDiff` walks deletions before additions within each
+ * changed block, so dels/adds are collected then zipped line-for-line; the
+ * shorter side gets empty filler cells so rows stay level.
+ */
+export function computeSideBySideDiff(before: string, after: string): SideBySideRow[] {
+  const lines = computeLineDiff(before, after);
+  const rows: SideBySideRow[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (line.type === "context") {
+      rows.push({
+        left: { type: "context", text: line.text, no: line.oldNo },
+        right: { type: "context", text: line.text, no: line.newNo },
+      });
+      i++;
+      continue;
+    }
+    const dels: DiffLine[] = [];
+    const adds: DiffLine[] = [];
+    while (i < lines.length && lines[i]!.type === "del") dels.push(lines[i++]!);
+    while (i < lines.length && lines[i]!.type === "add") adds.push(lines[i++]!);
+    const count = Math.max(dels.length, adds.length);
+    for (let k = 0; k < count; k++) {
+      const del = dels[k];
+      const add = adds[k];
+      rows.push({
+        left: del ? { type: "del", text: del.text, no: del.oldNo } : { type: "empty", text: "", no: null },
+        right: add ? { type: "add", text: add.text, no: add.newNo } : { type: "empty", text: "", no: null },
+      });
+    }
+  }
+  return rows;
+}
+
 /** Above this size we skip diff rendering (LCS is quadratic) but keep the card. */
 const DIFF_MAX_LINES = 2000;
 

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runAgent } from "../src/loop.js";
+import { normalizeMaxSteps, runAgent } from "../src/loop.js";
 import { PermissionEngine } from "../src/permissions.js";
 import { createBuiltinRegistry } from "../src/tools/index.js";
 import type { AgentMessage } from "../src/types.js";
@@ -125,6 +125,46 @@ test("stops at the step cap when the model keeps calling tools", async () => {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });
   }
+});
+
+test("null maxSteps runs unlimited until the model stops", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-unlimited-"));
+  // 5 tool-call rounds, then a final text answer: beyond the old default cap.
+  const server = await startMockOpenAI((i) =>
+    i < 5 ? toolCallResponse(`call_${i}`, "ls", {}) : textResponse("all done"),
+  );
+
+  try {
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages: baseMessages(),
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "allow",
+      cwd,
+      maxSteps: null,
+    });
+
+    assert.equal(result.reason, "completed");
+    assert.equal(result.steps, 6);
+    assert.equal(server.requests.length, 6);
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("normalizeMaxSteps maps cap overrides", () => {
+  assert.equal(normalizeMaxSteps(undefined), 40); // built-in default
+  assert.equal(normalizeMaxSteps(null), Number.POSITIVE_INFINITY); // unlimited
+  assert.equal(normalizeMaxSteps(0), Number.POSITIVE_INFINITY);
+  assert.equal(normalizeMaxSteps(-5), Number.POSITIVE_INFINITY);
+  assert.equal(normalizeMaxSteps(Number.NaN), Number.POSITIVE_INFINITY);
+  assert.equal(normalizeMaxSteps(Number.POSITIVE_INFINITY), Number.POSITIVE_INFINITY);
+  assert.equal(normalizeMaxSteps(12.9), 12); // fractional caps floor to a whole step
+  assert.equal(normalizeMaxSteps(75), 75);
 });
 
 test("unknown tools produce an error result instead of crashing", async () => {

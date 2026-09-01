@@ -1,5 +1,5 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
-import { addImage, parseImagePart, type StreamImage } from "@deyin/host-core";
+import { addImage, fetchWithTransientRetry, parseImagePart, type StreamImage } from "@deyin/host-core";
 import type { ReasoningEffort } from "@deyin/host-core/shared";
 import { toAnthropicMessages, toResponsesInput, type CompressionResult, type WireOptions } from "./wire.js";
 
@@ -336,14 +336,14 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
     else headers["x-api-key"] = opts.token;
   }
 
-  const res = await fetch(`${root}/v1/messages`, {
+  const res = await fetchWithTransientRetry(`${root}/v1/messages`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
     signal: opts.signal,
   });
   if (!res.ok) {
-    throw new Error(`Anthropic request failed (${res.status}). ${(await readError(res)).slice(0, 2000)}`.trim());
+    throw new Error(`Anthropic request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000));
   }
 
   const acc = new AnthropicAccumulator(built.compression);
@@ -584,14 +584,14 @@ export async function* streamResponsesEvents(opts: TransportOptions): AsyncGener
 
   const responsesHeaders: Record<string, string> = { "content-type": "application/json" };
   if (opts.token) responsesHeaders.authorization = `Bearer ${opts.token}`;
-  const res = await fetch(`${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`, {
+  const res = await fetchWithTransientRetry(`${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`, {
     method: "POST",
     headers: responsesHeaders,
     body: JSON.stringify(body),
     signal: opts.signal,
   });
   if (!res.ok) {
-    throw new Error(`Responses request failed (${res.status}). ${(await readError(res)).slice(0, 2000)}`.trim());
+    throw new Error(`Responses request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000));
   }
 
   const acc = new ResponsesAccumulator(built.compression);

@@ -37,6 +37,18 @@ import {
 import type { WireOptions } from "./wire.js";
 
 const DEFAULT_MAX_STEPS = 40;
+
+/**
+ * Step cap semantics: `undefined` keeps the built-in default; `null`, 0,
+ * negative or non-finite values lift the cap entirely (the loop runs until the
+ * model stops calling tools); a positive number caps the run there. Unlimited
+ * becomes Infinity so the plain `step <= maxSteps` bound works unchanged.
+ */
+export function normalizeMaxSteps(value: number | null | undefined): number {
+ if (value === undefined) return DEFAULT_MAX_STEPS;
+ if (value === null || !Number.isFinite(value) || value <= 0) return Number.POSITIVE_INFINITY;
+ return Math.floor(value);
+}
 const DEFAULT_CONTEXT_TOKENS = 128_000;
 /** Fraction of the context window we let the transcript grow to before compaction. */
 const BUDGET_FRACTION = 0.75;
@@ -96,7 +108,12 @@ export interface AgentRunOptions {
   authHeader?: boolean;
   /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
   maxTokens?: number;
-  maxSteps?: number;
+  /**
+ * Max loop iterations (request + tool execution rounds) before the run stops
+ * with reason "max-steps". `null` runs unlimited — the loop only ends when the
+ * model stops calling tools; `undefined` keeps DEFAULT_MAX_STEPS.
+ */
+maxSteps?: number | null;
   signal?: AbortSignal;
   todos?: TodoItem[];
   /** Optional host-backed persistent shell for the bash tool. */
@@ -149,7 +166,7 @@ function isAbortError(err: unknown): boolean {
  */
 export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const emit = opts.onEvent ?? (() => undefined);
-  const maxSteps = opts.maxSteps ?? DEFAULT_MAX_STEPS;
+  const maxSteps = normalizeMaxSteps(opts.maxSteps);
   const contextTokens = opts.contextLength ?? DEFAULT_CONTEXT_TOKENS;
   const toolSchemas = opts.tools.toWire();
   const schemaSplit = splitToolSchemaTokens(toolSchemas);

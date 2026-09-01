@@ -1,6 +1,20 @@
-import { lazy, Suspense, createElement, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  createElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { themeByName } from "../code.js";
-import { computeLineDiff, type FileDiff } from "../diff.js";
+import {
+  computeLineDiff,
+  computeSideBySideDiff,
+  type FileDiff,
+  type SideBySideRow,
+} from "../diff.js";
 import { useT } from "../i18n.js";
 import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
@@ -383,6 +397,8 @@ function PlanTodosFooter({
 
 /* Diff tab ------------------------------------------------------------------ */
 
+type DiffViewMode = "split" | "unified";
+
 function DiffTab({
   projectName,
   diff,
@@ -392,8 +408,17 @@ function DiffTab({
   diff: FileDiff | null;
   display: CodeDisplaySettings;
 }) {
+  const t = useT();
+  const [view, setView] = useState<DiffViewMode>("split");
   const [sourcePreview, setSourcePreview] = useState(false);
-  const lines = useMemo(() => (diff ? computeLineDiff(diff.before, diff.after) : []), [diff]);
+  // Both views come from the same LCS walk, so compute them together.
+  const { rows, lines } = useMemo(
+    () => ({
+      rows: diff ? computeSideBySideDiff(diff.before, diff.after) : [],
+      lines: diff ? computeLineDiff(diff.before, diff.after) : [],
+    }),
+    [diff],
+  );
 
   if (!diff) {
     return <div className="wspanel__body wspanel__empty">No changes yet. Edits made by the agent show up here.</div>;
@@ -413,8 +438,25 @@ function DiffTab({
           {diff.fileName}
         </span>
         <div className="wspanel__subbar-spacer" />
+        <div className="diff-view-toggle" role="group" aria-label="Diff layout">
+          <button
+            type="button"
+            className={`diff-view-toggle__btn ${view === "split" ? "diff-view-toggle__btn--active" : ""}`}
+            onClick={() => setView("split")}
+          >
+            {t("diff.viewSplit")}
+          </button>
+          <button
+            type="button"
+            className={`diff-view-toggle__btn ${view === "unified" ? "diff-view-toggle__btn--active" : ""}`}
+            onClick={() => setView("unified")}
+          >
+            {t("diff.viewUnified")}
+          </button>
+        </div>
         <button
           className={`chip chip--small ${sourcePreview ? "chip--active" : ""}`}
+          title="Show the new file as plain source"
           onClick={() => setSourcePreview((v) => !v)}
         >
           Source preview
@@ -423,6 +465,27 @@ function DiffTab({
       <div className="wspanel__body code-view" style={{ fontSize: display.codeFontSize }}>
         {sourcePreview ? (
           <pre className="code-pre" style={textStyle}>{diff.after}</pre>
+        ) : view === "split" ? (
+          <table className="diff-table diff-table--split">
+            <thead>
+              <tr>
+                <th className="diff-head diff-head--del" colSpan={2}>
+                  Old
+                </th>
+                <th className="diff-head diff-head--add" colSpan={2}>
+                  New
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <tr key={i} className="diff-row diff-split-row">
+                  <SplitCell cell={row.left} side="left" showLineNumbers={display.showLineNumbers} textStyle={textStyle} />
+                  <SplitCell cell={row.right} side="right" showLineNumbers={display.showLineNumbers} textStyle={textStyle} />
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : (
           <table className="diff-table">
             <tbody>
@@ -438,6 +501,35 @@ function DiffTab({
           </table>
         )}
       </div>
+    </>
+  );
+}
+
+function SplitCell({
+  cell,
+  side,
+  showLineNumbers,
+  textStyle,
+}: {
+  cell: SideBySideRow["left"];
+  side: "left" | "right";
+  showLineNumbers: boolean;
+  textStyle: CSSProperties | undefined;
+}) {
+  const empty = cell.type === "empty";
+  const sign = cell.type === "add" ? "+" : cell.type === "del" ? "-" : "";
+  return (
+    <>
+      {showLineNumbers && (
+        <td className={`diff-no diff-no--${side}`}>{cell.no ?? ""}</td>
+      )}
+      {!showLineNumbers && <td className="diff-sign">{sign}</td>}
+      <td
+        className={`diff-text diff-text--${side} ${empty ? "diff-text--empty" : `diff-cell--${cell.type}`}`}
+        style={textStyle}
+      >
+        {cell.text}
+      </td>
     </>
   );
 }

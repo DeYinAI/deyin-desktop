@@ -44,6 +44,17 @@ test("migrateSettings sanitizes subagent model/effort maps and clamps run limits
   assert.equal(migrated.subagentConcurrency, 1);
 });
 
+test("migrateSettings keeps agentMaxSteps null (unlimited) and clamps bad numbers", () => {
+  const unlimited = migrateSettings({ agentMaxSteps: null });
+  assert.equal(unlimited.agentMaxSteps, null);
+  assert.equal(migrateSettings({}).agentMaxSteps, DEFAULT_SETTINGS.agentMaxSteps);
+  assert.equal(migrateSettings({ agentMaxSteps: 60 }).agentMaxSteps, 60);
+  assert.equal(migrateSettings({ agentMaxSteps: 0 }).agentMaxSteps, null);
+  assert.equal(migrateSettings({ agentMaxSteps: -3 }).agentMaxSteps, null);
+  assert.equal(migrateSettings({ agentMaxSteps: 999_999 }).agentMaxSteps, 10_000);
+  assert.equal(migrateSettings({ agentMaxSteps: 12.9 }).agentMaxSteps, 12);
+});
+
 test("migrateSettings clamps out-of-range values and repairs invalid enums", () => {
   const migrated = migrateSettings({
     fontSize: 99,

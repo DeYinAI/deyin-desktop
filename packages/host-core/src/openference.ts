@@ -92,21 +92,21 @@ export async function* streamChat(opts: StreamChatOptions): AsyncGenerator<strin
   yield* streamChatCompletions(opts);
 }
 
-/** Transient upstream failures worth a single automatic retry. */
-function isTransientStatus(status: number): boolean {
- return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+/** 408/429/5xx are gateway blips worth one silent retry. */
+export function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
 /** Back off before the one retry, honoring Retry-After when present. */
-async function retryBackoff(res: Response, signal?: AbortSignal): Promise<void> {
- if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
- const retryAfter = Number(res.headers.get("retry-after"));
- const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : 800;
- await new Promise((resolve) => setTimeout(resolve, delayMs));
+export async function retryBackoff(res: Response, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+  const retryAfter = Number(res.headers.get("retry-after"));
+  const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : 800;
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 /** fetch() with one automatic retry on transient upstream statuses (408/429/5xx). */
-async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
+export async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
  let res = await fetch(url, init);
  if (!res.ok && isTransientStatus(res.status)) {
   await retryBackoff(res, init.signal ?? undefined);

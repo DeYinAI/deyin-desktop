@@ -2,7 +2,7 @@ import { pickImageModelParamsRecord } from "./image-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 18;
+export const SETTINGS_SCHEMA_VERSION = 19;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -23,6 +23,8 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   modelEfforts: {},
   imageModelParams: {},
   subagentMaxSteps: 20,
+ /** Step cap for main agent runs; null = unlimited (loop ends when the model stops). */
+ agentMaxSteps: 40,
   subagentConcurrency: 6,
   approvalMode: "full-access",
   thinking: true,
@@ -74,6 +76,19 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   merged.terminalFontSize = clamp(merged.terminalFontSize, 10, 20, DEFAULT_SETTINGS.terminalFontSize);
   merged.terminalScrollback = clamp(merged.terminalScrollback, 200, 100_000, DEFAULT_SETTINGS.terminalScrollback);
   merged.subagentMaxSteps = clamp(merged.subagentMaxSteps, 1, 200, DEFAULT_SETTINGS.subagentMaxSteps);
+ // Main agent step cap: null stays null (unlimited). Numbers <= 0 mean the same
+ // as null (loop's normalizeMaxSteps semantics); fractional caps floor to whole
+ // steps; anything non-numeric falls back to the default so a garbage value from
+ // disk can never disable the guardrail.
+ if (merged.agentMaxSteps !== null) {
+ const v = merged.agentMaxSteps;
+ merged.agentMaxSteps =
+ typeof v === "number" && Number.isFinite(v)
+ ? v <= 0
+ ? null
+ : Math.max(1, Math.min(10_000, Math.floor(v)))
+ : (DEFAULT_SETTINGS.agentMaxSteps as number);
+ }
   merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
   merged.roleModels = pickRoleRecord(merged.roleModels);
   merged.subagentModels = pickStringRecord(merged.subagentModels);

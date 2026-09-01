@@ -106,8 +106,8 @@ export interface SubagentRunRequest {
   modelOverride?: string;
   /** settings/config effort override, already normalized (low|medium|high). */
   effortOverride?: "low" | "medium" | "high";
-  /** maxSteps used when the definition has none. */
-  maxStepsDefault?: number;
+  /** Step cap used when the definition has none; null = unlimited. */
+  maxStepsDefault?: number | null;
   /** The parent run's current routing; used when no provider switch happens. */
   parentRouting: SubagentProviderRouting;
   /** Route an arbitrary provider id to endpoint + token source. */
