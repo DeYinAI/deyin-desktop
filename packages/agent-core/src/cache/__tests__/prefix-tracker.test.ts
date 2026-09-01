@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compactMessages } from "../../compaction.js";
+import { applyPrune, planPrune, STALE_TOOL_RESULT_CAP, TAIL_TOKENS } from "../../compaction.js";
 import type { AgentMessage } from "../../types.js";
 import {
   buildPromptCacheKey,
@@ -9,7 +9,6 @@ import {
   computePrefixShape,
   hashSystemPrompt,
   hashToolSchemas,
-  shouldBumpLogRewriteVersion,
 } from "../prefix-tracker.js";
 
 const tool = (name: string, description = "desc") => ({
@@ -92,43 +91,39 @@ test("comparePrefixShapes attributes system, tools, and log_rewrite churn", () =
   assert.deepEqual(rewriteDiag.changeReasons, ["log_rewrite"]);
 });
 
-test("compaction bumps log rewrite version only on hard mutations", () => {
+test("only a surface-changing compaction bumps the log rewrite version", () => {
   let version = 0;
-  const bump = (compaction: ReturnType<typeof compactMessages>) => {
-    if (shouldBumpLogRewriteVersion(compaction)) version += 1;
+  const bump = (reclaimed: number) => {
+    if (reclaimed > 0) version += 1;
   };
 
+  // Under pressure the plan is empty, so nothing about the prefix moves and the
+  // provider's cached prefix stays valid.
   const small: AgentMessage[] = [
     { role: "system", content: "You are Deyin." },
     { role: "user", content: "hi" },
   ];
-  const softOnly = compactMessages([...small], 10); // under budget -> no op
-  bump(softOnly);
+  bump(planPrune(small).reclaimedTokens);
   assert.equal(version, 0);
 
-  // Soft warning path: 50-60% usage, no mutation
-  const softWarning = { truncatedToolResults: 0, truncatedToolArgs: 0, droppedMessages: 0, softWarning: true };
-  assert.equal(shouldBumpLogRewriteVersion(softWarning), false);
-  bump(softWarning);
-  assert.equal(version, 0);
-
-  const big = compactMessages(
-    [
-      { role: "system", content: "You are Deyin." },
-      { role: "user", content: "build" },
-      ...Array.from({ length: 8 }, (_, i) => ({
-        role: "assistant" as const,
-        content: "",
-        toolCalls: [{ id: `c${i}`, name: "write", arguments: JSON.stringify({ path: `f${i}.txt`, content: "x".repeat(5000) }) }],
-      })).flatMap((m, i) => [
-        m,
-        { role: "tool" as const, toolCallId: `c${i}`, toolName: "write", content: "ok" },
-      ]),
-    ],
-    800,
-  );
-  assert.ok(shouldBumpLogRewriteVersion(big));
-  bump(big);
+  // A transcript with stale oversized tool results, padded past the verbatim
+  // tail so the early ones are actually prunable.
+  const big: AgentMessage[] = [
+    { role: "system", content: "You are Deyin." },
+    { role: "user", content: "build" },
+  ];
+  for (let i = 0; i < 12; i++) {
+    big.push({
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id: `c${i}`, name: "read", arguments: "{}" }],
+    });
+    big.push({ role: "tool", toolCallId: `c${i}`, toolName: "read", content: "x ".repeat(STALE_TOOL_RESULT_CAP * 3) });
+  }
+  const plan = planPrune(big, { tailBudget: Math.floor(TAIL_TOKENS / 8) });
+  assert.ok(plan.reclaimedTokens > 0);
+  applyPrune(big, plan);
+  bump(plan.reclaimedTokens);
   assert.equal(version, 1);
 
   const shapeBefore = computePrefixShape({ role: "system", content: "You are Deyin." }, [tool("read")], version - 1, 50);

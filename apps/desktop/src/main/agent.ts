@@ -52,6 +52,7 @@ import {
   type SubagentDefinition,
   subagentEffort,
   hostToolsForSubagent,
+  type SystemPromptBuildResult,
   type SystemPromptSections,
   type ToolDefinition,
   type ToolSessionMeta,
@@ -113,6 +114,20 @@ interface ThreadSession {
   previousMode?: ChatMode;
   /** Structured system-prompt slices for Context Usage accounting. */
   systemSections?: SystemPromptSections;
+  /**
+   * Hash of the pinned system prompt. `messages[0]` is only reassigned when a
+   * rebuild produces different bytes — the system prompt is the head of the
+   * provider's cached prefix, so rewriting it with identical-but-new content
+   * would invalidate the system AND message caches on every turn.
+   */
+  systemPromptHash?: string;
+  /**
+   * sessionStart hook output, captured once. Re-running these per turn was both
+   * semantically wrong (they are *session* start hooks) and a cache buster: a
+   * hook that prints a timestamp or `git status` rewrote the system prompt on
+   * every single turn.
+   */
+  startHookContext?: string[];
   /** Persistent PTY for bash tool calls in this thread; created lazily. */
   shell?: AgentShell;
   /** In-flight ensureShell so parallel bash calls share one spawn/register. */
@@ -123,8 +138,6 @@ interface ThreadSession {
   shellUnavailable?: boolean;
   /** True after the renderer has been told about shell.id. */
   shellAnnounced?: boolean;
-  /** True after the 50% context soft warning fired for this session. */
-  softWarningSent?: boolean;
   /** "Allow for session" grants; shared with every run's PermissionEngine so they stick. */
   permissionGrants: Set<string>;
 }
@@ -1139,9 +1152,14 @@ export class DesktopAgentHost {
             case "compaction":
               this.send(options.threadId, {
                 type: "compaction",
+                kind: event.kind,
+                trigger: event.trigger,
                 truncatedToolResults: event.truncatedToolResults,
                 truncatedToolArgs: event.truncatedToolArgs,
                 droppedMessages: event.droppedMessages,
+                reclaimedTokens: event.reclaimedTokens,
+                ratio: event.ratio,
+                summary: event.summary,
               });
               break;
             case "model-routed":
@@ -1170,21 +1188,12 @@ export class DesktopAgentHost {
                 cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
               });
               break;
-            case "context-snapshot": {
+            case "context-snapshot":
+              // The pressure notice rides on the loop's own `compaction` event
+              // (kind: "notice"), which measures against the provider-anchored
+              // token count rather than this display estimate.
               this.send(options.threadId, { type: "context-snapshot", snapshot: event.snapshot });
-              // Soft compaction warning: crossed 50% once per run (renderer shows a hint).
-              if (event.snapshot.percent >= 50 && !session.softWarningSent) {
-                session.softWarningSent = true;
-                this.send(options.threadId, {
-                  type: "compaction",
-                  truncatedToolResults: 0,
-                  truncatedToolArgs: 0,
-                  droppedMessages: 0,
-                  softWarning: true,
-                });
-              }
               break;
-            }
             case "optimization":
               this.send(options.threadId, {
                 type: "optimization",
@@ -1336,9 +1345,8 @@ export class DesktopAgentHost {
       if (modeChanged && options.mode === "plan") {
         existing.previousMode = existing.mode;
       }
-      const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks);
-      existing.messages[0] = { role: "system", content: parts.content };
-      existing.systemSections = { system: parts.system, skills: parts.skills, rules: parts.rules };
+      const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks, existing);
+      this.pinSystemPrompt(existing, parts);
       if (modeChanged) {
         const reminder = modeReminder({ event: "enter", target: options.mode, previous: existing.previousMode });
         if (reminder) {
@@ -1360,7 +1368,8 @@ export class DesktopAgentHost {
       return existing;
     }
 
-    const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks);
+    const hookState: { startHookContext?: string[] } = {};
+    const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks, hookState);
     const messages: AgentMessage[] = [{ role: "system", content: parts.content }];
     // Rebuild prior plain-text turns (post-restart continuity).
     for (const turn of options.history) {
@@ -1374,11 +1383,29 @@ export class DesktopAgentHost {
       messages,
       mode: options.mode,
       systemSections: { system: parts.system, skills: parts.skills, rules: parts.rules },
+      systemPromptHash: shortHash(parts.content),
+      startHookContext: hookState.startHookContext,
       shellEpoch: 0,
       permissionGrants: new Set<string>(),
     };
     this.sessions.set(options.threadId, session);
     return session;
+  }
+
+  /**
+   * Install a rebuilt system prompt only when its bytes actually changed.
+   *
+   * `messages[0]` is the head of the provider's cached prefix: Anthropic's
+   * invalidation hierarchy is tools -> system -> messages, so a system rewrite
+   * discards the whole conversation cache too. Rebuilding it every turn (which
+   * is what this used to do) meant the session never got a single cache hit.
+   */
+  private pinSystemPrompt(session: ThreadSession, parts: SystemPromptBuildResult): void {
+    session.systemSections = { system: parts.system, skills: parts.skills, rules: parts.rules };
+    const hash = shortHash(parts.content);
+    if (session.systemPromptHash === hash && session.messages[0]?.role === "system") return;
+    session.systemPromptHash = hash;
+    session.messages[0] = { role: "system", content: parts.content };
   }
 
   private async systemPromptParts(
@@ -1387,6 +1414,8 @@ export class DesktopAgentHost {
     registry: ToolRegistry,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
+    /** Carries sessionStart hook output across turns; populated on first use. */
+    hookState?: { startHookContext?: string[] },
   ) {
     const agent = agentForMode(mode);
     const contextFiles = await loadContextFiles(cwd).catch(() => []);
@@ -1403,11 +1432,16 @@ export class DesktopAgentHost {
       skills,
     });
 
-    // sessionStart hooks can contribute extra context (counted under Rules).
-    const startHooks = await runHooks(hooks, "sessionStart", "sessionStart", { cwd });
-    if (startHooks.additionalContext && startHooks.additionalContext.length > 0) {
-      parts = appendHookContext(parts, startHooks.additionalContext);
+    // sessionStart hooks contribute extra context (counted under Rules). Run
+    // them once per session and replay the captured lines afterwards, so a
+    // hook with volatile output cannot churn the cached prefix every turn.
+    let hookContext = hookState?.startHookContext;
+    if (hookContext === undefined) {
+      const startHooks = await runHooks(hooks, "sessionStart", "sessionStart", { cwd });
+      hookContext = startHooks.additionalContext ?? [];
+      if (hookState) hookState.startHookContext = hookContext;
     }
+    if (hookContext.length > 0) parts = appendHookContext(parts, hookContext);
     return parts;
   }
 
@@ -1528,9 +1562,8 @@ export class DesktopAgentHost {
       this.store.append(session.sessionId, reminderMsg);
     }
 
-    const parts = await this.systemPromptParts(nextMode, cwd, registry, skills, hooks);
-    session.messages[0] = { role: "system", content: parts.content };
-    session.systemSections = { system: parts.system, skills: parts.skills, rules: parts.rules };
+    const parts = await this.systemPromptParts(nextMode, cwd, registry, skills, hooks, session);
+    this.pinSystemPrompt(session, parts);
 
     this.send(threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });
 

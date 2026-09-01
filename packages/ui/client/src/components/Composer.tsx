@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { threadPreview } from "@deyin/host-core/shared";
 import { useT } from "../i18n.js";
 import { AnchoredMenu } from "./AnchoredMenu.js";
@@ -29,6 +29,8 @@ export interface ComposerImage {
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/** Height cap for the auto-growing input; mirrors max-height on .composer__input. */
+const MAX_INPUT_HEIGHT = 200;
 
 /** Read an image file into a ComposerImage (base64, no data: prefix). */
 function readImageFile(file: File): Promise<ComposerImage> {
@@ -75,18 +77,11 @@ interface ComposerProps {
   onToggleThinking?: (on: boolean) => void;
   canSend: boolean;
   streaming: boolean;
-  /** Follow-up queued while a run is active. */
-  queuedPrompt?: string | null;
   hasEvents: boolean;
   onChange: (value: string) => void;
   onSend: () => void;
   /** Abort current run and send immediately (Cursor-like interrupt). */
   onSendNow?: () => void;
-  /** Run the queued message in a new thread without stopping the current run. */
-  onStartMultitasking?: () => void;
-  /** Queue draft as follow-up without stopping the run (Cursor Steer). */
-  onSteer?: () => void;
-  onClearQueue?: () => void;
   /** When set and streaming, a stop button is shown. */
   onStop?: () => void;
   onSelectModel: (id: string) => void;
@@ -401,7 +396,7 @@ export function Composer(props: ComposerProps) {
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!props.canSend && !(props.streaming && props.queuedPrompt && props.onSendNow)) return;
+      if (!props.canSend && !(props.streaming && props.onSendNow)) return;
       // Alt+Enter while streaming: interrupt and send now.
       if (props.streaming && e.altKey && props.onSendNow) {
         props.onSendNow();
@@ -416,12 +411,22 @@ export function Composer(props: ComposerProps) {
     }
   };
 
-  const autoGrow = () => {
+  const autoGrow = useCallback(() => {
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
-  };
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_HEIGHT)}px`;
+  }, []);
+
+  // Keep the textarea height in sync with its content on every value change,
+  // typed or programmatic: send clears the draft, a thread switch restores
+  // one, token/attachment insertion rewrites it. Resizing only on keystrokes
+  // left a stale inline height behind, so the composer stayed expanded after
+  // sending a long message or collapsed at the wrong size on thread switches.
+  // Layout effect so the height settles before paint (no flicker on restore).
+  useLayoutEffect(() => {
+    autoGrow();
+  }, [props.value, autoGrow]);
 
   const insertToken = (token: string) => {
     props.onChange(props.value.length === 0 || props.value.endsWith(" ") ? props.value + token : `${props.value} ${token}`);
@@ -429,10 +434,7 @@ export function Composer(props: ComposerProps) {
     ref.current?.focus();
   };
 
-  const queued = props.queuedPrompt?.trim() ?? "";
-  const draft = props.value.trim();
-  const showSteerBar = props.streaming && draft.length > 0 && queued.length === 0;
-  const showStop = props.streaming && !!props.onStop;
+   const showStop = props.streaming && !!props.onStop;
   const showSend = !props.streaming || props.canSend;
   const showSlashMenu = slashMatches.length > 0;
   const showAtMenu = atQuery !== null && atHits.length > 0;
@@ -444,84 +446,6 @@ export function Composer(props: ComposerProps) {
 
   return (
     <div className="composer" ref={composerRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
-      {queued.length > 0 && (
-        <div className="composer__pending composer__pending--queued">
-          <div className="composer__pending-header">
-            <span className="composer__pending-label">{t("composer.queuedMessage")}</span>
-            <div className="composer__pending-actions">
-              {props.onStartMultitasking && (
-                <button
-                  type="button"
-                  className="composer__pending-link"
-                  title={t("composer.startMultitaskingHint")}
-                  onClick={() => props.onStartMultitasking?.()}
-                >
-                  {t("composer.startMultitasking")}
-                </button>
-              )}
-              {props.onSendNow && (
-                <button
-                  type="button"
-                  className="composer__pending-link"
-                  title={t("composer.sendNowHint")}
-                  onClick={() => props.onSendNow?.()}
-                >
-                  {t("composer.sendNow")}
-                </button>
-              )}
-              {props.onClearQueue && (
-                <button
-                  type="button"
-                  className="composer__pending-dismiss"
-                  title={t("composer.removeQueuedHint")}
-                  aria-label={t("composer.removeQueuedHint")}
-                  onClick={() => props.onClearQueue?.()}
-                >
-                  <Icon name="close" size={12} />
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="composer__pending-body" title={queued}>
-            <span className="composer__pending-text composer__pending-text--preview">{queued}</span>
-          </div>
-        </div>
-      )}
-      {showSteerBar && (
-        <div className="composer__pending composer__pending--steer" title={draft}>
-          <Icon name="steer" size={14} className="composer__pending-steer-icon" />
-          <span className="composer__pending-text composer__pending-text--quoted">&ldquo;{draft}&rdquo;</span>
-          <div className="composer__pending-actions">
-            <button
-              type="button"
-              className="composer__pending-steer"
-              title="Queue as follow-up without stopping the run"
-              onClick={() => (props.onSteer ?? props.onSend)()}
-            >
-              <Icon name="steer" size={12} />
-              Steer
-            </button>
-            <button
-              type="button"
-              className="composer__pending-dismiss"
-              title="Discard draft"
-              aria-label="Discard draft"
-              onClick={() => props.onChange("")}
-            >
-              <Icon name="trash" size={12} />
-            </button>
-            <button
-              type="button"
-              className="composer__pending-dismiss"
-              title="More options"
-              aria-label="More options"
-              disabled
-            >
-              <Icon name="dots" size={12} />
-            </button>
-          </div>
-        </div>
-      )}
       {(attachments.length > 0 || linkedThreads.length > 0 || images.length > 0) && (
         <div className="composer__chips">
           {images.map((img) => (
@@ -695,10 +619,7 @@ export function Composer(props: ComposerProps) {
                     : t("composer.placeholder")
         }
         value={props.value}
-        onChange={(e) => {
-          props.onChange(e.target.value);
-          autoGrow();
-        }}
+        onChange={(e) => props.onChange(e.target.value)}
         onKeyDown={handleKeyDown}
         onPaste={onPaste}
       />

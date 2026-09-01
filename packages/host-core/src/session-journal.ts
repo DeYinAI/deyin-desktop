@@ -91,8 +91,9 @@ export class SessionEventJournal {
         if (event.reason && event.reason !== "completed") {
           items.push({ role: "system", content: `run ${event.reason}` });
         }
-      } else if (event.type === "compaction") {
-        items.push({ role: "system", content: "context compacted" });
+      } else if (event.type === "compaction" && (event.kind === "prune" || event.kind === "fold")) {
+        // A pressure notice changed nothing, so it is not part of the transcript.
+        items.push({ role: "system", content: event.kind === "fold" ? "context folded" : "context pruned" });
       }
     }
     if (pending !== null) items.push({ role: "assistant", content: pending });

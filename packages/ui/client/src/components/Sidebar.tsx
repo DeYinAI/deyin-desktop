@@ -62,12 +62,19 @@ function useNow(intervalMs: number): number {
   return now;
 }
 
-/** Threads shown under their project: pinned ones live in their own section. */
+/** Threads shown under their project: pinned ones live in their own section.
+ * Newest first, so the preview cap always keeps the most recent chats visible. */
 function projectThreads(threads: Thread[]): Thread[] {
-  return threads.filter((t) => !t.archived && !t.pinned);
+  return threads
+    .filter((t) => !t.archived && !t.pinned)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** How many chats each project shows before a "Show N more" expander. */
+const THREAD_PREVIEW_LIMIT = 5;
+
 const COLLAPSED_PROJECTS_KEY = "deyin.sidebar.collapsedProjects";
+const EXPANDED_LISTS_KEY = "deyin.sidebar.expandedLists";
 
 function loadCollapsedProjects(): Set<string> {
   try {
@@ -84,11 +91,28 @@ function saveCollapsedProjects(collapsed: Set<string>): void {
   localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...collapsed]));
 }
 
+/** Projects whose chat list the user expanded past the preview cap. */
+function loadExpandedLists(): Set<string> {
+  try {
+    const raw = localStorage.getItem(EXPANDED_LISTS_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveExpandedLists(expanded: Set<string>): void {
+  localStorage.setItem(EXPANDED_LISTS_KEY, JSON.stringify([...expanded]));
+}
+
 export function Sidebar(props: SidebarProps) {
   const t = useT();
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects);
+  const [expandedLists, setExpandedLists] = useState(loadExpandedLists);
   const now = useNow(30_000);
 
   const toggleProjectExpanded = (projectId: string) => {
@@ -115,6 +139,38 @@ export function Sidebar(props: SidebarProps) {
     if (filter.trim()) return true;
     return !collapsedProjects.has(projectId);
   };
+
+  /** Flip a project between the preview cap and its full chat list. */
+  const toggleProjectList = (projectId: string) => {
+    setExpandedLists((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      saveExpandedLists(next);
+      return next;
+    });
+  };
+
+  // When the active chat sits below the preview cap, expand its project once so
+  // the current conversation stays visible; a manual collapse afterwards sticks.
+  const lastAutoExpandedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const threadId = props.activeThreadId;
+    if (!threadId || lastAutoExpandedRef.current === threadId) return;
+    lastAutoExpandedRef.current = threadId;
+    const project = props.projects.find((p) => p.threads.some((t) => t.id === threadId));
+    if (!project) return;
+    const threads = projectThreads(project.threads);
+    if (threads.findIndex((t) => t.id === threadId) >= THREAD_PREVIEW_LIMIT) {
+      setExpandedLists((prev) => {
+        if (prev.has(project.id)) return prev;
+        const next = new Set(prev);
+        next.add(project.id);
+        saveExpandedLists(next);
+        return next;
+      });
+    }
+  }, [props.activeThreadId, props.projects]);
 
   // "Search projects…": match project names and thread titles; threads in a
   // matching project are all kept, otherwise only matching threads show.
@@ -260,6 +316,12 @@ export function Sidebar(props: SidebarProps) {
           const expanded = isProjectExpanded(project.id);
           const folderIcon: IconName =
             project.root === null ? "home" : expanded ? "folderOpen" : "folder";
+          // Search shows everything; otherwise cap the list with a "Show N more" expander.
+          const filtering = filter.trim().length > 0;
+          const threads = projectThreads(project.threads);
+          const showAll = filtering || expandedLists.has(project.id);
+          const visibleThreads = showAll ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT);
+          const hiddenCount = threads.length - visibleThreads.length;
           return (
             <div className="project" key={project.id}>
               <div
@@ -294,7 +356,17 @@ export function Sidebar(props: SidebarProps) {
                 </button>
               </div>
               {expanded &&
-                projectThreads(project.threads).map((thread) => renderThread(project.id, thread, true))}
+                visibleThreads.map((thread) => renderThread(project.id, thread, true))}
+              {expanded && !filtering && threads.length > THREAD_PREVIEW_LIMIT && (
+                <button type="button" className="sidebar__more" onClick={() => toggleProjectList(project.id)}>
+                  <Icon name={showAll ? "chevronDown" : "chevronRight"} size={11} />
+                  <span>
+                    {showAll
+                      ? t("nav.showLessThreads")
+                      : t("nav.showMoreThreads").replace("{count}", String(hiddenCount))}
+                  </span>
+                </button>
+              )}
             </div>
           );
         })}

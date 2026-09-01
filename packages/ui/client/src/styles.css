@@ -667,6 +667,30 @@ code {
   margin-bottom: 6px;
 }
 
+/* "Show N more / Show less" expander under a project's chat list. */
+.sidebar__more {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 26px;
+  padding: 4px 8px 4px 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-faint);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar__more:hover {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+.sidebar__more svg {
+  flex-shrink: 0;
+}
+
 .sidebar__filter {
   margin: 2px 0 8px;
   padding: 6px 9px;
@@ -2423,17 +2447,29 @@ code {
   border-color: var(--color-accent);
 }
 
-/* Pending follow-up bar (Cursor-style): flush at top of the composer card. */
+/* Pending follow-up + steer bars (Cursor-style): standalone cards that float
+ * ABOVE the workspace (folder) bar and the composer pod, in the same measure. */
+.composer-pending-stack {
+ display: flex;
+ flex-direction: column;
+ gap: 6px;
+ width: 100%;
+ max-width: var(--chat-measure);
+ margin: 0 auto 6px;
+ min-width: 0;
+}
 .composer__pending {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: -14px -16px 12px;
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface-raised);
-  font-size: 12px;
-  min-width: 0;
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ padding: 8px 12px;
+ border: 1px solid var(--color-border);
+ border-radius: var(--radius-lg);
+ background: var(--color-surface-raised);
+ font-size: 12px;
+ min-width: 0;
+ overflow: hidden;
+ box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
 }
 .composer__pending--queued {
   flex-direction: column;
@@ -6618,6 +6654,37 @@ body.is-resizing-ns {
 }
 .activity-line--error {
   color: #ff7b72;
+}
+/* Compaction rows are <details>: the flex layout lives on the <summary> so the
+   briefing can expand underneath it. */
+.activity-line--compaction {
+  display: block;
+}
+.activity-line--compaction > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.activity-line--compaction > summary::-webkit-details-marker {
+  display: none;
+}
+.activity-line--compaction[open] > summary {
+  color: var(--color-text-muted);
+}
+.activity-line__summary {
+  margin: 6px 0 6px 19px;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-bg) 60%, transparent);
+  border-radius: 6px;
 }
 .activity-line--optimization {
   flex-wrap: wrap;

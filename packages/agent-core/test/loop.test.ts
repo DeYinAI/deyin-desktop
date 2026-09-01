@@ -344,3 +344,50 @@ test("same-step edits to one file run exclusively instead of racing", async () =
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("the request prefix grows append-only when context stays under pressure", async () => {
+  // The property both Anthropic and DeepSeek actually cache on: every request's
+  // message array is a strict prefix-extension of the previous one. The old
+  // loop compacted on every step, rewriting the middle of the transcript and
+  // invalidating the provider's cached prefix each time round.
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-prefix-"));
+  writeFileSync(join(cwd, "hello.txt"), "hi from the file");
+  const server = await startMockOpenAI((i) =>
+    i < 5 ? toolCallResponse(`call_${i}`, "read", { path: "hello.txt" }) : textResponse("done"),
+  );
+
+  try {
+    const messages = baseMessages();
+    const compactions: string[] = [];
+    await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      contextLength: 200_000,
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "compaction") compactions.push(event.kind);
+      },
+    });
+
+    assert.equal(compactions.length, 0, "a small session must not compact at all");
+    assert.equal(server.requests.length, 6);
+    for (let i = 1; i < server.requests.length; i++) {
+      const before = server.requests[i - 1]!.messages as Record<string, unknown>[];
+      const after = server.requests[i]!.messages as Record<string, unknown>[];
+      assert.ok(after.length > before.length, `request ${i} should have grown`);
+      assert.deepEqual(
+        after.slice(0, before.length),
+        before,
+        `request ${i} rewrote earlier messages instead of appending`,
+      );
+    }
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

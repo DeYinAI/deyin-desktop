@@ -227,7 +227,15 @@ export type ThreadEvent =
       diffSummary: string;
       reviewNotes?: string;
     }
-  | { kind: "compaction-notice"; softWarning: boolean; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
+  | {
+      kind: "compaction-notice";
+      compaction: "notice" | "prune" | "fold" | "exhausted";
+      truncatedToolResults: number;
+      truncatedToolArgs: number;
+      droppedMessages: number;
+      reclaimedTokens: number;
+      summary?: string;
+    }
   | { kind: "error"; text: string };
 
 export interface Thread {
@@ -953,11 +961,22 @@ export type AgentUiEvent =
  | { type: "goal-updated"; goal: ThreadGoal | null }
  | {
      type: "compaction";
+     /**
+      * `notice` crossed the pressure line but changed nothing (the prefix, and
+      * with it the provider cache, is intact); `prune` shrank stale tool output
+      * in place; `fold` replaced history with a summary; `exhausted` means the
+      * transcript cannot be reduced further and auto-compaction stood down.
+      */
+     kind: "notice" | "prune" | "fold" | "exhausted";
+     trigger: "pressure" | "context-overflow" | "manual";
      truncatedToolResults: number;
      truncatedToolArgs: number;
      droppedMessages: number;
-     /** True when usage crossed the soft warning line (no compaction yet). */
-     softWarning?: boolean;
+     reclaimedTokens: number;
+     /** Fraction of the context window in use when the pass ran. */
+     ratio: number;
+     /** The structured briefing, when this was a fold. */
+     summary?: string;
    }
  | { type: "evidence-gate"; code: string; message: string; toolName?: string }
  | {

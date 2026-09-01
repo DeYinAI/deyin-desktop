@@ -16,7 +16,21 @@ export interface WireOptions {
   model?: string;
   /** Stable key shared across agent steps for OpenAI-style prompt caching. */
   promptCacheKey?: string;
+  /**
+   * How many messages the PREVIOUS request carried.
+   *
+   * Anthropic writes a cache entry only at a breakpoint and then looks backward
+   * at most 20 block positions for one. A single trailing breakpoint therefore
+   * misses whenever a turn appends more than that, so we also mark the position
+   * the last request ended at — the one place an entry is guaranteed to exist.
+   * Omit it on the first request of a session.
+   */
+  previousMessageCount?: number;
 }
+
+/** Cache TTLs. The static prefix is worth the 2x write to survive idle gaps. */
+const STATIC_CACHE_CONTROL = { type: "ephemeral", ttl: "1h" } as const;
+const ROLLING_CACHE_CONTROL = { type: "ephemeral" } as const;
 
 export interface WireBuildResult {
   messages: Record<string, unknown>[];
@@ -87,8 +101,11 @@ export function toAnthropicMessages(messages: AgentMessage[], options: WireOptio
     if (text.length > 0) system.push({ type: "text", text });
   }
   if (enablePromptCaching && system.length > 0) {
-    // Cache breakpoint on the last system block (stable prefix: tools + rules + skills).
-    system[system.length - 1] = { ...system[system.length - 1]!, cache_control: { type: "ephemeral" } };
+    // Static breakpoint on the last system block (tools + rules + skills). This
+    // prefix never changes within a session, so it gets the 1h TTL: 2x on a
+    // single write, in exchange for surviving the idle gaps that dominate a
+    // desktop session (reading a diff, answering a permission prompt).
+    system[system.length - 1] = { ...system[system.length - 1]!, cache_control: STATIC_CACHE_CONTROL };
   }
 
   // Conversation messages, coalescing consecutive same-role turns.
@@ -97,6 +114,13 @@ export function toAnthropicMessages(messages: AgentMessage[], options: WireOptio
     const last = merged[merged.length - 1];
     if (last && last.role === role) last.blocks.push(block);
     else merged.push({ role, blocks: [block] });
+  };
+  /** Last emitted block position per source message index, for the rolling breakpoint. */
+  const positionOf = new Map<number, { group: number; block: number }>();
+  const markPosition = (index: number): void => {
+    const group = merged.length - 1;
+    if (group < 0) return;
+    positionOf.set(index, { group, block: merged[group]!.blocks.length - 1 });
   };
 
   for (; i < messages.length; i++) {
@@ -142,12 +166,25 @@ export function toAnthropicMessages(messages: AgentMessage[], options: WireOptio
         break;
       }
     }
+    markPosition(i);
   }
 
   if (enablePromptCaching && merged.length > 0) {
-    // Second breakpoint on the last block of the final message (conversation prefix).
-    const last = merged[merged.length - 1]!;
-    last.blocks[last.blocks.length - 1] = { ...last.blocks[last.blocks.length - 1]!, cache_control: { type: "ephemeral" } };
+    const mark = (pos: { group: number; block: number } | undefined): void => {
+      const group = pos && merged[pos.group];
+      const block = group?.blocks[pos!.block];
+      if (!group || !block || block.cache_control) return;
+      group.blocks[pos!.block] = { ...block, cache_control: ROLLING_CACHE_CONTROL };
+    };
+    // Rolling breakpoint at the position the previous request ended, so the
+    // lookback always finds an entry an earlier request actually wrote — even
+    // when this turn appended more than the 20-position window.
+    if (options.previousMessageCount !== undefined) {
+      mark(positionOf.get(options.previousMessageCount - 1));
+    }
+    // Rolling breakpoint at the end of this request, which becomes the previous
+    // one's anchor next time round.
+    mark({ group: merged.length - 1, block: merged[merged.length - 1]!.blocks.length - 1 });
   }
 
   return {
@@ -312,21 +349,25 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
     return res.compressed;
   };
 
-  const useAnthropicCache = enablePromptCaching && (provider === "anthropic");
-  let lastSystemIndex = -1;
-  for (let i = 0; i < messages.length; i++) {
-    if (messages[i]!.role === "system") lastSystemIndex = i;
-  }
+  const useAnthropicCache = enablePromptCaching && provider === "anthropic";
+  /**
+   * The static breakpoint goes on the LAST LEADING system message, not the last
+   * system message anywhere in the transcript. Mid-conversation `role: "system"`
+   * reminders are appended as the session goes on, so keying on the latter made
+   * the marker wander deeper into the conversation every time one landed —
+   * moving the breakpoint is exactly what a prefix cache cannot tolerate.
+   */
+  let staticSystemIndex = -1;
+  for (let i = 0; i < messages.length && messages[i]!.role === "system"; i++) staticSystemIndex = i;
 
   const wire = messages.map((m, index) => {
     switch (m.role) {
       case "system": {
         const content = compress(m.content, "message");
-        if (useAnthropicCache && index === lastSystemIndex && content.length > 0) {
-          // Anthropic-style cache breakpoint on the last system block (stable prefix).
+        if (useAnthropicCache && index === staticSystemIndex && content.length > 0) {
           return {
             role: "system",
-            content: [{ type: "text", text: content, cache_control: { type: "ephemeral" } }],
+            content: [{ type: "text", text: content, cache_control: STATIC_CACHE_CONTROL }],
           };
         }
         return { role: "system", content };
@@ -388,6 +429,22 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
     }
   });
 
+  // Rolling conversation breakpoints, the same pair the native Anthropic path
+  // places: one where the previous request ended (an entry is guaranteed to
+  // exist there) and one at the end of this one. Without these the growing
+  // conversation was never cached at all on this path — only the system block.
+  if (useAnthropicCache) {
+    const positions = new Set<number>();
+    if (options.previousMessageCount !== undefined) {
+      positions.add(options.previousMessageCount - 1);
+    }
+    positions.add(messages.length - 1);
+    for (const index of positions) {
+      if (index <= staticSystemIndex || index >= wire.length) continue;
+      wire[index] = withRollingCacheControl(wire[index]!);
+    }
+  }
+
   return {
     messages: wire,
     compression: enableCompression
@@ -399,4 +456,25 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
         }
       : undefined,
   };
+}
+
+/**
+ * Attach a rolling breakpoint to an OpenAI-shaped message, promoting plain
+ * string content to the block form Anthropic-compatible gateways require.
+ * Assistant turns whose content is null (tool-call-only) carry the marker on
+ * their last tool call instead, since there is no content block to mark.
+ */
+function withRollingCacheControl(message: Record<string, unknown>): Record<string, unknown> {
+  const content = message.content;
+  if (typeof content === "string" && content.length > 0) {
+    return { ...message, content: [{ type: "text", text: content, cache_control: ROLLING_CACHE_CONTROL }] };
+  }
+  if (Array.isArray(content) && content.length > 0) {
+    const blocks = [...(content as Record<string, unknown>[])];
+    const last = blocks[blocks.length - 1]!;
+    if (last.cache_control) return message;
+    blocks[blocks.length - 1] = { ...last, cache_control: ROLLING_CACHE_CONTROL };
+    return { ...message, content: blocks };
+  }
+  return message;
 }

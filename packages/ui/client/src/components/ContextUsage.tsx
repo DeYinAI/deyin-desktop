@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { PortalledPanel } from "./PortalledPanel.js";
 import { Icon } from "./Icon.js";
 import type { AccountUsage, ContextCategoryId, ContextUsageSnapshot } from "@deyin/contract";
+import { formatTokens } from "../formatTokens.js";
 
 const CATEGORY_COLORS: Record<ContextCategoryId, string> = {
   system: "#8b949e",
@@ -12,13 +13,6 @@ const CATEGORY_COLORS: Record<ContextCategoryId, string> = {
   subagents: "#79c0ff",
   conversation: "#f85149",
 };
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 10_000) return `${(n / 1000).toFixed(1)}K`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
-  return String(Math.round(n));
-}
 
 /** Quota consumption is fractional once per-model multipliers apply; the
  * meters read as call counts, so round before display. */

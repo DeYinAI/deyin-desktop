@@ -31,10 +31,11 @@ import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
 import { ChatView } from "./components/ChatView.js";
 import { Composer, type ComposerImage } from "./components/Composer.js";
+import { ComposerPendingBars } from "./components/ComposerPendingBars.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
-import { resolveVisionModel, visionBlockedMessage } from "./vision.js";
+import { resolveVisionModel } from "./vision.js";
 import {
   countPendingInteractionsForThread,
   pickRunningThreadToStop,
@@ -2104,55 +2105,36 @@ const continueFromStepLimit = useCallback(() => {
     // switched off. Images require the agent runtime (vision content parts).
     const images: AgentImageInput[] = composerImages.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
     if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent && !chatOnlyHosted) {
-      // Vision: cloud auto-route (opt-in), manual vision model pick, or Local Vision plugin.
+      // Vision: attach images to the run as-is — capability metadata is a hint,
+      // not a gate. A provider that can't take images returns its own error,
+      // which surfaces in the timeline like any other provider failure. The
+      // only automatic reroute is the opt-in cloud auto-route when the
+      // selected model is *known* text-only and a vision model exists.
       let runModel = runModelId;
       let visionNotice: string | undefined;
-      let sendText = text;
-      let sendImages = images;
       if (images.length > 0) {
-        const autoRoute = settings?.autoVisionRouting ?? false;
-        const route = resolveVisionModel(modelList, runModelId, { autoRoute });
-        if (route) {
+        const route = resolveVisionModel(modelList, runModelId, {
+          autoRoute: settings?.autoVisionRouting ?? false,
+        });
+        if (route?.routedTo) {
           runModel = route.model;
-          if (route.routedTo) visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
-        } else if (autoRoute) {
-          appendEvents(thread.id, [
-            {
-              kind: "assistant",
-              text: "No vision-capable model is available on this provider. Remove the attached images, or pick a vision model from the model menu.",
-            },
-          ]);
-          return;
-        } else if (window.deyin.vision?.describeLocal) {
-          const local = await window.deyin.vision.describeLocal(images, text);
-          if (local.ok && local.descriptions?.length) {
-            sendText = local.prompt ?? text;
-            sendImages = [];
-            visionNotice = `📷 Vision: described locally with ${local.model ?? "moondream"}.`;
-          } else {
-            appendEvents(thread.id, [{ kind: "assistant", text: local.error ?? visionBlockedMessage({ localVisionAvailable: true }) }]);
-            return;
-          }
-        } else {
-          appendEvents(thread.id, [{ kind: "assistant", text: visionBlockedMessage({ localVisionAvailable: Boolean(window.deyin.vision?.describeLocal) }) }]);
-          return;
+          visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
         }
       }
       setInput("");
       const sendMeta = {
         attachments: [...composerAttachments],
         linkedThreadIds: composerLinked.map((l) => l.threadId),
-        images: sendImages,
+        images,
         imageModels,
         imageChatModels,
         model: runModel,
         notice: visionNotice,
-        displayText: sendImages.length < images.length ? text : undefined,
       };
       setComposerAttachments([]);
       setComposerLinked([]);
       setComposerImages([]);
-      void startAgentRun(thread, sendText, composerMode, sendMeta);
+      void startAgentRun(thread, text, composerMode, sendMeta);
       return;
     }
 
@@ -2724,6 +2706,16 @@ const continueFromStepLimit = useCallback(() => {
                   </>
                 )}
                 {!chatOnlyHosted && (
+ <>
+ <ComposerPendingBars
+ queued={chatOnlyHosted ? null : activeQueuedPrompt}
+ steer={chatOnlyHosted || !activeThreadStreaming ? null : input}
+ onSendNow={chatOnlyHosted ? undefined : sendNow}
+ onStartMultitasking={chatOnlyHosted ? undefined : startMultitasking}
+ onClearQueue={chatOnlyHosted ? undefined : clearQueue}
+ onSteer={chatOnlyHosted ? undefined : () => void send()}
+ onDismissSteer={() => setInput("")}
+ />
                 <WorkspaceBar
                   platform={boot?.platform === "web" ? "web" : "desktop"}
                   projects={projects}
@@ -2747,6 +2739,7 @@ const continueFromStepLimit = useCallback(() => {
                     openPanelTab("git");
                   }}
                 />
+ </>
                 )}
                 <Composer
                   plainChat={chatOnlyHosted}
@@ -2769,16 +2762,12 @@ const continueFromStepLimit = useCallback(() => {
                   canSend={input.trim().length > 0}
                   streaming={activeThreadStreaming}
                   runStatus={chatOnlyHosted ? null : agentRunState?.running ? agentRunState.status ?? null : null}
-                  queuedPrompt={chatOnlyHosted ? null : activeQueuedPrompt}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
                   selectedProviderId={selectedProviderId}
                   onChange={setInput}
                   onSend={() => void send()}
-                  onSteer={chatOnlyHosted ? undefined : () => void send()}
                   onSendNow={chatOnlyHosted ? undefined : sendNow}
-                  onStartMultitasking={chatOnlyHosted ? undefined : startMultitasking}
-                  onClearQueue={chatOnlyHosted ? undefined : clearQueue}
                   onStop={showGlobalStop ? stopRun : undefined}
                   onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
                   onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}

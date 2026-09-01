@@ -13,39 +13,26 @@ export interface ResolveVisionModelOptions {
 }
 
 /**
- * Decide which model runs when the user attached images:
- * - selected model known vision-capable → use it;
- * - selected model known NOT vision-capable → first vision model in the list when
- *   autoRoute is true (for the primary provider that list is the user's plan);
- * - autoRoute false and text-only selection → null (caller may use Local Vision);
- * - no vision-capable model at all → null (caller shows a friendly error);
- * - capability unknown (no metadata) → keep the selection and let the API decide.
+ * Decide which model runs when the user attached images.
+ * Images are always sent to the selected model when it is vision-capable or
+ * its capability is unknown — the provider, not the client, is the authority
+ * on what it accepts, and its errors surface in the timeline like any other.
+ * The one client-side reroute is opt-in: when the selected model is *known*
+ * text-only and auto-route is on, the first vision model in the list takes the
+ * message. Never returns null.
  */
 export function resolveVisionModel(
   models: ModelInfo[],
   selectedModel: string,
   opts?: ResolveVisionModelOptions,
-): VisionRouteResult | null {
+): VisionRouteResult {
   const autoRoute = opts?.autoRoute ?? false;
   const selected = models.find((m) => m.id === selectedModel);
   if (!selected || selected.vision !== false) return { model: selectedModel };
-  if (!autoRoute) return null;
+  if (!autoRoute) return { model: selectedModel };
   const alt = models.find((m) => m.vision === true);
-  if (!alt) return null;
+  if (!alt) return { model: selectedModel };
   return { model: alt.id, routedTo: alt.id };
 }
 
 export const LOCAL_VISION_PLUGIN = "local-vision";
-
-/** User-facing hint when images cannot be sent on the current model. */
-export function visionBlockedMessage(opts?: { localVisionAvailable?: boolean }): string {
-  const localHint = opts?.localVisionAvailable
-    ? "install the **Local Vision** plugin (Settings → Capabilities → Plugins) and run `ollama pull moondream` (~1.7 GB), or "
-    : "";
-  return (
-    "This model can't read images. Pick a vision model from the model menu, turn on " +
-    "**Auto route to cloud vision** in Settings → General, or " +
-    localHint +
-    "remove the attached images."
-  );
-}
