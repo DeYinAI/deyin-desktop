@@ -84,21 +84,6 @@ export function hashToolSchemas(schemas: readonly unknown[]): string {
 }
 
 /**
- * Returns true when compaction mutated the transcript prefix (loop bumps logRewriteVersion).
- */
-export function shouldBumpLogRewriteVersion(compaction: {
-  droppedMessages: number;
-  truncatedToolResults: number;
-  truncatedToolArgs: number;
-}): boolean {
-  return (
-    compaction.droppedMessages > 0 ||
-    compaction.truncatedToolResults > 0 ||
-    compaction.truncatedToolArgs > 0
-  );
-}
-
-/**
  * Build a prefix shape snapshot for cache diagnostics.
  */
 export function computePrefixShape(

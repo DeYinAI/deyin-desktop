@@ -10,7 +10,7 @@ import {
   streamResponsesEvents,
   type StreamEvent,
 } from "../src/transports.js";
-import { toAnthropicMessages, toResponsesInput } from "../src/wire.js";
+import { buildWireMessages, toAnthropicMessages, toResponsesInput } from "../src/wire.js";
 import type { AgentMessage } from "../src/types.js";
 
 const data = (obj: unknown): string => `data: ${JSON.stringify(obj)}`;
@@ -277,8 +277,14 @@ test("toAnthropicMessages: system top-level, coalescing, tool blocks, cache brea
   ];
   const wire = toAnthropicMessages(messages, { enablePromptCaching: true });
   assert.equal(wire.system.length, 2);
-  // cache breakpoint on the last system block.
-  assert.deepEqual(wire.system[1], { type: "text", text: "More rules", cache_control: { type: "ephemeral" } });
+  // Static breakpoint on the last system block, with the 1h TTL: this prefix
+  // never changes within a session, so it is worth the 2x write to survive the
+  // idle gaps between turns.
+  assert.deepEqual(wire.system[1], {
+    type: "text",
+    text: "More rules",
+    cache_control: { type: "ephemeral", ttl: "1h" },
+  });
   assert.equal(wire.messages.length, 3); // user, assistant(tool_use), user(tool_result + text coalesced)
   const [first, second, third] = wire.messages as Array<{ role: string; content: Record<string, unknown>[] }>;
   assert.ok(first && second && third, "three merged messages expected");
@@ -289,8 +295,56 @@ test("toAnthropicMessages: system top-level, coalescing, tool blocks, cache brea
   assert.equal(third.role, "user");
   assert.deepEqual(third.content[0], { type: "tool_result", tool_use_id: "t1", content: "a.txt" });
   assert.equal(third.content[1]?.type, "text");
-  // last block of final message carries the second cache breakpoint.
+  // last block of final message carries the rolling breakpoint (default 5m TTL).
   assert.deepEqual(third.content[1], { type: "text", text: "thanks", cache_control: { type: "ephemeral" } });
+});
+
+test("toAnthropicMessages: rolling breakpoint marks where the previous request ended", () => {
+  const messages: AgentMessage[] = [
+    { role: "system", content: "Rules" },
+    { role: "user", content: "list files" },
+    { role: "assistant", content: "on it" },
+    { role: "user", content: "and the sizes" },
+    { role: "assistant", content: "sure" },
+  ];
+  // The previous request carried the first three messages, so an entry exists
+  // at that position and Anthropic's 20-position lookback is guaranteed a hit
+  // even when this turn appended a lot.
+  const wire = toAnthropicMessages(messages, { enablePromptCaching: true, previousMessageCount: 3 });
+  const groups = wire.messages as Array<{ role: string; content: Record<string, unknown>[] }>;
+  assert.equal(groups[1]?.content[0]?.text, "on it");
+  assert.deepEqual(groups[1]?.content[0]?.cache_control, { type: "ephemeral" });
+  // And the end of this request, which becomes next turn's anchor.
+  const last = groups.at(-1)!;
+  assert.deepEqual(last.content.at(-1)?.cache_control, { type: "ephemeral" });
+  // Three breakpoints total (system + two rolling), inside Anthropic's limit of 4.
+  const marked =
+    wire.system.filter((b) => b.cache_control).length +
+    groups.reduce((n, g) => n + g.content.filter((b) => b.cache_control).length, 0);
+  assert.equal(marked, 3);
+});
+
+test("buildWireMessages: static breakpoint stays on the leading system block", () => {
+  // Mid-conversation system reminders are appended as a session goes on. Keying
+  // the static marker on "the last system message" made it wander deeper into
+  // the transcript every time one landed — a moving breakpoint caches nothing.
+  const messages: AgentMessage[] = [
+    { role: "system", content: "Rules" },
+    { role: "user", content: "go" },
+    { role: "assistant", content: "ok" },
+    { role: "system", content: "<system_reminder>plan mode</system_reminder>" },
+    { role: "user", content: "continue" },
+  ];
+  const wire = buildWireMessages(messages, { provider: "anthropic", enablePromptCaching: true }).messages as Array<
+    Record<string, unknown>
+  >;
+  const blocks = (m: Record<string, unknown>): Record<string, unknown>[] =>
+    Array.isArray(m.content) ? (m.content as Record<string, unknown>[]) : [];
+  assert.deepEqual(blocks(wire[0]!)[0]?.cache_control, { type: "ephemeral", ttl: "1h" });
+  assert.equal(typeof wire[3]!.content, "string", "the mid-conversation reminder carries no marker");
+  // The growing conversation gets a rolling breakpoint of its own; without one
+  // this path cached the system block and nothing else.
+  assert.deepEqual(blocks(wire[4]!).at(-1)?.cache_control, { type: "ephemeral" });
 });
 
 test("toResponsesInput: instructions, reasoning, function_call and output items", () => {

@@ -9,7 +9,6 @@ export {
   computePrefixShape,
   hashSystemPrompt,
   hashToolSchemas,
-  shouldBumpLogRewriteVersion,
   type CacheDiagnostics,
   type PrefixShape,
 } from "./prefix-tracker.js";

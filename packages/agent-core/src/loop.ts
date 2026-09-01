@@ -2,9 +2,15 @@ import type { ReasoningEffort } from "@deyin/host-core/shared";
 import {
   comparePrefixShapes,
   computePrefixShape,
-  shouldBumpLogRewriteVersion,
 } from "./cache/prefix-tracker.js";
-import { compactMessages } from "./compaction.js";
+import {
+  applyPrune,
+  decideCompaction,
+  foldRegion,
+  MAX_CONSECUTIVE_COMPACTS,
+  type CompactionTrigger,
+} from "./compaction.js";
+import { priceMessages, type UsageAnchor } from "./context-measure.js";
 import {
   estimateContextUsage,
   splitToolSchemaTokens,
@@ -50,8 +56,6 @@ export function normalizeMaxSteps(value: number | null | undefined): number {
  return Math.floor(value);
 }
 const DEFAULT_CONTEXT_TOKENS = 128_000;
-/** Fraction of the context window we let the transcript grow to before compaction. */
-const BUDGET_FRACTION = 0.75;
 const HARD_TOOL_RESULT_CAP = 50_000;
 
 export type AgentEvent =
@@ -67,7 +71,19 @@ export type AgentEvent =
   | { type: "usage"; usage: TokenUsage }
   | { type: "context-snapshot"; snapshot: ContextSnapshot }
   | { type: "optimization"; metrics: OptimizationMetrics }
-  | { type: "compaction"; truncatedToolResults: number; truncatedToolArgs: number; droppedMessages: number }
+  | {
+      type: "compaction";
+      kind: "notice" | "prune" | "fold" | "exhausted";
+      trigger: CompactionTrigger;
+      truncatedToolResults: number;
+      truncatedToolArgs: number;
+      droppedMessages: number;
+      reclaimedTokens: number;
+      /** Ratio of the context window in use when the pass ran. */
+      ratio: number;
+      /** The structured briefing, when this was a fold. */
+      summary?: string;
+    }
   | { type: "evidence-gate"; code: string; message: string; toolName?: string }
   | { type: "model-routed"; step: number; role: ModelRole; model: string; providerId?: string }
   | { type: "done"; reason: AgentRunResult["reason"] };
@@ -160,6 +176,21 @@ function isAbortError(err: unknown): boolean {
 }
 
 /**
+ * Does this provider error mean "the prompt does not fit"?
+ *
+ * Every provider words it differently and none of them use a distinct status
+ * code, so this matches on the message. A false negative just surfaces the
+ * error to the user, which is the same behaviour as before.
+ */
+export function isContextOverflowError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  if (!message) return false;
+  return /context[_ ]length|context window|maximum context|prompt is too long|too many tokens|input length and .*max_tokens|reduce the length of the messages/i.test(
+    message,
+  );
+}
+
+/**
  * The agentic loop: request a completion, surface text/reasoning deltas, execute any
  * requested tools behind the permission engine, append results, and repeat until the
  * model stops calling tools or the step cap is reached.
@@ -171,10 +202,6 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const toolSchemas = opts.tools.toWire();
   const schemaSplit = splitToolSchemaTokens(toolSchemas);
   const schemaTokens = schemaSplit.tools + schemaSplit.mcp + schemaSplit.subagents;
-  // Leave room for tool schemas on every request; compactMessages only sees transcript tokens.
-  // Recomputed per step: a routed model may have a different context window.
-  const budgetFor = (windowTokens: number): number =>
-    Math.max(1_024, Math.floor(windowTokens * BUDGET_FRACTION) - schemaTokens);
   const usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedPromptTokens: 0 };
   const todos = opts.todos ?? [];
   const tracker = new OptimizationTracker();
@@ -225,6 +252,136 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   /** Bumped when compaction mutates the transcript prefix (invalidates provider cache). */
   let logRewriteVersion = 0;
 
+  // --- Compaction state -----------------------------------------------------
+  /**
+   * The provider's own prompt-token count from the last successful call, paired
+   * with what our estimator thought the same transcript was worth. Every
+   * threshold is measured against `anchor.promptTokens + (now - then)`, so the
+   * estimator's bias cancels and only the growth since is heuristic.
+   */
+  let usageAnchor: UsageAnchor | undefined;
+  /** Compaction passes with no successful non-compacting step in between. */
+  let consecutiveCompacts = 0;
+  /** The pressure notice is shown once per crossing, not once per step. */
+  let noticeShown = false;
+  /** Provider-confirmed overflow replays, bounded so a retry cannot spin. */
+  let overflowRetries = 0;
+  /**
+   * Messages carried by the previous request. The wire layer marks a rolling
+   * cache breakpoint there so Anthropic's 20-position lookback always finds an
+   * entry a prior request actually wrote, however much this turn appended.
+   */
+  let previousMessageCount: number | undefined;
+
+  /**
+   * Route a fold onto the cheap `tool` role.
+   *
+   * `roleForStep` maps "a step after read-only churn with no prose" to `tool`,
+   * so this synthetic input asks the run's own router for that role's model.
+   * Summarising tool output into prose has no business costing frontier rates.
+   */
+  const compactionRouting = (): ReturnType<StepRouter> | undefined =>
+    opts.router?.({ step: 2, previous: { hadProse: false, toolNames: ["read"], allRead: true } });
+
+  /**
+   * Consider compaction. Returns true when the surface actually changed.
+   *
+   * This is the ONLY place the transcript is rewritten. It runs at turn end, at
+   * `COMPACT_RATIO` inside a long multi-step turn, and reactively when a
+   * provider rejects the request as too long — never unconditionally per step,
+   * which is what made the old implementation re-fire on every iteration and
+   * invalidate the prefix cache with it.
+   */
+  const maybeCompact = async (trigger: CompactionTrigger, windowTokens: number): Promise<boolean> => {
+    const decision = decideCompaction({
+      messages: opts.messages,
+      contextLength: windowTokens,
+      schemaTokens,
+      anchor: usageAnchor,
+      trigger,
+      consecutiveCompacts,
+    });
+
+    const report = (
+      kind: "notice" | "prune" | "fold" | "exhausted",
+      fields: { truncatedToolResults?: number; truncatedToolArgs?: number; droppedMessages?: number; reclaimedTokens?: number; summary?: string } = {},
+    ): void => {
+      emit({
+        type: "compaction",
+        kind,
+        trigger,
+        ratio: decision.ratio,
+        truncatedToolResults: fields.truncatedToolResults ?? 0,
+        truncatedToolArgs: fields.truncatedToolArgs ?? 0,
+        droppedMessages: fields.droppedMessages ?? 0,
+        reclaimedTokens: fields.reclaimedTokens ?? 0,
+        ...(fields.summary ? { summary: fields.summary } : {}),
+      });
+    };
+
+    if (decision.action === "none") {
+      // Re-arm once pressure drops back below the line so a later crossing is
+      // still announced, but never repeat the notice while it stays above.
+      if (!decision.notice) noticeShown = false;
+      else if (!noticeShown) {
+        noticeShown = true;
+        report("notice");
+      }
+      return false;
+    }
+
+    if (decision.action === "exhausted") {
+      report("exhausted");
+      return false;
+    }
+
+    // Prune first, always: it is free, it is idempotent, and if it is enough the
+    // fold's extra model call never happens.
+    const pruned = applyPrune(opts.messages, decision.plan);
+    let droppedMessages = 0;
+    let reclaimedTokens = pruned.reclaimedTokens;
+    let summary: string | undefined;
+
+    if (decision.action === "fold") {
+      const route = compactionRouting();
+      const token = await (route?.getToken ?? opts.getToken)();
+      if (token === null || token === undefined) throw new AuthRequiredError();
+      const fold = await foldRegion({
+        apiBaseUrl: route?.apiBaseUrl ?? opts.apiBaseUrl,
+        token,
+        model: route?.model ?? opts.model,
+        apiFormat: route?.apiFormat ?? opts.apiFormat,
+        authHeader: route?.authHeader ?? opts.authHeader,
+        messages: opts.messages,
+        region: decision.region,
+        signal: opts.signal,
+      });
+      droppedMessages = fold.droppedMessages;
+      reclaimedTokens += fold.reclaimedTokens;
+      summary = fold.summary || undefined;
+    }
+
+    const changed = reclaimedTokens > 0 || droppedMessages > 0 || pruned.truncatedToolResults > 0 || pruned.truncatedToolArgs > 0;
+    if (!changed) return false;
+
+    // The surface moved, so the anchor no longer describes this transcript, the
+    // provider's cached prefix is gone from here on, and the recorded rolling
+    // breakpoint position no longer names the same content.
+    usageAnchor = undefined;
+    previousMessageCount = undefined;
+    logRewriteVersion += 1;
+    consecutiveCompacts += 1;
+    noticeShown = false;
+    report(decision.action === "fold" ? "fold" : "prune", {
+      truncatedToolResults: pruned.truncatedToolResults,
+      truncatedToolArgs: pruned.truncatedToolArgs,
+      droppedMessages,
+      reclaimedTokens,
+      summary,
+    });
+    return true;
+  };
+
   for (let step = 1; step <= maxSteps; step++) {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
@@ -237,17 +394,16 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     });
     const stepModel = routed?.model ?? opts.model;
     const stepWindow = routed?.contextLength ?? contextTokens;
-    const stepWire = opts.wire ? { ...opts.wire, model: stepModel } : undefined;
+    const stepWire = opts.wire ? { ...opts.wire, model: stepModel, previousMessageCount } : undefined;
     if (routed && stepModel !== previousModel) {
       emit({ type: "model-routed", step, role: routed.role, model: stepModel, providerId: routed.providerId });
     }
     previousModel = stepModel;
 
-    const compaction = compactMessages(opts.messages, budgetFor(stepWindow));
-    if (compaction.droppedMessages > 0 || compaction.truncatedToolResults > 0 || compaction.truncatedToolArgs > 0) {
-      if (shouldBumpLogRewriteVersion(compaction)) logRewriteVersion += 1;
-      emit({ type: "compaction", ...compaction });
-    }
+    // Mid-turn pressure only. A long multi-step turn can outgrow the window on
+    // its own, but below COMPACT_RATIO this is a no-op and the prefix is left
+    // byte-identical so the provider cache keeps hitting.
+    await maybeCompact("pressure", stepWindow);
 
     // Post-compaction / pre-request: the window the model actually sees this step.
     // Never invent a contextLength for the UI — compaction alone uses DEFAULT_CONTEXT_TOKENS.
@@ -272,6 +428,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     let reasoning = "";
     let toolCalls: AgentToolCall[] = [];
     let streamImages: StreamImage[] = [];
+    // Priced with the same estimator the anchor delta uses, and captured before
+    // the reply is appended, so `usageAnchor` describes exactly this request.
+    const surfaceAtRequest = priceMessages(opts.messages);
+    const sentMessageCount = opts.messages.length;
     try {
       for await (const event of streamChatEvents({
         apiBaseUrl: routed?.apiBaseUrl ?? opts.apiBaseUrl,
@@ -308,6 +468,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
               tracker.recordCachedPromptTokens(event.usage.cachedPromptTokens);
             }
             emit({ type: "usage", usage: { ...usage } });
+            // Anchor future pressure measurements on the provider's own count.
+            if (event.usage.promptTokens > 0) {
+              usageAnchor = { promptTokens: event.usage.promptTokens, surfaceTokens: surfaceAtRequest };
+            }
           }
           // Prefix-cache diagnostics: attribute hit/miss tokens to system/tools/log_rewrite
           // churn so the UI and telemetry reflect real provider cache behaviour.
@@ -331,8 +495,23 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       }
     } catch (err) {
       if (opts.signal?.aborted || isAbortError(err)) return finish("aborted", step);
+      // The provider is the authority on whether the prompt fits. When it says
+      // no, compact and replay the same step — but only if compaction actually
+      // moved the surface, so an oversized single message fails loudly instead
+      // of spinning. The circuit breaker in decideCompaction bounds this too.
+      if (isContextOverflowError(err) && overflowRetries < MAX_CONSECUTIVE_COMPACTS) {
+        overflowRetries += 1;
+        if (await maybeCompact("context-overflow", stepWindow)) {
+          step -= 1; // replay this step against the compacted surface
+          continue;
+        }
+      }
       throw err;
     }
+
+    // A step that completed without needing compaction re-arms the breaker.
+    consecutiveCompacts = 0;
+    previousMessageCount = sentMessageCount;
 
     // A model that draws its own pictures returns them beside the text. Store
     // each one and append its embed directive so the reply renders the image —
@@ -377,6 +556,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
           continue;
         }
       }
+      // Turn end: the natural cache-reset boundary. Compacting here rather than
+      // mid-loop means the whole turn ran against one stable prefix, and the
+      // next turn starts from a transcript that already fits.
+      await maybeCompact("pressure", stepWindow);
       return finish("completed", step);
     }
 
@@ -396,6 +579,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     }
   }
 
+  await maybeCompact("pressure", contextTokens);
   return finish("max-steps", maxSteps);
 
   function finish(reason: AgentRunResult["reason"], steps: number): AgentRunResult {

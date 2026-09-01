@@ -12,6 +12,7 @@ import { extractHtmlPageFromMarkdownLoose } from "../htmlPage.js";
 import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { summarizeActivityBlock } from "../toolActivity.js";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
+import { formatTokens } from "../formatTokens.js";
 
 /** Distance from the bottom (px) within which we consider the view "pinned". */
 const PIN_THRESHOLD = 64;
@@ -699,13 +700,25 @@ function EventRow({
         </div>
       );
 
-    case "compaction-notice":
+    case "compaction-notice": {
+      const parts: string[] = [];
+      if (event.droppedMessages > 0) parts.push(`${event.droppedMessages} messages summarized`);
+      if (event.truncatedToolResults > 0) parts.push(`${event.truncatedToolResults} tool results shortened`);
+      if (event.truncatedToolArgs > 0) parts.push(`${event.truncatedToolArgs} tool args trimmed`);
+      const verb = event.compaction === "fold" ? "Context folded" : "Context pruned";
       return (
-        <div className="activity-line">
-          <Icon name="clock" size={13} />
-          <span>{event.softWarning ? "Context over 50% — compaction may run soon" : "Context compacted for this run"}</span>
-        </div>
+        <details className="activity-line activity-line--compaction">
+          <summary>
+            <Icon name="clock" size={13} />
+            <span>
+              {verb} — {formatTokens(event.reclaimedTokens)} tokens reclaimed
+              {parts.length > 0 ? ` (${parts.join(", ")})` : ""}
+            </span>
+          </summary>
+          {event.summary ? <pre className="activity-line__summary">{event.summary}</pre> : null}
+        </details>
       );
+    }
 
     default:
       return null;

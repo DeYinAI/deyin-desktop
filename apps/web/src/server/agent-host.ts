@@ -896,9 +896,14 @@ export class WebAgentHost {
       case "compaction":
         this.emit(threadId, {
           type: "compaction",
+          kind: event.kind,
+          trigger: event.trigger,
           truncatedToolResults: event.truncatedToolResults,
           truncatedToolArgs: event.truncatedToolArgs,
           droppedMessages: event.droppedMessages,
+          reclaimedTokens: event.reclaimedTokens,
+          ratio: event.ratio,
+          summary: event.summary,
         });
         break;
       case "evidence-gate":

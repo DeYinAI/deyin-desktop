@@ -18,6 +18,7 @@ import {
   planTitleFromMarkdown,
 } from "../threads.js";
 import { diffSnippet, diffStats } from "../diff.js";
+import { formatTokens } from "../formatTokens.js";
 
 /* -------------------------------------------------------------------------- */
 /* Discriminated message types for the run timeline                           */
@@ -664,35 +665,62 @@ class AgentStateStore {
         this.emit({ type: "context-snapshot", threadId, snapshot: event.snapshot });
         break;
       case "compaction": {
-        if (event.softWarning) {
+        if (event.kind === "notice") {
+          this.emit({
+            type: "compaction-notice",
+            threadId,
+            message: `Context is ${Math.round(event.ratio * 100)}% full. History will be compacted if it keeps growing.`,
+          });
+          break;
+        }
+        if (event.kind === "exhausted") {
           this.emit({
             type: "compaction-notice",
             threadId,
             message:
-              "Context is over 50% full. Compaction will run soon if usage keeps growing — earlier messages may be summarized.",
+              "Context is full and cannot be reduced further — a single message is too large. Start a new thread or narrow the task.",
           });
-        } else if (event.droppedMessages > 0 || event.truncatedToolResults > 0 || event.truncatedToolArgs > 0) {
-          const parts: string[] = [];
-          if (event.droppedMessages > 0) parts.push(`${event.droppedMessages} messages summarized`);
-          if (event.truncatedToolResults > 0) parts.push(`${event.truncatedToolResults} tool results shortened`);
-          if (event.truncatedToolArgs > 0) parts.push(`${event.truncatedToolArgs} tool args trimmed`);
-          this.emit({
-            type: "compaction-notice",
-            threadId,
-            message: `Context compacted (${parts.join(", ")}). Prefix cache was refreshed.`,
-          });
-          t.runEvents = [
-            ...t.runEvents,
-            {
-              kind: "compaction-notice",
-              softWarning: false,
-              truncatedToolResults: event.truncatedToolResults,
-              truncatedToolArgs: event.truncatedToolArgs,
-              droppedMessages: event.droppedMessages,
-            },
-          ];
-          this.notifyStructural();
+          break;
         }
+
+        this.emit({
+          type: "compaction-notice",
+          threadId,
+          message:
+            event.kind === "fold"
+              ? `Context folded — ${formatTokens(event.reclaimedTokens)} reclaimed.`
+              : `Context pruned — ${formatTokens(event.reclaimedTokens)} reclaimed.`,
+        });
+
+        // One row per compaction, not one per step. The old loop compacted on
+        // every iteration and pushed an entry each time, which buried the
+        // transcript under identical notices.
+        const previous = t.runEvents.at(-1);
+        const merged: ThreadEvent =
+          previous?.kind === "compaction-notice"
+            ? {
+                kind: "compaction-notice",
+                compaction: event.kind === "fold" ? "fold" : previous.compaction,
+                truncatedToolResults: previous.truncatedToolResults + event.truncatedToolResults,
+                truncatedToolArgs: previous.truncatedToolArgs + event.truncatedToolArgs,
+                droppedMessages: previous.droppedMessages + event.droppedMessages,
+                reclaimedTokens: previous.reclaimedTokens + event.reclaimedTokens,
+                summary: event.summary ?? previous.summary,
+              }
+            : {
+                kind: "compaction-notice",
+                compaction: event.kind,
+                truncatedToolResults: event.truncatedToolResults,
+                truncatedToolArgs: event.truncatedToolArgs,
+                droppedMessages: event.droppedMessages,
+                reclaimedTokens: event.reclaimedTokens,
+                summary: event.summary,
+              };
+        t.runEvents =
+          previous?.kind === "compaction-notice"
+            ? [...t.runEvents.slice(0, -1), merged]
+            : [...t.runEvents, merged];
+        this.notifyStructural();
         break;
       }
       case "permission-request":
