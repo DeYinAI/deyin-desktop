@@ -7,6 +7,7 @@ import { OAuthClient } from "../src/client.js";
 import { MemoryTokenStore } from "../src/stores/memory.js";
 import { loginWithLoopback } from "../src/flows/loopback.js";
 import { loginWithDevice } from "../src/flows/device.js";
+import { OAuthClientError } from "../src/types.js";
 
 let server: ServerType;
 let baseUrl: string;
@@ -29,7 +30,7 @@ after(() => {
   server?.close();
 });
 
-function makeClient() {
+function makeClient(store = new MemoryTokenStore()) {
   return new OAuthClient(
     {
       issuer: baseUrl,
@@ -45,7 +46,7 @@ function makeClient() {
         revocationEndpoint: `${baseUrl}/oauth/revoke`,
       },
     },
-    new MemoryTokenStore(),
+ store,
   );
 }
 
@@ -127,3 +128,30 @@ test("device login polls until approved", async () => {
   const tokens = await login;
   assert.ok(tokens.accessToken, "device flow returns an access token");
 });
+
+
+test("refresh with a rejected refresh token clears the stored session", async () => {
+ // Login, then rotate once: the provider consumes refresh tokens on use,
+ // so tokens.refreshToken is now dead on the provider side.
+ const client = makeClient();
+ const tokens = await loginWithLoopback(client, {
+  open: false,
+  onAuthUrl: (authUrl) => {
+   void approveInBrowser(authUrl);
+  },
+ });
+ assert.ok(tokens.refreshToken, "refresh token issued");
+ await client.refresh();
+
+ // A client restored with the consumed refresh token (e.g. from a stale
+ // credentials.json) must fail with invalid_grant...
+ const stale = makeClient();
+ await (stale as unknown as { store: { save(t: unknown): Promise<void> } }).store.save(tokens);
+ await assert.rejects(
+  () => stale.refresh(),
+  (err: unknown) => err instanceof OAuthClientError && err.code === "invalid_grant",
+ );
+ // ...and clear the dead session instead of failing on every future request.
+ assert.equal(await stale.isAuthenticated(), false);
+});
+

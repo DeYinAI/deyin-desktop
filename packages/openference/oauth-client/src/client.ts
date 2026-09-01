@@ -99,7 +99,18 @@ export class OAuthClient {
       client_id: this.config.clientId,
     });
     if (this.config.clientSecret) body.set("client_secret", this.config.clientSecret);
-    const tokens = await this.postToken(tokenEndpoint, body);
+    let tokens: TokenSet;
+    try {
+    	tokens = await this.postToken(tokenEndpoint, body);
+    } catch (err) {
+    	// A rejected refresh token (invalid_grant) can never succeed again:
+    	// clear the dead session so the app shows signed-out instead of
+    	// failing on every request. Network/5xx failures keep the session.
+    	if (err instanceof OAuthClientError && (err.code === "invalid_grant" || err.code === "invalid_client")) {
+    		await this.store.clear();
+    	}
+    	throw err;
+    }
     // Carry forward a refresh token if the server did not rotate one.
     if (!tokens.refreshToken) tokens.refreshToken = current.refreshToken;
     await this.store.save(tokens);

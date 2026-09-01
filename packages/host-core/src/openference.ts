@@ -92,10 +92,32 @@ export async function* streamChat(opts: StreamChatOptions): AsyncGenerator<strin
   yield* streamChatCompletions(opts);
 }
 
+/** Transient upstream failures worth a single automatic retry. */
+function isTransientStatus(status: number): boolean {
+ return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+/** Back off before the one retry, honoring Retry-After when present. */
+async function retryBackoff(res: Response, signal?: AbortSignal): Promise<void> {
+ if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+ const retryAfter = Number(res.headers.get("retry-after"));
+ const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : 800;
+ await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+/** fetch() with one automatic retry on transient upstream statuses (408/429/5xx). */
+async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
+ let res = await fetch(url, init);
+ if (!res.ok && isTransientStatus(res.status)) {
+  await retryBackoff(res, init.signal ?? undefined);
+  res = await fetch(url, init);
+ }
+ return res;
+}
 /** OpenAI-compatible /chat/completions stream (existing path). */
 async function* streamChatCompletions(opts: StreamChatOptions): AsyncGenerator<string> {
   const request = (includeUsage: boolean) =>
-    fetch(`${opts.apiBaseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    fetchWithTransientRetry(`${opts.apiBaseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -169,7 +191,7 @@ async function* streamAnthropicChat(opts: StreamChatOptions): AsyncGenerator<str
     else headers["x-api-key"] = opts.token;
   }
 
-  const res = await fetch(`${root}/v1/messages`, {
+  const res = await fetchWithTransientRetry(`${root}/v1/messages`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -217,7 +239,7 @@ async function* streamResponsesChat(opts: StreamChatOptions): AsyncGenerator<str
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role, content: m.content }));
 
-  const res = await fetch(`${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`, {
+  const res = await fetchWithTransientRetry(`${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
