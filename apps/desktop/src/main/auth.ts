@@ -1,3 +1,4 @@
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { app, safeStorage, shell } from "electron";
 import { OAuthClient, type UserInfo } from "@deyin/oauth-client";
@@ -26,6 +27,11 @@ export class AuthManager {
   private readonly client: OAuthClient;
   private pending: DeepLinkLoginStart | null = null;
   private onChange: (() => void) | null = null;
+  /** Last profile seen from UserInfo, cached beside the credentials. */
+  private readonly profilePath: string;
+  /** OS-keychain cipher shared by the token store and the profile cache. */
+  private readonly encryptSecret?: (plaintext: string) => string | Buffer;
+  private readonly decryptSecret?: (ciphertext: Buffer) => string;
 
   constructor(
     config: DeyinConfig,
@@ -34,10 +40,14 @@ export class AuthManager {
     const credentialsPath = join(app.getPath("userData"), "credentials.json");
     const canEncrypt = safeStorage.isEncryptionAvailable();
 
+    this.profilePath = join(app.getPath("userData"), "profile.json");
+    this.encryptSecret = canEncrypt ? (plaintext) => safeStorage.encryptString(plaintext) : undefined;
+    this.decryptSecret = canEncrypt ? (ciphertext) => safeStorage.decryptString(ciphertext) : undefined;
+
     const store = new FileTokenStore({
       path: credentialsPath,
-      encrypt: canEncrypt ? (plaintext) => safeStorage.encryptString(plaintext) : undefined,
-      decrypt: canEncrypt ? (ciphertext) => safeStorage.decryptString(ciphertext) : undefined,
+      encrypt: this.encryptSecret,
+      decrypt: this.decryptSecret,
     });
 
     this.client = new OAuthClient(
@@ -70,7 +80,7 @@ export class AuthManager {
       onAuthUrl: (url) => console.log("[deyin auth] authorize:", url),
     });
     this.onChange?.();
-    return this.toProfile(await this.client.getUser());
+    return this.getUser();
   }
 
   /** Handle a `deyin://oauth/callback?...` URL routed from the OS. */
@@ -88,15 +98,64 @@ export class AuthManager {
 
   async logout(): Promise<void> {
     await this.client.logout();
+    await rm(this.profilePath, { force: true });
     this.onChange?.();
   }
 
+  /**
+   * The signed-in profile, or null when signed out.
+   *
+   * A UserInfo call that throws is not evidence of a signed-out user: right
+   * after a machine boots the app usually wins the race against the network,
+   * and treating that as "signed out" sent people back to the sign-in screen
+   * on a session that was still valid. Only a session the OAuth client has
+   * actually discarded (a rejected refresh token) reports null; otherwise the
+   * last known profile stands in until the next call succeeds.
+   */
   async getUser(): Promise<UserProfile | null> {
-    if (!(await this.client.isAuthenticated())) return null;
+    if (!(await this.client.isAuthenticated())) {
+      await rm(this.profilePath, { force: true });
+      return null;
+    }
     try {
-      return this.toProfile(await this.client.getUser());
+      const profile = this.toProfile(await this.client.getUser());
+      await this.cacheProfile(profile);
+      return profile;
+    } catch (err) {
+      if (!(await this.client.isAuthenticated())) return null;
+      const cached = await this.loadCachedProfile();
+      if (!cached) return null;
+      console.warn(
+        "[deyin auth] userinfo unreachable, using the cached profile:",
+        err instanceof Error ? err.message : String(err),
+      );
+      return cached;
+    }
+  }
+
+  private async loadCachedProfile(): Promise<UserProfile | null> {
+    try {
+      const raw = await readFile(this.profilePath);
+      const json = this.decryptSecret ? this.decryptSecret(raw) : raw.toString("utf8");
+      return JSON.parse(json) as UserProfile;
     } catch {
       return null;
+    }
+  }
+
+  private async cacheProfile(profile: UserProfile): Promise<void> {
+    const json = JSON.stringify(profile);
+    const data = this.encryptSecret ? this.encryptSecret(json) : json;
+    const tmp = `${this.profilePath}.${process.pid}.tmp`;
+    try {
+      await writeFile(tmp, data, { mode: 0o600 });
+      await rename(tmp, this.profilePath);
+    } catch (err) {
+      await rm(tmp, { force: true });
+      console.warn(
+        "[deyin auth] could not cache the profile:",
+        err instanceof Error ? err.message : String(err),
+      );
     }
   }
 

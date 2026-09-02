@@ -32,6 +32,8 @@ export class OAuthClient {
   readonly store: TokenStore;
   private endpoints?: ProviderEndpoints;
   private readonly doFetch: typeof fetch;
+  /** The refresh currently in flight, shared by every concurrent caller. */
+  private inFlightRefresh: Promise<TokenSet> | null = null;
 
   constructor(config: OAuthClientConfig, store: TokenStore = new MemoryTokenStore()) {
     this.config = config;
@@ -86,8 +88,26 @@ export class OAuthClient {
     return tokens;
   }
 
-  /** Force a refresh using the stored refresh token. */
+  /**
+   * Force a refresh using the stored refresh token.
+   *
+   * Concurrent callers share a single request. The provider rotates refresh
+   * tokens on use, so parallel refreshes race: the first consumes the token
+   * and every loser is handed `invalid_grant` for a session that is perfectly
+   * alive. That is exactly the shape of a cold start — the access token has
+   * expired while the machine was off and several callers reach for it at
+   * once — and clearing the session there forced a fresh sign-in every boot.
+   */
   async refresh(): Promise<TokenSet> {
+    if (this.inFlightRefresh) return this.inFlightRefresh;
+    const attempt = this.doRefresh().finally(() => {
+      this.inFlightRefresh = null;
+    });
+    this.inFlightRefresh = attempt;
+    return attempt;
+  }
+
+  private async doRefresh(retriedAfterRotation = false): Promise<TokenSet> {
     const current = await this.store.load();
     if (!current?.refreshToken) {
       throw new OAuthClientError("No refresh token available.", "no_refresh_token");
@@ -101,15 +121,25 @@ export class OAuthClient {
     if (this.config.clientSecret) body.set("client_secret", this.config.clientSecret);
     let tokens: TokenSet;
     try {
-    	tokens = await this.postToken(tokenEndpoint, body);
+      tokens = await this.postToken(tokenEndpoint, body);
     } catch (err) {
-    	// A rejected refresh token (invalid_grant) can never succeed again:
-    	// clear the dead session so the app shows signed-out instead of
-    	// failing on every request. Network/5xx failures keep the session.
-    	if (err instanceof OAuthClientError && (err.code === "invalid_grant" || err.code === "invalid_client")) {
-    		await this.store.clear();
-    	}
-    	throw err;
+      const rejected =
+        err instanceof OAuthClientError && (err.code === "invalid_grant" || err.code === "invalid_client");
+      // Network/5xx failures say nothing about the session: keep it.
+      if (!rejected) throw err;
+
+      // Another client on the same store (the CLI, a second window) may have
+      // rotated the token between our load and this request. If the store has
+      // moved on, only our copy was stale — retry once with what is there now.
+      const latest = await this.store.load();
+      if (!retriedAfterRotation && latest?.refreshToken && latest.refreshToken !== current.refreshToken) {
+        return this.doRefresh(true);
+      }
+
+      // A rejected refresh token can never succeed again: clear the dead
+      // session so the app shows signed-out instead of failing every request.
+      await this.store.clear();
+      throw err;
     }
     // Carry forward a refresh token if the server did not rotate one.
     if (!tokens.refreshToken) tokens.refreshToken = current.refreshToken;
@@ -125,6 +155,8 @@ export class OAuthClient {
     const current = await this.store.load();
     if (!current) throw new OAuthClientError("Not authenticated.", "not_authenticated");
     if (Date.now() < current.expiresAt - REFRESH_SKEW_MS) return current.accessToken;
+    // `refresh` de-duplicates, so parallel callers here join one request
+    // instead of racing each other for a single-use refresh token.
     if (current.refreshToken) return (await this.refresh()).accessToken;
     throw new OAuthClientError("Access token expired and no refresh token.", "expired");
   }

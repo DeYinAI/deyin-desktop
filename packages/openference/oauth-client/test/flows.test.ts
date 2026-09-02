@@ -155,3 +155,53 @@ test("refresh with a rejected refresh token clears the stored session", async ()
  assert.equal(await stale.isAuthenticated(), false);
 });
 
+
+test("concurrent refreshes share one request and keep the session", async () => {
+  // The provider rotates refresh tokens on use, so parallel refreshes used to
+  // race: one won and the losers got invalid_grant on a live session, which
+  // cleared the store. A cold start hits exactly this — several callers reach
+  // for an access token that expired while the machine was off.
+  const client = makeClient();
+  const tokens = await loginWithLoopback(client, {
+    open: false,
+    onAuthUrl: (authUrl) => {
+      void approveInBrowser(authUrl);
+    },
+  });
+  assert.ok(tokens.refreshToken, "refresh token issued");
+
+  const results = await Promise.all([client.refresh(), client.refresh(), client.refresh()]);
+  const accessTokens = new Set(results.map((t) => t.accessToken));
+  assert.equal(accessTokens.size, 1, "all callers share the same refreshed token");
+  assert.equal(await client.isAuthenticated(), true, "the session survives");
+
+  // The store holds the rotated token, so the next refresh still works.
+  const after = await client.refresh();
+  assert.ok(after.accessToken);
+  assert.notEqual(after.refreshToken, tokens.refreshToken);
+});
+
+test("parallel getAccessToken on an expired token does not sign the user out", async () => {
+  const store = new MemoryTokenStore();
+  const client = makeClient(store);
+  await loginWithLoopback(client, {
+    open: false,
+    onAuthUrl: (authUrl) => {
+      void approveInBrowser(authUrl);
+    },
+  });
+
+  // Simulate the machine having been off: the access token is past its expiry
+  // but the refresh token is still good.
+  const stored = await store.load();
+  assert.ok(stored);
+  await store.save({ ...stored, expiresAt: Date.now() - 60_000 });
+
+  const tokens = await Promise.all([
+    client.getAccessToken(),
+    client.getAccessToken(),
+    client.getAccessToken(),
+  ]);
+  assert.equal(new Set(tokens).size, 1, "one refresh serves every caller");
+  assert.equal(await client.isAuthenticated(), true);
+});
