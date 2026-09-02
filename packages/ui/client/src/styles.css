@@ -305,13 +305,13 @@ code {
   flex-shrink: 0;
   padding: 8px 10px 6px;
   margin: 0;
-  border-top: 1px solid var(--color-hairline);
+  /* no border: the footer hairline below already separates this area, and the wrapper stays mounted (empty) when the banner is hidden — a second hairline reads as a double line */
 }
 .settings__update {
   flex-shrink: 0;
   margin-top: auto;
   padding: 8px 10px 6px;
-  border-top: 1px solid var(--color-hairline);
+  /* no border: same reason as .sidebar__update */
 }
 .nav-rail__footer {
   display: flex;
