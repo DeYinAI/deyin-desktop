@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TokenSet, TokenStore } from "../types.js";
 
@@ -31,11 +31,24 @@ export class FileTokenStore implements TokenStore {
     }
   }
 
+  /**
+   * Write via temp file + rename. A refresh rewrites this file every time the
+   * access token ages out, so an in-place write leaves a window where losing
+   * power (or a Windows shutdown killing the process) truncates the file — and
+   * a torn credentials file reads back as "signed out".
+   */
   async save(tokens: TokenSet): Promise<void> {
     await mkdir(dirname(this.opts.path), { recursive: true });
     const json = JSON.stringify(tokens);
     const data = this.opts.encrypt ? this.opts.encrypt(json) : json;
-    await writeFile(this.opts.path, data, { mode: 0o600 });
+    const tmp = `${this.opts.path}.${process.pid}.tmp`;
+    try {
+      await writeFile(tmp, data, { mode: 0o600 });
+      await rename(tmp, this.opts.path);
+    } catch (err) {
+      await rm(tmp, { force: true });
+      throw err;
+    }
   }
 
   async clear(): Promise<void> {
