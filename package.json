@@ -14,7 +14,7 @@
     "build": "pnpm -r --filter \"./packages/**\" build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "eslint packages/agent-core packages/host-core apps/desktop apps/web apps/cli scripts/ci",
+    "lint": "eslint packages/agent-core packages/host-core packages/ui/client apps/desktop apps/web apps/cli scripts/ci",
     "oauth:dev": "pnpm --filter @deyin/oauth-provider dev",
     "desktop:dev": "pnpm --filter @deyin/desktop dev",
     "web:dev": "pnpm --filter @deyin/web dev",
@@ -24,13 +24,14 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
     "png-to-ico": "^3.0.2",
     "png2icons": "^2.0.1",
     "sharp": "^0.35.3",
     "tsx": "^4.23.12",
     "typescript": "^5.6.3",
-    "typescript-eslint": "^8.68.0",
-    "globals": "^17.11.0"
+    "typescript-eslint": "^8.68.0"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

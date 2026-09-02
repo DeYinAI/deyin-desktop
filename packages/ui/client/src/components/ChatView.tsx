@@ -142,6 +142,23 @@ export function ChatView(props: ChatViewProps) {
     props.codeDisplay.variant,
   );
 
+  const hasStreamOutput =
+    (props.streamText?.length ?? 0) > 0 || (props.streamReasoning?.length ?? 0) > 0;
+
+  // Grouping walks the entire timeline, and ChatView re-renders for reasons that
+  // have nothing to do with the timeline — most of all every keystroke in the
+  // composer, whose `input` state lives in the root component. Memoising on the
+  // two inputs that actually determine the grouping keeps typing O(1) in the
+  // length of the conversation instead of O(n).
+  //
+  // Every hook must run before the empty-state early return below — the
+  // empty↔populated transition (New Chat) changes which branch renders, and a
+  // hook skipped by the early return crashes the tree (React error #300).
+  const groups = useMemo(
+    () => groupTimelineEvents(props.events, { compactAllActivity: hasStreamOutput }),
+    [props.events, hasStreamOutput],
+  );
+
   if (props.events.length === 0 && props.streamText === null) {
     return (
       <div className="chat chat--empty" ref={scrollRef}>
@@ -156,19 +173,6 @@ export function ChatView(props: ChatViewProps) {
       </div>
     );
   }
-
-  const hasStreamOutput =
-    (props.streamText?.length ?? 0) > 0 || (props.streamReasoning?.length ?? 0) > 0;
-
-  // Grouping walks the entire timeline, and ChatView re-renders for reasons that
-  // have nothing to do with the timeline — most of all every keystroke in the
-  // composer, whose `input` state lives in the root component. Memoising on the
-  // two inputs that actually determine the grouping keeps typing O(1) in the
-  // length of the conversation instead of O(n).
-  const groups = useMemo(
-    () => groupTimelineEvents(props.events, { compactAllActivity: hasStreamOutput }),
-    [props.events, hasStreamOutput],
-  );
 
   return (
     <div className="chat" ref={scrollRef} onScroll={syncPinFromScroll}>
