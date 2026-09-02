@@ -34,7 +34,8 @@
     "test:edge": "tsx --test test/edge-cases.test.ts",
     "test:load": "tsx --test test/load.test.ts",
     "test:agent-suite": "tsx --test test/*.test.ts test/e2e/*.test.ts src/cache/__tests__/*.test.ts",
-    "benchmark": "tsx test/performance/run-benchmarks.ts"
+    "benchmark": "tsx test/performance/run-benchmarks.ts",
+    "bench:compaction": "tsx test/performance/compaction-bench.ts"
   },
   "dependencies": {
     "@deyin/host-core": "workspace:*",

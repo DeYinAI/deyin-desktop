@@ -392,11 +392,18 @@ test("the request prefix grows append-only when context stays under pressure", a
   }
 });
 
-test("folds once under real pressure, then keeps the new prefix stable", async () => {
+/** The fold request is the one whose last message is the briefing instruction. */
+function isFoldRequest(body: Record<string, unknown>): boolean {
+  const messages = body.messages as Array<{ content?: unknown }> | undefined;
+  const last = messages?.[messages.length - 1];
+  return typeof last?.content === "string" && last.content.includes("Compact the preceding conversation");
+}
+
+test("folds under real pressure and keeps the new prefix stable", async () => {
   // A tiny context window plus oversized tool results forces the full ladder:
-  // prune, then fold. The point is that it happens ONCE — the old loop
-  // compacted on every step and pushed a notice each time, which is the wall of
-  // "Context compacted" rows this replaces.
+  // prune, then fold. Folds are answered with a small usable briefing (matched
+  // on the request body, not the response index, so the test does not care
+  // exactly when pressure crosses) and every mutation must reclaim tokens.
   const cwd = mkdtempSync(join(tmpdir(), "deyin-fold-"));
   // Distinct files, not one file read six times: identical results are elided
   // to a pointer by the run deduper, which would keep the transcript small and
@@ -404,9 +411,14 @@ test("folds once under real pressure, then keeps the new prefix stable", async (
   for (let i = 0; i < 6; i++) {
     writeFileSync(join(cwd, `big${i}.txt`), `lorem ipsum dolor sit amet ${i} `.repeat(4000));
   }
-  const server = await startMockOpenAI((i) =>
-    i < 6 ? toolCallResponse(`call_${i}`, "read", { path: `big${i}.txt` }) : textResponse("done"),
-  );
+  let ordinary = 0;
+  const server = await startMockOpenAI((_i, body) => {
+    if (isFoldRequest(body)) {
+      return textResponse("## Goal\nRead the big files.\n## Pending & next step\nReport their contents.");
+    }
+    const idx = ordinary++;
+    return idx < 6 ? toolCallResponse(`call_${idx}`, "read", { path: `big${idx}.txt` }) : textResponse("done");
+  });
   // Small enough that the builtin tool schemas plus a few file reads blow past
   // FORCE_RATIO, which is what makes this exercise the fold rather than a prune.
 
@@ -416,7 +428,7 @@ test("folds once under real pressure, then keeps the new prefix stable", async (
       { role: "user", content: "read big.txt repeatedly" },
     ];
     const events: { kind: string; reclaimed: number }[] = [];
-    await runAgent({
+    const result = await runAgent({
       apiBaseUrl: server.url,
       getToken: async () => "test-token",
       model: "test-model",
@@ -435,10 +447,13 @@ test("folds once under real pressure, then keeps the new prefix stable", async (
 
     const mutations = events.filter((e) => e.kind === "prune" || e.kind === "fold");
     assert.ok(mutations.length > 0, "pressure this high must compact at least once");
-    assert.ok(mutations.length <= 3, `compacted ${mutations.length} times; expected a handful, not one per step`);
+    // One fold per oversized read is legitimate in a 4k window; the guard rails
+    // are that each pass reclaims tokens and none is a paid failure.
+    assert.ok(mutations.length <= 8, `compacted ${mutations.length} times; expected a handful, not one per step`);
     for (const m of mutations) {
       assert.ok(m.reclaimed > 0, `${m.kind} reported no reclaimed tokens`);
     }
+    assert.equal(result.summary?.foldFailures ?? 0, 0, "a usable briefing means no paid fold failures");
     // The system prompt is never part of a compacted region.
     assert.equal(messages[0]?.role, "system");
     assert.equal(messages[0]?.content, "You are a test agent.");
@@ -449,6 +464,63 @@ test("folds once under real pressure, then keeps the new prefix stable", async (
       messages.some((m) => m.role === "user" && m.content.includes("<compaction-summary>")),
       "a fold should leave a compaction-summary node on the surface",
     );
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a fold whose summary comes back unusable is paid for once, never twice", async () => {
+  // The summarizer returns a briefing larger than the region it replaces, so
+  // every fold is rejected. The receipt gate must stop the run from paying for
+  // the same nothing on every later pressure check (Reasonix's stuck-input
+  // receipt / failed-turn budget).
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-foldfail-"));
+  for (let i = 0; i < 6; i++) {
+    writeFileSync(join(cwd, `big${i}.txt`), `lorem ipsum dolor sit amet ${i} `.repeat(4000));
+  }
+  let ordinary = 0;
+  const server = await startMockOpenAI((_i, body) => {
+    if (isFoldRequest(body)) {
+      // Far larger than any region it could replace: strictly-smaller check fails.
+      return textResponse("Z".repeat(120_000));
+    }
+    const idx = ordinary++;
+    return idx < 6 ? toolCallResponse(`call_${idx}`, "read", { path: `big${idx}.txt` }) : textResponse("done");
+  });
+
+  try {
+    const messages: AgentMessage[] = [
+      { role: "system", content: "You are a test agent." },
+      { role: "user", content: "read big.txt repeatedly" },
+    ];
+    const kinds: string[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      contextLength: 4_000,
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "compaction") kinds.push(event.kind);
+      },
+    });
+
+    assert.ok(kinds.includes("fold-failed"), "the rejected fold must be reported");
+    // One row for the whole run: gated retries must not each push an event.
+    assert.equal(kinds.filter((k) => k === "fold-failed").length, 1);
+    assert.equal(result.summary?.foldFailures, 1, "exactly one PAID fold failure");
+    assert.ok(!kinds.includes("fold"), "no fold can succeed when every summary is oversized");
+    assert.ok(
+      !messages.some((m) => m.role === "user" && m.content.includes("<compaction-summary>")),
+      "a rejected fold must not touch the transcript",
+    );
+    // 7 ordinary requests (6 reads + the final reply) + exactly one paid fold.
+    assert.equal(server.requests.length, 8);
   } finally {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });
