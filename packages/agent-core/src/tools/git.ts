@@ -234,11 +234,24 @@ export const gitPushTool: ToolDefinition = {
   },
 };
 
-export const GIT_TOOLS: ToolDefinition[] = [
-  gitStatusTool,
-  gitLogTool,
-  gitDiffTool,
-  gitBlameTool,
+/**
+ * The git tools the model actually sees.
+ *
+ * Only the read-tier four. They earn their schema budget: they are safe to fan
+ * out in parallel, and the host renders their output as structured UI.
+ *
+ * The seven mutating ones (`add`, `commit`, `branch`, `stash`, `fetch`, `pull`,
+ * `push`) are deliberately NOT here. Each was one tool call, so staging,
+ * committing and pushing cost three round trips — three full re-sends of the
+ * transcript — for what is one `git add -A && git commit -m … && git push` in
+ * bash. They also competed with the system prompt's own "use bash for git"
+ * instruction. They remain exported for direct host use and for tests; the
+ * model reaches them through `bash`, which the bash tool description now says.
+ */
+export const GIT_TOOLS: ToolDefinition[] = [gitStatusTool, gitLogTool, gitDiffTool, gitBlameTool];
+
+/** The mutating git tools, kept exported for hosts that want to register them. */
+export const GIT_WRITE_TOOLS: ToolDefinition[] = [
   gitAddTool,
   gitCommitTool,
   gitBranchTool,

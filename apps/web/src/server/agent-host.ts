@@ -19,7 +19,7 @@ import {
   resolveCommandInvocation,
   unknownCommandMessage,
   getSessionJobsManager,
-  loadContextFiles,
+  loadContextFilesCached,
   matchCommand,
   modeReminder,
   rulesForApprovalMode,
@@ -352,9 +352,8 @@ export class WebAgentHost {
       const parts = buildSystemPromptParts({
         cwd: this.root,
         agent: agentForMode(mode),
-        toolNames: registry.names(),
         skills: skillSummaries,
-        contextFiles: await loadContextFiles(this.root).catch(() => []),
+        contextFiles: await loadContextFilesCached(this.root).catch(() => []),
       });
       let systemPrompt = parts.content;
       const repo = this.repoInfo();
@@ -450,13 +449,8 @@ export class WebAgentHost {
               contextLength: options.contextLength ?? 0,
               messages,
               tools: registry.toWire(),
-              wire: {
-                enableCompression: true,
-                compressionMode: "balanced",
-                enablePromptCaching: true,
-                provider: wireProvider,
-                model: options.model,
-              },
+              // Cached-response path: no request went out, so there are no wire
+              // savings to report and nothing to compress a second time for.
               cached: true,
             }),
           },
@@ -584,7 +578,15 @@ export class WebAgentHost {
           if (reminder) {
             messages.push({ role: "system", content: `<system_reminder>\n${reminder}\n</system_reminder>` });
           }
-          messages[0] = { role: "system", content: await buildPrompt(nextMode) };
+          // Only rewrite when the bytes actually differ. messages[0] is the head
+          // of the provider's cached prefix, and Anthropic's invalidation order
+          // is tools -> system -> messages, so an unchanged rewrite would throw
+          // away the whole conversation cache for nothing. (Desktop has done
+          // this via pinSystemPrompt for a while; the web host had not.)
+          const nextPrompt = await buildPrompt(nextMode);
+          if (messages[0]?.content !== nextPrompt) {
+            messages[0] = { role: "system", content: nextPrompt };
+          }
           this.emit(options.threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });
 
           if (change.event === "exit" && change.previous === "plan") {

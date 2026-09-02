@@ -73,7 +73,7 @@ test("SshHostsStore encrypts credentials", () => {
   assert.equal(listed[0]?.hasKey, true);
 });
 
-test("AutomationsStore migrates a legacy bare prompt to a payload", () => {
+test("AutomationsStore migrates a legacy bare prompt to a payload", async () => {
   const dir = mkdtempSync(join(tmpdir(), "deyin-auto-legacy-"));
   const storage = new FileStorage(dir, plainCipher);
   // A file written before the payload union existed.
@@ -93,6 +93,7 @@ test("AutomationsStore migrates a legacy bare prompt to a payload", () => {
       },
     ],
   });
+  await storage.flush();
 
   const migrated = new AutomationsStore(storage).get("legacy-1");
   assert.deepEqual(migrated?.payload, { kind: "prompt", prompt: "Do the old thing" });

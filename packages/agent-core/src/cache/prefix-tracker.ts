@@ -25,10 +25,17 @@ export interface PrefixShape {
   toolSchemaTokens: number;
 }
 
+/**
+ * Why a cached prefix stopped matching. `system` and `tools` are derived from
+ * the hashes; the rest are the provider-visible transcript rewrites the run
+ * reports as it makes them.
+ */
+export type CacheChangeReason = "system" | "tools" | "prune" | "fold" | "overflow";
+
 export interface CacheDiagnostics {
   /** Reasons for prefix invalidation */
   prefixChanged: boolean;
-  changeReasons: Array<"system" | "tools" | "log_rewrite">;
+  changeReasons: CacheChangeReason[];
   /** Cache hit/miss tokens this turn */
   hit: number;
   miss: number;
@@ -115,11 +122,22 @@ export function computePrefixShape(
 /**
  * Compare two prefix shapes and identify what changed.
  */
+/**
+ * Compare two prefix shapes and identify what changed.
+ *
+ * `rewriteReasons` is the set of provider-visible transcript rewrites drained
+ * since `prev` was captured. It is the ONLY source of rewrite-caused reasons: a
+ * bare `logRewriteVersion` bump with no drained reason means something local-only
+ * moved (a UI annotation, a resolved tool-call preview) which never reaches the
+ * provider, so reporting it as a cache change is a false positive that sends
+ * anyone debugging a low hit rate chasing the wrong thing.
+ */
 export function comparePrefixShapes(
   prev: PrefixShape | undefined,
   current: PrefixShape,
   cacheHit: number,
-  cacheMiss: number
+  cacheMiss: number,
+  rewriteReasons: readonly CacheChangeReason[] = []
 ): CacheDiagnostics {
   if (!prev) {
     return {
@@ -131,7 +149,7 @@ export function comparePrefixShapes(
     };
   }
   
-  const reasons: Array<"system" | "tools" | "log_rewrite"> = [];
+  const reasons: CacheChangeReason[] = [];
   
   if (prev.systemHash !== current.systemHash) {
     reasons.push("system");
@@ -141,8 +159,8 @@ export function comparePrefixShapes(
     reasons.push("tools");
   }
   
-  if (prev.logRewriteVersion !== current.logRewriteVersion) {
-    reasons.push("log_rewrite");
+  for (const reason of rewriteReasons) {
+    if (!reasons.includes(reason)) reasons.push(reason);
   }
   
   return {

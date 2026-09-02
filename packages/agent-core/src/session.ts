@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { computePrefixShape } from "./cache/prefix-tracker.js";
+import type { RunSummary } from "./loop.js";
 import {
   migrateSessionMeta,
   SESSION_SCHEMA_VERSION,
@@ -22,7 +23,9 @@ export type SessionLifecycleEvent =
   | { kind: "session-created"; cwd: string; model: string; agent: string }
   | { kind: "forked"; from: string; atSeq: number }
   | { kind: "title-set"; title: string }
-  | { kind: "compaction"; droppedMessages: number };
+  | { kind: "compaction"; droppedMessages: number }
+  /** End-of-run cost metrics; journaled so workloads can be scored from disk. */
+  | { kind: "run-summary"; summary: RunSummary };
 
 /** One replayable log event: seq counts non-meta records from 1. */
 export type SessionLogEvent =
@@ -33,6 +36,18 @@ type SessionRecord =
   | { type: "meta"; meta: SessionMetaRecord }
   | { type: "message"; message: AgentMessage }
   | { type: "lifecycle"; ts: string; event: SessionLifecycleEvent };
+
+/** Cached list() derivation for one session file, keyed on its fingerprint. */
+interface SessionIndexEntry {
+  /** `${mtimeMs}:${size}` — reuse the entry until the file changes. */
+  fingerprint: string;
+  meta: SessionMeta;
+}
+
+interface SessionIndexFile {
+  version: 1;
+  entries: Record<string, SessionIndexEntry>;
+}
 
 function newId(): string {
   return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -58,6 +73,32 @@ export class SessionStore {
 
   private file(id: string): string {
     return join(this.dir, `${id}.jsonl`);
+  }
+
+  private indexFilePath(): string {
+    return join(this.dir, "index.json");
+  }
+
+  private readIndex(): Record<string, SessionIndexEntry> {
+    try {
+      const parsed = JSON.parse(readFileSync(this.indexFilePath(), "utf8")) as SessionIndexFile;
+      if (parsed?.version === 1 && parsed.entries && typeof parsed.entries === "object") return parsed.entries;
+    } catch {
+      // missing or corrupt index: rebuild from the files themselves
+    }
+    return {};
+  }
+
+  private writeIndex(entries: Record<string, SessionIndexEntry>): void {
+    try {
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      writeFileSync(this.indexFilePath(), JSON.stringify({ version: 1, entries } satisfies SessionIndexFile), {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+    } catch {
+      // listing still works without a persisted index; it just re-parses next time
+    }
   }
 
   create(init: { cwd: string; model: string; agent: string }): SessionMeta {
@@ -185,7 +226,6 @@ export class SessionStore {
     }
     const messages: AgentMessage[] = [];
     let metaBase: SessionMetaRecord | null = null;
-    let metaLineRaw: unknown = null;
     let needsPersist = false;
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
@@ -196,7 +236,6 @@ export class SessionStore {
         continue;
       }
       if (record.type === "meta") {
-        metaLineRaw = record.meta;
         if (sessionNeedsMigration(record.meta)) {
           metaBase = migrateSessionMeta(record.meta);
           needsPersist = true;
@@ -207,18 +246,7 @@ export class SessionStore {
     }
     if (!metaBase) return null;
 
-    if (needsPersist || !metaBase.prefixHash) {
-      const systemMsg = messages.find((m) => m.role === "system");
-      const toolCount = Math.max(8, Math.min(16, 8 + messages.filter((m) => m.role === "tool").length));
-      const tools = Array.from({ length: toolCount }, (_, j) => ({
-        type: "function" as const,
-        function: { name: `tool_${j}`, description: "d", parameters: { type: "object", properties: {} } },
-      }));
-      const shape = computePrefixShape(systemMsg, tools, metaBase.cacheStats?.logRewriteVersion ?? 0, toolCount * 50);
-      if (!metaBase.prefixHash) metaBase.prefixHash = shape.prefixHash;
-      if (!metaBase.cacheStats) metaBase.cacheStats = buildCacheStats({ sessionCacheHit: 0, sessionCacheMiss: 0 }, shape);
-      needsPersist = true;
-    }
+    if (this.backfillMetaInPlace(metaBase, messages)) needsPersist = true;
 
     if (needsPersist) {
       try {
@@ -240,7 +268,6 @@ export class SessionStore {
         // load still succeeds even if persist fails
       }
     }
-    void metaLineRaw;
 
     let updatedAt = metaBase.createdAt;
     try {
@@ -256,7 +283,77 @@ export class SessionStore {
     };
   }
 
-  /** All sessions, newest first. */
+  /**
+   * Fill `prefixHash`/`cacheStats` in memory (the v2 backfill). Returns true
+   * when anything changed, so callers that own the file can schedule the
+   * rewrite — while listing callers can apply the same derivation read-only.
+   */
+  private backfillMetaInPlace(metaBase: SessionMetaRecord, messages: readonly AgentMessage[]): boolean {
+    return this.backfillMetaFromCounts(metaBase, messages.find((m) => m.role === "system"), messages.filter((m) => m.role === "tool").length);
+  }
+
+  private backfillMetaFromCounts(metaBase: SessionMetaRecord, systemMsg: AgentMessage | undefined, toolMessages: number): boolean {
+    if (metaBase.prefixHash && metaBase.cacheStats) return false;
+    const toolCount = Math.max(8, Math.min(16, 8 + toolMessages));
+    const tools = Array.from({ length: toolCount }, (_, j) => ({
+      type: "function" as const,
+      function: { name: `tool_${j}`, description: "d", parameters: { type: "object", properties: {} } },
+    }));
+    const shape = computePrefixShape(systemMsg, tools, metaBase.cacheStats?.logRewriteVersion ?? 0, toolCount * 50);
+    if (!metaBase.prefixHash) metaBase.prefixHash = shape.prefixHash;
+    if (!metaBase.cacheStats) metaBase.cacheStats = buildCacheStats({ sessionCacheHit: 0, sessionCacheMiss: 0 }, shape);
+    return true;
+  }
+
+  /**
+   * Derive the sidebar/listing fields from one session file WITHOUT rewriting
+   * it (no migration, no backfill persist): meta line + message count + first
+   * user message for the title. The full `load()` migration stays on the
+   * replay paths where the file is actually opened.
+   */
+  private summarize(id: string, mtimeMs: number): SessionMeta | null {
+    let raw: string;
+    try {
+      raw = readFileSync(this.file(id), "utf8");
+    } catch {
+      return null;
+    }
+    let messageCount = 0;
+    let toolMessages = 0;
+    let systemMsg: AgentMessage | undefined;
+    let firstUser: AgentMessage | undefined;
+    let metaBase: SessionMetaRecord | null = null;
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      let record: SessionRecord;
+      try {
+        record = JSON.parse(line) as SessionRecord;
+      } catch {
+        continue;
+      }
+      if (record.type === "meta") {
+        metaBase = migrateSessionMeta(record.meta);
+      } else if (record.type === "message") {
+        messageCount += 1;
+        if (record.message.role === "tool") toolMessages += 1;
+        else if (record.message.role === "system" && !systemMsg) systemMsg = record.message;
+        else if (record.message.role === "user" && !firstUser) firstUser = record.message;
+      }
+    }
+    if (!metaBase) return null;
+    // Same derivation load() would persist, applied in memory only.
+    this.backfillMetaFromCounts(metaBase, systemMsg, toolMessages);
+    const title = metaBase.title || (firstUser ? firstUser.content.replace(/\s+/g, " ").slice(0, 80) : "(empty session)");
+    return { ...metaBase, title, updatedAt: new Date(mtimeMs).toISOString(), messageCount };
+  }
+
+  /**
+   * All sessions, newest first. Each file is parsed once, fingerprinted by
+   * (mtime, size), and cached in `<dir>/index.json` — later listings reuse the
+   * cached entry unless the file changed, so a resume picker over hundreds of
+   * sessions costs a stat per file instead of a full parse each. The index is
+   * write-through: appends stay O(1) and the next list() heals any drift.
+   */
   list(): SessionMeta[] {
     let entries: string[];
     try {
@@ -264,11 +361,44 @@ export class SessionStore {
     } catch {
       return [];
     }
+    const index = this.readIndex();
+    const live = new Set<string>();
     const metas: SessionMeta[] = [];
+    let dirty = false;
     for (const entry of entries) {
-      const loaded = this.load(entry.replace(/\.jsonl$/, ""));
-      if (loaded) metas.push(loaded.meta);
+      const id = entry.replace(/\.jsonl$/, "");
+      live.add(id);
+      let mtimeMs: number;
+      let fingerprint: string;
+      try {
+        const st = statSync(this.file(id));
+        mtimeMs = st.mtimeMs;
+        fingerprint = `${st.mtimeMs}:${st.size}`;
+      } catch {
+        continue;
+      }
+      const cached = index[id];
+      if (cached && cached.fingerprint === fingerprint) {
+        metas.push(cached.meta);
+        continue;
+      }
+      const meta = this.summarize(id, mtimeMs);
+      if (meta) {
+        index[id] = { fingerprint, meta };
+        metas.push(meta);
+        dirty = true;
+      } else if (cached) {
+        delete index[id];
+        dirty = true;
+      }
     }
+    for (const id of Object.keys(index)) {
+      if (!live.has(id)) {
+        delete index[id];
+        dirty = true;
+      }
+    }
+    if (dirty) this.writeIndex(index);
     metas.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     return metas;
   }

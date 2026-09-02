@@ -53,7 +53,7 @@ function readImageFile(file: File): Promise<ComposerImage> {
   });
 }
 
-interface ComposerProps {
+export interface ComposerProps {
   value: string;
   models: ModelInfo[];
   selectedModel: string;

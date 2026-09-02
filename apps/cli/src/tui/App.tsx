@@ -26,6 +26,7 @@ import {
   type ToolRegistry,
 } from "@deyin/agent-core";
 import { listModels, type ModelInfo } from "@deyin/host-core";
+import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import { loginWithDevice } from "@deyin/oauth-client/node";
 import { join } from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -269,6 +270,14 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         case "compaction":
           notice(`Context compacted (${event.droppedMessages} messages dropped, ${event.truncatedToolResults} tool results truncated).`);
           break;
+        case "run-summary": {
+          const s = event.summary;
+          notice(
+            `Run: ${s.steps} steps, ${s.toolCalls} tool calls (${s.deniedCalls} denied, ${s.failedCalls} failed, ` +
+              `${s.duplicateResults} duplicates elided, ${s.loopGuardTrips} guard trips), cache hit rate ${(s.cacheHitRate * 100).toFixed(1)}%.`,
+          );
+          break;
+        }
         default:
           break;
       }
@@ -288,7 +297,6 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           content: buildSystemPrompt({
             cwd: ctx.cwd,
             agent,
-            toolNames: toolsRef.current.names(),
             contextFiles: contextFilesRef.current,
             skills: capsRef.current?.skills,
           }),
@@ -366,10 +374,31 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           thinking: ctx.config.thinking,
           maxSteps: agent.maxSteps ?? ctx.config.maxSteps,
           signal: controller.signal,
+          // The interactive TUI used to pass neither of these, so `provider`
+          // defaulted to "auto", no cache_control marker was ever emitted, and
+          // the whole prompt was re-read cold on every step. Desktop, web and
+          // headless all pass this block; parity matters most here, because a
+          // TUI session is the longest-lived transcript we have.
+          wire: {
+            enableCompression: true,
+            compressionMode: "balanced",
+            enablePromptCaching: true,
+            provider: resolveWireProvider({
+              providerId: "cli",
+              model,
+              cwd: ctx.cwd,
+              apiFormat: "chat-completions",
+            }),
+            model,
+          },
+          promptCacheKey: buildPromptCacheKeyFor({ providerId: "cli", model, cwd: ctx.cwd }),
         });
         const tokens = result.usage.totalTokens || estimateTokens(messagesRef.current.slice(before));
         ctx.usage.record({ model, tokens, newSession: newSessionRef.current });
         newSessionRef.current = false;
+        if (result.summary && sessionIdRef.current) {
+          ctx.sessions.appendEvent(sessionIdRef.current, { kind: "run-summary", summary: result.summary });
+        }
         if (result.reason === "max-steps") notice("Stopped: step limit reached. Send a message to continue.", "warn");
         if (result.reason === "aborted") notice("Cancelled.", "warn");
       } catch (err) {
@@ -438,13 +467,19 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         });
         const system = messagesRef.current[0];
         if (system && system.role === "system") {
-          system.content = buildSystemPrompt({
-            cwd: ctx.cwd,
-            agent,
-            toolNames: toolsRef.current.names(),
-            contextFiles: contextFilesRef.current,
-            skills: capsRef.current?.skills,
-          });
+          // Replace the object rather than mutating it: the token price memo is
+          // a WeakMap keyed on message identity, so an in-place content change
+          // leaves a stale price cached for the system prompt forever. This is
+          // the same reason `applyPrune` swaps objects instead of editing them.
+          messagesRef.current[0] = {
+            ...system,
+            content: buildSystemPrompt({
+              cwd: ctx.cwd,
+              agent,
+              contextFiles: contextFilesRef.current,
+              skills: capsRef.current?.skills,
+            }),
+          };
         }
         notice(`Agent set to ${value}.`);
       } else if (kind === "session") {

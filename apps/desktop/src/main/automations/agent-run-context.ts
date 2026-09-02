@@ -137,7 +137,6 @@ export async function buildAutomationEnvironment(
 export async function buildAutomationSystemPrompt(
   deps: AgentRunContextDeps,
   cwd: string,
-  registry: ToolRegistry,
 ): Promise<string> {
   const caps = await deps.capabilities.enabledForRun();
   const agent = BUILD_AGENT;
@@ -150,7 +149,6 @@ export async function buildAutomationSystemPrompt(
         agent.prompt +
         " You are running as an unattended automation in Deyin. Complete the task without asking the user questions.",
     },
-    toolNames: registry.names(),
     contextFiles,
     skills: caps.skills.length > 0 ? caps.skills : undefined,
   });

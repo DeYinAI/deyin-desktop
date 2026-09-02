@@ -1,7 +1,7 @@
-import { countTokens, estimateMessageTokens } from "./tokenizer.js";
+import { priceMessages } from "./context-measure.js";
+import { countTokens } from "./tokenizer.js";
 import { TASK_SUBAGENT_CATALOG_MARKER } from "./tools/task.js";
 import type { AgentMessage, WireTool } from "./types.js";
-import { buildWireMessages, type WireOptions } from "./wire.js";
 
 /** Category ids shown in the Context Usage popover (non-overlapping). */
 export type ContextCategoryId =
@@ -47,8 +47,21 @@ export interface EstimateContextOptions {
   /** Prefer these over parsing messages[0] for system/skills/rules. */
   systemSections?: SystemPromptSections;
   tools?: WireTool[];
-  /** When compression is enabled, include a wire savings line. */
-  wire?: WireOptions;
+  /**
+   * Pre-split tool-schema tokens. The split is a pure function of `tools`, which
+   * is constant while the tool surface is, so the caller computes it once per
+   * tool-list change instead of re-`JSON.stringify`ing ~70 schemas every step.
+   */
+  schemaSplit?: { tools: number; mcp: number; subagents: number };
+  /**
+   * Compression savings measured by the request that actually went out.
+   *
+   * This used to be produced by running `buildWireMessages` over the whole
+   * transcript a second time, purely to fill a UI line — an O(total chars) regex
+   * pass on the synchronous hot path, once per step, duplicating the pass the
+   * real request had already done. The caller reports its own numbers instead.
+   */
+  compression?: { originalTokens: number; compressedTokens: number };
   cached?: boolean;
 }
 
@@ -145,10 +158,14 @@ export function estimateContextUsage(opts: EstimateContextOptions): ContextSnaps
   const skillsTokens = countTokens(sections.skills);
   const rulesTokens = countTokens(sections.rules);
 
+  // priceMessage, not estimateMessageTokens: the former is memoised on message
+  // identity (a WeakMap in context-measure) and is the same estimator the
+  // compaction threshold uses, so the meter and the trigger now agree instead of
+  // reporting two different numbers for one transcript.
   const conversationMessages = opts.messages.filter((m) => m.role !== "system");
-  const conversationTokens = estimateMessageTokens(conversationMessages);
+  const conversationTokens = priceMessages(conversationMessages);
 
-  const split = splitToolSchemaTokens(opts.tools ?? []);
+  const split = opts.schemaSplit ?? splitToolSchemaTokens(opts.tools ?? []);
 
   const byId: Record<ContextCategoryId, number> = {
     system: systemTokens,
@@ -170,16 +187,9 @@ export function estimateContextUsage(opts: EstimateContextOptions): ContextSnaps
   const percent =
     contextLength > 0 ? Math.min(100, Math.round((usedTokens / contextLength) * 100)) : 0;
 
-  let wire: ContextSnapshot["wire"];
-  if (opts.wire?.enableCompression) {
-    const built = buildWireMessages(opts.messages, opts.wire);
-    if (built.compression) {
-      wire = {
-        originalTokens: built.compression.originalTokens,
-        compressedTokens: built.compression.compressedTokens,
-      };
-    }
-  }
+  const wire: ContextSnapshot["wire"] = opts.compression
+    ? { originalTokens: opts.compression.originalTokens, compressedTokens: opts.compression.compressedTokens }
+    : undefined;
 
   return {
     contextLength,

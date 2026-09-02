@@ -330,6 +330,14 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
     accept: "text/event-stream",
     "anthropic-version": opts.anthropicVersion ?? "2023-06-01",
   };
+  // The static system breakpoint asks for a 1-hour cache entry (see
+  // STATIC_CACHE_CONTROL in wire.ts). That TTL is gated behind a beta flag; sent
+  // without it, the `ttl` field is ignored and the entry silently degrades to
+  // five minutes — while still being billed at the 2x long-TTL write premium.
+  // Harmless on gateways that do not know the flag.
+  if (opts.wire?.enablePromptCaching !== false) {
+    headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11";
+  }
   // An empty token means a local provider (Ollama): send no credentials.
   if (opts.token) {
     if (opts.authHeader) headers.authorization = `Bearer ${opts.token}`;

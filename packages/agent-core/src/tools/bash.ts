@@ -73,25 +73,68 @@ export function effectiveShell(cwd?: string): string {
   return existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
 }
 
-/** Platform-specific tool description so the model emits the right shell syntax. */
+/**
+ * True when the resolved Windows shell is PowerShell 7+ (`pwsh`), which parses
+ * `&&` and `||`. Windows PowerShell 5.1 does NOT — telling the model to chain
+ * with `&&` there produces a parse error on every attempt, and the model then
+ * retries the same shape, which is a direct and entirely avoidable contributor
+ * to the tool-call count.
+ */
+function resolvedShellSupportsChaining(): boolean {
+  const shell = windowsPowerShell();
+  return /(^|[\\/])pwsh(\.exe)?$/i.test(shell);
+}
+
+/**
+ * Steer the model toward the cross-platform built-in tools instead of shell
+ * utilities. This matters most on Windows, where `grep`/`cat`/`ls`/`find`/`sed`
+ * are absent or behave differently — but it saves calls everywhere, because the
+ * dedicated tools return structured, bounded output.
+ */
+const BASH_TOOL_STEER =
+  " Use it for builds, tests, git, and package managers. To search, read, list, or edit files, prefer the" +
+  " dedicated tools (grep, read, ls, glob, edit) over shell grep/cat/ls/find/sed — they behave identically" +
+  " on every OS and their output is bounded. Working directory and environment persist across calls in the" +
+  " same chat. Interactive commands block until they finish or time out — prefer non-interactive flags.";
+
+/**
+ * Tool description matched to the shell that will actually run the command.
+ *
+ * Branching on `platform() === "win32"` alone is not enough: native Windows may
+ * resolve to pwsh 7 or to Windows PowerShell 5.1, and those disagree on the one
+ * piece of syntax the model reaches for most (`&&`). The description is stable
+ * for the life of the machine, so spelling out the real idioms costs nothing in
+ * cache terms and removes a whole class of guaranteed-failing calls.
+ */
 function bashToolDescription(): string {
-  if (platform() === "win32") {
+  if (platform() !== "win32") {
     return (
-      "Run a shell command in the workspace and return its combined output. On native Windows the " +
-      "command runs in PowerShell (use PowerShell/Windows syntax); when the project lives inside a " +
-      "WSL2 distro it runs in that distro's bash (use Unix syntax). Working directory and environment " +
-      "persist across calls in the same chat. Interactive commands block until they finish or time " +
-      "out — prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file " +
-      "operations. Combine related checks with && / ; in one call when order matters."
+      "Run a shell command in the workspace via a persistent bash session (when the host provides one) " +
+      "or a one-shot bash spawn otherwise, and return its combined output." +
+      BASH_TOOL_STEER +
+      " Combine related checks with && in one call when order matters, rather than spending a turn on each."
     );
   }
+
+  // The description is a module-level constant shared by every session, so the
+  // per-workspace WSL case cannot be resolved here — the Environment section of
+  // the system prompt names the actual shell via effectiveShell(cwd). Say so,
+  // rather than asserting PowerShell and being wrong inside a distro.
+  const pwsh7 = resolvedShellSupportsChaining();
+  const chaining = pwsh7
+    ? "'&&' and '||' chain conditionally; ';' runs both regardless."
+    : "'&&' and '||' are NOT parsed by this shell and are a syntax error. Use ';' to run both regardless, or 'if ($?) { ... }' to chain conditionally.";
   return (
-    "Run a shell command in the workspace via a persistent bash session (when the host provides " +
-    "one) or a one-shot bash spawn otherwise, and return its combined output. Use for builds, tests, " +
-    "git, package managers and anything else with a CLI. Working directory and environment persist " +
-    "across calls in the same chat. Interactive commands block until they finish or time out — " +
-    "prefer non-interactive flags. Prefer the read/write/edit/grep/glob tools for file operations. " +
-    "Combine related checks with && in one call when order matters."
+    `Run a shell command in the workspace and return its combined output. bash is NOT available here — ` +
+    `commands run under ${pwsh7 ? "PowerShell 7 (pwsh)" : "Windows PowerShell 5.1"}, so write PowerShell, not bash:\n` +
+    `  - chaining: ${chaining}\n` +
+    "  - redirection and variables: $null not /dev/null; $env:VAR not $VAR; '2>$null' discards stderr.\n" +
+    "  - file commands: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n" +
+    "  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n" +
+    "  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ with the closing '@ at column 0.\n" +
+    "If the Environment section of your instructions names a WSL distro as the shell, ignore all of the above " +
+    "and write ordinary bash with Unix paths." +
+    BASH_TOOL_STEER
   );
 }
 

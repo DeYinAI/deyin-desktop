@@ -158,3 +158,37 @@ test("appends after a crash-torn tail continue the log (append-only recovery)", 
   // The torn line is skipped; the well-formed record after it still replays.
   assert.ok(events.some((e) => e.type === "message" && e.message.content === "after crash"));
 });
+
+test("run-summary lifecycle record round-trips and forks without leaking into the transcript", () => {
+  const s = store();
+  const meta = s.create({ cwd: "/tmp", model: "GLM-5.2", agent: "build" });
+  s.append(meta.id, { role: "user", content: "hello" });
+  s.append(meta.id, { role: "assistant", content: "hi" });
+  const summary = {
+    steps: 3,
+    toolCalls: 2,
+    callsByTool: { read: 2 },
+    deniedCalls: 0,
+    failedCalls: 1,
+    duplicateResults: 1,
+    loopGuardTrips: 0,
+    compactionPasses: 0,
+    promptTokens: 1000,
+    cachedPromptTokens: 800,
+    cacheHitRate: 0.8,
+  };
+  s.appendEvent(meta.id, { kind: "run-summary", summary });
+  s.load(meta.id); // settle the one-time v2 meta upgrade before forking
+
+  const events = s.events(meta.id);
+  const rs = events.find((e) => e.type === "lifecycle" && e.event.kind === "run-summary");
+  assert.ok(rs, "run-summary replays as a lifecycle event");
+  assert.deepEqual(rs?.type === "lifecycle" && rs.event.kind === "run-summary" ? rs.event.summary : null, summary);
+  assert.equal(s.load(meta.id)?.messages.length, 2, "summary must not leak into the transcript");
+
+  const fork = s.fork(meta.id);
+  assert.ok(
+    s.events(fork!.id).some((e) => e.type === "lifecycle" && e.event.kind === "run-summary"),
+    "fork carries the run-summary record",
+  );
+});

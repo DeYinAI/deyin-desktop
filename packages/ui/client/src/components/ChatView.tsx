@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { themeByName, type CodeTheme } from "../code.js";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
@@ -160,10 +160,20 @@ export function ChatView(props: ChatViewProps) {
   const hasStreamOutput =
     (props.streamText?.length ?? 0) > 0 || (props.streamReasoning?.length ?? 0) > 0;
 
+  // Grouping walks the entire timeline, and ChatView re-renders for reasons that
+  // have nothing to do with the timeline — most of all every keystroke in the
+  // composer, whose `input` state lives in the root component. Memoising on the
+  // two inputs that actually determine the grouping keeps typing O(1) in the
+  // length of the conversation instead of O(n).
+  const groups = useMemo(
+    () => groupTimelineEvents(props.events, { compactAllActivity: hasStreamOutput }),
+    [props.events, hasStreamOutput],
+  );
+
   return (
     <div className="chat" ref={scrollRef} onScroll={syncPinFromScroll}>
       <div className="chat__timeline" ref={timelineRef}>
-        {groupTimelineEvents(props.events, { compactAllActivity: hasStreamOutput }).map((group, i) =>
+        {groups.map((group, i) =>
           group.kind === "activity" ? (
             <ActivityBlock
               key={i}

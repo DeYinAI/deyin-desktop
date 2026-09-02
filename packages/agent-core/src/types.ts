@@ -304,6 +304,12 @@ export interface ToolDefinition {
    * directory a bash call runs in.
    */
   meta?(args: Record<string, unknown>, ctx: ToolContext): { cwd?: string };
+  /**
+   * How to snip an oversized result: which end carries the information. Omit to
+   * take the default for this tool name (see `tool-result.ts`). Never reaches
+   * the provider — it is host policy, not part of the schema.
+   */
+  snipHint?: { headChars: number; tailChars: number };
   /** Returns the tool result text (fed back to the model as a role:"tool" message). */
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }

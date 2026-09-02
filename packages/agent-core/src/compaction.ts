@@ -2,7 +2,8 @@ import { completeChat } from "./stream.js";
 import { measureContext, priceMessage, priceMessages, type UsageAnchor } from "./context-measure.js";
 import { countTokens, truncateToTokens } from "./tokenizer.js";
 import type { ProviderApiFormat } from "./transports.js";
-import type { AgentMessage, AgentToolCall } from "./types.js";
+import type { AgentMessage, AgentToolCall, WireTool } from "./types.js";
+import type { WireOptions } from "./wire.js";
 
 /** Token-aware estimate; falls back gracefully for empty transcripts. */
 export function estimateTokens(messages: AgentMessage[]): number {
@@ -353,8 +354,14 @@ export function decideCompaction(input: CompactionPolicyInput): CompactionAction
 export const COMPACTION_SUMMARY_OPEN = "<compaction-summary>";
 export const COMPACTION_SUMMARY_CLOSE = "</compaction-summary>";
 
+/**
+ * Cap on the briefing itself. A summary that runs long defeats the point, and an
+ * uncapped fold can bill for a full-length completion.
+ */
+export const SUMMARY_OUTPUT_MAX_TOKENS = 8_192;
+
 const SUMMARY_INSTRUCTIONS = [
-  "You are compacting a coding session's history so the agent can continue in a fresh context window.",
+  "Compact the preceding conversation into a durable resume briefing, so the work can continue in a fresh context window.",
   "Write a dense briefing under exactly these headings, in this order. Keep every heading even if a section is empty (write 'None').",
   "",
   "## Goal",
@@ -371,6 +378,7 @@ const SUMMARY_INSTRUCTIONS = [
   "What remains, ending with the single most concrete next action.",
   "",
   "Be specific and dense. Plain text under the headings; no preamble, no sign-off.",
+  "Do not call any tools. Output only the briefing.",
 ].join("\n");
 
 export interface FoldResult {
@@ -382,6 +390,21 @@ export interface FoldResult {
 
 /**
  * Model-driven fold: replaces `region` with one structured briefing.
+ *
+ * **The request shape is the point.** The obvious implementation — a fresh
+ * system prompt, no tools, and just the region to summarise — shares no prefix
+ * with the ordinary request, so the provider re-reads the whole 30–60k-token
+ * region cold at full input price, on the blocking path, every single fold.
+ *
+ * Instead we replay the run's *real* prefix: the same system message, the same
+ * tool schemas, and `messages[0 .. region.end)` byte-for-byte, then append one
+ * instruction as the only new content. Everything before that instruction is a
+ * prefix the provider has already cached from the ordinary requests of this
+ * run, so the fold costs roughly a cache read plus the briefing's own output.
+ *
+ * The caller must therefore pass the run's own `tools`, `wire` and
+ * `promptCacheKey`, and must use the run's own model — a different model has a
+ * different cache, which is exactly what this is buying.
  *
  * Mutates `messages` in place (splice) because the loop and the desktop host
  * share that array identity, but the messages it removes are untouched objects
@@ -398,6 +421,12 @@ export async function foldRegion(opts: {
   apiFormat?: ProviderApiFormat;
   authHeader?: boolean;
   signal?: AbortSignal;
+  /** The run's tool schemas — sent so the cached prefix matches byte for byte. */
+  tools?: WireTool[];
+  /** The run's wire options. `previousMessageCount` is dropped by the caller. */
+  wire?: WireOptions;
+  /** The run's prompt cache key, so OpenAI-style routing lands on the same entry. */
+  promptCacheKey?: string;
 }): Promise<FoldResult> {
   const { messages, region } = opts;
   const slice = messages.slice(region.start, region.end);
@@ -411,10 +440,15 @@ export async function foldRegion(opts: {
     apiFormat: opts.apiFormat,
     authHeader: opts.authHeader,
     signal: opts.signal,
+    ...(opts.tools?.length ? { tools: opts.tools } : {}),
+    ...(opts.wire ? { wire: opts.wire } : {}),
+    ...(opts.promptCacheKey ? { promptCacheKey: opts.promptCacheKey } : {}),
+    maxTokens: SUMMARY_OUTPUT_MAX_TOKENS,
     messages: [
-      { role: "system", content: SUMMARY_INSTRUCTIONS },
-      ...slice,
-      { role: "user", content: `Produce the briefing for the conversation above.${focus}` },
+      // The real prefix, unmodified — this is what the provider has cached.
+      ...messages.slice(0, region.end),
+      // The only new content in the request.
+      { role: "user", content: `${SUMMARY_INSTRUCTIONS}${focus}` },
     ],
   });
 
@@ -423,13 +457,14 @@ export async function foldRegion(opts: {
 
   const before = priceMessages(slice);
   const replacement = summaryMessage(summary);
-  messages.splice(region.start, slice.length, replacement);
+  // A checkpoint must be strictly smaller than what it replaces. A summary that
+  // grew the transcript is worse than no fold at all — it costs a model call AND
+  // a prefix-cache reset to make the pressure problem worse.
+  const after = priceMessage(replacement);
+  if (after >= before) return { summary: "", droppedMessages: 0, reclaimedTokens: 0 };
 
-  return {
-    summary,
-    droppedMessages: slice.length,
-    reclaimedTokens: Math.max(0, before - priceMessage(replacement)),
-  };
+  messages.splice(region.start, slice.length, replacement);
+  return { summary, droppedMessages: slice.length, reclaimedTokens: before - after };
 }
 
 /** The surface node that stands in for a folded region. */
@@ -464,6 +499,10 @@ export async function compactWithModel(opts: {
   apiFormat?: ProviderApiFormat;
   authHeader?: boolean;
   signal?: AbortSignal;
+  /** Pass the session's tools/wire/cache key so a manual fold is cached too. */
+  tools?: WireTool[];
+  wire?: WireOptions;
+  promptCacheKey?: string;
 }): Promise<AgentMessage[]> {
   const messages = [...opts.messages];
   const region = selectRegion(messages, opts.tailTokens ?? MANUAL_TAIL_TOKENS);

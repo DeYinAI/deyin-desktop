@@ -11,7 +11,7 @@ import {
   subagentsRunCommand,
   subagentsTryCommand,
 } from "./commands/subagents.js";
-import { createContext } from "./context.js";
+import { createContext, flushCliStorage } from "./context.js";
 import { EXIT_ERROR, EXIT_INTERRUPT, runHeadless } from "./headless.js";
 import { errorLine, dim, red } from "./output.js";
 import { upgradeCommand } from "./upgrade.js";
@@ -54,6 +54,8 @@ async function headlessWithSigint(run: (signal: AbortSignal) => Promise<number>)
     process.off("SIGINT", onSigint);
   }
   process.exitCode = controller.signal.aborted ? EXIT_INTERRUPT : code;
+  // process.exit() skips beforeExit, so drain queued writes explicitly first.
+  await flushCliStorage();
   process.exit(process.exitCode);
 }
 

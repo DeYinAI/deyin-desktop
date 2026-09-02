@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { toWireMessages, toAnthropicMessages, toResponsesInput } from "../src/wire.js";
+import { buildWireMessages, toWireMessages, toAnthropicMessages, toResponsesInput } from "../src/wire.js";
 import type { AgentMessage } from "../src/types.js";
 
 test("passes system and user messages through", () => {
@@ -104,4 +104,68 @@ test("responses: user images become input_image items with data URLs", () => {
       ],
     },
   ]);
+});
+
+// ---------------------------------------------------------------------------
+// Rolling cache breakpoints
+// ---------------------------------------------------------------------------
+
+/** Does any block or the message itself carry a cache_control marker? */
+function isMarked(message: Record<string, unknown> | undefined): boolean {
+  if (!message) return false;
+  const content = message.content;
+  if (!Array.isArray(content)) return false;
+  return (content as Record<string, unknown>[]).some((b) => b.cache_control !== undefined);
+}
+
+const anthropicWire = { enablePromptCaching: true, provider: "anthropic" as const };
+
+test("a run ending on a tool-call-only turn still gets a rolling breakpoint", () => {
+  // Agent steps almost always end on a tool-call turn, whose content is null and
+  // so cannot carry a marker. Before the walk-back both rolling breakpoints were
+  // silently dropped in exactly this, the common, case.
+  const messages: AgentMessage[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "do the thing" },
+    { role: "tool", toolCallId: "c0", toolName: "read", content: "file contents" },
+    { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", arguments: "{}" }] },
+  ];
+  const { messages: wire } = buildWireMessages(messages, anthropicWire);
+
+  const tailTurn = wire[wire.length - 1]!;
+  assert.equal(tailTurn.content, null, "fixture should end on a tool-call-only turn");
+  assert.equal(isMarked(tailTurn), false, "a null-content turn must not be marked");
+  // The marker landed on the nearest message that can carry one.
+  assert.ok(
+    wire.slice(1).some((m) => isMarked(m as Record<string, unknown>)),
+    "no rolling breakpoint was placed anywhere in the conversation",
+  );
+});
+
+test("cache_control is never attached to a tool_calls entry", () => {
+  // Hanging it there would invent a wire shape gateways are entitled to reject.
+  const messages: AgentMessage[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "go" },
+    { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "read", arguments: "{}" }] },
+  ];
+  const { messages: wire } = buildWireMessages(messages, anthropicWire);
+  for (const m of wire) {
+    const calls = (m as Record<string, unknown>).tool_calls;
+    if (!Array.isArray(calls)) continue;
+    for (const call of calls as Record<string, unknown>[]) {
+      assert.equal(call.cache_control, undefined, "cache_control leaked onto a tool_calls entry");
+      assert.deepEqual(Object.keys(call).sort(), ["function", "id", "type"]);
+    }
+  }
+});
+
+test("the static system breakpoint is still placed on the leading system run", () => {
+  const messages: AgentMessage[] = [
+    { role: "system", content: "sys" },
+    { role: "user", content: "go" },
+    { role: "assistant", content: "done" },
+  ];
+  const { messages: wire } = buildWireMessages(messages, anthropicWire);
+  assert.ok(isMarked(wire[0] as Record<string, unknown>), "the system prompt lost its static breakpoint");
 });

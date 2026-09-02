@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCacheBenchmark } from "./cache-benchmark.js";
 import { runNativeBenchmark } from "./native-benchmark.js";
+import { runSummaryBenchmark } from "./summary-benchmark.js";
 import { runUiBenchmark } from "./ui-benchmark.js";
 
 export interface PerformanceReport {
@@ -16,6 +17,7 @@ export interface PerformanceReport {
     | ReturnType<typeof runCacheBenchmark>
     | ReturnType<typeof runUiBenchmark>
     | ReturnType<typeof runNativeBenchmark>
+    | Awaited<ReturnType<typeof runSummaryBenchmark>>
   >;
 }
 
@@ -23,8 +25,9 @@ export async function runAllBenchmarks(): Promise<PerformanceReport> {
   const cache = runCacheBenchmark();
   const ui = runUiBenchmark();
   const native = runNativeBenchmark();
+  const summary = await runSummaryBenchmark();
 
-  const benchmarks = [cache, ui, native];
+  const benchmarks = [cache, ui, native, summary];
   return {
     generatedAt: new Date().toISOString(),
     allPassed: benchmarks.every((b) => b.passed),
@@ -56,6 +59,8 @@ function formatMarkdown(report: PerformanceReport): string {
       for (const r of b.rows) {
         lines.push(`| Native | ${r.path} | ${r.speedup.toFixed(1)}x (identical=${r.identical}) | identical | ${r.identical ? "✅" : "❌"} |`);
       }
+    } else if (b.name === "summary-benchmark") {
+      lines.push(`| Summary | Deterministic scenario | ${b.rows.map((r) => `${r.metric}=${r.actual}`).join(", ")} | ${b.rows.map((r) => `${r.metric}=${r.expected}`).join(", ")} | ${b.passed ? "✅" : "❌"} |`);
     }
   }
 

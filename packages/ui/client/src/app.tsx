@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_SETTINGS,
   buildLinkedThreadContext,
@@ -29,9 +29,10 @@ import { McpAuthCard } from "./components/McpAuthCard.js";
 import { PromptDockSlot } from "./components/PromptDock.js";
 import { BrowserOverlay } from "./components/BrowserOverlay.js";
 import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
+import { ComposerDock, type ComposerHandle } from "./components/ComposerDock.js";
 import { ChatView } from "./components/ChatView.js";
-import { Composer, type ComposerImage } from "./components/Composer.js";
-import { ComposerPendingBars } from "./components/ComposerPendingBars.js";
+import { Sidebar } from "./components/Sidebar.js";
+import { DraftKeeper, type ComposerDraftState } from "./composer-draft.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
@@ -50,7 +51,6 @@ import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
 import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
-import { Sidebar } from "./components/Sidebar.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { ProjectMenu, type ProjectAction } from "./components/ProjectMenu.js";
 import { TopBar } from "./components/TopBar.js";
@@ -99,7 +99,6 @@ import type {
  ChatMode,
  ContextUsageSnapshot,
  ContextAttachment,
- LinkedThreadRef,
  PendingChange,
  DeyinSettings,
  EnvInfo,
@@ -122,6 +121,20 @@ import type {
 const PANEL_FRACTION_KEY = "deyin.panelWidthFraction.v2";
 const PANEL_DEFAULT_FRACTION = 0.5;
 const PANEL_MIN_PX = 320;
+
+/**
+ * Memo boundaries for the heavy leaves. During an agent run the root
+ * re-renders on every structural event (tool start/delta/end); these only need
+ * to re-render when their own props actually change, so the props below are
+ * all referentially stable (useCallback/useMemo) where they were inline.
+ */
+const MemoSidebar = memo(Sidebar);
+const MemoChatView = memo(ChatView);
+const MemoWorkspacePanel = memo(WorkspacePanel);
+/** Stable no-op for optional handlers disabled on chat-only hosts. */
+const noop = () => {};
+/** Stable fallback so `todos ?? EMPTY_TODOS` keeps one identity. */
+const EMPTY_TODOS: AgentTodoItem[] = [];
 /** Floor for the chat column: the chat measure (820px) plus its 40px of side
  *  padding, less the slack the composer can absorb before its row overflows. */
 const CHAT_MIN_PX = 560;
@@ -163,17 +176,6 @@ interface PendingPlanApproval {
   filePath?: string;
 }
 
-interface ComposerDraft {
-  input: string;
-  attachments: ContextAttachment[];
-  linked: LinkedThreadRef[];
-  images: ComposerImage[];
-}
-
-function emptyComposerDraft(): ComposerDraft {
-  return { input: "", attachments: [], linked: [], images: [] };
-}
-
 export function App() {
   const [boot, setBoot] = useState<Bootstrap | null>(null);
   const chatOnlyHosted = boot?.chatOnly ?? false;
@@ -194,11 +196,6 @@ export function App() {
   const [selectedProviderId, setSelectedProviderId] = useState<string>("openference");
   const [selectedModel, setSelectedModel] = useState<string>("GLM-5.2");
   const [composerMode, setComposerMode] = useState<ChatMode>("agent");
-  const [input, setInput] = useState("");
-  const [composerAttachments, setComposerAttachments] = useState<ContextAttachment[]>([]);
-  const [composerLinked, setComposerLinked] = useState<LinkedThreadRef[]>([]);
-  /** Images attached to the next message (vision); base64, platform-independent. */
-  const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
   const [pendingReview, setPendingReview] = useState<PendingChange[]>([]);
   const [securityReport, setSecurityReport] = useState<SecurityFindingsReport | null>(null);
   const [busy, setBusy] = useState(false);
@@ -221,14 +218,14 @@ export function App() {
   const [approvalsByThread, setApprovalsByThread] = useState<Record<string, PendingApproval[]>>({});
   const [mcpAuthByThread, setMcpAuthByThread] = useState<Record<string, PendingMcpAuth[]>>({});
   const [questionByThread, setQuestionByThread] = useState<Record<string, PendingQuestion[]>>({});
-  const draftByThreadRef = useRef<Record<string, ComposerDraft>>({});
-  const composerDraftRef = useRef<ComposerDraft>(emptyComposerDraft());
-  composerDraftRef.current = {
-    input,
-    attachments: composerAttachments,
-    linked: composerLinked,
-    images: composerImages,
-  };
+  /**
+   * Per-thread composer drafts. Owned here (not in the dock) so they survive
+   * view switches that unmount the composer; the dock restores on remount.
+   */
+  const draftKeeperRef = useRef(new DraftKeeper());
+  const draftKeeper = draftKeeperRef.current;
+  /** Imperative clear access into the dock's draft (post-send cleanup). */
+  const composerRef = useRef<ComposerHandle | null>(null);
   /**
    * Pending plan approvals, keyed by thread: a plan produced in one chat must
    * not replace (or pop over) a plan awaiting approval in another.
@@ -277,16 +274,6 @@ export function App() {
     queuedPromptByThreadRef.current = next;
     setQueuedPromptByThread(next);
   }, []);
-  const saveDraftForThread = useCallback((threadId: string) => {
-    draftByThreadRef.current = { ...draftByThreadRef.current, [threadId]: composerDraftRef.current };
-  }, []);
-  const restoreDraftForThread = useCallback((threadId: string | null) => {
-    const draft = threadId ? (draftByThreadRef.current[threadId] ?? emptyComposerDraft()) : emptyComposerDraft();
-    setInput(draft.input);
-    setComposerAttachments([...draft.attachments]);
-    setComposerLinked([...draft.linked]);
-    setComposerImages([...draft.images]);
-  }, []);
   const clearPendingForThread = useCallback((threadId: string) => {
     setApprovalsByThread((cur) => {
       if (!(threadId in cur)) return cur;
@@ -318,7 +305,7 @@ export function App() {
         sessionHit: number;
         sessionMiss: number;
         prefixChanged?: boolean;
-        changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+        changeReasons?: Array<"system" | "tools" | "prune" | "fold" | "overflow">;
       }
     >
   >({});
@@ -1452,12 +1439,10 @@ export function App() {
               : cur[0]!.id;
         return cur.map((p) => (p.id === target ? { ...p, threads: [thread, ...p.threads] } : p));
       });
-      if (activeThreadId) saveDraftForThread(activeThreadId);
       setActiveThreadId(thread.id);
-      restoreDraftForThread(thread.id);
       setView("workspace");
     })();
-  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, saveDraftForThread, restoreDraftForThread]);
+  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode]);
 
   const applyGoalToThread = useCallback(
     (thread: Thread, goal: string | null) => {
@@ -1508,11 +1493,10 @@ export function App() {
       }),
     );
     if (forkedId) {
-      if (activeThreadId) saveDraftForThread(activeThreadId);
       setActiveThreadId(forkedId);
       setView("workspace");
     }
-  }, [activeThreadId, saveDraftForThread]);
+  }, [activeThreadId]);
 
   /** Apply composer model selection to local state, settings default, and the active thread. */
   const applyComposerModel = useCallback(
@@ -1545,14 +1529,13 @@ export function App() {
   /** Focus a thread, following it into its own project when that differs. */
   const selectThread = useCallback(
     (threadId: string, projectId?: string) => {
-      if (activeThreadId && activeThreadId !== threadId) saveDraftForThread(activeThreadId);
       const owner = projectId ?? projects.find((p) => p.threads.some((t) => t.id === threadId))?.id;
       if (owner && owner !== activeProjectId) void selectProject(owner);
       setActiveThreadId(threadId);
       updateThread(threadId, { unread: false });
       setView("workspace");
     },
-    [projects, activeProjectId, activeThreadId, selectProject, updateThread, saveDraftForThread],
+    [projects, activeProjectId, selectProject, updateThread],
   );
 
   const threadHistory = useThreadHistory(activeThreadId, allThreadIds, selectThread);
@@ -1740,15 +1723,13 @@ export function App() {
 
   useEffect(() => {
     if (!activeThreadId) {
-      restoreDraftForThread(null);
       setPendingReview([]);
       setSecurityReport(null);
       return;
     }
-    restoreDraftForThread(activeThreadId);
     void window.deyin.review?.list(activeThreadId).then(setPendingReview);
     void window.deyin.security.listFindings(activeThreadId).then(setSecurityReport);
-  }, [activeThreadId, restoreDraftForThread]);
+  }, [activeThreadId]);
 
   useEffect(() => {
     if (!activeThreadId) return;
@@ -1946,8 +1927,7 @@ const continueFromStepLimit = useCallback(() => {
     return newThread;
   }, [activeProjectId, composerMode, selectedModel, selectedProviderId]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (text: string, draft: ComposerDraftState) => {
     if (!text || !boot) return;
 
     // /goal is a client-side command: set (or clear, when no text follows) the
@@ -1962,7 +1942,7 @@ const continueFromStepLimit = useCallback(() => {
         providerId: selectedProviderId,
       } satisfies Thread);
     if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
-      setInput("");
+      composerRef.current?.clearInput();
       return;
     }
 
@@ -1980,7 +1960,7 @@ const continueFromStepLimit = useCallback(() => {
       })
     ) {
       setQueuedForThread(thread.id, text);
-      setInput("");
+      composerRef.current?.clearInput();
       return;
     }
     updateThread(thread.id, { model: runModelId, providerId: runProviderId });
@@ -2059,15 +2039,15 @@ const continueFromStepLimit = useCallback(() => {
     // inline-image directive.
     const autoImageGen = settings?.autoImageGeneration ?? true;
     const imageIntent =
-      !isImageRun && autoImageGen && composerImages.length === 0 ? detectImageGenerationIntent(text) : null;
+      !isImageRun && autoImageGen && draft.images.length === 0 ? detectImageGenerationIntent(text) : null;
     const autoImageModel = imageIntent ? pickImageModelForGeneration(modelList) : undefined;
     const directImageModelId = isImageRun ? runModelId : autoImageModel?.id;
     const directImagePrompt = isImageRun ? text : imageIntent?.prompt;
 
     if (directImageModelId && directImagePrompt) {
       appendEvents(thread.id, [{ kind: "user", text }]);
-      setInput("");
-      setComposerImages([]);
+      composerRef.current?.clearInput();
+      composerRef.current?.clearImages();
       setPlainStreamForThread(thread.id, `Generating image with ${directImageModelId}…`);
       try {
         const imageParams = resolveImageModelParams(directImageModelId, savedImageParams);
@@ -2103,7 +2083,7 @@ const continueFromStepLimit = useCallback(() => {
     // Agent runtime (default): run the tool-calling loop in the host process in
     // the selected composer mode; falls back to the plain text stream when
     // switched off. Images require the agent runtime (vision content parts).
-    const images: AgentImageInput[] = composerImages.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
+    const images: AgentImageInput[] = draft.images.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
     if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent && !chatOnlyHosted) {
       // Vision: attach images to the run as-is — capability metadata is a hint,
       // not a gate. A provider that can't take images returns its own error,
@@ -2121,19 +2101,16 @@ const continueFromStepLimit = useCallback(() => {
           visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
         }
       }
-      setInput("");
+      composerRef.current?.clearComposerState();
       const sendMeta = {
-        attachments: [...composerAttachments],
-        linkedThreadIds: composerLinked.map((l) => l.threadId),
+        attachments: [...draft.attachments],
+        linkedThreadIds: draft.linked.map((l) => l.threadId),
         images,
         imageModels,
         imageChatModels,
         model: runModel,
         notice: visionNotice,
       };
-      setComposerAttachments([]);
-      setComposerLinked([]);
-      setComposerImages([]);
       void startAgentRun(thread, text, composerMode, sendMeta);
       return;
     }
@@ -2146,7 +2123,7 @@ const continueFromStepLimit = useCallback(() => {
     }
 
     appendEvents(thread.id, [{ kind: "user", text }]);
-    setInput("");
+    composerRef.current?.clearInput();
     setPlainStreamForThread(thread.id, "");
 
     // Inactivity watchdog: a stalled SSE stream must not wedge the composer
@@ -2200,34 +2177,33 @@ const continueFromStepLimit = useCallback(() => {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [input, streamText, runningThreadId, activeThread, boot, models, providers, settings, composerMode, composerAttachments, composerLinked, composerImages, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
+  }, [activeThread, boot, models, providers, settings, composerMode, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
-  const sendNow = useCallback(() => {
-    const fromInput = input.trim();
-    const text = fromInput || queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim() || "";
-    if (!text) return;
+  const sendNow = useCallback(
+    (text: string, fromInput: boolean) => {
+      if (!text) return;
 
-    const draftThread =
-      activeThread ??
-      ({
-        ...emptyThread(),
-        mode: composerMode,
-        model: selectedModel,
-        providerId: selectedProviderId,
-      } satisfies Thread);
+      const draftThread =
+        activeThread ??
+        ({
+          ...emptyThread(),
+          mode: composerMode,
+          model: selectedModel,
+          providerId: selectedProviderId,
+        } satisfies Thread);
 
-    // /goal never reaches the model — apply it without interrupting the run.
-    if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
-      if (fromInput) setInput("");
-      else setQueuedForThread(draftThread.id, null);
-      return;
-    }
+      // /goal never reaches the model — apply it without interrupting the run.
+      if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
+        if (fromInput) composerRef.current?.clearInput();
+        else setQueuedForThread(draftThread.id, null);
+        return;
+      }
 
-    if (!activeThread) return;
+      if (!activeThread) return;
 
-    setInput("");
-    setQueuedForThread(activeThread.id, null);
+      composerRef.current?.clearInput();
+      setQueuedForThread(activeThread.id, null);
 
     const runActive =
       agentStateStore.isRunning(activeThread.id) || plainStreamFor(activeThread.id) !== null;
@@ -2243,7 +2219,7 @@ const continueFromStepLimit = useCallback(() => {
       [activeThread.id]: { text, mode: composerMode },
     };
     stopRun();
-  }, [input, activeThread, streamText, settings, boot, composerMode, selectedModel, selectedProviderId, savedImageParams, startAgentRun, stopRun, setQueuedForThread, plainStreamFor]);
+  }, [activeThread, settings, boot, composerMode, selectedModel, selectedProviderId, startAgentRun, stopRun, setQueuedForThread, plainStreamFor]);
 
   const clearQueue = useCallback(() => {
     if (activeThreadId) setQueuedForThread(activeThreadId, null);
@@ -2254,11 +2230,10 @@ const continueFromStepLimit = useCallback(() => {
     const text = queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim();
     if (!text || !activeThread) return;
     setQueuedForThread(activeThread.id, null);
-    saveDraftForThread(activeThread.id);
     const newThread = ensureThread();
     if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(newThread, goal))) return;
     void startAgentRun(newThread, text, composerMode);
-  }, [activeThread, composerMode, ensureThread, setQueuedForThread, startAgentRun, saveDraftForThread]);
+  }, [activeThread, composerMode, ensureThread, setQueuedForThread, startAgentRun]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -2275,10 +2250,18 @@ const continueFromStepLimit = useCallback(() => {
     (workspaceRoot ? workspaceRoot.split(/[\\/]/).pop() ?? (chatOnlyHosted ? "Chat" : "Workspace") : chatOnlyHosted ? "Chat" : "No workspace");
 
   // Same inputs ChatView uses for its empty branch — drives the centered
-  // new-chat layout (logo hero + repo chip + composer).
-  const chatEvents = [...(activeThread?.events ?? []), ...(agentRunState?.runEvents ?? [])];
+  // new-chat layout (logo hero + repo chip + composer). Memoized: a fresh
+  // array here would defeat both ChatView's groups memo and its React.memo
+  // boundary on every unrelated root re-render.
+  const chatEvents = useMemo(
+    () => [...(activeThread?.events ?? []), ...(agentRunState?.runEvents ?? [])],
+    [activeThread, agentRunState],
+  );
   // Subagent runs in this thread, oldest first — the Agent panel's source list.
-  const subagentRuns = chatEvents.filter((e): e is Extract<typeof e, { kind: "subagent" }> => e.kind === "subagent");
+  const subagentRuns = useMemo(
+    () => chatEvents.filter((e): e is Extract<typeof e, { kind: "subagent" }> => e.kind === "subagent"),
+    [chatEvents],
+  );
   const chatStreamText = resolveChatStreamText({
     activeThreadId,
     agentStreamText: agentRunState?.streamText ?? null,
@@ -2288,6 +2271,130 @@ const continueFromStepLimit = useCallback(() => {
   const isChatEmpty = chatEvents.length === 0 && chatStreamText === null;
 
   const language = settings?.language ?? "en";
+
+  // Referentially stable props for the memoized leaves below: inline arrows
+  // and object literals would defeat the memo boundaries on every root render.
+  const chatCodeDisplay = useMemo(
+    () => ({
+      themeLight: settings?.codeThemeLight ?? "GitHub Light",
+      themeDark: settings?.codeThemeDark ?? "GitHub Dark",
+      variant: themeVariant,
+      fontSize: settings?.codeFontSize ?? 12,
+      showLineNumbers: settings?.showLineNumbers ?? true,
+      wrapLongLines: settings?.wrapLongLines ?? false,
+    }),
+    [settings?.codeThemeLight, settings?.codeThemeDark, themeVariant, settings?.codeFontSize, settings?.showLineNumbers, settings?.wrapLongLines],
+  );
+  const panelCodeDisplay = useMemo(
+    () => ({
+      showLineNumbers: settings?.showLineNumbers ?? true,
+      wrapLongLines: settings?.wrapLongLines ?? false,
+      codeFontSize: settings?.codeFontSize ?? 12,
+      themeLight: settings?.codeThemeLight ?? "GitHub Light",
+      themeDark: settings?.codeThemeDark ?? "GitHub Dark",
+      variant: themeVariant,
+    }),
+    [settings?.showLineNumbers, settings?.wrapLongLines, settings?.codeFontSize, settings?.codeThemeLight, settings?.codeThemeDark, themeVariant],
+  );
+  const threadTitles = useMemo(
+    () => Object.fromEntries((activeProject?.threads ?? []).map((t) => [t.id, t.title])),
+    [activeProject?.threads],
+  );
+  const openPlanPanel = useCallback(() => openPanelTab("plan"), [openPanelTab]);
+  const openPreviewPanel = useCallback(() => openPanelTab("preview"), [openPanelTab]);
+  const openSubagentPanel = useCallback(
+    (id: string) => {
+      setActiveSubagentId(id);
+      openPanelTab("agent");
+    },
+    [openPanelTab],
+  );
+  const forkAtEvent = useCallback(
+    (eventIndex: number) => {
+      if (activeThreadId) forkThreadAtEvent(activeThreadId, eventIndex);
+    },
+    [activeThreadId, forkThreadAtEvent],
+  );
+  const messageFeedback = useCallback(
+    (eventIndex: number, rating: "up" | "down") => {
+      if (!activeThreadId) return;
+      window.deyin.telemetry.record("message-feedback", {
+        rating,
+        threadId: activeThreadId,
+        eventIndex,
+      });
+    },
+    [activeThreadId],
+  );
+  const hasAgentTerminal = agentTerminals.some((t) => t.threadId === activeThreadId);
+  const openAgentTerminal = useCallback(() => openPanelTab("terminal"), [openPanelTab]);
+  const panelPlanTodos = activeThread?.todos ?? EMPTY_TODOS;
+
+  // Stable Sidebar handlers (memo boundary).
+  const sidebarCollapse = useCallback(() => setSidebarOpen(false), []);
+  const sidebarNewProject = useCallback(() => void addProjectFolder(), [addProjectFolder]);
+  const sidebarSelectProject = useCallback(
+    (projectId: string) => {
+      void selectProject(projectId);
+      setView("workspace");
+    },
+    [selectProject],
+  );
+  const sidebarSelectThread = useCallback((pid: string, tid: string) => selectThread(tid, pid), [selectThread]);
+  const sidebarOpenSearch = useCallback(() => setSearchOpen(true), []);
+  const sidebarThreadContext = useCallback(
+    (threadId: string, x: number, y: number) => setThreadMenu({ threadId, x, y }),
+    [],
+  );
+  const sidebarProjectContext = useCallback(
+    (projectId: string, x: number, y: number) => setProjectMenu({ projectId, x, y }),
+    [],
+  );
+  const sidebarRenameSubmit = useCallback(
+    (threadId: string, title: string) => {
+      updateThread(threadId, { title });
+      setRenamingThreadId(null);
+    },
+    [updateThread],
+  );
+  const sidebarOpenUsage = useCallback(() => {
+    setSettingsPage("data");
+    setView("settings");
+  }, []);
+  const sidebarOpenPlans = useCallback(() => setView("upgrade"), []);
+  const sidebarOpenSettings = useCallback(() => {
+    // The gear always lands on General; deep links (Manage models,
+    // browser settings) set their page right before switching views.
+    setSettingsPage("general");
+    setView("settings");
+    window.deyin.telemetry?.record("settings-opened");
+  }, []);
+  const sidebarOpenAutomations = useCallback(() => setView("automations"), []);
+  const sidebarOpenCustomize = useCallback(() => {
+    setSettingsPage("appearance");
+    setView("settings");
+  }, []);
+
+  // Stable WorkspacePanel handlers/objects (memo boundary).
+  const openGitDiff = useCallback(
+    (d: Parameters<typeof setDiffForThread>[1]) => {
+      if (activeThreadId) setDiffForThread(activeThreadId, d);
+      openPanelTab("diff");
+    },
+    [activeThreadId, openPanelTab, setDiffForThread],
+  );
+  const openFolder = useCallback(() => void addProjectFolder(), [addProjectFolder]);
+  const openBrowserSettings = useCallback(() => {
+    setSettingsPage("workspace");
+    setView("settings");
+  }, []);
+  const terminalAttachSessions = useMemo(
+    () =>
+      agentTerminals
+        .filter((t) => t.threadId === activeThreadId)
+        .map((t) => ({ id: t.id, label: t.label })),
+    [agentTerminals, activeThreadId],
+  );
 
   // Signed-out users see Welcome first. Desktop can skip via API-key path
   // (settings.welcomeDismissed). Hosted chat-only web always requires sign-in.
@@ -2434,7 +2541,7 @@ const continueFromStepLimit = useCallback(() => {
           />
         )}
         {sidebarOpen && (
-        <Sidebar
+        <MemoSidebar
           platform={boot?.platform ?? "desktop"}
           activeView={view}
           projects={projects}
@@ -2449,41 +2556,23 @@ const continueFromStepLimit = useCallback(() => {
           canForward={threadHistory.canForward}
           onBack={threadHistory.back}
           onForward={threadHistory.forward}
-          onCollapse={() => setSidebarOpen(false)}
+          onCollapse={sidebarCollapse}
           onNewTask={newTask}
-          onNewProject={() => void addProjectFolder()}
-          onSelectProject={(projectId) => {
-            void selectProject(projectId);
-            setView("workspace");
-          }}
-          onSelectThread={(pid, tid) => selectThread(tid, pid)}
-          onOpenSearch={() => setSearchOpen(true)}
-          onThreadContext={(threadId, x, y) => setThreadMenu({ threadId, x, y })}
-          onProjectContext={(projectId, x, y) => setProjectMenu({ projectId, x, y })}
-          onRenameSubmit={(threadId, title) => {
-            updateThread(threadId, { title });
-            setRenamingThreadId(null);
-          }}
+          onNewProject={sidebarNewProject}
+          onSelectProject={sidebarSelectProject}
+          onSelectThread={sidebarSelectThread}
+          onOpenSearch={sidebarOpenSearch}
+          onThreadContext={sidebarThreadContext}
+          onProjectContext={sidebarProjectContext}
+          onRenameSubmit={sidebarRenameSubmit}
           onConnect={connect}
           onLogout={logout}
           onChangeSettings={patchSettings}
-          onOpenUsage={() => {
-            setSettingsPage("data");
-            setView("settings");
-          }}
-          onOpenPlans={() => setView("upgrade")}
-          onOpenSettings={() => {
-            // The gear always lands on General; deep links (Manage models,
-            // browser settings) set their page right before switching views.
-            setSettingsPage("general");
-            setView("settings");
-            window.deyin.telemetry?.record("settings-opened");
-          }}
-          onOpenAutomations={() => setView("automations")}
-          onOpenCustomize={() => {
-            setSettingsPage("appearance");
-            setView("settings");
-          }}
+          onOpenUsage={sidebarOpenUsage}
+          onOpenPlans={sidebarOpenPlans}
+          onOpenSettings={sidebarOpenSettings}
+          onOpenAutomations={sidebarOpenAutomations}
+          onOpenCustomize={sidebarOpenCustomize}
           pendingByThread={pendingByThread}
         />
         )}
@@ -2526,64 +2615,35 @@ const continueFromStepLimit = useCallback(() => {
                 )}
               </div>
 
-              <ChatView
+              <MemoChatView
                 events={chatEvents}
                 streamText={chatStreamText}
                 streamReasoning={chatOnlyHosted ? null : (agentRunState?.streamReasoning ?? null)}
                 greetingName={greetingName}
                 threadKey={activeThreadId}
-                codeDisplay={{
-                  themeLight: settings?.codeThemeLight ?? "GitHub Light",
-                  themeDark: settings?.codeThemeDark ?? "GitHub Dark",
-                  variant: themeVariant,
-                  fontSize: settings?.codeFontSize ?? 12,
-                  showLineNumbers: settings?.showLineNumbers ?? true,
-                  wrapLongLines: settings?.wrapLongLines ?? false,
-                }}
-                onOpenFile={chatOnlyHosted ? () => {} : openFileDiff}
+                codeDisplay={chatCodeDisplay}
+                onOpenFile={chatOnlyHosted ? noop : openFileDiff}
                 onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
                 workspaceRoot={workspaceRoot}
-                onUndo={chatOnlyHosted ? () => {} : undoFileChange}
+                onUndo={chatOnlyHosted ? noop : undoFileChange}
                 onBuild={chatOnlyHosted ? undefined : buildFromPlan}
                 canBuildPlan={chatOnlyHosted ? false : planCardBuildable}
                 planMarkdown={chatOnlyHosted ? null : (activeThread?.planMarkdown ?? null)}
-                onOpenPlan={
-                  chatOnlyHosted
-                    ? undefined
-                    : () => {
-                        openPanelTab("plan");
-                      }
-                }
-                onOpenPreview={() => openPanelTab("preview")}
+                onOpenPlan={chatOnlyHosted ? undefined : openPlanPanel}
+                onOpenPreview={openPreviewPanel}
                 planArtifact={chatOnlyHosted ? null : planArtifact}
-                onOpenSubagent={
-                  chatOnlyHosted
-                    ? undefined
-                    : (id) => {
-                        setActiveSubagentId(id);
-                        openPanelTab("agent");
-                      }
-                }
+                onOpenSubagent={chatOnlyHosted ? undefined : openSubagentPanel}
                 onContinue={chatOnlyHosted ? undefined : continueFromStepLimit}
-                onForkAtEvent={(eventIndex) => {
-                  if (activeThreadId) forkThreadAtEvent(activeThreadId, eventIndex);
-                }}
-                onMessageFeedback={(eventIndex, rating) => {
-                  if (!activeThreadId) return;
-                  window.deyin.telemetry.record("message-feedback", {
-                    rating,
-                    threadId: activeThreadId,
-                    eventIndex,
-                  });
-                }}
+                onForkAtEvent={forkAtEvent}
+                onMessageFeedback={messageFeedback}
                 onOpenAgentTerminal={
                   chatOnlyHosted
                     ? undefined
-                    : agentTerminals.some((t) => t.threadId === activeThreadId)
-                      ? () => openPanelTab("terminal")
+                    : hasAgentTerminal
+                      ? openAgentTerminal
                       : undefined
                 }
-                threadTitles={Object.fromEntries((activeProject?.threads ?? []).map((t) => [t.id, t.title]))}
+                threadTitles={threadTitles}
               />
 
               {!chatOnlyHosted && (activeThread?.todos?.length ?? 0) > 0 && (
@@ -2705,46 +2765,19 @@ const continueFromStepLimit = useCallback(() => {
                 )}
                   </>
                 )}
-                {!chatOnlyHosted && (
- <>
- <ComposerPendingBars
- queued={chatOnlyHosted ? null : activeQueuedPrompt}
- steer={chatOnlyHosted || !activeThreadStreaming ? null : input}
- onSendNow={chatOnlyHosted ? undefined : sendNow}
- onStartMultitasking={chatOnlyHosted ? undefined : startMultitasking}
- onClearQueue={chatOnlyHosted ? undefined : clearQueue}
- onSteer={chatOnlyHosted ? undefined : () => void send()}
- onDismissSteer={() => setInput("")}
- />
-                <WorkspaceBar
-                  platform={boot?.platform === "web" ? "web" : "desktop"}
-                  projects={projects}
-                  activeProjectId={activeProjectId}
-                  projectName={projectName}
-                  workspaceRoot={workspaceRoot}
-                  homeDir={boot?.homeDir ?? null}
-                  onSelectProject={(projectId) => void selectProject(projectId)}
-                  onPickFolder={(startIn) => void addProjectFolder(startIn)}
-                  wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
-                  onOpenSshHosts={
-                    boot?.platform === "desktop"
-                      ? () => {
-                          setSettingsPage("sshHosts");
-                          setView("settings");
-                        }
-                      : undefined
-                  }
-                  onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
-                  onOpenSourceControl={() => {
-                    openPanelTab("git");
-                  }}
-                />
- </>
-                )}
-                <Composer
+                <ComposerDock
+                  ref={composerRef}
+                  threadId={activeThreadId}
+                  keeper={draftKeeper}
+                  chatOnly={chatOnlyHosted}
+                  steerActive={activeThreadStreaming}
+                  queued={activeQueuedPrompt}
+                  onSend={send}
+                  onSendNow={sendNow}
+                  onStartMultitasking={startMultitasking}
+                  onClearQueue={clearQueue}
                   plainChat={chatOnlyHosted}
                   focusSignal={composerFocus}
-                  value={input}
                   models={models}
                   selectedModel={selectedModel}
                   approvalMode={settings?.approvalMode ?? "full-access"}
@@ -2759,15 +2792,11 @@ const continueFromStepLimit = useCallback(() => {
                   thinking={settings?.thinking ?? true}
                   thinkingDefault={settings?.thinking ?? true}
                   modelEfforts={settings?.modelEfforts}
-                  canSend={input.trim().length > 0}
                   streaming={activeThreadStreaming}
                   runStatus={chatOnlyHosted ? null : agentRunState?.running ? agentRunState.status ?? null : null}
                   hasEvents={(activeThread?.events.length ?? 0) > 0}
                   providers={providers}
                   selectedProviderId={selectedProviderId}
-                  onChange={setInput}
-                  onSend={() => void send()}
-                  onSendNow={chatOnlyHosted ? undefined : sendNow}
                   onStop={showGlobalStop ? stopRun : undefined}
                   onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
                   onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
@@ -2815,12 +2844,6 @@ const continueFromStepLimit = useCallback(() => {
                   contextLength={selectedContextLength}
                   threadKey={activeThreadId}
                   compactionNotice={chatOnlyHosted ? null : activeCompactionNotice}
-                  attachments={chatOnlyHosted ? [] : composerAttachments}
-                  onAttachmentsChange={chatOnlyHosted ? undefined : setComposerAttachments}
-                  images={chatOnlyHosted ? [] : composerImages}
-                  onImagesChange={chatOnlyHosted ? undefined : setComposerImages}
-                  linkedThreads={chatOnlyHosted ? [] : composerLinked}
-                  onLinkedThreadsChange={chatOnlyHosted ? undefined : setComposerLinked}
                   threadsForPicker={activeProject?.threads}
                   activeThreadId={activeThreadId}
                   workspaceRoot={workspaceRoot}
@@ -2846,7 +2869,31 @@ const continueFromStepLimit = useCallback(() => {
                           applyGoalToThreadRef.current(thread, text);
                         }
                   }
-                />
+                >
+                  <WorkspaceBar
+                    platform={boot?.platform === "web" ? "web" : "desktop"}
+                    projects={projects}
+                    activeProjectId={activeProjectId}
+                    projectName={projectName}
+                    workspaceRoot={workspaceRoot}
+                    homeDir={boot?.homeDir ?? null}
+                    onSelectProject={(projectId) => void selectProject(projectId)}
+                    onPickFolder={(startIn) => void addProjectFolder(startIn)}
+                    wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
+                    onOpenSshHosts={
+                      boot?.platform === "desktop"
+                        ? () => {
+                            setSettingsPage("sshHosts");
+                            setView("settings");
+                          }
+                        : undefined
+                    }
+                    onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+                    onOpenSourceControl={() => {
+                      openPanelTab("git");
+                    }}
+                  />
+                </ComposerDock>
               </div>
             </main>
 
@@ -2882,7 +2929,7 @@ const continueFromStepLimit = useCallback(() => {
                   onDismiss={dismissPanel}
                 />
                 {panelOpen && (
-              <WorkspacePanel
+              <MemoWorkspacePanel
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
                 workspaceRoot={workspaceRoot}
@@ -2893,32 +2940,19 @@ const continueFromStepLimit = useCallback(() => {
                 }
                 pageTitle={activeThread?.pageTitle}
                 pageFileName={activeThread?.pageFileName}
-                planTodos={activeThread?.todos ?? []}
+                planTodos={panelPlanTodos}
                 planTodosRunning={agentRunState?.running ?? false}
                 canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && !activeComposerBusy && !(agentRunState?.running ?? false)}
                 diff={activeDiff}
                 browserUrl={browserUrl}
                 browserPartition={browserPartition}
-                codeDisplay={{
-                  showLineNumbers: settings?.showLineNumbers ?? true,
-                  wrapLongLines: settings?.wrapLongLines ?? false,
-                  codeFontSize: settings?.codeFontSize ?? 12,
-                  themeLight: settings?.codeThemeLight ?? "GitHub Light",
-                  themeDark: settings?.codeThemeDark ?? "GitHub Dark",
-                  variant: themeVariant,
-                }}
+                codeDisplay={panelCodeDisplay}
                 browserControlEnabled={settings?.browserControlEnabled ?? true}
-                onOpenGitDiff={(d) => {
-                  if (activeThreadId) setDiffForThread(activeThreadId, d);
-                  openPanelTab("diff");
-                }}
+                onOpenGitDiff={openGitDiff}
                 onNavigate={setBrowserUrl}
                 onCollapse={collapsePanel}
-                onOpenFolder={() => void addProjectFolder()}
-                onOpenBrowserSettings={() => {
-                  setSettingsPage("workspace");
-                  setView("settings");
-                }}
+                onOpenFolder={openFolder}
+                onOpenBrowserSettings={openBrowserSettings}
                 onBuildPlan={buildFromPlan}
                 onPlanTodosChange={updatePlanTodos}
                 pendingReview={pendingReview}
@@ -2937,9 +2971,7 @@ const continueFromStepLimit = useCallback(() => {
                 terminalCursorStyle={settings?.terminalCursorStyle ?? "bar"}
                 terminalCopyOnSelect={settings?.terminalCopyOnSelect ?? true}
                 terminalTheme={themeVariant}
-                terminalAttachSessions={agentTerminals
-                  .filter((t) => t.threadId === activeThreadId)
-                  .map((t) => ({ id: t.id, label: t.label }))}
+                terminalAttachSessions={terminalAttachSessions}
                 panelWidth={panelWidthPx}
               />
                 )}

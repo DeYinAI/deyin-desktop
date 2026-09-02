@@ -92,27 +92,49 @@ export async function* streamChat(opts: StreamChatOptions): AsyncGenerator<strin
   yield* streamChatCompletions(opts);
 }
 
-/** 408/429/5xx are gateway blips worth one silent retry. */
+/** 408/429/5xx are gateway blips worth retrying silently. */
 export function isTransientStatus(status: number): boolean {
   return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
 }
 
-/** Back off before the one retry, honoring Retry-After when present. */
-export async function retryBackoff(res: Response, signal?: AbortSignal): Promise<void> {
+/** Retries after the initial attempt. */
+export const MAX_TRANSIENT_RETRIES = 3;
+/** Ceiling on a computed backoff, and on an honoured Retry-After. */
+const MAX_BACKOFF_MS = 8_000;
+const BASE_BACKOFF_MS = 500;
+
+/**
+ * Back off before a retry, honouring Retry-After when the server sent one.
+ *
+ * `attempt` is 0-based. Without the exponential term, a rate-limited burst
+ * retried every 800ms in lockstep just re-collides; the jitter spreads
+ * concurrent agent steps (and parallel read-tier tool fan-out) apart instead of
+ * having them all wake at the same instant.
+ */
+export async function retryBackoff(res: Response, signal?: AbortSignal, attempt = 0): Promise<void> {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
   const retryAfter = Number(res.headers.get("retry-after"));
-  const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 5000) : 800;
+  const delayMs =
+    Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, MAX_BACKOFF_MS)
+      : Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS) * (0.5 + Math.random() / 2);
   await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-/** fetch() with one automatic retry on transient upstream statuses (408/429/5xx). */
+/**
+ * fetch() with automatic retries on transient upstream statuses (408/429/5xx).
+ *
+ * A single flat retry meant one unlucky 429 during a long run threw the whole
+ * turn away — and the turn's cost is the full prompt, so throwing it away is
+ * expensive as well as annoying.
+ */
 export async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
- let res = await fetch(url, init);
- if (!res.ok && isTransientStatus(res.status)) {
-  await retryBackoff(res, init.signal ?? undefined);
-  res = await fetch(url, init);
- }
- return res;
+  let res = await fetch(url, init);
+  for (let attempt = 0; attempt < MAX_TRANSIENT_RETRIES && !res.ok && isTransientStatus(res.status); attempt++) {
+    await retryBackoff(res, init.signal ?? undefined, attempt);
+    res = await fetch(url, init);
+  }
+  return res;
 }
 /** OpenAI-compatible /chat/completions stream (existing path). */
 async function* streamChatCompletions(opts: StreamChatOptions): AsyncGenerator<string> {

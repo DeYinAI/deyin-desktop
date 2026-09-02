@@ -2,6 +2,7 @@ import type { ReasoningEffort } from "@deyin/host-core/shared";
 import {
   comparePrefixShapes,
   computePrefixShape,
+  type CacheChangeReason,
 } from "./cache/prefix-tracker.js";
 import {
   applyPrune,
@@ -20,7 +21,9 @@ import {
 import type { EvidenceLedger } from "./evidence/ledger.js";
 import { EvidenceLedger as EvidenceLedgerClass, isMutationTool } from "./evidence/ledger.js";
 import { blockPrematureCompletion, checkMutationReadiness } from "./evidence/gates.js";
+import { LoopGuard, looksFailed, type GuardIntervention, type GuardOutcome } from "./loop-guard.js";
 import { OptimizationTracker, type OptimizationMetrics } from "./optimization.js";
+import { ResultDeduper, snipToolResult } from "./tool-result.js";
 import type { ModelRole, PreviousStep, StepRouter } from "./model-routing.js";
 import { buildRecallSuffix } from "./recall.js";
 import type { PermissionDecision, PermissionEngine, PermissionResolver } from "./permissions.js";
@@ -56,7 +59,6 @@ export function normalizeMaxSteps(value: number | null | undefined): number {
  return Math.floor(value);
 }
 const DEFAULT_CONTEXT_TOKENS = 128_000;
-const HARD_TOOL_RESULT_CAP = 50_000;
 
 export type AgentEvent =
   | { type: "step-start"; step: number }
@@ -85,8 +87,35 @@ export type AgentEvent =
       summary?: string;
     }
   | { type: "evidence-gate"; code: string; message: string; toolName?: string }
+  | { type: "loop-guard"; code: GuardIntervention["code"]; message: string; detail: string }
+  | { type: "run-summary"; summary: RunSummary }
   | { type: "model-routed"; step: number; role: ModelRole; model: string; providerId?: string }
   | { type: "done"; reason: AgentRunResult["reason"] };
+
+/**
+ * What one run actually cost, in the terms we want to drive down: rounds, tool
+ * calls, wasted calls, and how much of the prompt the provider served from cache.
+ * Emitted once at the end of every run so a workload can be scored.
+ */
+export interface RunSummary {
+  steps: number;
+  toolCalls: number;
+  /** Calls per tool name, so a single tool dominating a run is visible. */
+  callsByTool: Record<string, number>;
+  /** Calls the host refused (permission, hook, plan mode, delivery gate). */
+  deniedCalls: number;
+  /** Calls that errored or returned an ERROR: result. */
+  failedCalls: number;
+  /** Results replaced with a pointer because they were byte-identical repeats. */
+  duplicateResults: number;
+  /** Times a loop guard had to redirect the model. */
+  loopGuardTrips: number;
+  compactionPasses: number;
+  promptTokens: number;
+  cachedPromptTokens: number;
+  /** cachedPromptTokens / promptTokens, 0 when nothing was sent. */
+  cacheHitRate: number;
+}
 
 export interface AgentRunOptions {
   apiBaseUrl: string;
@@ -169,6 +198,7 @@ export interface AgentRunResult {
   usage: TokenUsage;
   steps: number;
   optimization?: OptimizationMetrics;
+  summary?: RunSummary;
 }
 
 function isAbortError(err: unknown): boolean {
@@ -199,9 +229,46 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const emit = opts.onEvent ?? (() => undefined);
   const maxSteps = normalizeMaxSteps(opts.maxSteps);
   const contextTokens = opts.contextLength ?? DEFAULT_CONTEXT_TOKENS;
-  const toolSchemas = opts.tools.toWire();
-  const schemaSplit = splitToolSchemaTokens(toolSchemas);
-  const schemaTokens = schemaSplit.tools + schemaSplit.mcp + schemaSplit.subagents;
+
+  /**
+   * The wire tool list, with outright-denied tools removed.
+   *
+   * Plan/ask/read-only mode is a *permission* rule set, so the model used to see
+   * `edit`, `write`, `delete`, `bash`, every git tool and every browser tool,
+   * call them, and get a denial string back. Each denial is a wasted round trip
+   * that also re-sends the whole transcript. Asking the run's own permission
+   * engine which tools it would refuse keeps the wire list and the permissions
+   * from ever disagreeing — there is no second allowlist to maintain.
+   *
+   * Recomputed per step (memoised on the denied set) because `switch_mode` can
+   * reconfigure the engine mid-run: leaving plan mode has to hand the write
+   * tools back.
+   */
+  type WireToolSet = {
+    signature: string;
+    tools: ReturnType<ToolRegistry["toWire"]>;
+    split: ReturnType<typeof splitToolSchemaTokens>;
+    schemaTokens: number;
+  };
+  let cachedWire: WireToolSet | undefined;
+  const wireTools = (): WireToolSet => {
+    const allowed = opts.tools.list().filter((t) => opts.permissions.actionFor(t) !== "deny");
+    const signature = allowed
+      .map((t) => t.name)
+      .sort()
+      .join("\u0000");
+    if (cachedWire?.signature !== signature) {
+      const tools = opts.tools.filtered(allowed.map((t) => t.name)).toWire();
+      const split = splitToolSchemaTokens(tools);
+      cachedWire = { signature, tools, split, schemaTokens: split.tools + split.mcp + split.subagents };
+    }
+    return cachedWire;
+  };
+  let wireSet = wireTools();
+  let toolSchemas = wireSet.tools;
+  let schemaTokens = wireSet.schemaTokens;
+  /** Compression measured by the last request that actually went out. */
+  let lastCompression: { originalTokens: number; compressedTokens: number } | undefined;
   const usage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedPromptTokens: 0 };
   const todos = opts.todos ?? [];
   const tracker = new OptimizationTracker();
@@ -212,6 +279,17 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   const cacheKeyFor = (_model: string): string => promptCacheKey;
   const evidenceGates = opts.evidenceGatesEnabled === true;
   const ledger = opts.evidenceLedger ?? (evidenceGates ? new EvidenceLedgerClass() : undefined);
+  const guard = new LoopGuard();
+  const deduper = new ResultDeduper();
+  /** Phase-0 accounting: what this run cost, in the terms we want to reduce. */
+  const counters = {
+    toolCalls: 0,
+    callsByTool: {} as Record<string, number>,
+    deniedCalls: 0,
+    failedCalls: 0,
+    loopGuardTrips: 0,
+    compactionPasses: 0,
+  };
 
   const ctx: ToolContext = {
     cwd: opts.cwd,
@@ -247,10 +325,21 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let previousStep: PreviousStep | undefined;
   /** Model used by the previous step, so `model-routed` only fires on a change. */
   let previousModel = "";
+  /**
+   * The model whose prefix cache currently holds this transcript — i.e. the one
+   * the most recent requests went to. A fold must replay against that model or
+   * the whole point of the cache-aligned request shape is lost.
+   */
+  let foldModel = opts.model;
   /** Prefix shape of the previous request; drives per-turn cache diagnostics. */
   let previousPrefixShape: ReturnType<typeof computePrefixShape> | undefined;
   /** Bumped when compaction mutates the transcript prefix (invalidates provider cache). */
   let logRewriteVersion = 0;
+  /**
+   * Provider-visible rewrites since the last diagnostics snapshot. Drained on
+   * read: only a rewrite the provider actually saw may be blamed for a miss.
+   */
+  let pendingRewriteReasons: CacheChangeReason[] = [];
 
   // --- Compaction state -----------------------------------------------------
   /**
@@ -274,14 +363,14 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let previousMessageCount: number | undefined;
 
   /**
-   * Route a fold onto the cheap `tool` role.
+   * The fold deliberately runs on the run's OWN model, not a cheap one.
    *
-   * `roleForStep` maps "a step after read-only churn with no prose" to `tool`,
-   * so this synthetic input asks the run's own router for that role's model.
-   * Summarising tool output into prose has no business costing frontier rates.
+   * `foldRegion` replays this run's real prefix so the summarisation request
+   * hits the provider's KV cache. A cheaper model has a different cache, so
+   * routing the fold away would trade ~90% off the input price of a 30–60k-token
+   * region for a discount on ~1k output tokens. Input dominates by more than an
+   * order of magnitude, so cache alignment wins and the routing is gone.
    */
-  const compactionRouting = (): ReturnType<StepRouter> | undefined =>
-    opts.router?.({ step: 2, previous: { hadProse: false, toolNames: ["read"], allRead: true } });
 
   /**
    * Consider compaction. Returns true when the surface actually changed.
@@ -346,18 +435,27 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     let summary: string | undefined;
 
     if (decision.action === "fold") {
-      const route = compactionRouting();
-      const token = await (route?.getToken ?? opts.getToken)();
+      const token = await opts.getToken();
       if (token === null || token === undefined) throw new AuthRequiredError();
+      // Same endpoint, same model, same tools, same cache key as the ordinary
+      // request — that identity is what makes the replayed prefix a cache hit.
+      // `previousMessageCount` is dropped: it indexes the ordinary request's
+      // message array, which is not the one the fold sends.
+      const foldWire = opts.wire
+        ? { ...opts.wire, model: foldModel, previousMessageCount: undefined }
+        : undefined;
       const fold = await foldRegion({
-        apiBaseUrl: route?.apiBaseUrl ?? opts.apiBaseUrl,
+        apiBaseUrl: opts.apiBaseUrl,
         token,
-        model: route?.model ?? opts.model,
-        apiFormat: route?.apiFormat ?? opts.apiFormat,
-        authHeader: route?.authHeader ?? opts.authHeader,
+        model: foldModel,
+        apiFormat: opts.apiFormat,
+        authHeader: opts.authHeader,
         messages: opts.messages,
         region: decision.region,
         signal: opts.signal,
+        tools: toolSchemas,
+        ...(foldWire ? { wire: foldWire } : {}),
+        promptCacheKey,
       });
       droppedMessages = fold.droppedMessages;
       reclaimedTokens += fold.reclaimedTokens;
@@ -373,7 +471,11 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     usageAnchor = undefined;
     previousMessageCount = undefined;
     logRewriteVersion += 1;
+    pendingRewriteReasons.push(
+      trigger === "context-overflow" ? "overflow" : decision.action === "fold" ? "fold" : "prune",
+    );
     consecutiveCompacts += 1;
+    counters.compactionPasses += 1;
     noticeShown = false;
     report(decision.action === "fold" ? "fold" : "prune", {
       truncatedToolResults: pruned.truncatedToolResults,
@@ -402,6 +504,13 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       emit({ type: "model-routed", step, role: routed.role, model: stepModel, providerId: routed.providerId });
     }
     previousModel = stepModel;
+    foldModel = stepModel;
+
+    // A mid-run `switch_mode` reconfigures the permission engine, which changes
+    // which tools are visible. Re-resolve before measuring or sending.
+    wireSet = wireTools();
+    toolSchemas = wireSet.tools;
+    schemaTokens = wireSet.schemaTokens;
 
     // Mid-turn pressure only. A long multi-step turn can outgrow the window on
     // its own, but below COMPACT_RATIO this is a no-op and the prefix is left
@@ -417,7 +526,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         messages: opts.messages,
         systemSections: opts.systemSections,
         tools: toolSchemas,
-        wire: stepWire,
+        schemaSplit: wireSet.split,
+        // Reported by the request that actually went out, rather than measured
+        // by compressing the whole transcript a second time to fill one line.
+        ...(lastCompression ? { compression: lastCompression } : {}),
       }),
     });
 
@@ -486,11 +598,22 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
           );
           const cached = event.usage?.cachedPromptTokens ?? 0;
           const prompt = event.usage?.promptTokens ?? 0;
-          const diag = comparePrefixShapes(previousPrefixShape, shape, cached, Math.max(0, prompt - cached));
+          const diag = comparePrefixShapes(
+            previousPrefixShape,
+            shape,
+            cached,
+            Math.max(0, prompt - cached),
+            pendingRewriteReasons,
+          );
+          pendingRewriteReasons = [];
           previousPrefixShape = shape;
           tracker.recordPrefixShape(shape, diag);
           if (event.compression) {
             tracker.recordCompression(event.compression.originalTokens, event.compression.compressedTokens);
+            lastCompression = {
+              originalTokens: event.compression.originalTokens,
+              compressedTokens: event.compression.compressedTokens,
+            };
           }
           // Single optimization emit per done event (avoids duplicate IPC for usage + compression).
           emit({ type: "optimization", metrics: tracker.get() });
@@ -571,12 +694,34 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     // that require matching order.
     if (opts.signal?.aborted) {
       for (const call of toolCalls) {
-        append(toolResult(call, "Aborted by the user before execution."));
+        append(toolResult(call, "Aborted by the user before execution.", deduper, opts));
       }
     } else {
-      const outcomes = await executeSameStepCalls(toolCalls, opts, ctx, emit, tracker, ledger);
+      const outcomes = await executeSameStepCalls(toolCalls, opts, ctx, emit, tracker, ledger, guard);
       for (let i = 0; i < toolCalls.length; i++) {
-        append(toolResult(toolCalls[i]!, outcomes[i]!));
+        const outcome = outcomes[i]!;
+        counters.toolCalls += 1;
+        counters.callsByTool[outcome.toolName] = (counters.callsByTool[outcome.toolName] ?? 0) + 1;
+        if (outcome.denied) counters.deniedCalls += 1;
+        else if (!outcome.ok) counters.failedCalls += 1;
+        append(toolResult(toolCalls[i]!, outcome.result, deduper, opts));
+      }
+
+      // The guards run after the whole batch, so a turn that mixed a success
+      // with a failure is correctly read as progress.
+      const intervention = guard.observe(outcomes);
+      if (intervention) {
+        counters.loopGuardTrips += 1;
+        emit({
+          type: "loop-guard",
+          code: intervention.code,
+          message: intervention.message,
+          detail: intervention.detail,
+        });
+        // A user turn rather than a tool result: the redirect is about the run,
+        // not about any single call, and tool results must stay paired with the
+        // tool_calls that requested them.
+        append({ role: "user", content: intervention.message });
       }
       emit({ type: "optimization", metrics: tracker.get() });
     }
@@ -586,8 +731,23 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   return finish("max-steps", maxSteps);
 
   function finish(reason: AgentRunResult["reason"], steps: number): AgentRunResult {
+    const cached = usage.cachedPromptTokens ?? 0;
+    const summary: RunSummary = {
+      steps,
+      toolCalls: counters.toolCalls,
+      callsByTool: { ...counters.callsByTool },
+      deniedCalls: counters.deniedCalls,
+      failedCalls: counters.failedCalls,
+      duplicateResults: deduper.elidedCount,
+      loopGuardTrips: counters.loopGuardTrips,
+      compactionPasses: counters.compactionPasses,
+      promptTokens: usage.promptTokens,
+      cachedPromptTokens: cached,
+      cacheHitRate: usage.promptTokens > 0 ? cached / usage.promptTokens : 0,
+    };
+    emit({ type: "run-summary", summary });
     emit({ type: "done", reason });
-    return { reason, finalText, usage, steps, optimization: tracker.get() };
+    return { reason, finalText, usage, steps, optimization: tracker.get(), summary };
   }
 }
 
@@ -609,34 +769,43 @@ async function executeSameStepCalls(
   ctx: ToolContext,
   emit: (event: AgentEvent) => void,
   tracker: OptimizationTracker,
-  ledger?: EvidenceLedger,
-): Promise<string[]> {
-  const outcomes = new Array<string>(toolCalls.length);
+  ledger: EvidenceLedger | undefined,
+  guard: LoopGuard,
+): Promise<GuardOutcome[]> {
+  const outcomes = new Array<GuardOutcome>(toolCalls.length);
   const isRead = (call: AgentToolCall): boolean => opts.tools.get(call.name)?.tier === "read";
   let i = 0;
   while (i < toolCalls.length) {
     if (!isRead(toolCalls[i]!)) {
-      outcomes[i] = await executeCall(toolCalls[i]!, opts, ctx, emit, tracker, ledger);
+      outcomes[i] = await executeCall(toolCalls[i]!, opts, ctx, emit, tracker, ledger, guard);
       i += 1;
       continue;
     }
     let end = i;
     while (end < toolCalls.length && isRead(toolCalls[end]!)) end += 1;
     const batch = toolCalls.slice(i, end);
-    const results = await Promise.all(batch.map((call) => executeCall(call, opts, ctx, emit, tracker, ledger)));
+    const results = await Promise.all(
+      batch.map((call) => executeCall(call, opts, ctx, emit, tracker, ledger, guard)),
+    );
     for (let k = 0; k < results.length; k++) outcomes[i + k] = results[k]!;
     i = end;
   }
   return outcomes;
 }
 
-function toolResult(call: AgentToolCall, content: string): AgentMessage {
-  return {
-    role: "tool",
-    toolCallId: call.id,
-    toolName: call.name,
-    content: content.length > HARD_TOOL_RESULT_CAP ? `${content.slice(0, HARD_TOOL_RESULT_CAP)}\n... [truncated]` : content,
-  };
+/**
+ * Append one tool result, deduplicated against this run and snipped to the hard
+ * cap keeping both ends. The session log and the UI keep the full original.
+ */
+function toolResult(
+  call: AgentToolCall,
+  content: string,
+  deduper: ResultDeduper,
+  opts: AgentRunOptions,
+): AgentMessage {
+  const duplicate = deduper.check(content, call.id);
+  const wire = duplicate ?? snipToolResult(content, call.name, call.id, opts.tools.get(call.name)?.snipHint);
+  return { role: "tool", toolCallId: call.id, toolName: call.name, content: wire };
 }
 
 async function executeCall(
@@ -645,14 +814,24 @@ async function executeCall(
   ctx: ToolContext,
   emit: (event: AgentEvent) => void,
   tracker: OptimizationTracker,
-  ledger?: EvidenceLedger,
-): Promise<string> {
+  ledger: EvidenceLedger | undefined,
+  guard: LoopGuard,
+): Promise<GuardOutcome> {
+  const argsKey = call.arguments.trim();
+  const out = (result: string, flags: { ok: boolean; denied?: boolean }): GuardOutcome => ({
+    toolName: call.name,
+    result,
+    ok: flags.ok,
+    denied: flags.denied === true,
+    argsKey,
+  });
+
   const tool = opts.tools.get(call.name);
   if (!tool) {
     emit({ type: "tool-start", call, summary: call.name });
     const msg = `ERROR: unknown tool "${call.name}". Available tools: ${opts.tools.names().join(", ")}.`;
     emit({ type: "tool-end", call, result: msg, ok: false });
-    return msg;
+    return out(msg, { ok: false });
   }
 
   let args: Record<string, unknown>;
@@ -662,12 +841,21 @@ async function executeCall(
     emit({ type: "tool-start", call, summary: call.name });
     const msg = "ERROR: tool arguments were not valid JSON. Emit a single well-formed JSON object.";
     emit({ type: "tool-end", call, result: msg, ok: false });
-    return msg;
+    return out(msg, { ok: false });
   }
 
   const summary = safeSummary(tool.summarize, args, call.name);
   const cwd = safeMeta(tool.meta, args, ctx);
   emit({ type: "tool-start", call, summary, cwd });
+
+  // Loop guard: refuse a write-like call that has already succeeded identically
+  // several times in this run. Cheaper than executing the no-op and far cheaper
+  // than letting the model discover it is looping.
+  const repeat = guard.precheck(call.name, argsKey, tool.tier);
+  if (repeat) {
+    emit({ type: "tool-end", call, result: repeat, ok: false, denied: true });
+    return out(repeat, { ok: false, denied: true });
+  }
 
   // Delivery mode: block mutations until todos carry acceptance criteria.
   if (opts.evidenceGatesEnabled && ledger && isMutationTool(call.name) && tool.tier !== "read") {
@@ -676,7 +864,7 @@ async function executeCall(
       emit({ type: "evidence-gate", code: gate.code, message: gate.message, toolName: call.name });
       const msg = `ERROR: delivery gate (${gate.code}): ${gate.message}`;
       emit({ type: "tool-end", call, result: msg, ok: false, denied: true });
-      return msg;
+      return out(msg, { ok: false, denied: true });
     }
   }
 
@@ -688,7 +876,7 @@ async function executeCall(
       if (hookResult?.block) {
         const msg = `Blocked by hook: ${hookResult.block}`;
         emit({ type: "tool-end", call, result: msg, ok: false, denied: true });
-        return msg;
+        return out(msg, { ok: false, denied: true });
       }
     } catch {
       // Hook engine failures fail open by design.
@@ -716,7 +904,7 @@ async function executeCall(
     const msg = "Denied: the user rejected this tool call. Do not retry it; adjust your approach or ask the user.";
     emit({ type: "tool-end", call, result: msg, ok: false, denied: true });
     ledger?.observeToolCall(call.name, args, false);
-    return msg;
+    return out(msg, { ok: false, denied: true });
   }
 
   try {
@@ -726,7 +914,7 @@ async function executeCall(
         tracker.recordToolCache(true);
         emit({ type: "tool-end", call, result: cached, ok: true, fromCache: true });
         if (opts.afterTool) await opts.afterTool(call, cached, true).catch(() => undefined);
-        return cached;
+        return out(cached, { ok: true });
       }
       tracker.recordToolCache(false);
     }
@@ -737,17 +925,20 @@ async function executeCall(
       onOutput: (delta) => emit({ type: "tool-delta", call, delta }),
     };
     const result = await tool.execute(args, callCtx);
-    emit({ type: "tool-end", call, result, ok: true, cwd });
-    ledger?.observeToolCall(call.name, args, true);
-    if (opts.storeToolCache) await opts.storeToolCache(call, args, result).catch(() => undefined);
-    if (opts.afterTool) await opts.afterTool(call, result, true).catch(() => undefined);
-    return result;
+    // A tool that returns an `ERROR:` string rather than throwing still failed;
+    // the guards must see it that way or a tool that never throws is invisible.
+    const ok = !looksFailed(result);
+    emit({ type: "tool-end", call, result, ok, cwd });
+    ledger?.observeToolCall(call.name, args, ok);
+    if (ok && opts.storeToolCache) await opts.storeToolCache(call, args, result).catch(() => undefined);
+    if (opts.afterTool) await opts.afterTool(call, result, ok).catch(() => undefined);
+    return out(result, { ok });
   } catch (err) {
     const msg = `ERROR: ${err instanceof Error ? err.message : String(err)}`;
     emit({ type: "tool-end", call, result: msg, ok: false, cwd });
     ledger?.observeToolCall(call.name, args, false);
     if (opts.afterTool) await opts.afterTool(call, msg, false).catch(() => undefined);
-    return msg;
+    return out(msg, { ok: false });
   }
 }
 

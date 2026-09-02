@@ -107,7 +107,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     const contextFiles = await loadContextFiles(ctx.cwd);
     const system: AgentMessage = {
       role: "system",
-      content: buildSystemPrompt({ cwd: ctx.cwd, agent, toolNames: tools.names(), contextFiles, skills: caps.skills }),
+      content: buildSystemPrompt({ cwd: ctx.cwd, agent, contextFiles, skills: caps.skills }),
     };
     messages = [system];
     ctx.sessions.append(sessionId, system);
@@ -156,6 +156,17 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       case "compaction":
         stderr.write(dim(`[context] compacted (${event.droppedMessages} messages dropped)\n`));
         break;
+      case "run-summary": {
+        const s = event.summary;
+        stderr.write(
+          dim(
+            `[run] ${s.steps} steps, ${s.toolCalls} tool calls (${s.deniedCalls} denied, ${s.failedCalls} failed, ` +
+              `${s.duplicateResults} duplicates elided, ${s.loopGuardTrips} guard trips), ` +
+              `cache hit rate ${(s.cacheHitRate * 100).toFixed(1)}%\n`,
+          ),
+        );
+        break;
+      }
       default:
         break;
     }
@@ -239,6 +250,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 
     const tokens = result.usage.totalTokens || estimateTokens(messages.slice(before));
     ctx.usage.record({ model: ctx.config.model, tokens, newSession });
+    if (result.summary) ctx.sessions.appendEvent(sessionId, { kind: "run-summary", summary: result.summary });
 
     if (opts.json) {
       emitJson({
@@ -248,6 +260,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         usage: result.usage,
         sessionId,
         finalText: result.finalText,
+        summary: result.summary ?? null,
       });
     } else {
       if (result.finalText && !result.finalText.endsWith("\n")) stdout.write("\n");

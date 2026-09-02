@@ -66,14 +66,17 @@ export function runNativeBenchmark(): NativeBenchmarkResult {
       identical: true,
     });
 
-    // Wire compression.
+    // Wire compression. The native call must mirror the TS arguments exactly:
+    // the default toolName ("tool") is not noisy, while "bash" is, and the
+    // noisy flag selects a different compression path — comparing mismatched
+    // arguments reported a false parity failure.
     let tsOut = "";
     let nativeOut = "";
     const tsComp = bench(() => {
       tsOut = tsCompressToolOutput(logPayload, "bash", { mode: "balanced" }).compressed;
     }, 300);
     const nativeComp = bench(() => {
-      nativeOut = fastCompressToolOutput(logPayload, "balanced") ?? "";
+      nativeOut = fastCompressToolOutput(logPayload, "balanced", "bash", false) ?? "";
     }, 300);
     rows.push({
       path: "compressToolOutput (40KB log)",
