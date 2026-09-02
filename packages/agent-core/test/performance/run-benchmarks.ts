@@ -6,6 +6,7 @@ import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCacheBenchmark } from "./cache-benchmark.js";
+import { runCompactionBenchmark } from "./compaction-bench.js";
 import { runNativeBenchmark } from "./native-benchmark.js";
 import { runSummaryBenchmark } from "./summary-benchmark.js";
 import { runUiBenchmark } from "./ui-benchmark.js";
@@ -18,6 +19,7 @@ export interface PerformanceReport {
     | ReturnType<typeof runUiBenchmark>
     | ReturnType<typeof runNativeBenchmark>
     | Awaited<ReturnType<typeof runSummaryBenchmark>>
+    | Awaited<ReturnType<typeof runCompactionBenchmark>>
   >;
 }
 
@@ -26,8 +28,9 @@ export async function runAllBenchmarks(): Promise<PerformanceReport> {
   const ui = runUiBenchmark();
   const native = runNativeBenchmark();
   const summary = await runSummaryBenchmark();
+  const compaction = await runCompactionBenchmark();
 
-  const benchmarks = [cache, ui, native, summary];
+  const benchmarks = [cache, ui, native, summary, compaction];
   return {
     generatedAt: new Date().toISOString(),
     allPassed: benchmarks.every((b) => b.passed),
@@ -61,10 +64,16 @@ function formatMarkdown(report: PerformanceReport): string {
       }
     } else if (b.name === "summary-benchmark") {
       lines.push(`| Summary | Deterministic scenario | ${b.rows.map((r) => `${r.metric}=${r.actual}`).join(", ")} | ${b.rows.map((r) => `${r.metric}=${r.expected}`).join(", ")} | ${b.passed ? "✅" : "❌"} |`);
+    } else if (b.name === "compaction-benchmark") {
+      for (const r of b.cost.rows) {
+        lines.push(`| Compaction | ${r.scenario} (window ${r.window}) | action=${r.action}, prune reclaimed ${r.pruneReclaimed} tok, second pass ${r.secondPassReclaimed} | action=${r.expected}, second pass 0 | ${r.ok ? "✅" : "❌"} |`);
+      }
+      lines.push(`| Compaction | Tail budget scaling | min(16k, 25% of window) | 32k→8k, 128k→16k | ${b.cost.tailBudgetsOk ? "✅" : "❌"} |`);
+      lines.push(`| Compaction | Fold fidelity | ${b.fidelity.survived}/${b.fidelity.planted} facts survived | ${b.fidelity.expectedSurvivors} (tail immune, pinned intact, cache-shaped request) | ${b.passed ? "✅" : "❌"} |`);
     }
   }
 
-  lines.push("", "## Targets", "", "- Cache hit rate: ≥80%", "- 1000-turn load: <2s", "- Streaming: ≥55fps (p95)", "- Native outputs byte-identical to TS fallbacks", "");
+  lines.push("", "## Targets", "", "- Cache hit rate: ≥80%", "- 1000-turn load: <2s", "- Streaming: ≥55fps (p95)", "- Native outputs byte-identical to TS fallbacks", "- Compaction: policy picks the expected action per scenario, prune is idempotent, folds preserve everything the summarizer returned", "");
   return lines.join("\n");
 }
 

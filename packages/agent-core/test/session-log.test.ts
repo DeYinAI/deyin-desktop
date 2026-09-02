@@ -173,6 +173,7 @@ test("run-summary lifecycle record round-trips and forks without leaking into th
     duplicateResults: 1,
     loopGuardTrips: 0,
     compactionPasses: 0,
+    foldFailures: 0,
     promptTokens: 1000,
     cachedPromptTokens: 800,
     cacheHitRate: 0.8,

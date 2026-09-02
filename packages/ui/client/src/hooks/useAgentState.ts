@@ -682,6 +682,15 @@ class AgentStateStore {
           });
           break;
         }
+        if (event.kind === "fold-failed") {
+          this.emit({
+            type: "compaction-notice",
+            threadId,
+            message:
+              "Context fold failed — the summary came back unusable, so retrying is deferred to avoid paying for the same result twice.",
+          });
+          break;
+        }
 
         this.emit({
           type: "compaction-notice",

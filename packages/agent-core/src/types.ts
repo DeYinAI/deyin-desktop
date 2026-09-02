@@ -121,6 +121,12 @@ export interface ToolContext {
   sessionMeta?: ToolSessionMeta;
   /** Transcript snapshot for read_session_context (read-only). */
   messages?: readonly AgentMessage[];
+  /**
+   * Raw (pre-snip) tool results, so read_session_context can page the middle of
+   * an oversized result back by the tool_call_id its snip marker names. The
+   * loop fills this in; hosts may pass their own to retain across runs.
+   */
+  rawResults?: import("./raw-results.js").RawResultStore;
   /** Inter-agent messaging bus (SendMessage tool). */
   sendMessage?: (to: string, content: string) => Promise<string>;
   /** Poll a background shell task started earlier in this session. */

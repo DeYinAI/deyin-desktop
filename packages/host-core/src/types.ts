@@ -229,7 +229,7 @@ export type ThreadEvent =
     }
   | {
       kind: "compaction-notice";
-      compaction: "notice" | "prune" | "fold" | "exhausted";
+      compaction: "notice" | "prune" | "fold" | "fold-failed" | "exhausted";
       truncatedToolResults: number;
       truncatedToolArgs: number;
       droppedMessages: number;
@@ -964,10 +964,12 @@ export type AgentUiEvent =
      /**
       * `notice` crossed the pressure line but changed nothing (the prefix, and
       * with it the provider cache, is intact); `prune` shrank stale tool output
-      * in place; `fold` replaced history with a summary; `exhausted` means the
-      * transcript cannot be reduced further and auto-compaction stood down.
+      * in place; `fold` replaced history with a summary; `fold-failed` means a
+      * paid fold came back unusable and retries are receipt-gated;
+      * `exhausted` means the transcript cannot be reduced further and
+      * auto-compaction stood down.
       */
-     kind: "notice" | "prune" | "fold" | "exhausted";
+     kind: "notice" | "prune" | "fold" | "fold-failed" | "exhausted";
      trigger: "pressure" | "context-overflow" | "manual";
      truncatedToolResults: number;
      truncatedToolArgs: number;

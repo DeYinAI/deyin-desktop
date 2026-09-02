@@ -1,4 +1,5 @@
 import type { ReasoningEffort } from "@deyin/host-core/shared";
+import { createHash } from "crypto";
 import {
   comparePrefixShapes,
   computePrefixShape,
@@ -9,6 +10,7 @@ import {
   decideCompaction,
   foldRegion,
   MAX_CONSECUTIVE_COMPACTS,
+  type CompactionRegion,
   type CompactionTrigger,
 } from "./compaction.js";
 import { priceMessages, type UsageAnchor } from "./context-measure.js";
@@ -23,6 +25,7 @@ import { EvidenceLedger as EvidenceLedgerClass, isMutationTool } from "./evidenc
 import { blockPrematureCompletion, checkMutationReadiness } from "./evidence/gates.js";
 import { LoopGuard, looksFailed, type GuardIntervention, type GuardOutcome } from "./loop-guard.js";
 import { OptimizationTracker, type OptimizationMetrics } from "./optimization.js";
+import { RawResultStore } from "./raw-results.js";
 import { ResultDeduper, snipToolResult } from "./tool-result.js";
 import type { ModelRole, PreviousStep, StepRouter } from "./model-routing.js";
 import { buildRecallSuffix } from "./recall.js";
@@ -75,7 +78,7 @@ export type AgentEvent =
   | { type: "optimization"; metrics: OptimizationMetrics }
   | {
       type: "compaction";
-      kind: "notice" | "prune" | "fold" | "exhausted";
+      kind: "notice" | "prune" | "fold" | "fold-failed" | "exhausted";
       trigger: CompactionTrigger;
       truncatedToolResults: number;
       truncatedToolArgs: number;
@@ -111,6 +114,11 @@ export interface RunSummary {
   /** Times a loop guard had to redirect the model. */
   loopGuardTrips: number;
   compactionPasses: number;
+  /**
+   * Paid fold attempts whose summary came back unusable (empty, or not smaller
+   * than the region it replaced). Gated retries are free and not counted.
+   */
+  foldFailures: number;
   promptTokens: number;
   cachedPromptTokens: number;
   /** cachedPromptTokens / promptTokens, 0 when nothing was sent. */
@@ -289,6 +297,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     failedCalls: 0,
     loopGuardTrips: 0,
     compactionPasses: 0,
+    foldFailures: 0,
   };
 
   const ctx: ToolContext = {
@@ -302,6 +311,11 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     evidenceLedger: ledger,
     ...opts.toolContext,
   };
+  // Raw (pre-snip) tool results: read_session_context pages them back by the
+  // tool_call_id the snip marker names. A host-supplied store wins so a
+  // long-lived host can retain more than one run's worth.
+  const rawResults = ctx.rawResults ?? new RawResultStore();
+  ctx.rawResults = rawResults;
 
   const append = (message: AgentMessage): void => {
     opts.messages.push(message);
@@ -353,6 +367,20 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   let consecutiveCompacts = 0;
   /** The pressure notice is shown once per crossing, not once per step. */
   let noticeShown = false;
+  /**
+   * Fingerprint of the last fold view whose summary came back unusable. A
+   * byte-identical retry would pay the same model call for the same nothing, so
+   * it is not made (Reasonix calls this the stuck-input receipt).
+   */
+  let failedFoldView: string | undefined;
+  /**
+   * Paid-but-failed folds this run; one is the budget. A summarizer that cannot
+   * shrink this transcript will not do better two steps later, and every retry
+   * is a full-price model call. Overflow and manual compaction bypass.
+   */
+  let failedFolds = 0;
+  /** Report a fold failure once per run, not once per gated attempt. */
+  let foldFailureReported = false;
   /** Provider-confirmed overflow replays, bounded so a retry cannot spin. */
   let overflowRetries = 0;
   /**
@@ -392,7 +420,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     });
 
     const report = (
-      kind: "notice" | "prune" | "fold" | "exhausted",
+      kind: "notice" | "prune" | "fold" | "fold-failed" | "exhausted",
       fields: { truncatedToolResults?: number; truncatedToolArgs?: number; droppedMessages?: number; reclaimedTokens?: number; summary?: string } = {},
     ): void => {
       emit({
@@ -437,6 +465,18 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     if (decision.action === "fold") {
       const token = await opts.getToken();
       if (token === null || token === undefined) throw new AuthRequiredError();
+      // Receipt gate: a fold that already failed on this view (or failed at all
+      // this run) is skipped until something forces it — a manual /compact or a
+      // provider-confirmed overflow, both of which are worth another try.
+      const viewHash = foldViewHash(opts.messages, decision.region);
+      const bypass = trigger === "manual" || trigger === "context-overflow";
+      if (!bypass && (failedFolds >= 1 || failedFoldView === viewHash)) {
+        if (!foldFailureReported) {
+          foldFailureReported = true;
+          report("fold-failed");
+        }
+        return false;
+      }
       // Same endpoint, same model, same tools, same cache key as the ordinary
       // request — that identity is what makes the replayed prefix a cache hit.
       // `previousMessageCount` is dropped: it indexes the ordinary request's
@@ -460,6 +500,22 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       droppedMessages = fold.droppedMessages;
       reclaimedTokens += fold.reclaimedTokens;
       summary = fold.summary || undefined;
+      if (droppedMessages === 0) {
+        // The summarization was paid for and came back unusable. Keep the
+        // receipt so the same view is never paid for twice, and spend the
+        // run's one failure budget.
+        failedFoldView = viewHash;
+        failedFolds += 1;
+        counters.foldFailures += 1;
+        if (!foldFailureReported) {
+          foldFailureReported = true;
+          report("fold-failed");
+        }
+        return false;
+      }
+      failedFoldView = undefined;
+      failedFolds = 0;
+      foldFailureReported = false;
     }
 
     const changed = reclaimedTokens > 0 || droppedMessages > 0 || pruned.truncatedToolResults > 0 || pruned.truncatedToolArgs > 0;
@@ -694,7 +750,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     // that require matching order.
     if (opts.signal?.aborted) {
       for (const call of toolCalls) {
-        append(toolResult(call, "Aborted by the user before execution.", deduper, opts));
+        append(toolResult(call, "Aborted by the user before execution.", deduper, opts, rawResults));
       }
     } else {
       const outcomes = await executeSameStepCalls(toolCalls, opts, ctx, emit, tracker, ledger, guard);
@@ -704,7 +760,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         counters.callsByTool[outcome.toolName] = (counters.callsByTool[outcome.toolName] ?? 0) + 1;
         if (outcome.denied) counters.deniedCalls += 1;
         else if (!outcome.ok) counters.failedCalls += 1;
-        append(toolResult(toolCalls[i]!, outcome.result, deduper, opts));
+        append(toolResult(toolCalls[i]!, outcome.result, deduper, opts, rawResults));
       }
 
       // The guards run after the whole batch, so a turn that mixed a success
@@ -741,6 +797,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       duplicateResults: deduper.elidedCount,
       loopGuardTrips: counters.loopGuardTrips,
       compactionPasses: counters.compactionPasses,
+      foldFailures: counters.foldFailures,
       promptTokens: usage.promptTokens,
       cachedPromptTokens: cached,
       cacheHitRate: usage.promptTokens > 0 ? cached / usage.promptTokens : 0,
@@ -795,17 +852,34 @@ async function executeSameStepCalls(
 
 /**
  * Append one tool result, deduplicated against this run and snipped to the hard
- * cap keeping both ends. The session log and the UI keep the full original.
+ * cap keeping both ends. When the snip actually trimmed, the raw bytes are
+ * retained in `rawResults` so `read_session_context` can page the missing
+ * middle back by the tool_call_id the marker names.
  */
 function toolResult(
   call: AgentToolCall,
   content: string,
   deduper: ResultDeduper,
   opts: AgentRunOptions,
+  rawResults: RawResultStore,
 ): AgentMessage {
   const duplicate = deduper.check(content, call.id);
-  const wire = duplicate ?? snipToolResult(content, call.name, call.id, opts.tools.get(call.name)?.snipHint);
+  if (duplicate !== null) {
+    return { role: "tool", toolCallId: call.id, toolName: call.name, content: duplicate };
+  }
+  const wire = snipToolResult(content, call.name, call.id, opts.tools.get(call.name)?.snipHint);
+  if (wire !== content) rawResults.record(call.id, call.name, content);
   return { role: "tool", toolCallId: call.id, toolName: call.name, content: wire };
+}
+
+/** Fingerprint of the exact region a fold would summarise (the paid view). */
+function foldViewHash(messages: readonly AgentMessage[], region: CompactionRegion): string {
+  const hash = createHash("sha256");
+  for (let i = region.start; i < region.end; i++) {
+    const m = messages[i]!;
+    hash.update(`${m.role}\u0000${m.content}\u0000${m.role === "tool" ? m.toolCallId : ""}\u0001`);
+  }
+  return hash.digest("hex");
 }
 
 async function executeCall(

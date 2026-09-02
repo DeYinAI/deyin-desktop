@@ -427,13 +427,15 @@ export async function foldRegion(opts: {
   wire?: WireOptions;
   /** The run's prompt cache key, so OpenAI-style routing lands on the same entry. */
   promptCacheKey?: string;
+  /** Injection seam for tests and benchmarks; defaults to the real transport. */
+  complete?: typeof completeChat;
 }): Promise<FoldResult> {
   const { messages, region } = opts;
   const slice = messages.slice(region.start, region.end);
   if (slice.length === 0) return { summary: "", droppedMessages: 0, reclaimedTokens: 0 };
 
   const focus = opts.focus ? `\n\nPay particular attention to: ${opts.focus}` : "";
-  const { content } = await completeChat({
+  const { content } = await (opts.complete ?? completeChat)({
     apiBaseUrl: opts.apiBaseUrl,
     token: opts.token,
     model: opts.model,
@@ -503,6 +505,8 @@ export async function compactWithModel(opts: {
   tools?: WireTool[];
   wire?: WireOptions;
   promptCacheKey?: string;
+  /** Injection seam for tests and benchmarks; defaults to the real transport. */
+  complete?: typeof completeChat;
 }): Promise<AgentMessage[]> {
   const messages = [...opts.messages];
   const region = selectRegion(messages, opts.tailTokens ?? MANUAL_TAIL_TOKENS);

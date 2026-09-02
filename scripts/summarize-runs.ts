@@ -24,6 +24,8 @@ interface SummaryRecord {
   duplicateResults: number;
   loopGuardTrips: number;
   compactionPasses: number;
+  /** Paid fold attempts that came back unusable; absent in pre-fold-failure records. */
+  foldFailures?: number;
   promptTokens: number;
   cachedPromptTokens: number;
   cacheHitRate: number;
@@ -110,6 +112,7 @@ if (asJson) {
           duplicateResults: total((s) => s.duplicateResults),
           loopGuardTrips: total((s) => s.loopGuardTrips),
           compactionPasses: total((s) => s.compactionPasses),
+          foldFailures: total((s) => s.foldFailures ?? 0),
           promptTokens,
           cachedPromptTokens,
           cacheHitRate: promptTokens > 0 ? cachedPromptTokens / promptTokens : 0,
@@ -133,7 +136,7 @@ if (all.length === 0) {
 const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
 console.log(`Run summaries in ${sessionsDir}`);
 console.log("");
-const header = ["session", "runs", "steps", "tools", "denied", "failed", "dupes", "guards", "cache"].join(" | ");
+const header = ["session", "runs", "steps", "tools", "denied", "failed", "dupes", "guards", "foldfail", "cache"].join(" | ");
 console.log(header);
 console.log("-".repeat(header.length));
 for (const s of sessions) {
@@ -150,6 +153,7 @@ for (const s of sessions) {
       t((x) => x.failedCalls),
       t((x) => x.duplicateResults),
       t((x) => x.loopGuardTrips),
+      t((x) => x.foldFailures ?? 0),
       p > 0 ? pct(c / p) : "-",
     ].join(" | "),
   );
@@ -165,6 +169,7 @@ console.log(
     total((s) => s.failedCalls),
     total((s) => s.duplicateResults),
     total((s) => s.loopGuardTrips),
+    total((s) => s.foldFailures ?? 0),
     promptTokens > 0 ? pct(cachedPromptTokens / promptTokens) : "-",
   ].join(" | "),
 );
