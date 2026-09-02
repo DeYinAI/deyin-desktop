@@ -428,14 +428,25 @@ function DiffTab({
     ? undefined
     : ({ whiteSpace: "pre", wordBreak: "normal" } as const);
 
+  const sep = Math.max(diff.fileName.lastIndexOf("/"), diff.fileName.lastIndexOf("\\"));
+  const fileDir = sep >= 0 ? diff.fileName.slice(0, sep + 1) : "";
+  const fileBase = sep >= 0 ? diff.fileName.slice(sep + 1) : diff.fileName;
+  // "" is an empty file, so these say "there is no other version", not "the
+  // diff failed" — which is how a blank pane reads.
+  const isNewFile = diff.before === "";
+  const isDeletedFile = diff.after === "";
+
   return (
     <>
       <div className="wspanel__subbar">
-        <span className="crumb">{projectName}</span>
+        <span className="crumb crumb--project">{projectName}</span>
         <Icon name="chevronRight" size={11} />
-        <span className="crumb crumb--file">
+        {/* The directory is what gives when the panel is narrow; the file name
+            always stays readable, and the title carries the full path. */}
+        <span className="crumb crumb--file" title={diff.fileName}>
           <Icon name="file" size={12} />
-          {diff.fileName}
+          {fileDir && <span className="crumb__dir">{fileDir}</span>}
+          <span className="crumb__name">{fileBase}</span>
         </span>
         <div className="wspanel__subbar-spacer" />
         <div className="diff-view-toggle" role="group" aria-label="Diff layout">
@@ -467,13 +478,22 @@ function DiffTab({
           <pre className="code-pre" style={textStyle}>{diff.after}</pre>
         ) : view === "split" ? (
           <table className="diff-table diff-table--split">
+            {/* table-layout is fixed, and with only colSpan headers in the first
+                row the four columns would split the width evenly — giving each
+                line-number gutter a quarter of the panel. State the widths. */}
+            <colgroup>
+              <col className={display.showLineNumbers ? "diff-col-no" : "diff-col-sign"} />
+              <col />
+              <col className={display.showLineNumbers ? "diff-col-no" : "diff-col-sign"} />
+              <col />
+            </colgroup>
             <thead>
               <tr>
                 <th className="diff-head diff-head--del" colSpan={2}>
-                  Old
+                  Old{isNewFile && <span className="diff-head__note">new file</span>}
                 </th>
                 <th className="diff-head diff-head--add" colSpan={2}>
-                  New
+                  New{isDeletedFile && <span className="diff-head__note">deleted</span>}
                 </th>
               </tr>
             </thead>
