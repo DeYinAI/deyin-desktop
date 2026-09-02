@@ -6,6 +6,24 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.13 — 2026-09-03
+
+### Highlights
+
+- Settings → Models: the Openference card now live-updates to connected after
+  sign-in (was stuck on "Not connected" until you left the page) and, once
+  connected, shows the plan name, weekly reset date and a quota grid — 5-hour
+  window, this week, requests today, credits
+- "Renew / change plan" opens the in-app plan picker; "Manage billing" opens
+  the portal's billing overview
+- Plans support a forward-compatible `isSoldOut` flag: sold out plans render a
+  localized badge and a disabled CTA (public catalog API omits the flag today;
+  absent means available)
+- Tooling: the bash tool description no longer tells agents to avoid `&&` on
+  WSL-backed Windows sessions, and commands that finish before the persistent
+  shell starts capturing output are labeled for retry instead of reading as
+  "printed nothing"
+
 ## 1.0.12 — 2026-09-02
 
 ### Highlights
