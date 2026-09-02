@@ -48,8 +48,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   optimizationPluginEnabled: false,
   memoryEnabled: true,
   reviewMode: "off",
-  autoVisionRouting: false,
-  autoImageGeneration: true,
+ autoImageGeneration: true,
   whatsNewSeenVersion: null,
 };
 
@@ -130,8 +129,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   }
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
-  if (typeof merged.autoVisionRouting !== "boolean") merged.autoVisionRouting = DEFAULT_SETTINGS.autoVisionRouting;
-  if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration = DEFAULT_SETTINGS.autoImageGeneration;
+if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration = DEFAULT_SETTINGS.autoImageGeneration;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
   if (!["dark", "light", "system", "warm"].includes(merged.theme)) merged.theme = "dark";

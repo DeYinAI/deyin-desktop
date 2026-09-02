@@ -200,12 +200,14 @@ without adopting its operator/lifestyle scope:
 
 ## Multi-model
 - Model picker backed by Openference's live `/v1/models` catalog.
-- Catalog entries are classified: chat models stream completions, vision models accept
-  image attachments, and text-to-image models are tagged **Image** in the picker.
-- Cloud vision auto-routing is **off by default** (Settings → General → **Auto route to
-  cloud vision**). With it off, attach images on a text model by installing the
-  **Local Vision** plugin (Ollama + `moondream`, ~1.7 GB) or by picking a vision model
-  manually.
+- Catalog entries are classified: chat models stream completions, and
+  text-to-image models are tagged **Image** in the picker.
+- Image attachments always go to the model you picked — the client never
+  gatekeeps on catalog metadata. If a model can't take images, the provider
+  returns its own error, which surfaces in the timeline like any other
+  provider failure. The optional **Local Vision** plugin (Ollama +
+  `moondream`, ~1.7 GB) describes pictures on-device when your model has no
+  vision.
 
 ## Image generation
 - Image ability is read off the `/v1/models` catalog (`host-core/src/images.ts`,
