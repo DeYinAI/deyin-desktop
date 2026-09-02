@@ -1124,9 +1124,12 @@ export function App() {
             if (cur.some((t) => t.id === effect.terminalId)) return cur;
             return [...cur, { id: effect.terminalId, label: effect.label, threadId: effect.threadId }];
           });
+          // Opt-in only: a shell call must not steal the right panel from what
+          // the user is reading. The session is registered above either way, so
+          // it is waiting in the Terminal tab whenever they choose to look.
           // Never yank the panel for a run in a chat the user is not looking at.
           if (
-            settingsRef.current?.revealTerminalOnAgentCommand !== false &&
+            settingsRef.current?.revealTerminalOnAgentCommand === true &&
             effect.threadId === activeThreadIdRef.current
           ) {
             openPanelTab("terminal");

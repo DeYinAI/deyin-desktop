@@ -545,7 +545,7 @@ export interface DeyinSettings {
   terminalCursorStyle: "bar" | "block" | "underline";
   /** Copy a terminal selection to the clipboard as soon as it is made. */
   terminalCopyOnSelect: boolean;
-  /** Open the terminal panel when the agent first runs a shell command. */
+  /** Open the terminal panel when the agent first runs a shell command. Off by default. */
   revealTerminalOnAgentCommand: boolean;
   /** Live local semantic indexing of the workspace. */
   indexingEnabled: boolean;

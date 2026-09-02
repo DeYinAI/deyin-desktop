@@ -18,7 +18,7 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   assert.equal(migrated.language, "zh");
   assert.equal(migrated.agentMode, "agent");
   assert.equal(migrated.terminalScrollback, DEFAULT_SETTINGS.terminalScrollback);
-  assert.equal(migrated.revealTerminalOnAgentCommand, true);
+  assert.equal(migrated.revealTerminalOnAgentCommand, false);
   assert.deepEqual(migrated.onboard, { workspaceOpened: false, terminalUsed: false, taskRun: false });
   // Subagent settings default.
   assert.deepEqual(migrated.subagentModels, {});
@@ -28,6 +28,39 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   assert.equal(migrated.subagentMaxSteps, DEFAULT_SETTINGS.subagentMaxSteps);
   assert.equal(migrated.subagentConcurrency, DEFAULT_SETTINGS.subagentConcurrency);
  assert.equal(migrated.autoImageGeneration, true);
+});
+
+test("upgrading clears the old reveal-terminal-on-agent-command default once", () => {
+  // Every pre-v20 install has `true` written into settings.json from the old
+  // default, so flipping DEFAULT_SETTINGS alone would change nothing for them.
+  const upgraded = migrateSettings({ schemaVersion: 19, revealTerminalOnAgentCommand: true });
+  assert.equal(upgraded.revealTerminalOnAgentCommand, false);
+
+  // Settings predating the schemaVersion field upgrade the same way.
+  assert.equal(migrateSettings({ revealTerminalOnAgentCommand: true }).revealTerminalOnAgentCommand, false);
+
+  // Once at v20 the user's own choice is theirs to keep, in both directions.
+  const optedIn = migrateSettings({ schemaVersion: SETTINGS_SCHEMA_VERSION, revealTerminalOnAgentCommand: true });
+  assert.equal(optedIn.revealTerminalOnAgentCommand, true);
+  const optedOut = migrateSettings({ schemaVersion: SETTINGS_SCHEMA_VERSION, revealTerminalOnAgentCommand: false });
+  assert.equal(optedOut.revealTerminalOnAgentCommand, false);
+});
+
+test("turning reveal-terminal back on survives the next settings write", () => {
+  const dir = tempDir();
+  try {
+    // A v19 install: the store migrates and persists on construction.
+    const storage = new FileStorage(dir);
+    storage.writeJson("settings.json", { schemaVersion: 19, revealTerminalOnAgentCommand: true });
+    const store = new SettingsStore(storage);
+    assert.equal(store.get().revealTerminalOnAgentCommand, false, "the upgrade turns it off");
+
+    // The user opts back in; an unrelated later write must not undo that.
+    store.set({ revealTerminalOnAgentCommand: true });
+    assert.equal(store.set({ terminalFontSize: 14 }).revealTerminalOnAgentCommand, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("migrateSettings sanitizes subagent model/effort maps and clamps run limits", () => {
