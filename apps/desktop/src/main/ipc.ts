@@ -984,6 +984,11 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
         telemetry.flush(),
         new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
       ]);
+      // Writes are async and coalescing; don't quit with settings/projects still queued.
+      await Promise.race([
+        storage.flush(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+      ]);
       index.dispose();
       gitWatcher.stop();
       workspaceService.dispose();

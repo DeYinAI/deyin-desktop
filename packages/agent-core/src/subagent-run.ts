@@ -198,7 +198,6 @@ export async function runSubagent(
       content: buildSystemPrompt({
         cwd,
         agent: { name: def.name, description: def.description, prompt: def.prompt },
-        toolNames: registry.names(),
       }),
     },
     { role: "user", content: prompt },

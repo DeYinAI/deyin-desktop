@@ -38,7 +38,7 @@ export async function runLocalAutomation(
   const { automation, prompt, cwd, onEvent, signal } = opts;
   const env = await buildAutomationEnvironment(deps, cwd, automation.providerId);
   const settings = deps.settings.get();
- const system = await buildAutomationSystemPrompt(deps, cwd, env.registry);
+ const system = await buildAutomationSystemPrompt(deps, cwd);
   const messages: AgentMessage[] = [
     { role: "system", content: system },
     { role: "user", content: prompt },

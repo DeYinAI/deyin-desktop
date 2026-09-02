@@ -111,6 +111,44 @@ export async function loadContextFiles(cwd: string, opts: LoadContextFilesOption
   return (await loadContextFilesDetailed(cwd, opts)).files;
 }
 
+/**
+ * How long a cached instruction-file load stays fresh.
+ *
+ * Hosts rebuild the system prompt on every turn, so this walked five parent
+ * levels x six filenames, plus the rules directory and every `@import`'s
+ * realpath, before a hash guard usually threw the result away. Instruction files
+ * change at human speed; re-reading them once per turn buys nothing.
+ */
+const CONTEXT_FILE_TTL_MS = 4_000;
+
+const contextFileCache = new Map<string, { at: number; files: ContextFile[] }>();
+
+/**
+ * `loadContextFiles` with a short TTL, keyed on the directories it reads.
+ *
+ * Deliberately time-based rather than mtime-based: the set of files is itself
+ * discovered by the walk, so there is no fixed list to stat, and a few seconds
+ * of staleness on an AGENTS.md edit is not worth a second traversal to detect.
+ * Callers that must see an edit immediately should use `loadContextFiles`.
+ */
+export async function loadContextFilesCached(
+  cwd: string,
+  opts: LoadContextFilesOptions = {},
+): Promise<ContextFile[]> {
+  const key = `${cwd}\u0000${opts.userDir ?? ""}`;
+  const hit = contextFileCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < CONTEXT_FILE_TTL_MS) return hit.files;
+  const files = await loadContextFiles(cwd, opts);
+  contextFileCache.set(key, { at: now, files });
+  return files;
+}
+
+/** Drop cached instruction files (used by tests and by an explicit reload). */
+export function clearContextFileCache(): void {
+  contextFileCache.clear();
+}
+
 /** Read the recognized instruction files of one directory in precedence order. */
 async function instructionFilesIn(dir: string): Promise<ContextFile[]> {
   const out: ContextFile[] = [];
@@ -185,7 +223,6 @@ async function readOptional(path: string): Promise<string | null> {
 export interface SystemPromptOptions {
   cwd: string;
   agent: AgentDefinition;
-  toolNames: string[];
   contextFiles?: ContextFile[];
   /** Discovered skills, advertised so the model can self-select them. */
   skills?: SkillDefinition[];
@@ -219,15 +256,17 @@ export function buildSystemPromptParts(opts: SystemPromptOptions): SystemPromptB
   systemParts.push(
     [
       "# Tool rules",
-      `- Available tools: ${opts.toolNames.join(", ")}.`,
+      // The tool names are already in the tool schemas the provider receives;
+      // repeating them here bought nothing and cost tokens in the cached prefix.
       "- You can use multiple tools in one response when they are independent. Prefer batching over serial text→one-tool→text turns — each turn re-sends the full context.",
-      "- Do not narrate or probe with one shell command per turn when you can combine checks (`cmd1 && cmd2`) or issue several tool calls together.",
+      "- Do not narrate or probe with one shell command per turn when you can combine checks (chain them in a single command) or issue several tool calls together.",
       "- Reserve a new turn for work that truly depends on a prior tool result.",
       "- Think through the whole change before the first edit: read the relevant code, understand the surrounding context and its edge cases, and plan the full edit path. Editing before you understand the scope costs more tool calls than the reading would have.",
       "- Read files before editing them; edits must match the file content exactly.",
       "- When one file needs several changes, send them as a single edit call with the edits array rather than one call per change, and use replace_all for a rename that applies throughout.",
       "- Prefer edit over write for existing files; never truncate a file to avoid rewriting it.",
-      "- Use bash for builds, tests and git. Commands run non-interactively; avoid anything that waits for input.",
+      "- Use bash for builds, tests, package managers, and for git operations that change state (add, commit, branch, push) — chain them into one call rather than one per step. The git_status/git_log/git_diff/git_blame tools are for reading. Commands run non-interactively; avoid anything that waits for input.",
+      "- Do not re-read a file or re-run a command whose result is already in this conversation; identical results are elided and tell you nothing new.",
       "- For multi-step tasks, maintain a todo list with todo_write and keep it current.",
       "- When you are done, reply with a concise summary of what you did. Do not end your reply with a question unless you are genuinely blocked.",
     ].join("\n"),

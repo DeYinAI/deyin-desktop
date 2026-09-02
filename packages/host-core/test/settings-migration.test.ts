@@ -74,16 +74,18 @@ test("migrateSettings clamps out-of-range values and repairs invalid enums", () 
   assert.equal(migrated.approvalMode, "full-access");
 });
 
-test("SettingsStore persists the migrated shape for v1 files", () => {
+test("SettingsStore persists the migrated shape for v1 files", async () => {
   const dir = tempDir();
   try {
     const storage = new FileStorage(dir);
     // Simulate a v1 settings.json (no schemaVersion, no new keys).
     storage.writeJson("settings.json", { theme: "dark", language: "de", fontSize: 14 });
+    await storage.flush();
     const store = new SettingsStore(storage);
     assert.equal(store.get().schemaVersion, SETTINGS_SCHEMA_VERSION);
     assert.equal(store.get().language, "de");
     // The upgrade was written back to disk.
+    await storage.flush();
     const onDisk = storage.readJson<{ schemaVersion?: number; defaultShell?: string | null }>("settings.json", {});
     assert.equal(onDisk.schemaVersion, SETTINGS_SCHEMA_VERSION);
     assert.equal(onDisk.defaultShell, null);
@@ -92,7 +94,7 @@ test("SettingsStore persists the migrated shape for v1 files", () => {
   }
 });
 
-test("AgentsStore migrates legacy caps arrays into the disabled set", () => {
+test("AgentsStore migrates legacy caps arrays into the disabled set", async () => {
   const dir = tempDir();
   try {
     const storage = new FileStorage(dir);
@@ -103,10 +105,12 @@ test("AgentsStore migrates legacy caps arrays into the disabled set", () => {
       ],
       providers: [],
     });
+    await storage.flush();
     const agents = new AgentsStore(storage);
     assert.ok(agents.disabledCaps().has("test-runner"));
     assert.ok(!agents.disabledCaps().has("review-code"));
     // The legacy array is gone from disk after migration.
+    await storage.flush();
     const onDisk = storage.readJson<{ caps?: unknown; disabledCaps?: string[] }>("agents.json", {});
     assert.equal(onDisk.caps, undefined);
     assert.deepEqual(onDisk.disabledCaps, ["test-runner"]);
@@ -115,19 +119,23 @@ test("AgentsStore migrates legacy caps arrays into the disabled set", () => {
   }
 });
 
-test("AgentsStore toggles persist and plugin secrets round-trip ciphered", () => {
+test("AgentsStore toggles persist and plugin secrets round-trip ciphered", async () => {
   const dir = tempDir();
   try {
     const storage = new FileStorage(dir);
     const agents = new AgentsStore(storage);
     agents.setCapEnabled("skill:review-code", false);
+    await storage.flush();
     assert.ok(new AgentsStore(storage).disabledCaps().has("skill:review-code"));
     agents.setCapEnabled("skill:review-code", true);
+    await storage.flush();
     assert.ok(!new AgentsStore(storage).disabledCaps().has("skill:review-code"));
 
     agents.setPluginSecret("my-plugin", "API_KEY", "secret-value");
+    await storage.flush();
     assert.deepEqual(new AgentsStore(storage).getPluginSecrets("my-plugin"), { API_KEY: "secret-value" });
     agents.removePluginSecrets("my-plugin");
+    await storage.flush();
     assert.deepEqual(new AgentsStore(storage).getPluginSecrets("my-plugin"), {});
   } finally {
     rmSync(dir, { recursive: true, force: true });

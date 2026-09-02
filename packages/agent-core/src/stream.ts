@@ -128,6 +128,11 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       model: opts.model,
       messages: wireMessages,
       stream: true,
+      // OpenAI omits `usage` from streamed responses unless this is set. Without
+      // it the loop never gets a usage anchor, so compaction runs on the raw
+      // local estimate and the prefix-cache diagnostics see 0 hits / 0 misses —
+      // i.e. every measurement in the system silently goes blind.
+      stream_options: { include_usage: true },
     };
     if (opts.tools && opts.tools.length > 0) body.tools = opts.tools;
     // Image-capable chat models must be asked for pictures explicitly; gateways
@@ -149,16 +154,34 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     const headers: Record<string, string> = { "content-type": "application/json" };
     // Local providers (Ollama) run without a key: skip the auth header.
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
-    const res = await fetchWithTransientRetry(endpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    });
+    const post = (): Promise<Response> =>
+      fetchWithTransientRetry(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: opts.signal,
+      });
 
-    if (!res.ok || !res.body) {
+    let res = await post();
+    if (!res.ok) {
       const detail = await res.text().catch(() => "");
-      throw new Error(`Chat request failed (${res.status}). ${detail.trim().slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000));
+      // Some OpenAI-compatible gateways 400 on `stream_options`. Drop it and
+      // retry once: losing the usage anchor is far better than losing the turn.
+      if (res.status === 400 && /stream[_ ]?options/i.test(detail)) {
+        delete body.stream_options;
+        res = await post();
+      }
+      if (!res.ok) {
+        const finalDetail = res.status === 400 ? detail : await res.text().catch(() => "");
+        throw new Error(
+          `Chat request failed (${res.status}). ${finalDetail.trim().slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`
+            .trim()
+            .slice(0, 2000),
+        );
+      }
+    }
+    if (!res.body) {
+      throw new Error(`Chat request failed (${res.status}). The provider returned no response body.`);
     }
 
     const parser = new StreamAccumulator(built.compression);

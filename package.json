@@ -18,7 +18,8 @@
     "oauth:dev": "pnpm --filter @deyin/oauth-provider dev",
     "desktop:dev": "pnpm --filter @deyin/desktop dev",
     "web:dev": "pnpm --filter @deyin/web dev",
-    "clean": "pnpm -r exec rm -rf dist out node_modules/.cache"
+    "clean": "pnpm -r exec rm -rf dist out node_modules/.cache",
+    "runs:summary": "tsx scripts/summarize-runs.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

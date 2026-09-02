@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import {
   applyPrune,
+  foldRegion,
+  SUMMARY_OUTPUT_MAX_TOKENS,
   decideCompaction,
   estimateTokens,
   pinnedPrefixLen,
@@ -14,6 +18,7 @@ import {
   STALE_TOOL_RESULT_CAP,
 } from "../src/compaction.js";
 import type { AgentMessage } from "../src/types.js";
+import { buildWireMessages } from "../src/wire.js";
 
 /** A short tail budget keeps fixtures small while exercising the real code path. */
 const TAIL = 200;
@@ -228,4 +233,95 @@ test("gives up after MAX_CONSECUTIVE_COMPACTS instead of looping forever", () =>
     }).action,
     "exhausted",
   );
+});
+
+// ---------------------------------------------------------------------------
+// Fold request shape — the cache-alignment contract
+// ---------------------------------------------------------------------------
+
+/** Capture the request body a fold sends, without a network round trip. */
+async function captureFoldRequest(
+  messages: AgentMessage[],
+  region: { start: number; end: number; tokens: number },
+  reply: string,
+  extra: Record<string, unknown> = {},
+): Promise<{ body: Record<string, unknown>; result: Awaited<ReturnType<typeof foldRegion>> }> {
+  let body: Record<string, unknown> = {};
+  const server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => {
+      body = JSON.parse(raw) as Record<string, unknown>;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: reply }, finish_reason: null }] })}\n\n`,
+      );
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    const result = await foldRegion({
+      apiBaseUrl: `http://127.0.0.1:${port}`,
+      token: "t",
+      model: "test-model",
+      messages,
+      region,
+      ...extra,
+    });
+    return { body, result };
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+test("the fold replays the run's real prefix so the provider can serve it from cache", async () => {
+  const messages = transcript(6, 400);
+  const region = selectRegion(messages, TAIL);
+  const tools = [
+    { type: "function" as const, function: { name: "read", description: "read a file", parameters: { type: "object" } } },
+  ];
+  // foldRegion splices the summary into `messages`, so capture what the ordinary
+  // request would have sent BEFORE the fold runs.
+  const expected = buildWireMessages(messages.slice(0, region.end), {}).messages;
+  const { body } = await captureFoldRequest(messages, region, "## Goal\nbriefing", { tools });
+
+  const sent = body.messages as { role: string; content: unknown }[];
+  // Everything before the appended instruction must be the ordinary request's
+  // own prefix, byte for byte — that identity IS the cache hit.
+  assert.equal(sent.length, region.end + 1, "the fold sent something other than prefix + one instruction");
+  assert.deepEqual(sent.slice(0, region.end), expected);
+  // The last message is the only new content.
+  assert.equal(sent[sent.length - 1]!.role, "user");
+  assert.match(String(sent[sent.length - 1]!.content), /## Goal/);
+  // The same tool schemas ride along, because they sit in the cached prefix too.
+  assert.deepEqual(body.tools, tools);
+  // And the output is capped, so a fold cannot bill for a full-length completion.
+  assert.equal(body.max_tokens, SUMMARY_OUTPUT_MAX_TOKENS);
+});
+
+test("a fold whose summary is not smaller than the region it replaces is rejected", async () => {
+  const messages = transcript(6, 400);
+  const region = selectRegion(messages, TAIL);
+  const before = messages.length;
+  // A "summary" far larger than the region: taking it would cost a model call
+  // AND a cache reset to make the pressure problem worse.
+  const { result } = await captureFoldRequest(messages, region, "bloat ".repeat(20_000));
+  assert.equal(result.droppedMessages, 0);
+  assert.equal(result.reclaimedTokens, 0);
+  assert.equal(messages.length, before, "the transcript must be left untouched");
+});
+
+test("a successful fold replaces the region and reports what it reclaimed", async () => {
+  const messages = transcript(6, 400);
+  const region = selectRegion(messages, TAIL);
+  const before = messages.length;
+  const { result } = await captureFoldRequest(messages, region, "## Goal\nshort briefing");
+  assert.ok(result.droppedMessages > 0);
+  assert.ok(result.reclaimedTokens > 0);
+  assert.equal(messages.length, before - result.droppedMessages + 1);
+  assert.equal(messages[0]!.role, "system", "the system prompt is never folded");
 });

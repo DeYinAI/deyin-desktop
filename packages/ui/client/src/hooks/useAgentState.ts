@@ -163,7 +163,7 @@ export type AgentSideEffect =
         sessionHit: number;
         sessionMiss: number;
         prefixChanged?: boolean;
-        changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+        changeReasons?: Array<"system" | "tools" | "prune" | "fold" | "overflow">;
       };
     }
   | { type: "context-snapshot"; threadId: string; snapshot: ContextUsageSnapshot }

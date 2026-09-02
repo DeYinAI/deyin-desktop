@@ -56,6 +56,7 @@ export { createWaitJobsTool } from "./wait-jobs.js";
 export { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 export {
   GIT_TOOLS,
+  GIT_WRITE_TOOLS,
   gitStatusTool,
   gitLogTool,
   gitDiffTool,

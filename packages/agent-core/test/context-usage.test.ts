@@ -6,6 +6,7 @@ import {
   splitToolSchemaTokens,
 } from "../src/context-usage.js";
 import { TASK_SUBAGENT_CATALOG_MARKER } from "../src/tools/task.js";
+import { buildWireMessages } from "../src/wire.js";
 import type { AgentMessage, WireTool } from "../src/types.js";
 
 function tool(name: string, description = "desc"): WireTool {
@@ -134,16 +135,27 @@ test("wire compression stats use tokenizer-compatible units", () => {
       content: "line1\nline1\nline1\nline2\n" + "x".repeat(500),
     },
   ];
+  // The stats come from the request that actually went out — the snapshot no
+  // longer compresses the transcript a second time just to produce them.
+  const built = buildWireMessages(messages, { enableCompression: true, compressionMode: "balanced" });
+  assert.ok(built.compression);
+  assert.equal(typeof built.compression!.originalTokens, "number");
+  assert.equal(typeof built.compression!.compressedTokens, "number");
+  assert.ok(built.compression!.originalTokens > 0);
+
   const snap = estimateContextUsage({
     messages,
     contextLength: 50_000,
-    wire: { enableCompression: true, compressionMode: "balanced" },
+    compression: {
+      originalTokens: built.compression!.originalTokens,
+      compressedTokens: built.compression!.compressedTokens,
+    },
   });
   assert.ok(snap.wire);
-  assert.equal(typeof snap.wire!.originalTokens, "number");
-  assert.equal(typeof snap.wire!.compressedTokens, "number");
-  assert.ok(snap.wire!.originalTokens > 0);
-  // Without compression enabled, wire stats are omitted.
+  assert.equal(snap.wire!.originalTokens, built.compression!.originalTokens);
+  assert.equal(snap.wire!.compressedTokens, built.compression!.compressedTokens);
+
+  // With nothing reported, wire stats are omitted.
   const raw = estimateContextUsage({ messages, contextLength: 50_000 });
   assert.equal(raw.wire, undefined);
 });

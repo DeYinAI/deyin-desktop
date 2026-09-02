@@ -434,13 +434,19 @@ export function buildWireMessages(messages: AgentMessage[], options: WireOptions
   // exist there) and one at the end of this one. Without these the growing
   // conversation was never cached at all on this path — only the system block.
   if (useAnthropicCache) {
-    const positions = new Set<number>();
+    const requested: number[] = [];
     if (options.previousMessageCount !== undefined) {
-      positions.add(options.previousMessageCount - 1);
+      requested.push(options.previousMessageCount - 1);
     }
-    positions.add(messages.length - 1);
-    for (const index of positions) {
+    requested.push(messages.length - 1);
+    const positions = new Set<number>();
+    for (const index of requested) {
       if (index <= staticSystemIndex || index >= wire.length) continue;
+      // Walk back off tool-call-only turns, which cannot carry a marker.
+      const target = markablePositionAtOrBefore(wire, index, staticSystemIndex);
+      if (target >= 0) positions.add(target);
+    }
+    for (const index of positions) {
       wire[index] = withRollingCacheControl(wire[index]!);
     }
   }
@@ -476,5 +482,42 @@ function withRollingCacheControl(message: Record<string, unknown>): Record<strin
     blocks[blocks.length - 1] = { ...last, cache_control: ROLLING_CACHE_CONTROL };
     return { ...message, content: blocks };
   }
+
   return message;
+}
+
+/**
+ * Can this message carry a rolling breakpoint at all?
+ *
+ * Tool-call-only assistant turns are sent as `content: null` with an OpenAI
+ * `tool_calls` array. There is no content block to mark, and hanging
+ * `cache_control` off a `tool_calls` entry invents a wire shape gateways are
+ * entitled to reject. So such a message is simply not markable.
+ */
+function canCarryRollingBreakpoint(message: Record<string, unknown> | undefined): boolean {
+  if (!message) return false;
+  const content = message.content;
+  if (typeof content === "string") return content.length > 0;
+  return Array.isArray(content) && content.length > 0;
+}
+
+/**
+ * The nearest markable position at or before `index`, or -1 if there is none
+ * above the static system breakpoint.
+ *
+ * An agent step almost always ENDS on a tool-call-only assistant turn, so
+ * without this walk-back both rolling breakpoints silently vanish exactly when
+ * they matter most — which is the 20-position lookback failing for the very
+ * case it was added to protect. Landing the marker one or two messages earlier
+ * caches marginally less; landing it nowhere caches nothing.
+ */
+function markablePositionAtOrBefore(
+  wire: readonly Record<string, unknown>[],
+  index: number,
+  floor: number,
+): number {
+  for (let i = Math.min(index, wire.length - 1); i > floor; i--) {
+    if (canCarryRollingBreakpoint(wire[i])) return i;
+  }
+  return -1;
 }

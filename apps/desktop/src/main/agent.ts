@@ -18,7 +18,6 @@ import {
 import {
   PermissionEngine,
   SessionStore,
-  ToolRegistry,
   appendHookContext,
   buildSystemPromptParts,
   McpConnectionPool,
@@ -28,7 +27,7 @@ import {
   resolveCommandInvocation,
   unknownCommandMessage,
   getSessionJobsManager,
-  loadContextFiles,
+  loadContextFilesCached,
   matchCommand,
   modeReminder,
   runAgent,
@@ -746,7 +745,7 @@ export class DesktopAgentHost {
 
       // Transcript: reuse the in-memory session, else restore/create a persisted one.
       // Built after MCP connect so the system prompt lists connected MCP tools.
-      const session = await this.ensureSession(options, cwd, registry, caps.skills.length > 0 ? caps.skills : [], hooks);
+      const session = await this.ensureSession(options, cwd, caps.skills.length > 0 ? caps.skills : [], hooks);
       const jobsMgr = getSessionJobsManager(session.sessionId, join(app.getPath("userData"), "jobs"));
       if (subagents.length > 0) {
         registry.register(
@@ -888,18 +887,10 @@ export class DesktopAgentHost {
               messages: session.messages,
               systemSections: session.systemSections,
               tools: registry.toWire(),
-              wire: {
-                enableCompression: true,
-                compressionMode: "balanced",
-                enablePromptCaching: true,
-                provider: resolveWireProvider({
-                  providerId: options.providerId,
-                  model: options.model,
-                  cwd,
-                  apiFormat: provider?.apiFormat,
-                }),
-                model: options.model,
-              },
+              // No `compression` here on purpose: this snapshot is emitted on
+              // the cached-response path, where no request went out, so there
+              // are no wire savings to report. It used to pass `wire` and make
+              // the snapshot compress the whole transcript to find that out.
               cached: true,
             }),
           });
@@ -1026,7 +1017,6 @@ export class DesktopAgentHost {
               options,
               change,
               cwd,
-              registry,
               caps.skills,
               hooks,
               permissions,
@@ -1178,6 +1168,32 @@ export class DesktopAgentHost {
                 message: event.message,
                 toolName: event.toolName,
               });
+              break;
+            case "loop-guard":
+              // Surfaced on the existing gate channel: from the user's point of
+              // view this is the same kind of thing — the host stepped in and
+              // redirected the model. `code` distinguishes the two.
+              this.send(options.threadId, {
+                type: "evidence-gate",
+                code: `loop-guard:${event.code}`,
+                message: event.detail,
+              });
+              break;
+            case "run-summary":
+              // The scoring line for a workload: rounds, tool calls, wasted
+              // calls, and how much of the prompt the provider served from cache.
+              // Journaled into the session log so runs can be scored from disk
+              // (scripts/summarize-runs.ts) instead of scraping stdout.
+              this.store.appendEvent(session.sessionId, { kind: "run-summary", summary: event.summary });
+              console.info(
+                `[deyin] run ${options.threadId}: ${event.summary.steps} steps, ` +
+                  `${event.summary.toolCalls} tool calls ` +
+                  `(${event.summary.deniedCalls} denied, ${event.summary.failedCalls} failed, ` +
+                  `${event.summary.duplicateResults} duplicate results elided, ` +
+                  `${event.summary.loopGuardTrips} loop-guard trips), ` +
+                  `${event.summary.compactionPasses} compaction passes, ` +
+                  `cache hit rate ${(event.summary.cacheHitRate * 100).toFixed(1)}%`,
+              );
               break;
             case "usage":
               this.send(options.threadId, {
@@ -1335,7 +1351,6 @@ export class DesktopAgentHost {
   private async ensureSession(
     options: AgentStartOptions,
     cwd: string,
-    registry: ToolRegistry,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
   ): Promise<ThreadSession> {
@@ -1345,7 +1360,7 @@ export class DesktopAgentHost {
       if (modeChanged && options.mode === "plan") {
         existing.previousMode = existing.mode;
       }
-      const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks, existing);
+      const parts = await this.systemPromptParts(options.mode, cwd, skills, hooks, existing);
       this.pinSystemPrompt(existing, parts);
       if (modeChanged) {
         const reminder = modeReminder({ event: "enter", target: options.mode, previous: existing.previousMode });
@@ -1369,7 +1384,7 @@ export class DesktopAgentHost {
     }
 
     const hookState: { startHookContext?: string[] } = {};
-    const parts = await this.systemPromptParts(options.mode, cwd, registry, skills, hooks, hookState);
+    const parts = await this.systemPromptParts(options.mode, cwd, skills, hooks, hookState);
     const messages: AgentMessage[] = [{ role: "system", content: parts.content }];
     // Rebuild prior plain-text turns (post-restart continuity).
     for (const turn of options.history) {
@@ -1411,14 +1426,13 @@ export class DesktopAgentHost {
   private async systemPromptParts(
     mode: ChatMode,
     cwd: string,
-    registry: ToolRegistry,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
     /** Carries sessionStart hook output across turns; populated on first use. */
     hookState?: { startHookContext?: string[] },
   ) {
     const agent = agentForMode(mode);
-    const contextFiles = await loadContextFiles(cwd).catch(() => []);
+    const contextFiles = await loadContextFilesCached(cwd).catch(() => []);
     let parts = buildSystemPromptParts({
       cwd,
       agent: {
@@ -1427,7 +1441,6 @@ export class DesktopAgentHost {
           agent.prompt +
           " You run inside the Deyin desktop app: the user sees your streamed text and tool cards in the chat timeline.",
       },
-      toolNames: registry.names(),
       contextFiles,
       skills,
     });
@@ -1533,7 +1546,6 @@ export class DesktopAgentHost {
     options: AgentStartOptions,
     change: ModeChangeRequest,
     cwd: string,
-    registry: ToolRegistry,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
     permissions: PermissionEngine,
@@ -1562,7 +1574,7 @@ export class DesktopAgentHost {
       this.store.append(session.sessionId, reminderMsg);
     }
 
-    const parts = await this.systemPromptParts(nextMode, cwd, registry, skills, hooks, session);
+    const parts = await this.systemPromptParts(nextMode, cwd, skills, hooks, session);
     this.pinSystemPrompt(session, parts);
 
     this.send(threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });

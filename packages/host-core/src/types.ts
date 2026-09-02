@@ -217,7 +217,7 @@ export type ThreadEvent =
       sessionCacheMiss?: number;
       cacheHitRate?: number;
       prefixChanged?: boolean;
-      changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+      changeReasons?: Array<"system" | "tools" | "prune" | "fold" | "overflow">;
     }
   | { kind: "evidence-gate"; code: string; message: string }
   | {
@@ -881,7 +881,7 @@ export interface ContextUsageSnapshot {
     sessionHit: number;
     sessionMiss: number;
     prefixChanged?: boolean;
-    changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+    changeReasons?: Array<"system" | "tools" | "prune" | "fold" | "overflow">;
   };
 }
 
@@ -912,7 +912,7 @@ export type AgentUiEvent =
      sessionCacheMiss?: number;
      cacheHitRate?: number;
      prefixChanged?: boolean;
-     changeReasons?: Array<"system" | "tools" | "log_rewrite">;
+     changeReasons?: Array<"system" | "tools" | "prune" | "fold" | "overflow">;
    }
  | { type: "permission-request"; requestId: string; toolName: string; summary: string }
  | {

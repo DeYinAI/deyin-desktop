@@ -20,11 +20,42 @@ export interface CliContext {
   memory: MemoryStore;
 }
 
+/** Storage instances created this process; flushed once when the loop drains. */
+const liveStorages: FileStorage[] = [];
+let exitFlushRegistered = false;
+
+/**
+ * Writes are async and coalescing, and each CLI command builds its own context,
+ * so there is no shared "end of main" to flush at. `beforeExit` fires once the
+ * event loop drains — i.e. after the command finished — and can still run IO;
+ * it does not fire on explicit process.exit(), which no command path uses after
+ * writing. The guard keeps the second drain (scheduled by the flush itself)
+ * from re-entering.
+ */
+/**
+ * Flush every storage created this process. `beforeExit` covers normal
+ * exits, but explicit `process.exit()` (the headless runner) skips it — call
+ * this before exiting manually.
+ */
+export async function flushCliStorage(): Promise<void> {
+  await Promise.all(liveStorages.map((s) => s.flush())).catch(() => {});
+}
+
+function flushOnExit(storage: FileStorage): void {
+  liveStorages.push(storage);
+  if (exitFlushRegistered) return;
+  exitFlushRegistered = true;
+  process.once("beforeExit", () => {
+    void Promise.all(liveStorages.map((s) => s.flush())).catch(() => {});
+  });
+}
+
 export function createContext(opts: { cwd?: string; overrides?: Partial<DeyinCliConfigFile> } = {}): CliContext {
   const cwd = resolve(opts.cwd ?? process.cwd());
   const dataDir = defaultDataDir();
   const config = loadCliConfig({ cwd, globalDir: dataDir, overrides: opts.overrides });
   const storage = new FileStorage(dataDir);
+  flushOnExit(storage);
   const oauth = new OAuthClient(
     { issuer: config.oauthIssuer, clientId: config.clientId, scopes: DEFAULT_CONFIG.scopes },
     new FileTokenStore({ path: join(dataDir, "credentials.json") }),

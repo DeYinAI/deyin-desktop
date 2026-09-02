@@ -19,7 +19,8 @@ test("bundle:base activates every row and fills the tool catalog", async () => {
 
   const names = kernel.get(Tools).names().sort();
   // Every builtin tool family present: fs + shell + git + web + plan + agent.
-  for (const expected of ["bash", "read", "write", "edit", "grep", "git_status", "git_push", "websearch", "web_fetch", "todo_write", "report_goal_met", "skill", "ask_question"]) {
+  // Note git is read-tier only — the mutating git tools go through bash.
+  for (const expected of ["bash", "read", "write", "edit", "grep", "git_status", "git_diff", "websearch", "web_fetch", "todo_write", "report_goal_met", "skill", "ask_question"]) {
     assert.ok(names.includes(expected), `catalog must contain "${expected}"; got ${names.join(", ")}`);
   }
   // Catalog covers exactly the BUILTIN_TOOLS set — no drift allowed between

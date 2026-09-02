@@ -13,8 +13,11 @@ test("@deyin/plugin-tools-git registers its family into the catalog", async () =
   await kernel.start([
     { name: "test", rows: [{ id: "catalog", plugin: toolCatalogPlugin.name }, { id: "family", plugin: "@deyin/plugin-tools-git" }] },
   ]);
+  // Read-tier only. The mutating git tools go through bash: as separate tools
+  // they turned one operation into three round trips and competed with the
+  // system prompt's own "use bash for git" instruction.
   assert.deepEqual(
     [...kernel.get(Tools).names()].sort(),
-    ["git_status","git_log","git_diff","git_blame","git_add","git_commit","git_branch","git_stash","git_fetch","git_pull","git_push"].sort(),
+    ["git_status", "git_log", "git_diff", "git_blame"].sort(),
   );
 });

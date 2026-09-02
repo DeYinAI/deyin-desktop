@@ -398,9 +398,14 @@ test("folds once under real pressure, then keeps the new prefix stable", async (
   // compacted on every step and pushed a notice each time, which is the wall of
   // "Context compacted" rows this replaces.
   const cwd = mkdtempSync(join(tmpdir(), "deyin-fold-"));
-  writeFileSync(join(cwd, "big.txt"), "lorem ipsum dolor sit amet ".repeat(4000));
+  // Distinct files, not one file read six times: identical results are elided
+  // to a pointer by the run deduper, which would keep the transcript small and
+  // defeat the pressure this test is built to create.
+  for (let i = 0; i < 6; i++) {
+    writeFileSync(join(cwd, `big${i}.txt`), `lorem ipsum dolor sit amet ${i} `.repeat(4000));
+  }
   const server = await startMockOpenAI((i) =>
-    i < 6 ? toolCallResponse(`call_${i}`, "read", { path: "big.txt" }) : textResponse("done"),
+    i < 6 ? toolCallResponse(`call_${i}`, "read", { path: `big${i}.txt` }) : textResponse("done"),
   );
   // Small enough that the builtin tool schemas plus a few file reads blow past
   // FORCE_RATIO, which is what makes this exercise the fold rather than a prune.
@@ -444,6 +449,83 @@ test("folds once under real pressure, then keeps the new prefix stable", async (
       messages.some((m) => m.role === "user" && m.content.includes("<compaction-summary>")),
       "a fold should leave a compaction-summary node on the surface",
     );
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a run that keeps hitting the same failure is redirected instead of burning the step budget", async () => {
+  // The model asks for a file that does not exist, over and over. Nothing here
+  // is a permission denial, so only the storm detector can catch it.
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-storm-"));
+  const server = await startMockOpenAI((i) =>
+    i < 8 ? toolCallResponse(`call_${i}`, "read", { path: `nope-${i}.txt` }) : textResponse("giving up"),
+  );
+
+  try {
+    const guards: { code: string; detail: string }[] = [];
+    const messages = baseMessages();
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "loop-guard") guards.push({ code: event.code, detail: event.detail });
+      },
+    });
+
+    assert.ok(guards.length > 0, "repeated identical failures must trip a loop guard");
+    assert.equal(guards[0]!.code, "storm");
+    // The redirect reaches the model as a real turn, not just an event.
+    assert.ok(
+      messages.some((m) => m.role === "user" && m.content.includes("[loop guard]")),
+      "the guard's redirect must be appended to the transcript",
+    );
+    assert.equal(result.summary?.loopGuardTrips, guards.length);
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("the run summary reports what the run actually cost", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-summary-"));
+  writeFileSync(join(cwd, "hello.txt"), "hi from the file ".repeat(100));
+  // Read the same file twice: the second result is byte-identical and elided.
+  const server = await startMockOpenAI((i) =>
+    i < 2 ? toolCallResponse(`call_${i}`, "read", { path: "hello.txt" }) : textResponse("done"),
+  );
+
+  try {
+    let summary: NonNullable<Awaited<ReturnType<typeof runAgent>>["summary"]> | undefined;
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages: baseMessages(),
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "run-summary") summary = event.summary;
+      },
+    });
+
+    assert.ok(summary, "every run must emit a summary");
+    assert.deepEqual(summary, result.summary);
+    assert.equal(summary!.toolCalls, 2);
+    assert.equal(summary!.callsByTool.read, 2);
+    assert.equal(summary!.deniedCalls, 0);
+    assert.equal(summary!.failedCalls, 0);
+    assert.equal(summary!.duplicateResults, 1, "the identical second read should have been elided");
+    assert.equal(summary!.steps, 3);
   } finally {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });

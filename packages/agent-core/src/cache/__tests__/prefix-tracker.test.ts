@@ -72,11 +72,10 @@ test("tool schema canonicalization is stable across key order", () => {
   assert.equal(hashToolSchemas(a), hashToolSchemas(b));
 });
 
-test("comparePrefixShapes attributes system, tools, and log_rewrite churn", () => {
+test("comparePrefixShapes attributes system and tools churn from the hashes", () => {
   const base = computePrefixShape({ role: "system", content: "sys" }, [tool("read")], 0, 100);
   const systemChanged = computePrefixShape({ role: "system", content: "sys!" }, [tool("read")], 0, 100);
   const toolsChanged = computePrefixShape({ role: "system", content: "sys" }, [tool("read"), tool("write")], 0, 120);
-  const rewriteChanged = computePrefixShape({ role: "system", content: "sys" }, [tool("read")], 1, 100);
 
   const sysDiag = comparePrefixShapes(base, systemChanged, 0, 100);
   assert.ok(sysDiag.prefixChanged);
@@ -85,10 +84,29 @@ test("comparePrefixShapes attributes system, tools, and log_rewrite churn", () =
   const toolsDiag = comparePrefixShapes(base, toolsChanged, 50, 50);
   assert.ok(toolsDiag.prefixChanged);
   assert.deepEqual(toolsDiag.changeReasons, ["tools"]);
+});
 
-  const rewriteDiag = comparePrefixShapes(base, rewriteChanged, 80, 20);
-  assert.ok(rewriteDiag.prefixChanged);
-  assert.deepEqual(rewriteDiag.changeReasons, ["log_rewrite"]);
+test("a transcript rewrite is blamed only when the provider actually saw one", () => {
+  const base = computePrefixShape({ role: "system", content: "sys" }, [tool("read")], 0, 100);
+  const bumped = computePrefixShape({ role: "system", content: "sys" }, [tool("read")], 1, 100);
+
+  // A bare version bump with nothing drained means only local-only metadata
+  // moved (a UI annotation, a resolved tool-call preview). That never reaches
+  // the provider, so blaming it for a miss would send anyone debugging a low hit
+  // rate chasing the wrong thing.
+  const localOnly = comparePrefixShapes(base, bumped, 80, 20);
+  assert.equal(localOnly.prefixChanged, false);
+  assert.deepEqual(localOnly.changeReasons, []);
+
+  // A drained reason is reported, and names what actually happened.
+  const folded = comparePrefixShapes(base, bumped, 80, 20, ["fold"]);
+  assert.ok(folded.prefixChanged);
+  assert.deepEqual(folded.changeReasons, ["fold"]);
+
+  // Hash churn and rewrites combine, without duplicates.
+  const systemAndPrune = computePrefixShape({ role: "system", content: "sys!" }, [tool("read")], 1, 100);
+  const both = comparePrefixShapes(base, systemAndPrune, 10, 90, ["prune", "prune"]);
+  assert.deepEqual(both.changeReasons, ["system", "prune"]);
 });
 
 test("only a surface-changing compaction bumps the log rewrite version", () => {
@@ -128,8 +146,9 @@ test("only a surface-changing compaction bumps the log rewrite version", () => {
 
   const shapeBefore = computePrefixShape({ role: "system", content: "You are Deyin." }, [tool("read")], version - 1, 50);
   const shapeAfter = computePrefixShape({ role: "system", content: "You are Deyin." }, [tool("read")], version, 50);
-  const diag = comparePrefixShapes(shapeBefore, shapeAfter, 0, 0);
-  assert.deepEqual(diag.changeReasons, ["log_rewrite"]);
+  // The prune is provider-visible, so the run reports it and it is blamed.
+  const diag = comparePrefixShapes(shapeBefore, shapeAfter, 0, 0, ["prune"]);
+  assert.deepEqual(diag.changeReasons, ["prune"]);
 });
 
 test("buildPromptCacheKey is stable for identical prefix components", () => {
