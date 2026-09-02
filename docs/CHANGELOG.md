@@ -6,6 +6,12 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.12 — 2026-09-02
+
+### Highlights
+
+- Hotfix: blank screen on New Chat (and on startup thread-list hydration) — a timeline memoisation hook sat after ChatView's empty-state early return, so the first empty↔populated transition crashed the renderer with React error #300; hooks now run before the branch and the renderer is lint-guarded by `react-hooks/rules-of-hooks` so a conditional hook cannot ship again
+
 ## 1.0.11 — 2026-09-02
 
 ### Highlights
