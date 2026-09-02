@@ -2,7 +2,7 @@ import { pickImageModelParamsRecord } from "./image-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 19;
+export const SETTINGS_SCHEMA_VERSION = 20;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -40,7 +40,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   terminalScrollback: 5000,
   terminalCursorStyle: "bar",
   terminalCopyOnSelect: true,
-  revealTerminalOnAgentCommand: true,
+  revealTerminalOnAgentCommand: false,
   indexingEnabled: true,
   onboard: { workspaceOpened: false, terminalUsed: false, taskRun: false },
   keepRunningInBackground: false,
@@ -115,6 +115,15 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   if (typeof merged.revealTerminalOnAgentCommand !== "boolean") {
     merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
   }
+  // v20 turned "reveal terminal on agent command" off: a shell call yanking the
+  // right panel mid-run pulled the user out of whatever they were reading. The
+  // old default was written into every existing settings.json, so flipping
+  // DEFAULT_SETTINGS alone would change nothing for anyone already installed —
+  // clear it once, on the upgrade only. Turning it back on lands at v20 and is
+  // then left alone.
+  if (schemaVersionOf(input) < 20) {
+    merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
+  }
   if (!["bar", "block", "underline"].includes(merged.terminalCursorStyle)) {
     merged.terminalCursorStyle = DEFAULT_SETTINGS.terminalCursorStyle;
   }
@@ -164,6 +173,11 @@ function pickStringRecord(
     }
   }
   return clean;
+}
+
+/** Schema version of a settings object read from disk; 0 when it predates the field. */
+function schemaVersionOf(input: Record<string, unknown>): number {
+  return typeof input.schemaVersion === "number" ? input.schemaVersion : 0;
 }
 
 function clamp(value: unknown, min: number, max: number, fallback: number): number {

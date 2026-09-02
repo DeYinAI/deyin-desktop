@@ -133,7 +133,7 @@ export function TerminalPage({ settings, onChange }: Props) {
       <SettingGroup>
       <SettingCard
         title="Reveal terminal on agent command"
-        description="Open the terminal panel and focus the Agent tab when the chat agent first runs a shell command."
+        description="Off by default: shell runs stay in the Terminal tab until you open it. Turn on to jump to the Agent tab the first time the chat agent runs a shell command."
       >
         <Toggle
           checked={settings.revealTerminalOnAgentCommand}
