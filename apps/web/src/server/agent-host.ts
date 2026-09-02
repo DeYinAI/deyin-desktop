@@ -16,6 +16,8 @@ import {
   buildSystemPromptParts,
   createRoleRouter,
   createTaskTool,
+  effectiveSubagentReadonly,
+  getSubagentStateStore,
   resolveCommandInvocation,
   unknownCommandMessage,
   getSessionJobsManager,
@@ -34,7 +36,10 @@ import {
   type ImageGenBridge,
   type PermissionDecision,
   type PermissionEngineOptions,
+  type LoadedHook,
   type SubagentDefinition,
+  type TaskCallOverrides,
+  type TaskRunResult,
   type ToolRegistry,
   type ToolSessionMeta,
 } from "@deyin/agent-core";
@@ -335,7 +340,7 @@ export class WebAgentHost {
     const permissions = new PermissionEngine(buildPermissions(options.mode));
 
     const jobsMgr = getSessionJobsManager(options.threadId, join(this.root, ".deyin", "jobs"));
-    const registry = await this.buildRegistry(options, subagents, jobsMgr);
+    const registry = await this.buildRegistry(options, subagents, jobsMgr, runCaps.hooks);
     // Attached pictures also land in the session image store, so generate_image
     // can edit them by file name instead of drawing something new.
     const attachedImages =
@@ -625,6 +630,7 @@ export class WebAgentHost {
     options: WebAgentStartOptions,
     subagents: SubagentDefinition[],
     jobsMgr: ReturnType<typeof getSessionJobsManager>,
+    hooks: LoadedHook[],
   ): Promise<ToolRegistry> {
     const kernel = await this.ensureKernel();
     const registry = buildToolRegistry(kernel.get(Tools));
@@ -635,8 +641,8 @@ export class WebAgentHost {
       registry.register(
         createTaskTool({
           subagents,
-          runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) =>
-            this.runSubagentTask(options, def, prompt, signal),
+          runSubagent: (def: SubagentDefinition, prompt: string, overrides: TaskCallOverrides) =>
+            this.runSubagentTask(options, def, prompt, hooks, overrides),
           onBackgroundStart: (def, subPrompt) =>
             jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
           onBackgroundDone: (jobId, _def, result) => {
@@ -658,15 +664,28 @@ export class WebAgentHost {
     options: WebAgentStartOptions,
     def: SubagentDefinition,
     prompt: string,
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; report: string }> {
+    hooks: LoadedHook[],
+    overrides: TaskCallOverrides,
+  ): Promise<TaskRunResult> {
+    const signal = overrides.signal;
+    // A call may tighten a subagent to read-only; it can never loosen one.
+    const readonly = effectiveSubagentReadonly(def, overrides.readonly);
     const subagentId = randomUUID();
     const startedAt = Date.now();
     this.emit(options.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
     const result = await runSubagent(def, prompt, {
       cwd: this.root,
       parent: { model: options.model, providerId: "web-session", thinking: options.thinking },
+      callModel: overrides.model,
       maxStepsDefault: 20,
+      readonly,
+      hooks,
+      // Transcripts live beside the sandbox's jobs log so resume/fork survives
+      // a reconnect to the same session.
+      state: getSubagentStateStore(join(this.root, ".deyin")),
+      sessionId: options.threadId,
+      resumeAgentId: overrides.resumeAgentId,
+      forkAgentId: overrides.forkAgentId,
       parentRouting: {
         apiBaseUrl: options.provider.baseUrl,
         getToken: async () => options.provider.token,
@@ -679,7 +698,7 @@ export class WebAgentHost {
       // level and mode, so full access never prompts inside spawned work either.
       permissionEngine: new PermissionEngine({
         agentRules: rulesForApprovalMode(options.approvalMode),
-        configRules: [...(agentForMode(options.mode).permissions ?? []), ...subagentReadonlyRules(def)],
+        configRules: [...(agentForMode(options.mode).permissions ?? []), ...subagentReadonlyRules({ readonly })],
         skipAll: skipPromptsForApproval(options.approvalMode, options.mode),
         sessionGrants: this.grantsFor(options.threadId),
       }),

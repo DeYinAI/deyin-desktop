@@ -6,8 +6,11 @@ import {
   discoverSubagents,
   getSessionJobsManager,
   runSubagent,
+  effectiveSubagentReadonly,
+  getSubagentStateStore,
   subagentReadonlyRules,
   subagentRoots,
+  type LoadedHook,
   type PermissionResolver,
   type SubagentDefinition,
   type ToolRegistry,
@@ -26,6 +29,8 @@ export interface CliSubagentToolOptions {
   sessionId: () => string | null;
   /** --yes semantics: skip permission prompts for non-readonly subagents. */
   skipAll: boolean;
+  /** Loaded lifecycle hooks; subagentStart/subagentStop fire from these. */
+  hooks?: LoadedHook[];
   resolvePermission: PermissionResolver;
   onBackgroundDone?: (jobId: string, def: SubagentDefinition, result: { ok: boolean; report: string }) => void;
 }
@@ -44,12 +49,15 @@ export async function registerCliSubagentTool(tools: ToolRegistry, opts: CliSuba
   tools.register(
     createTaskTool({
       subagents,
-      runSubagent: (def, prompt, signal) => {
+      runSubagent: (def, prompt, overrides) => {
         const routing = { apiBaseUrl: ctx.config.apiBaseUrl, getToken: tokenSource(ctx) };
+        // A call may tighten a subagent to read-only; it can never loosen one.
+        const readonly = effectiveSubagentReadonly(def, overrides.readonly);
         return runSubagent(def, prompt, {
           cwd: ctx.cwd,
           parent: { model: ctx.config.model, providerId: "openference", thinking: ctx.config.thinking },
           modelOverride: ctx.config.subagentModels[def.name],
+          callModel: overrides.model,
           effortOverride: undefined,
           maxStepsDefault: ctx.config.subagentMaxSteps,
           parentRouting: routing,
@@ -58,11 +66,19 @@ export async function registerCliSubagentTool(tools: ToolRegistry, opts: CliSuba
           resolveProvider: (providerId) => (providerId === "openference" ? routing : undefined),
           permissionEngine: new PermissionEngine({
             agentRules: [],
-            configRules: [...ctx.config.permissions, ...subagentReadonlyRules(def)],
-            skipAll: opts.skipAll && !def.readonly,
+            configRules: [...ctx.config.permissions, ...subagentReadonlyRules({ readonly })],
+            skipAll: opts.skipAll && !readonly,
           }),
           resolvePermission: opts.resolvePermission,
-          signal,
+          readonly,
+          hooks: opts.hooks,
+          // Transcripts live beside the CLI's jobs log, so resume/fork works
+          // across separate `deyin` invocations in the same session.
+          state: getSubagentStateStore(ctx.dataDir),
+          sessionId: opts.sessionId() ?? undefined,
+          resumeAgentId: overrides.resumeAgentId,
+          forkAgentId: overrides.forkAgentId,
+          signal: overrides.signal,
         });
       },
       onBackgroundStart: (def, subPrompt) => {

@@ -21,7 +21,15 @@ import { hooksFiles } from "./paths.js";
  * against the tool name / shell command, depending on the event.
  */
 
-export type HookEvent = "sessionStart" | "preToolUse" | "postToolUse" | "beforeShellExecution" | "afterShellExecution" | "stop";
+export type HookEvent =
+  | "sessionStart"
+  | "preToolUse"
+  | "postToolUse"
+  | "beforeShellExecution"
+  | "afterShellExecution"
+  | "subagentStart"
+  | "subagentStop"
+  | "stop";
 
 export const HOOK_EVENTS: HookEvent[] = [
   "sessionStart",
@@ -29,6 +37,11 @@ export const HOOK_EVENTS: HookEvent[] = [
   "postToolUse",
   "beforeShellExecution",
   "afterShellExecution",
+  // Delegated work: subagentStart may deny a run (exit 2 or permission "deny"),
+  // subagentStop may append to the report via additional_context. Both match on
+  // the subagent name.
+  "subagentStart",
+  "subagentStop",
   "stop",
 ];
 

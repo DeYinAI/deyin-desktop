@@ -5,15 +5,41 @@ import { asString } from "./util.js";
 export interface TaskRunResult {
   ok: boolean;
   report: string;
+  /**
+   * Identifies the child transcript this run produced, so a later call can
+   * `resume` or `fork` it. Absent when the host persists no subagent state.
+   */
+  agentId?: string;
+}
+
+/** Per-call overrides the model may attach to one task invocation. */
+export interface TaskCallOverrides {
+  /**
+   * Deny write/edit for this call only. It can tighten a subagent but never
+   * loosen one whose definition is already read-only.
+   */
+  readonly?: boolean;
+  /** Model for this call ("providerId::modelId" or a bare id). */
+  model?: string;
+  /** Continue the transcript of a previous run instead of starting clean. */
+  resumeAgentId?: string;
+  /** Branch from a previous run, leaving the source transcript untouched. */
+  forkAgentId?: string;
+  signal?: AbortSignal;
 }
 
 export interface TaskToolOptions {
   subagents: SubagentDefinition[];
   /**
    * Host callback that actually runs the subagent with a clean context
-   * (fresh transcript: subagent system prompt + this prompt only).
+   * (fresh transcript: subagent system prompt + this prompt only), or with the
+   * resumed/forked transcript when the call asks for one.
    */
-  runSubagent: (def: SubagentDefinition, prompt: string, signal?: AbortSignal) => Promise<TaskRunResult>;
+  runSubagent: (
+    def: SubagentDefinition,
+    prompt: string,
+    overrides: TaskCallOverrides,
+  ) => Promise<TaskRunResult>;
   /** Called when a background subagent starts; return a job id for the wait tool. */
   onBackgroundStart?: (def: SubagentDefinition, prompt: string) => string;
   /** Background completion sink (UI notification). */
@@ -53,6 +79,26 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
           type: "boolean",
           description: "Run in the background and return immediately (default follows the subagent definition).",
         },
+        readonly: {
+          type: "boolean",
+          description:
+            "Deny write/edit for this call only. Tightens the subagent; a definition that is already read-only stays read-only.",
+        },
+        model: {
+          type: "string",
+          description:
+            "Model for this call, as \"providerId::modelId\" or a bare model id. A model the user pinned for this subagent still wins.",
+        },
+        resume: {
+          type: "string",
+          description:
+            "agent_id from an earlier task result: continues that subagent's own transcript instead of starting clean, so it keeps everything it already learned.",
+        },
+        fork: {
+          type: "string",
+          description:
+            "agent_id to branch from: the child starts with a copy of that transcript and the original is left untouched. Use to explore two directions from one investigation.",
+        },
       },
       required: ["subagent", "prompt"],
     },
@@ -65,11 +111,23 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
         const names = opts.subagents.map((s) => s.name).join(", ");
         return `ERROR: unknown subagent "${name}". Available: ${names}.`;
       }
+      const resumeAgentId = typeof args.resume === "string" && args.resume ? args.resume : undefined;
+      const forkAgentId = typeof args.fork === "string" && args.fork ? args.fork : undefined;
+      if (resumeAgentId && forkAgentId) {
+        return 'ERROR: pass either "resume" or "fork", not both.';
+      }
+      const overrides: TaskCallOverrides = {
+        readonly: typeof args.readonly === "boolean" ? args.readonly : undefined,
+        model: typeof args.model === "string" && args.model ? args.model : undefined,
+        resumeAgentId,
+        forkAgentId,
+        signal: ctx.signal,
+      };
       const background = typeof args.background === "boolean" ? args.background : def.isBackground;
       if (background) {
         const jobId = opts.onBackgroundStart?.(def, prompt) ?? "";
         void opts
-          .runSubagent(def, prompt, ctx.signal)
+          .runSubagent(def, prompt, overrides)
           .then((result) => opts.onBackgroundDone?.(jobId, def, result))
           .catch((err) =>
             opts.onBackgroundDone?.(jobId, def, {
@@ -83,8 +141,13 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
           "Use wait with job_ids to collect results, or continue with other work."
         );
       }
-      const result = await opts.runSubagent(def, prompt, ctx.signal);
-      return result.ok ? result.report : `Subagent "${def.name}" failed: ${result.report}`;
+      const result = await opts.runSubagent(def, prompt, overrides);
+      const body = result.ok ? result.report : `Subagent "${def.name}" failed: ${result.report}`;
+      // Handing the id back is what makes resume/fork reachable: the model has
+      // no other way to name a transcript it never saw.
+      return result.agentId
+        ? `${body}\n\n(agent_id: ${result.agentId} — pass resume:"${result.agentId}" to continue this subagent, or fork:"${result.agentId}" to branch from it.)`
+        : body;
     },
   };
 }

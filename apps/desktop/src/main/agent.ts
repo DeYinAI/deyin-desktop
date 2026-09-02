@@ -38,6 +38,10 @@ import {
   runSubagent,
   skipPromptsForApproval,
   subagentReadonlyRules,
+  effectiveSubagentReadonly,
+  getSubagentStateStore,
+  type TaskCallOverrides,
+  type TaskRunResult,
   type AgentMessage,
   type ImageGenBridge,
   type InteractionRequest,
@@ -102,6 +106,18 @@ function broadcastGitChanged(): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(CH.gitChanged, undefined);
   }
+}
+
+/** Everything one `task` tool invocation needs to run its subagent. */
+interface SubagentCallContext {
+  apiBaseUrl: string;
+  getToken: () => Promise<string | null>;
+  parentMcpTools: ToolDefinition[];
+  /** The parent run's hooks; subagentStart/subagentStop fire from these. */
+  hooks: LoadedHook[];
+  /** Owning thread session, so a resumed transcript cannot cross sessions. */
+  sessionId: string;
+  overrides: TaskCallOverrides;
 }
 
 interface ThreadSession {
@@ -751,8 +767,15 @@ export class DesktopAgentHost {
         registry.register(
           createTaskTool({
             subagents,
-            runSubagent: (def, subPrompt, subSignal) =>
-              this.runSubagent(options, def, subPrompt, apiBaseUrl, getToken, parentMcpTools, subSignal),
+            runSubagent: (def, subPrompt, overrides) =>
+              this.runSubagent(options, def, subPrompt, {
+                apiBaseUrl,
+                getToken,
+                parentMcpTools,
+                hooks,
+                sessionId: session.sessionId,
+                overrides,
+              }),
             onBackgroundStart: (def, subPrompt) =>
               jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
             onBackgroundDone: (jobId, _def, result) => {
@@ -1256,25 +1279,21 @@ export class DesktopAgentHost {
     parent: AgentStartOptions,
     def: SubagentDefinition,
     prompt: string,
-    apiBaseUrl: string,
-    getToken: () => Promise<string | null>,
-    parentMcpTools: ToolDefinition[],
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; report: string }> {
-    return this.subagentLimiter.run(() =>
-      this.runSubagentUncapped(parent, def, prompt, apiBaseUrl, getToken, parentMcpTools, signal),
-    );
+    ctx: SubagentCallContext,
+  ): Promise<TaskRunResult> {
+    return this.subagentLimiter.run(() => this.runSubagentUncapped(parent, def, prompt, ctx));
   }
 
   private async runSubagentUncapped(
     parent: AgentStartOptions,
     def: SubagentDefinition,
     prompt: string,
-    apiBaseUrl: string,
-    getToken: () => Promise<string | null>,
-    parentMcpTools: ToolDefinition[],
-    signal?: AbortSignal,
-  ): Promise<{ ok: boolean; report: string }> {
+    ctx: SubagentCallContext,
+  ): Promise<TaskRunResult> {
+    const { apiBaseUrl, getToken, parentMcpTools, hooks, sessionId, overrides } = ctx;
+    const signal = overrides.signal;
+    // A call may tighten a subagent to read-only; it can never loosen one.
+    const readonly = effectiveSubagentReadonly(def, overrides.readonly);
     const subagentId = randomUUID();
     const startedAt = Date.now();
     this.send(parent.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
@@ -1289,8 +1308,16 @@ export class DesktopAgentHost {
       cwd,
       parent: { model: parent.model, providerId: parent.providerId, thinking: parent.thinking },
       modelOverride: this.opts.settings.get().subagentModels[def.name],
+      callModel: overrides.model,
       effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
       maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
+      readonly,
+      hooks,
+      // Transcripts live beside the jobs log so resume/fork survives a restart.
+      state: getSubagentStateStore(app.getPath("userData")),
+      sessionId,
+      resumeAgentId: overrides.resumeAgentId,
+      forkAgentId: overrides.forkAgentId,
       parentRouting: { apiBaseUrl, getToken, apiFormat: parentProviderWire.apiFormat, authHeader: parentProviderWire.authHeader },
       // Children inherit the parent's wire compression + prompt caching.
       wire: {
@@ -1313,7 +1340,7 @@ export class DesktopAgentHost {
       // must stay read-only even inside a spawned task.
       permissionEngine: new PermissionEngine({
         agentRules: rulesForApprovalMode(parent.approvalMode),
-        configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules(def)],
+        configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules({ readonly })],
         // Full access covers spawned work too: a readonly definition still has
         // write/edit denied, but its bash rule must not turn into a prompt.
         skipAll: skipPromptsForApproval(parent.approvalMode, parent.mode),
@@ -1347,6 +1374,8 @@ export class DesktopAgentHost {
     });
     return result;
   }
+
+
 
   private async ensureSession(
     options: AgentStartOptions,

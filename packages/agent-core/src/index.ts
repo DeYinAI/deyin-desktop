@@ -2,6 +2,7 @@ export * from "./interaction.js";
 export * from "./limit.js";
 export * from "./recall.js";
 export * from "./subagent-run.js";
+export * from "./subagent-state.js";
 export * from "./subagent-host-tools.js";
 export * from "./types.js";
 export * from "./wire.js";

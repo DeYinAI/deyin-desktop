@@ -79,17 +79,33 @@ without adopting its operator/lifestyle scope:
 - The composer autocompletes `/` from commands plus invocable skills.
 
 ## Subagents
-- Markdown definitions in `.deyin/agents/*.md` with front-matter (`name`, `description`,
-  `model`, `readonly`, `is_background`); the body is the subagent's system prompt.
-- The main agent delegates through the `task` tool; subagents run with a clean context.
-- Built-ins: `explorer`, `reviewer`, `test-runner`.
+- Markdown definitions in `.deyin/agents/*.md` (project) or `~/.deyin/agents/*.md` (user) with
+  front-matter (`name`, `description`, `model`, `effort`, `max_steps`, `tools`, `readonly`,
+  `is_background`); the body is the subagent's system prompt. Project beats user on a name clash.
+- The main agent delegates through the `task` tool; subagents run with a clean context and
+  return only their report. Delegation is model-driven: the `description` is what the model
+  routes on, so write it as "when to use this".
+- Built-ins: `explorer`, `reviewer`, `bugbot`, `security-review`, `test-runner`, `shell`,
+  `browser`, `docs-researcher`, `ci-investigator`.
+- Per-call overrides on the `task` tool: `readonly` (tightens a subagent for one call — it can
+  never loosen a definition that is already read-only), `model` (`providerId::modelId` or a bare
+  id; a model pinned in Settings still wins), and `background`.
+- **Resume and fork**: a run returns an `agent_id`, and a later call may `resume` that transcript
+  (same id, the subagent carries on with everything it learned) or `fork` it (new id, the source
+  is left untouched — useful for exploring two directions from one investigation). Transcripts
+  are stored per host and refused across sessions and across subagent names. The parent thread
+  still only ever sees reports.
 
 ## Hooks
 - `hooks.json` (project `.deyin/hooks.json` or user `~/.deyin/hooks.json`), schema
   `{ "version": 1, "hooks": { "<event>": [{ "command", "timeout", "matcher", "failClosed" }] } }`.
 - Events: `sessionStart`, `preToolUse`, `postToolUse`, `beforeShellExecution`,
-  `afterShellExecution`, `stop`. Payload arrives as JSON on stdin; exit code 2 blocks the
-  action; failures fail open unless `failClosed`.
+  `afterShellExecution`, `subagentStart`, `subagentStop`, `stop`. Payload arrives as JSON on
+  stdin; exit code 2 blocks the action; failures fail open unless `failClosed`.
+- `subagentStart` and `subagentStop` match on the **subagent name**. A `subagentStart` hook may
+  refuse delegated work outright (exit 2 or `{"permission":"deny"}`) — the one place a policy can
+  see into a `task` call. `subagentStop` cannot block (the work is done); what it prints as
+  `additional_context` is appended to the report the parent receives.
 
 ## Plugins
 - A plugin bundles skills, slash commands, subagents, MCP servers, and hooks.
