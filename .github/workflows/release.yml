@@ -225,7 +225,8 @@ jobs:
       # electron-updater polls GET /releases/latest — must set make_latest or GitHub
       # keeps an older release (e.g. v1.0.7) as "latest" and clients never see updates.
       - name: Publish public update feed
-        continue-on-error: true
+        # A silent no-op here leaves clients on an old version, because
+        # electron-updater only sees what this step publishes.
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
