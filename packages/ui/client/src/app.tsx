@@ -36,7 +36,6 @@ import { DraftKeeper, type ComposerDraftState } from "./composer-draft.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
-import { resolveVisionModel } from "./vision.js";
 import {
   countPendingInteractionsForThread,
   pickRunningThreadToStop,
@@ -829,10 +828,15 @@ export function App() {
   const [connectError, setConnectError] = useState<string | null>(null);
 
   const refreshSession = useCallback(async () => {
-    const profile = await window.deyin.auth.getUser();
-    setUser(profile);
-    if (profile) setModels(await window.deyin.models.list());
-  }, []);
+ const profile = await window.deyin.auth.getUser();
+ setUser(profile);
+ if (profile) {
+ setModels(await window.deyin.models.list());
+ // Provider status (e.g. the Openference plan card) derives from auth
+ // state on the main side; re-pull so the UI reflects it immediately.
+ setProviders(await window.deyin.providers.list());
+ }
+ }, []);
 
   const connect = useCallback(async () => {
     setConnectError(null);
@@ -841,10 +845,11 @@ export function App() {
     try {
       const profile = await window.deyin.auth.connect();
       if (profile) {
-        setUser(profile);
-        setModels(await window.deyin.models.list());
-        setConnecting(false);
-      }
+ setUser(profile);
+ setModels(await window.deyin.models.list());
+ setProviders(await window.deyin.providers.list());
+ setConnecting(false);
+ }
     } catch (err) {
       console.error("Connect failed", err);
       setConnectError(err instanceof Error ? err.message : "Sign-in failed. Try again.");
@@ -1662,9 +1667,7 @@ export function App() {
         imageChatModels?: string[];
         /** Model override (e.g. a vision-capable model routed at send time). */
         model?: string;
-        /** Inline notice shown next to the sent message (e.g. vision routing). */
-        notice?: string;
-        /** Transcript text when it differs from the agent prompt (local vision). */
+ /** Transcript text when it differs from the agent prompt (local vision). */
         displayText?: string;
       },
     ) => {
@@ -1677,8 +1680,7 @@ export function App() {
       const isFirstMessage = toChatMessages(thread.events).length === 0;
       appendEvents(thread.id, [
         { kind: "user", text: meta?.displayText ?? text, attachments, linkedThreadIds },
-        ...(meta?.notice ? [{ kind: "assistant" as const, text: meta.notice }] : []),
-      ]);
+ ]);
       const runId = agentStateStore.startRun(thread.id, mode);
       try {
         const refs = dedupeContextRefs(attachments.map((a) => ({ kind: a.kind, path: a.path })));
@@ -2085,31 +2087,17 @@ const continueFromStepLimit = useCallback(() => {
     // switched off. Images require the agent runtime (vision content parts).
     const images: AgentImageInput[] = draft.images.map(({ mediaType, base64 }) => ({ mediaType, base64 }));
     if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent && !chatOnlyHosted) {
-      // Vision: attach images to the run as-is — capability metadata is a hint,
-      // not a gate. A provider that can't take images returns its own error,
-      // which surfaces in the timeline like any other provider failure. The
-      // only automatic reroute is the opt-in cloud auto-route when the
-      // selected model is *known* text-only and a vision model exists.
-      let runModel = runModelId;
-      let visionNotice: string | undefined;
-      if (images.length > 0) {
-        const route = resolveVisionModel(modelList, runModelId, {
-          autoRoute: settings?.autoVisionRouting ?? false,
-        });
-        if (route?.routedTo) {
-          runModel = route.model;
-          visionNotice = `📷 Vision: routed to ${route.routedTo} for this message.`;
-        }
-      }
-      composerRef.current?.clearComposerState();
+      // Images always go to the model the user picked. Capability metadata is a
+ // hint, never a gate: a provider that can't take images returns its own
+ // error, which surfaces in the timeline like any other provider failure.
+ composerRef.current?.clearComposerState();
       const sendMeta = {
         attachments: [...draft.attachments],
         linkedThreadIds: draft.linked.map((l) => l.threadId),
         images,
         imageModels,
         imageChatModels,
-        model: runModel,
-        notice: visionNotice,
+        model: runModelId,
       };
       void startAgentRun(thread, text, composerMode, sendMeta);
       return;
@@ -2455,6 +2443,7 @@ const continueFromStepLimit = useCallback(() => {
             onProvidersChanged={handleProvidersChanged}
             onChangeSettings={patchSettings}
             onConnect={connect}
+            onOpenPlans={() => setView("upgrade")}
             onBack={() => {
               void window.deyin.providers.list().then(handleProvidersChanged);
               setView("workspace");

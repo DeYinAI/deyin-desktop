@@ -9,7 +9,7 @@ import {
   type StoredProviderBase,
 } from "./defaults.js";
 import { classifyModelKinds, modelImageCapability } from "./images.js";
-import { listModels, visionCapability, type TokenSource } from "./models.js";
+import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { Storage } from "./storage.js";
 import type {
@@ -322,10 +322,11 @@ export class AgentsStore {
             id: m.id,
             name: m.id,
             contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
-            // Image models take a prompt, not a conversation: never route vision to them.
-          // Unknown capability stays undefined so the renderer keeps the
-          // user's selection and lets the API decide (vision: false must be earned).
-          vision: endpointOnly ? false : visionCapability(m.id, m),
+             // Image models take a prompt, not a conversation: never route vision to them.
+ // Vision capability is explicit catalog metadata only (see models.ts) — a catalog
+ // that says nothing leaves `vision` undefined, so the client sends images anyway
+ // and the provider's own error is the fallback.
+ vision: endpointOnly ? false : modelSupportsVision(m.id, m),
             kind: endpointOnly ? ("image" as const) : ("chat" as const),
             ...(capability === "chat" ? { imageOutput: true } : {}),
             ...(reasoning ? { reasoning } : {}),

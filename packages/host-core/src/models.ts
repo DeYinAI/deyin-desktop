@@ -22,24 +22,26 @@ interface OpenAIModelListItem {
   supported_parameters?: unknown;
 }
 
-/** Model ids from known vision-capable families, used when the catalog carries
- * no explicit capability metadata. Deliberately conservative. */
-const VISION_ID_RE =
-  /(^|[^a-z0-9])(vl|vision|omni|4o)([^a-z0-9]|$)|glm-4(\.\d+)?v|gpt-4\.1|gpt-5|gemini|claude|pixtral|grok-\d|llama-?3\.?2-(11b|90b)|moondream|internvl/i;
 
 /**
- * True when a model accepts image *inputs*. Recognition order (conservative):
+ * True when a model accepts image *inputs*, per EXPLICIT catalog metadata
+ * only. Recognition order:
  * 1. explicit catalog `vision` flag;
  * 2. `capabilities` ("vision", "image_input");
  * 3. input-modality metadata third-party catalogs publish —
  *    `architecture.input_modalities` (OpenRouter), top-level `input_modalities`,
  *    or arrow/legacy `modality`/`modalities` declaring an image input
  *    ("text+image->text", ["text","image"]). Output-only image markers are
- *    ignored so text-to-image endpoints stay non-vision;
- * 4. curated id heuristic for known multimodal families.
+ * ignored so text-to-image endpoints stay non-vision.
+ *
+ * No id heuristic: a custom provider's catalog is the only source of truth,
+ * and when it says nothing the stored `vision` stays `undefined` so the
+ * client sends images anyway and the provider's own error (if any) surfaces
+ * in the timeline. A model id that merely looks vision-capable is not
+ * evidence.
  */
 export function modelSupportsVision(
-  id: string,
+ _id: string,
   meta?: { vision?: unknown; capabilities?: unknown } & ImageModelMeta,
 ): boolean {
   if (meta?.vision !== undefined) return meta.vision === true || meta.vision === 1 || meta.vision === "true";
@@ -55,7 +57,7 @@ export function modelSupportsVision(
     if (v === true || v === 1 || v === "true") return true;
   }
   if (meta && modalityInputImage(meta)) return true;
-  return VISION_ID_RE.test(id);
+ return false;
 }
 
 /**
@@ -103,28 +105,6 @@ function arrowModalityInput(value: string): string[] | null {
   return (match[1] ?? "").split(/[+,|/]/).map((s) => s.trim()).filter(Boolean);
 }
 
-/**
- * Stored-catalog view of vision capability: true / false / unknown.
- * Unlike {@link modelSupportsVision} (which answers "would this id plausibly
- * take images?" and falls back to the id heuristic), this preserves
- * "unknown": only explicit metadata asserts `false` (the `vision` flag or a
- * capabilities list naming its features without vision), never the bare id
- * regex. Stores persist `undefined` so the renderer keeps the user's
- * selection and lets the API decide, instead of blocking image sends with a
- * fabricated `vision: false`.
- */
-export function visionCapability(
- id: string,
- meta?: { vision?: unknown; capabilities?: unknown } & ImageModelMeta,
-): boolean | undefined {
- if (modelSupportsVision(id, meta)) return true;
- // Explicit negatives only: the flag, or a capabilities list that names its
- // supported features without vision. Anything else stays unknown.
- if (meta?.vision === false) return false;
- if (Array.isArray(meta?.capabilities)) return false;
- return undefined;
-}
-
 /** Anything that can produce a valid Openference access token (or null when signed out). */
 export type TokenSource = () => Promise<string | null>;
 
@@ -147,10 +127,12 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
     if (items.length === 0) return DEFAULT_MODELS;
     return items.map((m) => {
       const capability = modelImageCapability(m.id, m);
-      // "endpoint" models take a prompt, not a conversation: never route vision
-      // to them. "chat" models generate pictures inside a normal completion, so
-      // they stay chat models that additionally emit images.
-      const endpointOnly = capability === "endpoint";
+ // "endpoint" models take a prompt, not a conversation: never route vision
+ // to them. "chat" models generate pictures inside a normal completion, so
+ // they stay chat models that additionally emit images. Vision capability is
+ // explicit catalog metadata only — no metadata means unknown, and the
+ // provider's own error is the fallback.
+ const endpointOnly = capability === "endpoint";
       const reasoning = parseModelReasoningMeta(m);
       return {
         id: m.id,

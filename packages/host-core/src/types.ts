@@ -560,13 +560,7 @@ export interface DeyinSettings {
   memoryEnabled: boolean;
   /** Route write/edit/delete through the user review queue. */
   reviewMode: "off" | "on";
-  /**
-   * When images are attached on a text-only model, auto-switch to the first
-   * vision-capable model in the user's plan. Off by default — use Local Vision
-   * plugin (Ollama) or pick a vision model manually instead.
-   */
-  autoVisionRouting: boolean;
-  /**
+ /**
    * When the user asks for a picture on a text-only model, route the message to
    * an image model automatically instead of letting the chat model refuse.
    */

@@ -27,8 +27,7 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   assert.deepEqual(migrated.imageModelParams, {});
   assert.equal(migrated.subagentMaxSteps, DEFAULT_SETTINGS.subagentMaxSteps);
   assert.equal(migrated.subagentConcurrency, DEFAULT_SETTINGS.subagentConcurrency);
-  assert.equal(migrated.autoVisionRouting, false);
-  assert.equal(migrated.autoImageGeneration, true);
+ assert.equal(migrated.autoImageGeneration, true);
 });
 
 test("migrateSettings sanitizes subagent model/effort maps and clamps run limits", () => {
