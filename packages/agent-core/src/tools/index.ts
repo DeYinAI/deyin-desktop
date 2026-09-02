@@ -83,6 +83,7 @@ export {
   TASK_SUBAGENT_CATALOG_MARKER,
   type TaskToolOptions,
   type TaskRunResult,
+  type TaskCallOverrides,
 } from "./task.js";
 export { createCodebaseSearchTool, type CodebaseSearchHit } from "./codebase-search.js";
 import { createForgetTool, createMemoryTool, createRememberTool } from "./memory.js";
