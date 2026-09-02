@@ -85,6 +85,8 @@ import type { PageService } from "./page.js";
 import type { ImageService } from "./images.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
+import { createAutomationTools } from "./automation-tools.js";
+import type { AutomationService } from "./automations/service.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
 import type { McpAuthBridge, McpOAuthTarget } from "./mcp-auth-bridge.js";
@@ -175,6 +177,8 @@ export interface AgentHostOptions {
   visualize?: VisualizeService;
   /** One-page website artifact store (create_page tool). */
   pages?: PageService;
+/** Scheduled + manual automation runner; enables the automation_* tool family. */
+ automations?: AutomationService;
   /** Generated-image store (generate_image tool + direct image-model runs). */
   images?: ImageService;
   terminals: TerminalManager;
@@ -675,6 +679,14 @@ export class DesktopAgentHost {
     if (!this.opts.images || (this.opts.getImageModels?.(options.providerId) ?? []).length === 0) {
       registry.unregister("generate_image");
     }
+ // Automations tool family: create/run scheduled automations via the same
+ // AutomationService the Automations UI uses. Optional: the web host has no
+ // scheduler, so it omits the service.
+ if (this.opts.automations) {
+ for (const tool of createAutomationTools(this.opts.automations, this.opts.settings)) {
+ registry.register(tool);
+ }
+ }
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
