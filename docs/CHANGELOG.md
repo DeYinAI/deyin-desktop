@@ -6,6 +6,17 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.11 — 2026-09-02
+
+### Highlights
+
+- Context engine: structured compaction briefings with a live context meter; the verbatim tail now scales with the model's window so small context windows keep folding viable
+- Compaction reliability: failed fold summaries are receipt-gated — a summarizer that cannot shrink the transcript is paid for once per run instead of once per step; surfaced as `fold-failed` in the UI and run summaries
+- Snipped tool results are no longer lost: the full raw text is retained (bounded) and pageable back with `read_session_context (tool_call_id=…)` instead of re-running the tool
+- Loop guard (error storms, blocked streaks, repeated writes, no-progress nudges), tool-result deduplication with head/tail snipping, and per-run summaries (denied/failed/duplicate calls, guard trips, cache hit rate) with `runs:summary` aggregation
+- Composer dock with draft persistence and per-thread queue bars
+- New compaction benchmark (cost + fidelity arms) guarding policy actions, prune idempotency, tail scaling, and fold fidelity; results tracked in PERFORMANCE_REPORT.md
+
 ## 1.0.3 — 2026-08-26
 
 ### Highlights
