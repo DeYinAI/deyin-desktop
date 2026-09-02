@@ -52,6 +52,7 @@ import type {
 } from "@deyin/contract";
 import type { DeyinConfig } from "@deyin/contract";
 import { DesktopAgentHost } from "./agent.js";
+import { AutomationsStore } from "@deyin/host-core";
 import { AutomationService } from "./automations/service.js";
 import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
 import { testWslDistro } from "./automations/wsl-executor.js";
@@ -329,6 +330,46 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     mcpAuth: createMcpAuthBridge(mcpModules, mcpOAuth),
   };
 
+  const automations = new AutomationService({
+    storage,
+    deps: agentDeps,
+    auth,
+    isCatchUpEnabled: () => settings.get().automationsCatchUp,
+  });
+
+  // First-run seed: give the Automations view something real to show. Only
+  // fires when automations.json does not exist yet — never resurrects an
+  // automation the user deleted (the file exists from then on). lastScheduledAt
+  // is set to now so scheduler catch-up does not fire a stale slot for it.
+  try {
+    if (!existsSync(join(storage.dir, "automations.json"))) {
+      const store = new AutomationsStore(storage);
+      const now = Date.now();
+      const prompt = [
+        "Research the latest news on the web about newly released or updated frontier LLMs",
+        "(OpenAI, Anthropic, Google, Meta, DeepSeek, xAI, Alibaba Qwen, Mistral).",
+        "Use web search. Focus on the last 7 days: model names, sizes, benchmarks, pricing,",
+        "availability. Write a concise markdown digest to daily-news.md in that workspace",
+        "(create it if missing, prepend today's date as a section). Keep the file under 200",
+        "lines, newest entries first.",
+      ].join(" ");
+      store.create({
+        name: "Latest Model News Research",
+        description:
+          "Daily 8:00 AM digest of the newest frontier LLM releases (OpenAI, Anthropic, Google, Meta, DeepSeek, xAI, Qwen)",
+        enabled: true,
+        payload: { kind: "prompt", prompt },
+        trigger: { kind: "cron", expression: "0 8 * * *" },
+        target: { kind: "local", workspacePath: "C:\\Users\\Anh\\news-digest" },
+        model: settings.get().defaultModel?.split("::")[1] ?? "",
+        providerId: "openference",
+        lastScheduledAt: now,
+      });
+    }
+  } catch (err) {
+    console.warn("[deyin] automation seed skipped:", err);
+  }
+
   const agentHost = new DesktopAgentHost({
     config,
     auth,
@@ -340,6 +381,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     visualize,
     pages,
     images,
+    automations,
     terminals,
     memory,
     review,
@@ -359,13 +401,6 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
         ...list.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => ({ id: m.id, route: "chat" as const })),
       ];
     },
-  });
-
-  const automations = new AutomationService({
-    storage,
-    deps: agentDeps,
-    auth,
-    isCatchUpEnabled: () => settings.get().automationsCatchUp,
   });
 
   const workspaceService = new WorkspaceService(automations.sshHosts);

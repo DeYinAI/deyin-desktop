@@ -99,6 +99,46 @@ After writing, confirm the file exists at the expected path and summarize: name,
 `,
   },
   {
+    name: "create-automation",
+    description:
+      "Set up a scheduled automation (cron or manual) through the automation_* tools so it persists and arms the scheduler immediately. Use when the user asks to automate a task, schedule recurring research, or run a prompt every day/week at a given time.",
+    content: `
+# Create an Automation
+
+Automations run an agent prompt on a schedule (cron) or on demand (manual), in a
+workspace on this machine or in WSL. Create them with the automation_* tools —
+they persist immediately and arm the scheduler; no restart, no file editing.
+
+## 1. Gather what you need
+
+Infer as much as possible from the conversation before asking:
+
+- Goal: what should the agent do on every run? Draft the prompt from it.
+- Schedule: map "daily at 8" to cron ~~~0 8 * * *~~~, "weekdays 9" to ~~~0 9 * * 1-5~~~, "hourly" to ~~~0 * * * *~~~. No schedule = manual.
+- Workspace: where the run should happen. Default to the current workspace root unless the user says otherwise (create the folder if it does not exist yet).
+- Model: leave unset to use the app default.
+
+If wording for the prompt was given, keep it verbatim.
+
+## 2. Create it
+
+Call ~~~automation_create~~~ with name, description, prompt, cron, workspacePath.
+Non-local targets (wsl) need distro and use the Openference provider.
+
+## 3. Verify
+
+- ~~~automation_list~~~ shows the automation with the expected schedule and enabled state.
+- Offer one ~~~automation_run~~~ (id, waitSeconds ~ 120) to prove it works; report the final output.
+- Runs also appear in Automations - Run History, with a desktop notification on finish.
+
+## Notes
+
+- A missed cron slot runs once on next app launch (catch-up), not once per missed slot.
+- Scheduled runs need the app running and the computer awake.
+- To change or remove later: automation_update / automation_delete.
+`,
+  },
+  {
     name: "create-rule",
     description:
       "Create project rules in .deyin/rules that steer every agent session. Use when the user wants coding standards, conventions, or persistent instructions applied automatically.",
