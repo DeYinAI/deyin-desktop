@@ -7,9 +7,19 @@ export interface DiffLine {
   newNo: number | null;
 }
 
+/**
+ * Lines of a file's text. An empty string is an empty file — zero lines — not
+ * one blank line: `"".split("\n")` returns [""], which made a brand-new file
+ * report a deletion of blank line 1, drawn as a stray red row in the unified
+ * view and a lone "1" in an otherwise empty OLD pane in the split view.
+ */
+function splitLines(text: string): string[] {
+  return text === "" ? [] : text.split("\n");
+}
+
 export function computeLineDiff(before: string, after: string): DiffLine[] {
-  const a = before.split("\n");
-  const b = after.split("\n");
+  const a = splitLines(before);
+  const b = splitLines(after);
 
   // LCS table (fine for the file sizes a preview handles).
   const m = a.length;
@@ -114,8 +124,8 @@ const DIFF_MAX_LINES = 2000;
 /** Adds/dels counts for a file card; falls back to a cheap estimate on big files. */
 export function diffStats(before: string, after: string): { adds: number; dels: number; renderable: boolean } {
   if (before === "" && after === "") return { adds: 0, dels: 0, renderable: false };
-  const a = before.split("\n");
-  const b = after.split("\n");
+  const a = splitLines(before);
+  const b = splitLines(after);
   if (a.length > DIFF_MAX_LINES || b.length > DIFF_MAX_LINES) {
     const counts = new Map<string, number>();
     for (const line of a) counts.set(line, (counts.get(line) ?? 0) + 1);

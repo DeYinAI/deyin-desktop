@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeLineDiff, computeSideBySideDiff } from "../src/diff.js";
+import { computeLineDiff, computeSideBySideDiff, diffStats } from "../src/diff.js";
 
-// NOTE: inputs below avoid trailing newlines on purpose — a trailing "\n" makes
-// split("\n") emit a phantom empty last line (pre-existing computeLineDiff
-// behavior), which would just add a harmless empty context row.
+// NOTE: inputs below avoid trailing newlines on purpose — a trailing "\n" still
+// makes split("\n") emit an empty last line, which just adds a harmless empty
+// context row. An entirely empty file is a separate case: zero lines.
 
 test("sideBySide: unchanged file stays row-aligned context", () => {
   const rows = computeSideBySideDiff("a\nb\nc", "a\nb\nc");
@@ -96,21 +96,52 @@ test("sideBySide: separate hunks stay grouped and ordered", () => {
   );
 });
 
-test("sideBySide: empty old file renders as a deleted blank line plus adds", () => {
-  // "" splits to a single empty line (computeLineDiff semantics).
+test("sideBySide: a new file is all adds, with nothing on the old side", () => {
+  // An empty "before" is an empty file, not a file holding one blank line: it
+  // used to report a deletion of blank line 1, which drew a stray red row in
+  // the unified view and a lone "1" in an otherwise empty OLD pane.
   const rows = computeSideBySideDiff("", "one\ntwo");
   assert.deepEqual(
     rows.map((r) => [r.left.type, r.right.type]),
     [
-      ["del", "add"],
+      ["empty", "add"],
       ["empty", "add"],
     ],
   );
-  assert.equal(rows[0]!.left.text, "");
+  assert.deepEqual(
+    rows.map((r) => r.left.no),
+    [null, null],
+  );
   assert.deepEqual(
     rows.map((r) => r.right.no),
     [1, 2],
   );
+});
+
+test("sideBySide: a deleted file is all dels, with nothing on the new side", () => {
+  const rows = computeSideBySideDiff("one\ntwo", "");
+  assert.deepEqual(
+    rows.map((r) => [r.left.type, r.right.type]),
+    [
+      ["del", "empty"],
+      ["del", "empty"],
+    ],
+  );
+  assert.deepEqual(
+    rows.map((r) => r.right.no),
+    [null, null],
+  );
+});
+
+test("sideBySide: an unchanged empty file has no rows at all", () => {
+  assert.deepEqual(computeSideBySideDiff("", ""), []);
+});
+
+test("diffStats counts a new file's lines without a phantom deletion", () => {
+  assert.deepEqual(diffStats("", "one\ntwo"), { adds: 2, dels: 0, renderable: true });
+  assert.deepEqual(diffStats("one\ntwo", ""), { adds: 0, dels: 2, renderable: true });
+  // A real blank line is still a line.
+  assert.deepEqual(diffStats("\n", ""), { adds: 0, dels: 2, renderable: true });
 });
 
 test("sideBySide: row count equals max(old, new) across every hunk (no drift)", () => {
