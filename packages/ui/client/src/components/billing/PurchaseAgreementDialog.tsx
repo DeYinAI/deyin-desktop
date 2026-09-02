@@ -47,6 +47,7 @@ export function PurchaseAgreementDialog({
             features: null,
             tagline: null,
             isPopular: false,
+ isSoldOut: false,
             planKind: "normal",
             hasStripe: true,
           }),

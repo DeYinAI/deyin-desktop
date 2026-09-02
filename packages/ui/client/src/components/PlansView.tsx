@@ -495,8 +495,9 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                   pendingPlanChange,
                 });
                 const isScheduledTarget = pendingPlanChange?.planId === plan.id;
-                const ctaDisabled =
-                  pres.cta.disabled || isScheduledTarget || (loadingPlanId !== null && loadingPlanId !== plan.id);
+                 const soldOut = plan.isSoldOut;
+ const ctaDisabled =
+                    soldOut ||                   pres.cta.disabled || isScheduledTarget || (loadingPlanId !== null && loadingPlanId !== plan.id);
 
                 return (
                   <div
@@ -507,6 +508,7 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                       <div className="plans-card__name">{plan.name}</div>
                       <div className="plans-card__badges">
                         {plan.isPopular && <span className="badge badge--ok">{t("plans.popular")}</span>}
+ {plan.isSoldOut && <span className="badge badge--muted">{t("plans.soldOut")}</span>}
                         {scheduled && <span className="badge">{t("plans.cta.scheduled")}</span>}
                       </div>
                     </div>
@@ -565,9 +567,11 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                         disabled={ctaDisabled}
                         onClick={() => handleSelectPlan(plan.id)}
                       >
-                        {isScheduledTarget
-                          ? t("plans.cta.scheduled")
-                          : t(CTA_KEYS[pres.cta.key] as Parameters<typeof t>[0])}
+                        {soldOut
+   ? t("plans.soldOut")
+   : isScheduledTarget
+   ? t("plans.cta.scheduled")
+   : t(CTA_KEYS[pres.cta.key] as Parameters<typeof t>[0])}
                       </button>
                     </div>
                   </div>

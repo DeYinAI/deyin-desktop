@@ -60,3 +60,32 @@ test("fetchPublicPlans returns null when plans array is missing", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("normalizePlan defaults isSoldOut to false when the API omits it", async () => {
+ const originalFetch = globalThis.fetch;
+ globalThis.fetch = (async () =>
+ new Response(JSON.stringify({ plans: [samplePlan] }), { status: 200 })) as typeof fetch;
+
+ try {
+ const plans = await fetchPublicPlans({ oauthIssuer: "https://openference.com" });
+ assert.equal(plans?.[0]?.isSoldOut, false);
+ } finally {
+ globalThis.fetch = originalFetch;
+ }
+});
+
+test("normalizePlan passes through a server-reported sold-out flag", async () => {
+ const originalFetch = globalThis.fetch;
+ globalThis.fetch = (async () =>
+ new Response(
+ JSON.stringify({ plans: [{ ...samplePlan, isSoldOut: true }] }),
+ { status: 200 },
+ )) as typeof fetch;
+
+ try {
+ const plans = await fetchPublicPlans({ oauthIssuer: "https://openference.com" });
+ assert.equal(plans?.[0]?.isSoldOut, true);
+ } finally {
+ globalThis.fetch = originalFetch;
+ }
+});

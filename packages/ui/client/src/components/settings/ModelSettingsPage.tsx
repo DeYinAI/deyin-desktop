@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../Icon.js";
 import { formatContext } from "../ModelPicker.js";
 import { PageHeader, Toggle } from "./controls.js";
+import { fmtUsage } from "./AccountUsagePanel.js";
 import type {
   AccountUsage,
   ModelInfo,
@@ -20,6 +21,8 @@ interface Props {
   onProvidersChanged: (providers: ProviderInfo[]) => void;
   /** Force-refresh the primary provider's cached /models catalog. */
   onRefreshLiveModels: () => Promise<void>;
+ /** Open the in-app plan picker (Renew / change plan). */
+ onOpenPlans?: () => void;
 }
 
 /** Sentinel id for the unsaved "Add provider" draft shown in the detail pane. */
@@ -33,15 +36,38 @@ export function ModelSettingsPage(props: Props) {
     if (!selectedId && props.providers[0]) setSelectedId(props.providers[0].id);
   }, [props.providers, selectedId]);
 
-  // Cached account snapshot: the plan shown on the primary provider.
-  useEffect(() => {
-    void window.deyin.usage.account().then(setAccount).catch(() => setAccount(null));
-  }, []);
-
+  
   const adding = selectedId === DRAFT_ID;
   const selected = adding ? null : (props.providers.find((p) => p.id === selectedId) ?? props.providers[0] ?? null);
   const primaries = props.providers.filter((p) => p.kind === "primary");
   const customs = props.providers.filter((p) => p.kind === "custom");
+
+ /** Re-pull provider status + a fresh account snapshot (e.g. after sign-in). */
+ const refreshAccountState = useCallback(async () => {
+ const [providers, account] = await Promise.all([
+ window.deyin.providers.list(),
+ window.deyin.usage.account(true).catch(() => null),
+ ]);
+ props.onProvidersChanged(providers);
+ setAccount(account);
+ return providers.some((p) => p.kind === "primary" && p.status === "connected");
+ }, [props.onProvidersChanged]);
+
+ // The account snapshot is cached (6h TTL); fetch fresh whenever this page
+ // mounts so a just-completed sign-in is reflected immediately.
+ useEffect(() => {
+ void refreshAccountState();
+ }, [refreshAccountState]);
+
+ // Post-connect pollers are stopped if the user leaves the page.
+ const connectPollers = useRef<ReturnType<typeof setInterval>[]>([]);
+ useEffect(
+ () => () => {
+ for (const timer of connectPollers.current) clearInterval(timer);
+ connectPollers.current = [];
+ },
+ [],
+ );
 
   return (
     <div className="settings-page">
@@ -92,11 +118,24 @@ export function ModelSettingsPage(props: Props) {
             provider={selected}
             liveModels={props.liveModels}
             planName={account?.planName ?? null}
-            busy={props.busy}
-            onConnect={props.onConnect}
-            onProvidersChanged={props.onProvidersChanged}
-            onRefreshLiveModels={props.onRefreshLiveModels}
-          />
+            account={account}
+ busy={props.busy}
+ onConnect={() => {
+ props.onConnect();
+ // The OAuth round-trip finishes in the browser; poll until the
+ // session shows up (or give up after two minutes).
+ const started = Date.now();
+ const timer = setInterval(() => {
+ void refreshAccountState().then((connected) => {
+ if (connected || Date.now() - started > 120_000) clearInterval(timer);
+ });
+ }, 2_000);
+ connectPollers.current.push(timer);
+ }}
+ onProvidersChanged={props.onProvidersChanged}
+ onRefreshLiveModels={props.onRefreshLiveModels}
+ onOpenPlans={props.onOpenPlans}
+ />
         )}
       </div>
     </div>
@@ -234,13 +273,66 @@ interface DetailProps {
   liveModels: ModelInfo[];
   /** Cached Openference plan name shown on the primary provider. */
   planName: string | null;
-  busy: boolean;
-  onConnect: () => void;
-  onProvidersChanged: (providers: ProviderInfo[]) => void;
-  onRefreshLiveModels: () => Promise<void>;
+ /** Full account snapshot for quota display (null when signed out). */
+ account: AccountUsage | null;
+ busy: boolean;
+ onConnect: () => void;
+ onProvidersChanged: (providers: ProviderInfo[]) => void;
+ onRefreshLiveModels: () => Promise<void>;
+ /** Open the in-app plan picker (Renew / change plan). */
+ onOpenPlans?: () => void;
 }
 
-function ProviderDetail({ provider, liveModels, planName, busy, onConnect, onProvidersChanged, onRefreshLiveModels }: DetailProps) {
+/** Short "Sep 5" style date used on quota chips. */
+function formatResetAt(iso: string): string {
+ const d = new Date(iso);
+ if (Number.isNaN(d.getTime())) return "";
+ return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** One quota tile: label, percent-used bar and numeric note. */
+function QuotaMeter({
+ label,
+ used,
+ total,
+ suffix,
+ money,
+ plain,
+}: {
+ label: string;
+ used: number;
+ total: number | null;
+ suffix?: string;
+ money?: boolean;
+ plain?: boolean;
+}) {
+ const fmt = (n: number) => (money ? `$${n.toFixed(2)}` : fmtUsage(Math.round(n)));
+ const pct = total && total > 0 ? Math.min(100, Math.round((used / total) * 100)) : null;
+ return (
+ <div className="plan-quota__cell">
+ <div className="plan-quota__cell-head">
+ <span className="plan-quota__cell-label">{label}</span>
+ {pct !== null && !plain && <span className="plan-quota__cell-pct">{pct}%</span>}
+ </div>
+ <div className="plan-quota__cell-value">
+ {fmt(used)}
+ {total && !plain ? (
+ <span className="plan-quota__cell-note">
+ {" "}
+ / {fmt(total)} {suffix ?? ""}
+ </span>
+ ) : null}
+ </div>
+ {pct !== null && !plain && (
+ <div className="plan-quota__bar">
+ <div className="plan-quota__bar-fill" style={{ width: `${pct}%` }} />
+ </div>
+ )}
+ </div>
+ );
+}
+
+function ProviderDetail({ provider, liveModels, planName, account, busy, onConnect, onOpenPlans, onProvidersChanged, onRefreshLiveModels }: DetailProps) {
   const isCustom = provider.kind === "custom";
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(provider.name);
@@ -371,31 +463,89 @@ function ProviderDetail({ provider, liveModels, planName, busy, onConnect, onPro
       </div>
 
       {provider.kind === "primary" && (
-        <div className="plan-connect">
-          <div className="plan-connect__meta">
-            <span className="plan-connect__title">
-              Coding plan
-              {provider.status === "connected" && (
-                <span className="badge badge--ok" style={{ marginLeft: 8 }}>
-                  {planName ?? "Connected"}
-                </span>
-              )}
-            </span>
-            <span className="hint">
-              {provider.status === "connected"
-                ? planName
-                  ? `Signed in on the ${planName} plan.`
-                  : "Connected via Openference sign-in."
-                : "Not connected"}
-            </span>
-          </div>
-          {provider.status !== "connected" && (
-            <button className="btn btn--outline" disabled={busy} onClick={onConnect}>
-              {busy ? "Connecting..." : `Connect to ${provider.name}`}
-            </button>
-          )}
-        </div>
-      )}
+ <div className="plan-connect">
+ <div className="plan-connect__meta">
+ <span className="plan-connect__title">
+ Coding plan
+ {provider.status === "connected" && (
+ <span className="badge badge--ok" style={{ marginLeft: 8 }}>
+ {planName ?? "Connected"}
+ </span>
+ )}
+ </span>
+ <span className="hint">
+ {provider.status === "connected"
+ ? planName
+ ? `Signed in on the ${planName} plan.`
+ : "Connected via Openference sign-in."
+ : "Not connected"}
+ </span>
+ </div>
+ {provider.status !== "connected" && (
+ <button className="btn btn--outline" disabled={busy} onClick={onConnect}>
+ {busy ? "Connecting..." : `Connect to ${provider.name}`}
+ </button>
+ )}
+ </div>
+ )}
+ {provider.kind === "primary" && provider.status === "connected" && account && (
+ <div className="plan-quota">
+ <div className="plan-quota__row">
+ <span className="plan-quota__plan">{planName ?? "Openference plan"}</span>
+ {account.weeklyResetAt && (
+ <span
+ className="badge badge--muted"
+ title={`Weekly quota resets ${new Date(account.weeklyResetAt).toLocaleString()}`}
+ >
+ Resets {formatResetAt(account.weeklyResetAt)}
+ </span>
+ )}
+ <div className="plan-quota__spacer" />
+ {onOpenPlans && (
+ <button className="btn btn--outline" onClick={onOpenPlans}>
+ Renew / change plan
+ </button>
+ )}
+ <button
+ className="btn btn--outline"
+ title="Open the Openference billing portal"
+ onClick={() => {
+   void window.deyin.identity
+   .get()
+   .then((identity) =>
+    `${(identity.oauthIssuer ?? "https://openference.com").replace(/\/$/, "")}/app/user/billing/overview`,
+   )
+   .then((url) => window.deyin.shell.openExternal(url))
+   .catch(() => {
+    /* portal open is best-effort; nothing to surface if it fails */
+   });
+ }}
+ >
+ Manage billing
+ </button>
+ </div>
+ <div className="plan-quota__grid">
+ <QuotaMeter
+ label="5-hour window"
+ used={account.windowQuotaUsed}
+ total={account.requestsPerWindow}
+ suffix={account.windowHours ? `${account.windowHours}h` : undefined}
+ />
+ <QuotaMeter
+ label="This week"
+ used={account.weekQuotaUsed}
+ total={account.requestsPerWeek}
+ />
+ <QuotaMeter
+ label="Requests today"
+ used={account.todayRequests}
+ total={account.todayRequests}
+ plain
+ />
+ <QuotaMeter label="Credits" used={account.creditsUsd ?? 0} total={null} money />
+ </div>
+ </div>
+ )}
 
       <div className="field">
         <label className="field__label">Base URL</label>

@@ -139,6 +139,8 @@ interface SettingsViewProps {
   onProvidersChanged: (providers: ProviderInfo[]) => void;
   onChangeSettings: (patch: Partial<DeyinSettings>) => void;
   onConnect: () => void;
+ /** Open the in-app plan picker (Renew / change plan). */
+ onOpenPlans?: () => void;
   onBack: () => void;
   onRefreshLiveModels?: () => Promise<void>;
 }
@@ -294,6 +296,7 @@ export function SettingsView(props: SettingsViewProps) {
             liveModels={props.liveModels}
             busy={props.busy}
             onConnect={props.onConnect}
+            onOpenPlans={props.onOpenPlans}
             onProvidersChanged={props.onProvidersChanged}
             onRefreshLiveModels={props.onRefreshLiveModels ?? (() => Promise.resolve())}
           />
