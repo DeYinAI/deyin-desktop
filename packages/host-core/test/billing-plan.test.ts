@@ -20,6 +20,7 @@ function plan(overrides: Partial<PublicPlan> & Pick<PublicPlan, "id" | "name" | 
     isPopular: false,
     planKind: "normal",
     hasStripe: true,
+ isSoldOut: false,
     ...overrides,
   };
 }

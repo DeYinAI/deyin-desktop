@@ -20,6 +20,8 @@ export interface PublicPlan {
   isPopular: boolean;
   planKind: "normal" | "agent";
   hasStripe: boolean;
+ /** Server-reported availability; the API omits this today, so absent = available. */
+ isSoldOut: boolean;
 }
 
 interface PlansApiPlan {
@@ -37,6 +39,8 @@ interface PlansApiPlan {
   isPopular?: boolean;
   planKind?: string;
   hasStripe?: boolean;
+ /** Forward-compat: server may mark plans sold out; absent means available. */
+ isSoldOut?: boolean;
 }
 
 interface PlansApiResponse {
@@ -61,7 +65,8 @@ function normalizePlan(raw: PlansApiPlan): PublicPlan {
     isPopular: raw.isPopular ?? false,
     planKind: raw.planKind === "agent" ? "agent" : "normal",
     hasStripe: raw.hasStripe ?? false,
-  };
+   isSoldOut: raw.isSoldOut === true,
+ };
 }
 
 /**
