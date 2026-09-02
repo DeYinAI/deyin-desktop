@@ -486,7 +486,10 @@ export class AgentShell {
 
   private async runExclusive(command: string, opts: AgentShellRunOptions): Promise<AgentShellRunResult> {
     if (this.disposed) throw new Error("AgentShell has been disposed.");
-    await this.ensureStarted();
+    // Was the PTY up and prompt-synced before this call? If not, the command may
+ // slip through before output capture starts (see the guard below).
+ const wasReady = this.ready && this.term !== null;
+ await this.ensureStarted();
 
     let restarted = false;
     if (opts.cwd && opts.cwd !== this.cwd) {
@@ -503,7 +506,13 @@ export class AgentShell {
     }
 
     const result = await this.execOnce(command, opts.timeoutS, opts.signal, opts.onData);
-    return { ...result, restarted: restarted || result.restarted };
+    // A command that runs while the shell is still syncing its prompt markers can
+ // finish before capture starts, surfacing as a silent empty result. Label it
+ // so the model retries instead of concluding the command printed nothing.
+ if (!wasReady && result.exitCode === 0 && !result.output.trim()) {
+ result.output = "(no output captured \u2014 the shell was still starting; run the command again)";
+ }
+ return { ...result, restarted: restarted || result.restarted };
   }
 
   private cdCommand(cwd: string): string {
