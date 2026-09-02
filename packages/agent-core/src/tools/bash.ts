@@ -125,15 +125,15 @@ function bashToolDescription(): string {
     ? "'&&' and '||' chain conditionally; ';' runs both regardless."
     : "'&&' and '||' are NOT parsed by this shell and are a syntax error. Use ';' to run both regardless, or 'if ($?) { ... }' to chain conditionally.";
   return (
-    `Run a shell command in the workspace and return its combined output. bash is NOT available here — ` +
-    `commands run under ${pwsh7 ? "PowerShell 7 (pwsh)" : "Windows PowerShell 5.1"}, so write PowerShell, not bash:\n` +
+    `Run a shell command in the workspace and return its combined output. Commands run under ${pwsh7 ? "PowerShell 7 (pwsh)" : "Windows PowerShell 5.1"}, unless the Environment section names a WSL distro — write for the shell you are given:\n` +
     `  - chaining: ${chaining}\n` +
     "  - redirection and variables: $null not /dev/null; $env:VAR not $VAR; '2>$null' discards stderr.\n" +
     "  - file commands: Get-ChildItem (ls), Get-Content (cat), Remove-Item -Recurse -Force (rm -rf), Copy-Item (cp), Select-String (grep).\n" +
     "  - no head/tail/which/touch: use Select-Object -First/-Last N, (Get-Command x).Source, New-Item.\n" +
     "  - multi-line text to a native exe (e.g. git commit -m): use a single-quoted here-string @'...'@ with the closing '@ at column 0.\n" +
     "If the Environment section of your instructions names a WSL distro as the shell, ignore all of the above " +
-    "and write ordinary bash with Unix paths." +
+    "and write ordinary bash with Unix paths. " +
+ "Shell rules: bash is the default here — '&&' chains conditionally; never substitute ';' for it. " +
     BASH_TOOL_STEER
   );
 }
