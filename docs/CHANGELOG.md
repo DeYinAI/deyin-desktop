@@ -6,6 +6,24 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.14 — 2026-09-03
+
+### Highlights
+
+- Hotfix: threads with an attached screenshot could die permanently — every
+  later message replayed the image to text-only models (GLM answers with
+  error 1210) and failed identically; the request now self-heals by retrying
+  without image parts, so the conversation keeps working
+- Background commands that finish quickly (echo, file probes) are no longer
+  reported as "Unknown background task" with their output lost — settled
+  results stay pollable for a grace window
+- Browser tool: `file://` and localhost/dev-server URLs are no longer forced
+  to `https://` (which could never work); screenshots now come back as
+  inline-image directives rendered in chat instead of a binary file the agent
+  cannot read
+- Settings: the last unstyled dropdowns (Computer Use page, image-model menu)
+  now match the upgraded select styling
+
 ## 1.0.13 — 2026-09-03
 
 ### Highlights

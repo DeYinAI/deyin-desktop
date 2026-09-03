@@ -1,6 +1,6 @@
 {
   "name": "@deyin/desktop",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "Deyin desktop app (Electron). Agentic development environment with native computer use, billing, MCP servers, and plugin system.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Deyin <hello@deyin.ai>",
