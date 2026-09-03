@@ -20,6 +20,7 @@ import {
   pickVideoModelForGeneration,
   videoModelParamsKey,
   resolveVideoModelParams,
+  modelIsVideo,
  touchProjectOpened,
 } from "@deyin/host-core/shared";
 import type { ModelReasoningMode, WorkspaceLocation, ImageModelParams, VideoModelParams } from "@deyin/host-core/shared";
@@ -698,10 +699,11 @@ export function App() {
     return provider?.models.find((m) => m.id === selectedModel)?.contextLength;
   }, [models, providers, selectedModel, selectedProviderId]);
 
-  const selectedModelKind = useMemo(
-    () => models.find((m) => m.id === selectedModel)?.kind,
-    [models, selectedModel],
-  );
+  const selectedModelKind = useMemo(() => {
+    const entry = models.find((m) => m.id === selectedModel);
+    if (entry?.kind === "video" || modelIsVideo(selectedModel, entry?.kind)) return "video" as const;
+    return entry?.kind;
+  }, [models, selectedModel]);
 
   const savedImageParams = useMemo(() => {
     const key = imageModelParamsKey(selectedProviderId, selectedModel);
@@ -2020,8 +2022,9 @@ const continueFromStepLimit = useCallback(() => {
     // Chat models that draw: usable by generate_image and able to answer with a
     // picture directly, so they never count as "no image model available".
     const imageChatModels = modelList.filter((m) => m.kind !== "image" && m.kind !== "video" && m.imageOutput).map((m) => m.id);
-    const isImageRun = modelList.find((m) => m.id === runModelId)?.kind === "image";
-    const isVideoRun = modelList.find((m) => m.id === runModelId)?.kind === "video";
+    const selectedEntry = modelList.find((m) => m.id === runModelId);
+    const isImageRun = selectedEntry?.kind === "image";
+    const isVideoRun = modelIsVideo(runModelId, selectedEntry?.kind);
 
     if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
       const provisional = deriveTitle(text);
@@ -2185,6 +2188,44 @@ const continueFromStepLimit = useCallback(() => {
       appendEvents(thread.id, [
         { kind: "assistant", text: "Plain chat mode doesn't support images. Enable the agent runtime in Settings → General." },
       ]);
+      return;
+    }
+
+    // Last-resort guard: never POST a video model to chat completions.
+    if (modelIsVideo(runModelId, selectedEntry?.kind) && text.trim()) {
+      appendEvents(thread.id, [{ kind: "user", text }]);
+      composerRef.current?.clearInput();
+      composerRef.current?.clearImages();
+      setPlainStreamForThread(thread.id, `Generating video with ${runModelId}…`);
+      try {
+        const videoParams = resolveVideoModelParams(
+          runModelId,
+          settings?.videoModelParams?.[videoModelParamsKey(runProviderId, runModelId)],
+        );
+        const result = await window.deyin.videos.generate({
+          threadId: thread.id,
+          prompt: text,
+          model: runModelId,
+          providerId: runProviderId,
+          aspectRatio: videoParams.aspectRatio,
+          width: videoParams.width,
+          height: videoParams.height,
+          numFrames: videoParams.numFrames,
+          frameRate: videoParams.frameRate,
+          numInferenceSteps: videoParams.numInferenceSteps,
+          negativePrompt: videoParams.negativePrompt,
+          seed: videoParams.seed,
+          mode: videoParams.mode,
+        });
+        appendEvents(thread.id, [{ kind: "assistant", text: `::deyin-inline-video{file="${result.video.file}"}` }]);
+      } catch (err) {
+        appendEvents(thread.id, [
+          { kind: "assistant", text: `Video generation failed: ${err instanceof Error ? err.message : String(err)}` },
+        ]);
+      } finally {
+        setPlainStreamForThread(thread.id, null);
+        void window.deyin.usage.record({ model: runModelId, tokens: 0, newSession: isFirstMessage });
+      }
       return;
     }
 

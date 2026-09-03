@@ -150,3 +150,12 @@ test("classifyModelKinds: backfills kind on catalogs cached before classificatio
   assert.deepEqual(classified.map((m) => m.kind), ["image", "chat", "image", "chat"]);
   assert.deepEqual(classified.map((m) => m.imageOutput), [false, false, false, true]);
 });
+
+test("classifyModelKinds: backfills video kind from id heuristic on stale cache", () => {
+  const classified = classifyModelKinds([
+    { id: "Agnes-Video-2.5-Flash", name: "Agnes Video" },
+    { id: "GLM-5.2", name: "GLM" },
+  ]);
+  assert.equal(classified[0]?.kind, "video");
+  assert.equal(classified[1]?.kind, "chat");
+});

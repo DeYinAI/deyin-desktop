@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import {
   getModelReasoningMode,
   getModelReasoningOptions,
+  modelIsVideo,
   reasoningModeLabel,
   type ModelReasoningMode,
 } from "@deyin/host-core/shared";
@@ -126,8 +127,8 @@ export function ModelPicker(props: ModelPickerProps) {
   const canEditReasoning =
     Boolean(props.onSetModelEffort) &&
     Boolean(sessionProviderId && props.selected) &&
-    selectedModelInfo?.kind !== "image" &&
-    selectedModelInfo?.kind !== "video";
+    !modelIsVideo(props.selected, selectedModelInfo?.kind) &&
+    selectedModelInfo?.kind !== "image";
   const sessionSavedMode =
     sessionProviderId && props.selected
       ? getModelReasoningMode(effortSettings, sessionProviderId, props.selected)
@@ -202,7 +203,7 @@ export function ModelPicker(props: ModelPickerProps) {
                     <span className="badge badge--muted" title="Text-to-image model">
                       Image
                     </span>
-                  ) : model.kind === "video" ? (
+                  ) : modelIsVideo(model.id, model.kind) ? (
                     <span className="badge badge--muted" title="Text-to-video model">
                       Video
                     </span>
