@@ -115,6 +115,12 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
 
   let wireMessages = built.messages as unknown as Record<string, unknown>[];
   let continuations = 0;
+  // One-shot degradation: some chat endpoints accept only text content parts on
+  // certain models (z-ai GLM text models reject `image_url` with 400 code 1210
+  // "messages.content.type is invalid, allowed values: ['text']"). Retry once
+  // with image parts stripped rather than failing the turn - and, because the
+  // image lives on the persisted user message, every later request too.
+  let strippedImages = false;
   let content = "";
   let reasoning = "";
   let usage: TokenUsage | null = null;
@@ -164,13 +170,41 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
 
     let res = await post();
     if (!res.ok) {
-      const detail = await res.text().catch(() => "");
+      let detail = await res.text().catch(() => "");
       // Some OpenAI-compatible gateways 400 on `stream_options`. Drop it and
       // retry once: losing the usage anchor is far better than losing the turn.
       if (res.status === 400 && /stream[_ ]?options/i.test(detail)) {
         delete body.stream_options;
         res = await post();
+        if (!res.ok) detail = await res.text().catch(() => "");
       }
+      // Text-only endpoints reject `image_url` content parts. Strip every image
+      // part and retry once: the attached picture is already lost as input, but
+      // the conversation survives instead of 400-ing on every future request.
+      if (
+       res.status === 400 &&
+       !strippedImages &&
+       /content[._ ]?type|image_url|modalit/i.test(detail)
+      ) {
+       const textOnly = wireMessages.map((m) =>
+        typeof m.content === "string" || m.content == null
+         ? m
+         : {
+          ...m,
+          content: (m.content as Array<{ type?: string }>).filter(
+           (part) => part.type === "text",
+          ),
+         },
+       );
+       if (JSON.stringify(textOnly) !== JSON.stringify(wireMessages)) {
+        wireMessages = textOnly;
+        body.messages = wireMessages;
+        strippedImages = true;
+        res = await post();
+        if (!res.ok) detail = await res.text().catch(() => "");
+       }
+      }
+
       if (!res.ok) {
         const finalDetail = res.status === 400 ? detail : await res.text().catch(() => "");
         throw new Error(

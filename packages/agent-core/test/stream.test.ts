@@ -161,3 +161,72 @@ test("a whole-completion frame (message, not delta) still yields text and tool c
   assert.equal(done.finishReason, "tool_calls");
   assert.deepEqual(done.toolCalls, [{ id: "call_x", name: "ls", arguments: '{"path":"."}' }]);
 });
+
+
+test("a 400 rejecting image content parts retries text-only instead of failing the turn", async () => {
+ const bodies: Record<string, unknown>[] = [];
+ const originalFetch = globalThis.fetch;
+ let call = 0;
+ globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+ call += 1;
+ if (init && typeof init.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+ if (call === 1) {
+ // z-ai style rejection of image_url parts (error 1210).
+ return new Response(
+ JSON.stringify({ error: { code: "1210", message: "messages.content.type is invalid, allowed values: ['text']" } }),
+ { status: 400, headers: { "content-type": "application/json" } },
+ );
+ }
+ const sse = 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n';
+ return new Response(sse, {
+ status: 200,
+ headers: { "content-type": "text/event-stream" },
+ });
+ }) as typeof fetch;
+ try {
+ const events: StreamEvent[] = [];
+ for await (const ev of streamChatEvents({
+ apiBaseUrl: "http://host",
+ token: "tok",
+ model: "glm-text",
+ messages: [
+ { role: "user", content: "look", images: [{ base64: "AAAA", mediaType: "image/png" }] },
+ ],
+ },
+ )) events.push(ev);
+ const done = events.at(-1);
+ if (done?.type !== "done") throw new Error("expected done");
+ assert.equal(done.content, "ok");
+ // First request carried the image part; the retry sent text parts only.
+ const first = bodies[0]?.messages as { content: unknown }[];
+ const retry = bodies[1]?.messages as { content: { type: string }[] | string }[];
+ assert.equal((first[0]?.content as { type: string }[]).some((p) => p.type === "image_url"), true);
+ const retryParts = Array.isArray(retry[0]?.content) ? retry[0]!.content : [{ type: "string" }];
+ assert.equal(retryParts.every((p) => p.type === "text"), true);
+ } finally {
+ globalThis.fetch = originalFetch;
+ }
+});
+
+test("a 400 with no image parts to strip still surfaces the provider error", async () => {
+ const originalFetch = globalThis.fetch;
+ globalThis.fetch = (async () =>
+ new Response(JSON.stringify({ error: { message: "bad tool schema" } }), {
+ status: 400,
+ headers: { "content-type": "application/json" },
+ })) as typeof fetch;
+ try {
+ const events: StreamEvent[] = [];
+ for await (const ev of streamChatEvents({
+ apiBaseUrl: "http://host",
+ token: "tok",
+ model: "m",
+ messages: [{ role: "user", content: "plain" }],
+ })) events.push(ev);
+ throw new Error("expected the request to fail");
+ } catch (err) {
+ assert.match(String(err), /Chat request failed \(400\)/);
+ } finally {
+ globalThis.fetch = originalFetch;
+ }
+});
