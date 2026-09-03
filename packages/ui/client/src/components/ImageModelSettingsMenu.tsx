@@ -87,6 +87,7 @@ export function ImageModelSettingsMenu({ providerId, modelId, saved, onChange }:
       <label className="image-settings__field">
         <span>Size</span>
         <select
+          className="select"
           value={draft.size ?? "1024x1024"}
           onChange={(e) => setDraft((d: ImageModelParams) => ({ ...d, size: e.target.value }))}
         >
