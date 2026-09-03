@@ -325,3 +325,29 @@ test("a successful fold replaces the region and reports what it reclaimed", asyn
   assert.equal(messages.length, before - result.droppedMessages + 1);
   assert.equal(messages[0]!.role, "system", "the system prompt is never folded");
 });
+
+test("foldRegion appends the authoritative todo section to the briefing", async () => {
+ const messages = transcript(6, 400);
+ const region = selectRegion(messages, TAIL);
+ const todos = [
+ { id: "t1", content: "fix the widget", status: "completed" as const },
+ { id: "t2", content: "update the docs", status: "in_progress" as const },
+ { id: "t3", content: "ship it", status: "pending" as const },
+ ];
+ const { body, result } = await captureFoldRequest(messages, region, "## Goal\nbriefing", {
+ todos,
+ });
+ void body;
+ const summary = String(result.summary);
+ assert.match(summary, /## Todo list \(authoritative\)/);
+ assert.match(summary, /\[x\] t1: fix the widget/);
+ assert.match(summary, /\[~\] t2: update the docs/);
+ assert.match(summary, /\[ \] t3: ship it/);
+});
+
+test("foldRegion omits the todo section when no todos exist", async () => {
+ const messages = transcript(6, 400);
+ const region = selectRegion(messages, TAIL);
+ const { result } = await captureFoldRequest(messages, region, "## Goal\nbriefing");
+ assert.ok(!String(result.summary).includes("Todo list"));
+});

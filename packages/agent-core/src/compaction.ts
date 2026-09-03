@@ -1,4 +1,5 @@
 import { completeChat } from "./stream.js";
+import type { TodoItem } from "./types.js";
 import { measureContext, priceMessage, priceMessages, type UsageAnchor } from "./context-measure.js";
 import { countTokens, truncateToTokens } from "./tokenizer.js";
 import type { ProviderApiFormat } from "./transports.js";
@@ -381,6 +382,20 @@ const SUMMARY_INSTRUCTIONS = [
   "Do not call any tools. Output only the briefing.",
 ].join("\n");
 
+/**
+ * Deterministic briefing section carrying the live todo tracker. The
+ * summariser cannot be trusted to preserve item ids/status across a fold,
+ * and a resumed agent that reads a guessed list will finish with stale
+ * todos. Appended verbatim after the model-written briefing.
+ */
+export function todoListSection(todos: TodoItem[]): string {
+  if (todos.length === 0) return "";
+  const mark = (s: TodoItem["status"]): string =>
+    s === "completed" ? "[x]" : s === "in_progress" ? "[~]" : s === "cancelled" ? "[-]" : "[ ]";
+  const lines = todos.map((t) => `${mark(t.status)} ${t.id}: ${t.content}`).join("\n");
+  return `\n\n## Todo list (authoritative)\n${lines}`;
+}
+
 export interface FoldResult {
   summary: string;
   /** Messages removed from the surface. The caller's log keeps them. */
@@ -427,6 +442,8 @@ export async function foldRegion(opts: {
   wire?: WireOptions;
   /** The run's prompt cache key, so OpenAI-style routing lands on the same entry. */
   promptCacheKey?: string;
+  /** The live tracker state; appended verbatim to the briefing so it survives the fold. */
+  todos?: TodoItem[];
   /** Injection seam for tests and benchmarks; defaults to the real transport. */
   complete?: typeof completeChat;
 }): Promise<FoldResult> {
@@ -456,9 +473,12 @@ export async function foldRegion(opts: {
 
   const summary = content.trim();
   if (!summary) return { summary: "", droppedMessages: 0, reclaimedTokens: 0 };
+  // The tracker state is exact, unlike the prose around it: pin it to the
+  // briefing so a resumed run reconciles against reality, not a guess.
+  const finalSummary = summary + (opts.todos ? todoListSection(opts.todos) : "");
 
   const before = priceMessages(slice);
-  const replacement = summaryMessage(summary);
+  const replacement = summaryMessage(finalSummary);
   // A checkpoint must be strictly smaller than what it replaces. A summary that
   // grew the transcript is worse than no fold at all — it costs a model call AND
   // a prefix-cache reset to make the pressure problem worse.
@@ -466,7 +486,7 @@ export async function foldRegion(opts: {
   if (after >= before) return { summary: "", droppedMessages: 0, reclaimedTokens: 0 };
 
   messages.splice(region.start, slice.length, replacement);
-  return { summary, droppedMessages: slice.length, reclaimedTokens: before - after };
+  return { summary: finalSummary, droppedMessages: slice.length, reclaimedTokens: before - after };
 }
 
 /** The surface node that stands in for a folded region. */
