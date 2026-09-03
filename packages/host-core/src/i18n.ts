@@ -175,6 +175,9 @@ const en = {
   "general.agentModeDesc": "Let Deyin use tools (files, terminal, browser, MCP). Turn off for plain chat.",  "general.autoImageGeneration": "Auto generate images",
   "general.autoImageGenerationDesc":
     "When you ask for a picture on a text-only model, route the prompt to an image model in your plan (FLUX, SDXL, gpt-image, Gemini flash-image). On by default.",
+  "general.autoVideoGeneration": "Auto generate videos",
+  "general.autoVideoGenerationDesc":
+    "When you ask for a video on a text-only model, route the prompt to a video model in your plan (Agnes Video, etc.). On by default.",
   "general.automationsCatchUp": "Catch up missed automations",
   "general.automationsCatchUpDesc": "Run scheduled automations once on startup if the app was closed during the scheduled time.",
   "general.keepRunningInBackground": "Keep running in background",
@@ -603,6 +606,9 @@ const zh: Partial<Record<MessageKey, string>> = {
   "general.agentModeDesc": "允许 Deyin 使用工具（文件、终端、浏览器、MCP）。关闭后为纯聊天。",  "general.autoImageGeneration": "自动生成图片",
   "general.autoImageGenerationDesc":
     "在纯文本模型上请求图片时，自动将提示词路由到你计划中的图片模型（FLUX、SDXL、gpt-image、Gemini flash-image）。默认开启。",
+  "general.autoVideoGeneration": "自动生成视频",
+  "general.autoVideoGenerationDesc":
+    "在纯文本模型上请求视频时，自动将提示词路由到你计划中的视频模型（Agnes Video 等）。默认开启。",
   "general.privacy": "隐私",
   "general.telemetry": "使用统计",
   "general.telemetryDesc": "共享匿名功能使用数据（绝不包含代码、路径或提示词）。默认关闭。",
@@ -980,6 +986,9 @@ const de: Partial<Record<MessageKey, string>> = {
   "general.agentModeDesc": "Deyin darf Werkzeuge nutzen (Dateien, Terminal, Browser, MCP). Aus = reiner Chat.",  "general.autoImageGeneration": "Bilder automatisch erzeugen",
   "general.autoImageGenerationDesc":
     "Wenn du auf einem reinen Textmodell nach einem Bild fragst, wird die Eingabe an ein Bildmodell in deinem Plan geroutet (FLUX, SDXL, gpt-image, Gemini flash-image). Standard an.",
+  "general.autoVideoGeneration": "Videos automatisch erzeugen",
+  "general.autoVideoGenerationDesc":
+    "Wenn du auf einem reinen Textmodell nach einem Video fragst, wird die Eingabe an ein Videomodell in deinem Plan geroutet (Agnes Video usw.). Standard an.",
   "general.privacy": "Privatsphäre",
   "general.telemetry": "Nutzungstelemetrie",
   "general.telemetryDesc": "Anonyme Nutzungsdaten teilen (niemals Code, Pfade oder Prompts). Standardmäßig aus.",

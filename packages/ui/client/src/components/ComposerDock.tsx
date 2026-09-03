@@ -17,8 +17,9 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, 
 import { Composer, type ComposerProps } from "./Composer.js";
 import { ComposerPendingBars } from "./ComposerPendingBars.js";
 import { ImageModelSettingsBar } from "./ImageModelSettingsBar.js";
+import { VideoModelSettingsBar } from "./VideoModelSettingsBar.js";
 import { type ComposerDraftState, type DraftKeeper } from "../composer-draft.js";
-import type { ImageModelParams } from "@deyin/host-core/shared";
+import type { ImageModelParams, VideoModelParams } from "@deyin/host-core/shared";
 
 /** What the app can ask the dock to clear after (or during) a send. */
 export interface ComposerHandle {
@@ -66,6 +67,13 @@ export interface ComposerDockProps extends DockedComposerProps {
     saved?: ImageModelParams;
     onChange: (providerId: string, modelId: string, params: ImageModelParams) => void;
   };
+  /** Per-model Agnes video tuning when a text-to-video model is selected. */
+  videoModelSettings?: {
+    providerId: string;
+    modelId: string;
+    saved?: VideoModelParams;
+    onChange: (providerId: string, modelId: string, params: VideoModelParams) => void;
+  };
   /** Rendered between the pending bars and the composer (the workspace bar). */
   children?: ReactNode;
 }
@@ -82,6 +90,7 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
     onStartMultitasking,
     onClearQueue,
     imageModelSettings,
+    videoModelSettings,
     children,
     ...composerProps
   } = props;
@@ -157,6 +166,14 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
               modelId={imageModelSettings.modelId}
               saved={imageModelSettings.saved}
               onChange={imageModelSettings.onChange}
+            />
+          ) : null}
+          {videoModelSettings ? (
+            <VideoModelSettingsBar
+              providerId={videoModelSettings.providerId}
+              modelId={videoModelSettings.modelId}
+              saved={videoModelSettings.saved}
+              onChange={videoModelSettings.onChange}
             />
           ) : null}
           {children}

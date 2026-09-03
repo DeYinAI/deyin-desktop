@@ -244,6 +244,11 @@ agent: {
     read: (threadId, fileName) => ipcRenderer.invoke(CH.imagesRead, threadId, fileName),
     generate: (request) => ipcRenderer.invoke(CH.imagesGenerate, request),
   },
+  videos: {
+    save: (threadId, input) => ipcRenderer.invoke(CH.videosSave, threadId, input),
+    read: (threadId, fileName) => ipcRenderer.invoke(CH.videosRead, threadId, fileName),
+    generate: (request) => ipcRenderer.invoke(CH.videosGenerate, request),
+  },
   vision: {
     describeLocal: (images, userText) => ipcRenderer.invoke(CH.visionDescribeLocal, images, userText),
     localStatus: () => ipcRenderer.invoke(CH.visionLocalStatus),

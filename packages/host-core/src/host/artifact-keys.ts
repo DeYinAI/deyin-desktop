@@ -7,7 +7,7 @@ export function safeArtifactSegment(value: string, label: string): string {
   return trimmed.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-export type ArtifactKind = "images" | "pages";
+export type ArtifactKind = "images" | "videos" | "pages";
 
 /**
  * Build a user-scoped object key. The OAuth `sub` is the tenancy boundary — never

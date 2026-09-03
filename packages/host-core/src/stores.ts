@@ -9,6 +9,7 @@ import {
   type StoredProviderBase,
 } from "./defaults.js";
 import { classifyModelKinds, modelImageCapability } from "./images.js";
+import { isVideoModel } from "./videos.js";
 import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
 import { deyinUserAgent } from "./user-agent.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
@@ -316,6 +317,7 @@ export class AgentsStore {
       const models = (Array.isArray(body.data) ? body.data : [])
         .filter((m): m is ProviderCatalogEntry => typeof m.id === "string" && m.id.length > 0)
         .map((m) => {
+          const video = isVideoModel(m.id, m);
           const capability = modelImageCapability(m.id, m);
           const endpointOnly = capability === "endpoint";
           const reasoning = parseModelReasoningMeta(m);
@@ -327,8 +329,8 @@ export class AgentsStore {
  // Vision capability is explicit catalog metadata only (see models.ts) — a catalog
  // that says nothing leaves `vision` undefined, so the client sends images anyway
  // and the provider's own error is the fallback.
- vision: endpointOnly ? false : modelSupportsVision(m.id, m),
-            kind: endpointOnly ? ("image" as const) : ("chat" as const),
+ vision: video || endpointOnly ? false : modelSupportsVision(m.id, m),
+            kind: video ? ("video" as const) : endpointOnly ? ("image" as const) : ("chat" as const),
             ...(capability === "chat" ? { imageOutput: true } : {}),
             ...(reasoning ? { reasoning } : {}),
           };

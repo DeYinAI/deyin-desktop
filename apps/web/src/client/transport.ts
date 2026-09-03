@@ -20,11 +20,14 @@ import {
   sendDiagnosticsReport,
   syncWorkspaceIdentity,
   generateImages,
+  generateVideo,
   imageParamsToExtra,
   modelImageCapability,
+  videoParamsToExtra,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
 import { browserImageDataUrl, readBrowserImage, saveBrowserImage } from "./browser-image-store.js";
+import { browserVideoDataUrl, readBrowserVideo, saveBrowserVideo } from "./browser-video-store.js";
 import { readBrowserPage, saveBrowserPage } from "./browser-page-store.js";
 import type { DeyinApi } from "@deyin/contract";
 import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
@@ -44,6 +47,7 @@ import type {
   GitStash,
   GitStatus,
   ImageGenerateResult,
+  VideoGenerateResult,
   PluginCatalogEntry,
   ProjectsState,
   ProviderInfo,
@@ -959,6 +963,83 @@ export function createBrowserTransport(): DeyinApi {
           guidance: request.guidance,
           seed: request.seed,
           strength: request.strength,
+          provider: routing,
+        }));
+      },
+    },
+    videos: {
+      save: CHAT_ONLY
+        ? async (threadId, input) => saveBrowserVideo(threadId, input)
+        : (threadId, input) =>
+            host.invoke<{ file: string }>((id: number) => ({
+              type: "videos.save",
+              id,
+              threadId,
+              base64: input.base64,
+              mediaType: input.mediaType,
+            })),
+      read: CHAT_ONLY
+        ? async (threadId, file) => browserVideoDataUrl(await readBrowserVideo(threadId, file))
+        : async (threadId, file) => {
+            const result = await host.invoke<{ dataUrl: string }>((id: number) => ({ type: "videos.read", id, threadId, file }));
+            return result.dataUrl;
+          },
+      generate: async (request) => {
+        const provider = readProviders().find((p) => p.id === request.providerId);
+        const keys = readKeys();
+        const primary = !provider || provider.kind === "primary";
+        const token = primary ? ((await oauth.getAccessToken().catch(() => null)) ?? "") : (keys[provider.id] ?? "");
+        if (!token && !primary && !provider?.local) {
+          throw new Error(`No API key stored for ${provider?.name ?? request.providerId}.`);
+        }
+        const routing = {
+          baseUrl: primary ? `${location.origin}/api` : (provider?.baseUrl ?? `${location.origin}/api`),
+          token,
+          apiFormat: primary ? ("chat-completions" as const) : (provider?.apiFormat ?? "chat-completions"),
+          authHeader: provider?.authHeader,
+        };
+        if (CHAT_ONLY) {
+          const extra = videoParamsToExtra({
+            aspectRatio: request.aspectRatio,
+            width: request.width,
+            height: request.height,
+            numFrames: request.numFrames,
+            frameRate: request.frameRate,
+            numInferenceSteps: request.numInferenceSteps,
+            negativePrompt: request.negativePrompt,
+            seed: request.seed,
+            mode: request.mode,
+          });
+          const generated = await generateVideo({
+            apiBaseUrl: routing.baseUrl,
+            token: routing.token,
+            model: request.model,
+            prompt: request.prompt,
+            inputImages: request.inputImages,
+            ...(Object.keys(extra).length > 0 ? { extra } : {}),
+          });
+          const saved = await saveBrowserVideo(request.threadId, {
+            base64: generated.base64,
+            mediaType: generated.mediaType,
+          });
+          return { video: { file: saved.file, mediaType: saved.mediaType }, model: request.model } satisfies VideoGenerateResult;
+        }
+        return await host.invoke<VideoGenerateResult>((id: number) => ({
+          type: "videos.generate",
+          id,
+          threadId: request.threadId,
+          prompt: request.prompt,
+          model: request.model,
+          aspectRatio: request.aspectRatio,
+          width: request.width,
+          height: request.height,
+          numFrames: request.numFrames,
+          frameRate: request.frameRate,
+          numInferenceSteps: request.numInferenceSteps,
+          seed: request.seed,
+          negativePrompt: request.negativePrompt,
+          mode: request.mode,
+          inputImages: request.inputImages,
           provider: routing,
         }));
       },

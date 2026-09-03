@@ -25,9 +25,11 @@ test("migrateSettings fills new keys with defaults and stamps the schema version
   assert.deepEqual(migrated.subagentEfforts, {});
   assert.deepEqual(migrated.modelEfforts, {});
   assert.deepEqual(migrated.imageModelParams, {});
+  assert.deepEqual(migrated.videoModelParams, {});
   assert.equal(migrated.subagentMaxSteps, DEFAULT_SETTINGS.subagentMaxSteps);
   assert.equal(migrated.subagentConcurrency, DEFAULT_SETTINGS.subagentConcurrency);
  assert.equal(migrated.autoImageGeneration, true);
+  assert.equal(migrated.autoVideoGeneration, true);
 });
 
 test("upgrading clears the old reveal-terminal-on-agent-command default once", () => {

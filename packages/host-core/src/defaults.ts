@@ -1,8 +1,9 @@
 import { pickImageModelParamsRecord } from "./image-model-params.js";
+import { pickVideoModelParamsRecord } from "./video-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 20;
+export const SETTINGS_SCHEMA_VERSION = 21;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -22,6 +23,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   subagentEfforts: {},
   modelEfforts: {},
   imageModelParams: {},
+  videoModelParams: {},
   subagentMaxSteps: 20,
  /** Step cap for main agent runs; null = unlimited (loop ends when the model stops). */
  agentMaxSteps: 40,
@@ -49,6 +51,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   memoryEnabled: true,
   reviewMode: "off",
  autoImageGeneration: true,
+  autoVideoGeneration: true,
   whatsNewSeenVersion: null,
 };
 
@@ -100,6 +103,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     (v): v is string => v === "off" || v === "low" || v === "medium" || v === "high",
   );
   merged.imageModelParams = pickImageModelParamsRecord(merged.imageModelParams);
+  merged.videoModelParams = pickVideoModelParamsRecord(merged.videoModelParams);
   if (typeof merged.browserControlEnabled !== "boolean") {
     merged.browserControlEnabled = DEFAULT_SETTINGS.browserControlEnabled;
   }
@@ -139,6 +143,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
 if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration = DEFAULT_SETTINGS.autoImageGeneration;
+  if (typeof merged.autoVideoGeneration !== "boolean") merged.autoVideoGeneration = DEFAULT_SETTINGS.autoVideoGeneration;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
   if (!["dark", "light", "system", "warm"].includes(merged.theme)) merged.theme = "dark";

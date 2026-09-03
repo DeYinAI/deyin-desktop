@@ -214,10 +214,11 @@ export function modelEmitsImages(id: string, meta?: ImageModelMeta): boolean {
  * Backfill `kind` on catalog entries that predate modality classification
  * (models cached by an older build, or a custom provider's stored model list).
  */
-export function classifyModelKinds<T extends { id: string; kind?: "chat" | "image"; imageOutput?: boolean }>(
+export function classifyModelKinds<T extends { id: string; kind?: "chat" | "image" | "video"; imageOutput?: boolean }>(
   models: T[],
-): (T & { kind: "chat" | "image"; imageOutput: boolean })[] {
+): (T & { kind: "chat" | "image" | "video"; imageOutput: boolean })[] {
   return models.map((m) => {
+    if (m.kind === "video") return { ...m, kind: "video" as const, imageOutput: m.imageOutput ?? false };
     const capability = modelImageCapability(m.id);
     return {
       ...m,

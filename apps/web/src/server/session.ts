@@ -2,7 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { GitWatcher, generateImages, git as gitService, imageDataUrl, imageParamsToExtra, isValidArtifactUserSub, modelImageCapability, runGit } from "@deyin/host-core";
+import { GitWatcher, generateImages, generateVideo, git as gitService, imageDataUrl, imageParamsToExtra, isValidArtifactUserSub, modelImageCapability, runGit, videoDataUrl, videoParamsToExtra } from "@deyin/host-core";
 import type { ClientMessage, ServerMessage } from "@deyin/contract/web";
 import { SessionHost } from "./host.js";
 import { WebAgentHost, type WebAgentStartOptions } from "./agent-host.js";
@@ -232,6 +232,52 @@ export class Session {
             };
           });
           this.send({ type: "reply", id: msg.id, ok: true, result: { images, model: msg.model } });
+          break;
+        }
+        case "videos.save": {
+          if (!this.artifacts) throw new Error("Session not ready.");
+          const saved = await this.artifacts.saveVideo(msg.threadId, { base64: msg.base64, mediaType: msg.mediaType });
+          this.send({ type: "reply", id: msg.id, ok: true, result: { file: saved.file } });
+          break;
+        }
+        case "videos.read": {
+          if (!this.artifacts) throw new Error("Session not ready.");
+          const video = await this.artifacts.readVideo(msg.threadId, msg.file);
+          this.send({ type: "reply", id: msg.id, ok: true, result: { dataUrl: videoDataUrl(video) } });
+          break;
+        }
+        case "videos.generate": {
+          if (!this.artifacts) throw new Error("Session not ready.");
+          const extra = videoParamsToExtra({
+            aspectRatio: msg.aspectRatio,
+            width: msg.width,
+            height: msg.height,
+            numFrames: msg.numFrames,
+            frameRate: msg.frameRate,
+            numInferenceSteps: msg.numInferenceSteps,
+            negativePrompt: msg.negativePrompt,
+            seed: msg.seed,
+            mode: msg.mode,
+          });
+          const generated = await generateVideo({
+            apiBaseUrl: msg.provider.baseUrl,
+            token: msg.provider.token,
+            model: msg.model,
+            prompt: msg.prompt,
+            inputImages: msg.inputImages,
+            ...(Object.keys(extra).length > 0 ? { extra } : {}),
+          });
+          const saved = this.artifacts.videos.save(msg.threadId, {
+            base64: generated.base64,
+            mediaType: generated.mediaType,
+          });
+          void this.artifacts.mirrorVideoSave(msg.threadId, saved.file).catch(() => undefined);
+          this.send({
+            type: "reply",
+            id: msg.id,
+            ok: true,
+            result: { video: { file: saved.file, mediaType: saved.mediaType }, model: msg.model },
+          });
           break;
         }
         case "repo.state":

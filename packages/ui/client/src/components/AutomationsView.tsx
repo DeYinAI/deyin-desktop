@@ -431,7 +431,7 @@ export function AutomationsView(props: Props) {
   };
 
   const selected = useMemo(() => items.find((i) => i.id === selectedId) ?? null, [items, selectedId]);
-  const availableModels = props.models.filter((m) => m.kind !== "image");
+  const availableModels = props.models.filter((m) => m.kind !== "image" && m.kind !== "video");
   const visibleItems = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return items;

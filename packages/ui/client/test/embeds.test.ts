@@ -29,3 +29,12 @@ test("splitInlineEmbeds: a directive without a file is dropped, not rendered", (
     { kind: "md", text: " after" },
   ]);
 });
+
+test("splitInlineEmbeds: pulls video directives out of the surrounding markdown", () => {
+  const segments = splitInlineEmbeds('Done:\n\n::deyin-inline-video{file="vid-a.mp4"}\n');
+  assert.deepEqual(segments, [
+    { kind: "md", text: "Done:\n\n" },
+    { kind: "video", file: "vid-a.mp4", title: undefined },
+    { kind: "md", text: "\n" },
+  ]);
+});

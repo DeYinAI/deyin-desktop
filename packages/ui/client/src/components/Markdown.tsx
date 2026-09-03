@@ -7,6 +7,7 @@ import { splitInlineEmbeds } from "../embeds.js";
 import { looksLikeFilePath, resolveWorkspaceFilePath } from "../filePath.js";
 import type { ChatCodeDisplay } from "./ChatView.js";
 import { InlineImage } from "./InlineImage.js";
+import { InlineVideo } from "./InlineVideo.js";
 import { InlineVisualization } from "./InlineVisualization.js";
 
 interface MarkdownProps {
@@ -62,6 +63,8 @@ export function Markdown({
           <InlineVisualization key={`vis-${i}`} threadId={threadId} file={seg.file} title={seg.title} />
         ) : seg.kind === "image" && threadId ? (
           <InlineImage key={`img-${i}`} threadId={threadId} file={seg.file} alt={seg.alt} />
+        ) : seg.kind === "video" && threadId ? (
+          <InlineVideo key={`vid-${i}`} threadId={threadId} file={seg.file} title={seg.title} />
         ) : seg.kind === "md" && seg.text.trim() ? (
           <MarkdownBlock
             key={`md-${i}`}

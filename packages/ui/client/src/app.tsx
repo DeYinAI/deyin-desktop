@@ -15,9 +15,14 @@ import {
   pickImageModelForGeneration,
   imageModelParamsKey,
   resolveImageModelParams,
+  detectVideoGenerationIntent,
+  videoGenerationBlockedMessage,
+  pickVideoModelForGeneration,
+  videoModelParamsKey,
+  resolveVideoModelParams,
  touchProjectOpened,
 } from "@deyin/host-core/shared";
-import type { ModelReasoningMode, WorkspaceLocation, ImageModelParams } from "@deyin/host-core/shared";
+import type { ModelReasoningMode, WorkspaceLocation, ImageModelParams, VideoModelParams } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { AppProviders } from "./providers.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
@@ -702,6 +707,11 @@ export function App() {
     const key = imageModelParamsKey(selectedProviderId, selectedModel);
     return settings?.imageModelParams?.[key];
   }, [selectedProviderId, selectedModel, settings?.imageModelParams]);
+
+  const savedVideoParams = useMemo(() => {
+    const key = videoModelParamsKey(selectedProviderId, selectedModel);
+    return settings?.videoModelParams?.[key];
+  }, [selectedProviderId, selectedModel, settings?.videoModelParams]);
 
   const activeContextSnapshot = useMemo((): ContextUsageSnapshot | null => {
     if (activeThreadId === null) return null;
@@ -2009,8 +2019,9 @@ const continueFromStepLimit = useCallback(() => {
     const imageModels = modelList.filter((m) => m.kind === "image").map((m) => m.id);
     // Chat models that draw: usable by generate_image and able to answer with a
     // picture directly, so they never count as "no image model available".
-    const imageChatModels = modelList.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => m.id);
+    const imageChatModels = modelList.filter((m) => m.kind !== "image" && m.kind !== "video" && m.imageOutput).map((m) => m.id);
     const isImageRun = modelList.find((m) => m.id === runModelId)?.kind === "image";
+    const isVideoRun = modelList.find((m) => m.id === runModelId)?.kind === "video";
 
     if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
       const provisional = deriveTitle(text);
@@ -2019,7 +2030,10 @@ const continueFromStepLimit = useCallback(() => {
       // Skip the LLM call when the provisional title is already short enough.
       const needsLlmTitle = provisional.endsWith("…") || provisional.split(/\s+/).length > 6;
       if (needsLlmTitle) {
-        const titleModel = isImageRun ? (modelList.find((m) => m.kind !== "image")?.id ?? runModelId) : runModelId;
+        const titleModel =
+          isImageRun || isVideoRun
+            ? (modelList.find((m) => m.kind !== "image" && m.kind !== "video")?.id ?? runModelId)
+            : runModelId;
         void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: titleModel, text })
           .then((generated) => {
             if (!generated) return;
@@ -2036,6 +2050,67 @@ const continueFromStepLimit = useCallback(() => {
           })
           .catch(() => {});
       }
+    }
+
+    // Text-to-video model picked in the composer, or auto-routed from video intent:
+    // the prompt goes straight to POST /v1/videos — these models have no chat
+    // completion to stream. The result is stored per thread and embedded with the
+    // inline-video directive.
+    const autoVideoGen = settings?.autoVideoGeneration ?? true;
+    const videoIntent =
+      !isVideoRun && !isImageRun && autoVideoGen && draft.images.length === 0
+        ? detectVideoGenerationIntent(text)
+        : null;
+    const autoVideoModel = videoIntent ? pickVideoModelForGeneration(modelList) : undefined;
+    const directVideoModelId = isVideoRun ? runModelId : autoVideoModel;
+    const directVideoPrompt = isVideoRun ? text : videoIntent?.prompt;
+
+    if (directVideoModelId && directVideoPrompt) {
+      appendEvents(thread.id, [{ kind: "user", text }]);
+      composerRef.current?.clearInput();
+      composerRef.current?.clearImages();
+      setPlainStreamForThread(thread.id, `Generating video with ${directVideoModelId}…`);
+      try {
+        const videoParams = resolveVideoModelParams(
+          directVideoModelId,
+          settings?.videoModelParams?.[videoModelParamsKey(runProviderId, directVideoModelId)],
+        );
+        const inputImages =
+          draft.images.length > 0
+            ? draft.images.map(({ mediaType, base64 }) => ({ mediaType, base64 }))
+            : undefined;
+        const result = await window.deyin.videos.generate({
+          threadId: thread.id,
+          prompt: directVideoPrompt,
+          model: directVideoModelId,
+          providerId: runProviderId,
+          aspectRatio: videoParams.aspectRatio,
+          width: videoParams.width,
+          height: videoParams.height,
+          numFrames: videoParams.numFrames,
+          frameRate: videoParams.frameRate,
+          numInferenceSteps: videoParams.numInferenceSteps,
+          negativePrompt: videoParams.negativePrompt,
+          seed: videoParams.seed,
+          mode: videoParams.mode,
+          inputImages,
+        });
+        const body = `::deyin-inline-video{file="${result.video.file}"}`;
+        appendEvents(thread.id, [{ kind: "assistant", text: body }]);
+      } catch (err) {
+        appendEvents(thread.id, [
+          { kind: "assistant", text: `Video generation failed: ${err instanceof Error ? err.message : String(err)}` },
+        ]);
+      } finally {
+        setPlainStreamForThread(thread.id, null);
+        void window.deyin.usage.record({ model: directVideoModelId, tokens: 0, newSession: isFirstMessage });
+      }
+      return;
+    }
+
+    if (videoIntent && !autoVideoModel) {
+      appendEvents(thread.id, [{ kind: "assistant", text: videoGenerationBlockedMessage() }]);
+      return;
     }
 
     // Text-to-image model picked in the composer, or auto-routed from image intent:
@@ -2828,6 +2903,22 @@ const continueFromStepLimit = useCallback(() => {
                             if (Object.keys(params).length === 0) delete next[key];
                             else next[key] = params;
                             patchSettings({ imageModelParams: next });
+                          },
+                        }
+                      : undefined
+                  }
+                  videoModelSettings={
+                    selectedModelKind === "video"
+                      ? {
+                          providerId: selectedProviderId,
+                          modelId: selectedModel,
+                          saved: savedVideoParams,
+                          onChange: (providerId, modelId, params: VideoModelParams) => {
+                            const key = videoModelParamsKey(providerId, modelId);
+                            const next = { ...(settings?.videoModelParams ?? {}) };
+                            if (Object.keys(params).length === 0) delete next[key];
+                            else next[key] = params;
+                            patchSettings({ videoModelParams: next });
                           },
                         }
                       : undefined

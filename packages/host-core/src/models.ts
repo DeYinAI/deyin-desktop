@@ -1,4 +1,5 @@
 import { modelImageCapability, type ImageModelMeta } from "./images.js";
+import { isVideoModel } from "./videos.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { ModelInfo } from "./types.js";
 import { deyinUserAgent } from "./user-agent.js";
@@ -127,6 +128,7 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
     const items = body.data ?? [];
     if (items.length === 0) return DEFAULT_MODELS;
     return items.map((m) => {
+      const video = isVideoModel(m.id, m);
       const capability = modelImageCapability(m.id, m);
  // "endpoint" models take a prompt, not a conversation: never route vision
  // to them. "chat" models generate pictures inside a normal completion, so
@@ -140,8 +142,8 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
         name: m.id,
         contextLength: m.context_length,
         maxOutputTokens: m.max_output_tokens,
-        vision: endpointOnly ? false : modelSupportsVision(m.id, m),
-        kind: endpointOnly ? ("image" as const) : ("chat" as const),
+        vision: video || endpointOnly ? false : modelSupportsVision(m.id, m),
+        kind: video ? ("video" as const) : endpointOnly ? ("image" as const) : ("chat" as const),
         ...(capability === "chat" ? { imageOutput: true } : {}),
         ...(reasoning ? { reasoning } : {}),
       };

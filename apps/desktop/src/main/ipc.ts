@@ -16,6 +16,7 @@ import {
   git,
   GitWatcher,
   imageDataUrl,
+  videoDataUrl,
   type GitResult,
   webSearch,
 } from "@deyin/host-core";
@@ -42,6 +43,7 @@ import type {
   GitResultLite,
   GitStatus,
   ImageGenerateRequest,
+  VideoGenerateRequest,
   McpServerInput,
   ProjectsState,
   ProviderPatch,
@@ -75,7 +77,9 @@ import { scanDiffViaMcp } from "./security-scan.js";
 import { VisualizeService } from "./visualize.js";
 import { PageService } from "./page.js";
 import { ImageService } from "./images.js";
+import { VideoService } from "./videos.js";
 import { runImageGeneration, type ImageRouting } from "./image-gen.js";
+import { runVideoGeneration, type VideoRouting } from "./video-gen.js";
 import { LocalVisionService } from "./local-vision-service.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { WorkspaceTrustStore } from "./workspace-trust.js";
@@ -212,6 +216,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     : join(app.getAppPath(), "bundled-plugins");
   const plugins = new PluginService(pluginsDir, storage, agents, capabilities, existsSync(bundledSrcDir) ? bundledSrcDir : undefined);
   const imagesService = new ImageService();
+  const videosService = new VideoService();
  const browser = new BrowserControlService(
  opts.getWorkspaceRoot,
  () => settings.get().browserControlEnabled,
@@ -289,6 +294,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const visualize = new VisualizeService();
   const pages = new PageService();
   const images = imagesService;
+  const videos = videosService;
   const localVision = new LocalVisionService(pluginsDir, agents);
 
   /** Provider routing for image generation, mirroring the chat/agent routing. */
@@ -302,6 +308,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       getToken: () => Promise.resolve(agents.getKey(provider.id) ?? (provider.local ? "" : null)),
     };
   };
+
+  /** Provider routing for video generation, mirroring image routing. */
+  const videoRouting = (providerId?: string): VideoRouting => imageRouting(providerId);
 
   /* MCP modules / catalog / native OAuth. */
   const mcpModules = new McpModuleService(homedir(), () => capabilities.invalidate());
@@ -771,6 +780,15 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.imagesRead, (_e, threadId: string, fileName: string) => imageDataUrl(images.read(threadId, fileName)));
   ipcMain.handle(CH.imagesGenerate, (_e, request: ImageGenerateRequest) =>
     runImageGeneration(images, imageRouting(request.providerId), request),
+  );
+
+  /* Generated videos: store, read back as a data URL, and run a model directly. */
+  ipcMain.handle(CH.videosSave, (_e, threadId: string, input: { base64: string; mediaType?: string }) => ({
+    file: videos.save(threadId, input).file,
+  }));
+  ipcMain.handle(CH.videosRead, (_e, threadId: string, fileName: string) => videoDataUrl(videos.read(threadId, fileName)));
+  ipcMain.handle(CH.videosGenerate, (_e, request: VideoGenerateRequest) =>
+    runVideoGeneration(videos, videoRouting(request.providerId), request),
   );
 
   /* Local Vision plugin (Ollama + moondream). */
