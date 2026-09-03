@@ -6,6 +6,20 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.15 — 2026-09-03
+
+### Highlights
+
+- Agents can no longer finish a turn with the todo list left stale: when a
+ final answer arrives while items are pending or in progress, the loop
+ injects one bounded "[todo reconcile]" nudge asking the model to mark
+ finished items completed (or cancel obsolete ones) and keep working;
+ budgeted at 2 nudges per run, opt-out via `todoReconcile: false`
+- The todo list now survives context compaction exactly: the fold briefing
+ carries a deterministic, tracker-derived "Todo list (authoritative)"
+ section (id + status per item) instead of the summariser guessing state
+ from prose, so resumed sessions reconcile against reality
+
 ## 1.0.14 — 2026-09-03
 
 ### Highlights
