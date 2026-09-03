@@ -60,6 +60,7 @@ import type {
   UsageStats,
   UserProfile,
   PublicPlan,
+  ReleaseStatus,
   SelectPlanOptions,
   SelectPlanResponse,
   BillingOverview,
@@ -243,6 +244,7 @@ export const CH = {
   usageRecord: "deyin:usage:record",
   usageAccount: "deyin:usage:account",
   plansList: "deyin:plans:list",
+  plansReleaseStatus: "deyin:plans:releaseStatus",
   billingSelectPlan: "deyin:billing:selectPlan",
   billingOverview: "deyin:billing:overview",
   billingPublishableKey: "deyin:billing:publishableKey",
@@ -598,6 +600,8 @@ export interface DeyinApi {
   plans: {
     /** Public Openference plan catalog (edge-cached on the server). */
     list(): Promise<PublicPlan[] | null>;
+    /** Live daily-release status: drop countdown and sold-out plan ids. */
+    releaseStatus(): Promise<ReleaseStatus>;
   };
   billing: {
     /** Subscription and billing overview for plan changes. */

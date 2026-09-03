@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { formatPlanPrice } from "@deyin/host-core/shared";
+import { formatCurrencyAmount } from "@deyin/host-core/shared";
 import { useT } from "../../i18n.js";
 
 interface PurchaseAgreementDialogProps {
@@ -34,23 +34,7 @@ export function PurchaseAgreementDialog({
     displayPrice > 0
       ? t("plans.agreement.pricePerMonth").replace(
           "{price}",
-          formatPlanPrice({
-            id: 0,
-            name: planName,
-            priceMonthly: displayPrice,
-            localizedPrice: { amount: displayPrice, currency },
-            maxRpm: 0,
-            requestsPerWeek: null,
-            requestsPerWindow: null,
-            windowHours: null,
-            tokensPerWeek: null,
-            features: null,
-            tagline: null,
-            isPopular: false,
- isSoldOut: false,
-            planKind: "normal",
-            hasStripe: true,
-          }),
+          formatCurrencyAmount(displayPrice, currency),
         )
       : "";
 

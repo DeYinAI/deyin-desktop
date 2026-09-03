@@ -9,6 +9,7 @@ import {
   computeStats,
   fetchAccountUsage,
   fetchPublicPlans,
+  fetchReleaseStatus,
   selectPlan,
   fetchBillingOverview,
   fetchBillingPublishableKey,
@@ -72,7 +73,9 @@ import { isChatOnlyHosted } from "./chat-only.js";
 const CHAT_ONLY = isChatOnlyHosted();
 const OAUTH_ISSUER = (import.meta.env.VITE_DEYIN_OAUTH_ISSUER as string) ?? "http://localhost:8788";
 const CLIENT_ID = (import.meta.env.VITE_DEYIN_CLIENT_ID as string) ?? "deyin-desktop";
-const SCOPES = ["openid", "profile", "email", "offline_access", "model:invoke"];
+// `billing:manage` is first-party-only on the issuer; without it the billing
+// routes answer 403 "Session login required" (no dashboard session here).
+const SCOPES = ["openid", "profile", "email", "offline_access", "model:invoke", "billing:manage"];
 const REDIRECT_URI = `${location.origin}/auth/callback`;
 const API_BASE = `${location.origin}/api`;
 const SSO_URL = `${OAUTH_ISSUER.replace(/\/+$/, "")}/auth/sso`;
@@ -1075,6 +1078,7 @@ export function createBrowserTransport(): DeyinApi {
     },
     plans: {
       list: () => fetchPublicPlans({ oauthIssuer: OAUTH_ISSUER, apiBase: API_BASE }),
+      releaseStatus: () => fetchReleaseStatus({ oauthIssuer: OAUTH_ISSUER, apiBase: API_BASE }),
     },
     billing: {
       overview: () =>

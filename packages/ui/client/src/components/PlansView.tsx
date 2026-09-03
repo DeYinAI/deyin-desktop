@@ -1,23 +1,34 @@
 import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  annualMonthsFree,
+  annualSavingPercent,
+  buildPlanColumns,
   buildPlanCardPresentation,
   estimateProratedCharge,
   estimateRefund,
   formatBillingDate,
-  formatPlanPrice,
-  formatQuota,
+  formatCurrencyAmount,
+  formatReleaseCountdown,
+  getPlanCardPricing,
+  getPlanComparisonRows,
+  getPlanDisplayFeatures,
+  getPlanTagline,
   hasActiveSubscription,
   isAllowedCheckoutUrl,
   isCheckoutCanceledUrl,
   isCheckoutSuccessUrl,
   isCrossCurrencyChange,
   isPlanDowngrade,
+  isPlanPurchaseBlocked,
   pendingPlanSwitchForCard,
   pendingSwitchOnCurrentPlanCard,
+  planBlockedCtaKind,
+  releaseAnyBlocked,
   scheduledCancellationForPlanCard,
   type BillingOverview,
   type PlanCardCtaKey,
   type PublicPlan,
+  type ReleaseStatus,
 } from "@deyin/host-core/shared";
 import { confirmUpgradeWith3ds } from "../billing/confirmUpgradeWith3ds.js";
 import { useT } from "../i18n.js";
@@ -46,11 +57,6 @@ interface PlansViewProps {
   onComplete: () => void;
 }
 
-function featureLines(features: string | null): string[] {
-  if (!features?.trim()) return [];
-  return features.split("\n").map((line) => line.trim()).filter(Boolean);
-}
-
 const CTA_KEYS: Record<PlanCardCtaKey, string> = {
   processing: "plans.cta.processing",
   switchToAnnual: "plans.cta.switchToAnnual",
@@ -62,10 +68,16 @@ const CTA_KEYS: Record<PlanCardCtaKey, string> = {
   subscribe: "plans.cta.subscribe",
 };
 
+/** The issuer answers 403 with this when the token predates the billing scope. */
+function isBillingScopeError(message: string): boolean {
+  return /session login required/i.test(message);
+}
+
 export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete }: PlansViewProps) {
   const t = useT();
   const [plans, setPlans] = useState<PublicPlan[] | null>(null);
   const [overview, setOverview] = useState<BillingOverview | null>(null);
+  const [release, setRelease] = useState<ReleaseStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [planTab, setPlanTab] = useState<PlanTab>("coding");
   const [isAnnual, setIsAnnual] = useState(false);
@@ -75,6 +87,11 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [showPortalAction, setShowPortalAction] = useState(false);
+  const [showSignInAction, setShowSignInAction] = useState(false);
+  const [showComparison, setShowComparison] = useState(false);
+  /** Per-column tier choice (Pro vs Pro+), keyed by column key. */
+  const [tierChoice, setTierChoice] = useState<Record<string, number>>({});
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [pendingDowngradePlanId, setPendingDowngradePlanId] = useState<number | null>(null);
   const [pendingCrossCurrencyPlanId, setPendingCrossCurrencyPlanId] = useState<number | null>(null);
   const [pendingPurchase, setPendingPurchase] = useState<PurchasePending | null>(null);
@@ -97,16 +114,23 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
     return data;
   }, []);
 
+  const refreshRelease = useCallback(async () => {
+    const status = await window.deyin.plans.releaseStatus();
+    if (mountedRef.current) setRelease(status);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [catalog, billing] = await Promise.all([
+      const [catalog, billing, releaseStatus] = await Promise.all([
         window.deyin.plans.list(),
         window.deyin.billing.overview(),
+        window.deyin.plans.releaseStatus(),
       ]);
       if (!mountedRef.current) return;
       setPlans(catalog);
       setOverview(billing);
+      setRelease(releaseStatus);
       if (billing?.subscriptionBillingCycle) setIsAnnual(billing.subscriptionBillingCycle === "annual");
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -127,6 +151,24 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
     stripeSubscriptionId: overview?.stripeSubscriptionId ?? null,
     subscriptionStatus: overview?.subscriptionStatus ?? null,
   });
+  /** Paying subscribers bypass the daily release gate, as they do server-side. */
+  const releaseExempt = hasSubscription && (currentPlanPriceMonthly ?? 0) > 0;
+
+  const countdown = formatReleaseCountdown(release?.nextDropAt ?? null, nowMs);
+  const anyBlocked = releaseAnyBlocked(release) && !releaseExempt;
+
+  // Tick only while a countdown is actually on screen, and refetch once it
+  // runs out — the drop instant has passed, so the sold-out set has moved.
+  useEffect(() => {
+    if (!anyBlocked || !release?.nextDropAt) return;
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [anyBlocked, release?.nextDropAt]);
+
+  useEffect(() => {
+    if (!anyBlocked || !release?.nextDropAt || countdown !== null) return;
+    void refreshRelease();
+  }, [anyBlocked, countdown, refreshRelease, release?.nextDropAt]);
 
   useEffect(() => {
     if (tabInitialized.current || !plans?.length || !currentPlanName) return;
@@ -140,6 +182,31 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
   const visiblePlans = useMemo(
     () => (plans ?? []).filter((p) => (planTab === "agent" ? p.planKind === "agent" : p.planKind !== "agent")),
     [plans, planTab],
+  );
+
+  // Coding tiers collapse into the pricing page's columns (Pro/Pro+ and
+  // Max/Max+ share a card); agent SKUs stay one card each.
+  const columns = useMemo(
+    () =>
+      planTab === "agent"
+        ? visiblePlans.map((p) => ({ key: p.name, tiers: [p] }))
+        : buildPlanColumns(visiblePlans),
+    [planTab, visiblePlans],
+  );
+
+  const activeTierOf = useCallback(
+    (column: { key: string; tiers: PublicPlan[] }): PublicPlan => {
+      const chosen = column.tiers.find((p) => p.id === tierChoice[column.key]);
+      if (chosen) return chosen;
+      const current = column.tiers.find((p) => p.id === currentPlanId);
+      return current ?? (column.tiers[0] as PublicPlan);
+    },
+    [currentPlanId, tierChoice],
+  );
+
+  const comparisonPlans = useMemo(
+    () => columns.map((column) => activeTierOf(column)),
+    [activeTierOf, columns],
   );
 
   const upgradeUrl = `${oauthIssuer.replace(/\/$/, "")}/app/user/billing/upgrade`;
@@ -185,6 +252,7 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       setError(null);
       setNotice(null);
       setShowPortalAction(false);
+      setShowSignInAction(false);
       setPendingDowngradePlanId(null);
       setPendingCrossCurrencyPlanId(null);
 
@@ -245,14 +313,25 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
         setError(t("plans.checkoutFailed"));
       } catch (err) {
         const msg = err instanceof Error ? err.message : t("plans.checkoutFailed");
-        setError(msg);
-        const fallback = (err as { fallback?: string }).fallback;
-        setShowPortalAction(!!fallback || /portal|billing portal/i.test(msg));
+        // A token minted before `billing:manage` existed still authenticates,
+        // so the issuer rejects the call rather than the sign-in. Re-consent
+        // is the fix; the browser page works either way.
+        if (isBillingScopeError(msg)) {
+          setError(t("plans.billingScopeMissing"));
+          setShowSignInAction(true);
+          setShowPortalAction(true);
+        } else {
+          setError(msg);
+          const fallback = (err as { fallback?: string }).fallback;
+          setShowPortalAction(!!fallback || /portal|billing portal/i.test(msg));
+        }
+        // The gate may have closed while the card was on screen.
+        void refreshRelease();
       } finally {
         setLoadingPlanId(null);
       }
     },
-    [hasSubscription, isAnnual, oauthIssuer, onComplete, plans, refreshOverview, t],
+    [hasSubscription, isAnnual, oauthIssuer, onComplete, plans, refreshOverview, refreshRelease, t],
   );
 
   const handleSelectPlan = useCallback(
@@ -311,11 +390,12 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       }
 
       if (targetPlan.priceMonthly > 0) {
+        const pricing = getPlanCardPricing(targetPlan, isAnnual);
         setPendingPurchase({
           selectionPlanId: pres.selectionPlanId,
           planName: targetPlan.name,
-          displayPrice: pres.displayPrice,
-          currency: pres.currency,
+          displayPrice: pricing.displayPrice,
+          currency: pricing.currency,
         });
         return;
       }
@@ -355,12 +435,13 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       currentBillingCycle: overview?.subscriptionBillingCycle ?? null,
       isLoading: false,
     });
+    const pricing = getPlanCardPricing(target, isAnnual);
     setPendingCrossCurrencyPlanId(null);
     setPendingPurchase({
       selectionPlanId: pres.selectionPlanId,
       planName: target.name,
-      displayPrice: pres.displayPrice,
-      currency: pres.currency,
+      displayPrice: pricing.displayPrice,
+      currency: pricing.currency,
       changeNow: true,
     });
   };
@@ -393,6 +474,15 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
     ? plans?.find((p) => p.id === pendingCrossCurrencyPlanId)
     : null;
   const downgradeTarget = pendingDowngradePlanId ? plans?.find((p) => p.id === pendingDowngradePlanId) : null;
+
+  const releaseBanner = (() => {
+    if (!anyBlocked || !release) return null;
+    if (!release.available) return t("plans.release.unavailableBanner");
+    if (release.beforeDrop) return t("plans.release.beforeDropBanner");
+    return t("plans.release.soldOutBanner");
+  })();
+
+  const comparisonRows = showComparison ? getPlanComparisonRows(comparisonPlans) : [];
 
   return (
     <div className="plans-view">
@@ -429,14 +519,35 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                 {t("plans.agentPlanTab")}
               </button>
             </div>
-            <BillingCycleToggle isAnnual={isAnnual} onChange={setIsAnnual} />
+            <div className="plans-view__cycle">
+              <BillingCycleToggle isAnnual={isAnnual} onChange={setIsAnnual} />
+              <span className="plans-view__save-chip">
+                {t("plans.annualToggle.save").replace("{percent}", String(annualSavingPercent()))}
+              </span>
+            </div>
           </div>
+
+          {releaseBanner && (
+            <div className="plans-view__release-banner">
+              <span>{releaseBanner}</span>
+              {countdown && (
+                <span className="plans-view__release-countdown">
+                  {t("plans.releaseCountdown").replace("{countdown}", countdown)}
+                </span>
+              )}
+            </div>
+          )}
 
           {notice && <div className="plans-view__notice">{notice}</div>}
 
           {error && (
             <div className="plans-view__error">
               <span>{error}</span>
+              {showSignInAction && (
+                <button type="button" className="chip chip--small" onClick={() => void window.deyin.auth.connect()}>
+                  {t("plans.signInAgain")}
+                </button>
+              )}
               {(showPortalAction || error) && (
                 <button type="button" className="chip chip--small" onClick={openExternalBilling}>
                   {t("plans.openInBrowser")}
@@ -456,15 +567,16 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
             </div>
           )}
 
-          {!loading && plans && plans.length > 0 && visiblePlans.length === 0 && (
+          {!loading && plans && plans.length > 0 && columns.length === 0 && (
             <div className="plans-view__state">
               {planTab === "agent" ? t("plans.noAgentPlans") : t("plans.noCodingPlans")}
             </div>
           )}
 
-          {!loading && visiblePlans.length > 0 && (
+          {!loading && columns.length > 0 && (
             <div className="plans-grid">
-              {visiblePlans.map((plan) => {
+              {columns.map((column) => {
+                const plan = activeTierOf(column);
                 const pres = buildPlanCardPresentation({
                   plan,
                   currentPlanId,
@@ -476,7 +588,9 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                   currentBillingCycle: overview?.subscriptionBillingCycle ?? null,
                   isLoading: loadingPlanId === plan.id,
                 });
-                const bullets = featureLines(plan.features);
+                const pricing = getPlanCardPricing(plan, isAnnual);
+                const tagline = getPlanTagline(plan);
+                const bullets = getPlanDisplayFeatures(plan, "marketing");
                 const scheduled = pendingPlanSwitchForCard({
                   planId: plan.id,
                   isCurrent: pres.isCurrent,
@@ -495,27 +609,78 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                   pendingPlanChange,
                 });
                 const isScheduledTarget = pendingPlanChange?.planId === plan.id;
-                 const soldOut = plan.isSoldOut;
- const ctaDisabled =
-                    soldOut ||                   pres.cta.disabled || isScheduledTarget || (loadingPlanId !== null && loadingPlanId !== plan.id);
+                const blockedParams = {
+                  releaseStatus: release,
+                  planId: plan.id,
+                  planPriceMonthly: plan.priceMonthly,
+                  isAnnual,
+                  // The gate only ever closes NEW purchases, so the card for
+                  // the plan already held must keep its own CTA.
+                  releaseExempt: releaseExempt || pres.isCurrent,
+                };
+                const blocked = isPlanPurchaseBlocked(blockedParams);
+                const blockedKind = planBlockedCtaKind(blockedParams);
+                const ctaDisabled =
+                  blocked ||
+                  pres.cta.disabled ||
+                  isScheduledTarget ||
+                  (loadingPlanId !== null && loadingPlanId !== plan.id);
 
                 return (
                   <div
-                    key={plan.id}
+                    key={column.key}
                     className={`plans-card ${plan.isPopular ? "plans-card--popular" : ""} ${pres.isCurrent ? "plans-card--current" : ""}`}
                   >
+                    {plan.isPopular && <div className="plans-card__ribbon">{t("plans.popular")}</div>}
                     <div className="plans-card__head">
-                      <div className="plans-card__name">{plan.name}</div>
+                      {column.tiers.length > 1 ? (
+                        <div className="plans-card__tiers" role="group">
+                          {column.tiers.map((tier) => (
+                            <button
+                              key={tier.id}
+                              type="button"
+                              aria-pressed={tier.id === plan.id}
+                              className={`plans-card__tier ${tier.id === plan.id ? "plans-card__tier--active" : ""}`}
+                              onClick={() => setTierChoice((prev) => ({ ...prev, [column.key]: tier.id }))}
+                            >
+                              {tier.name}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="plans-card__name">{plan.name}</div>
+                      )}
                       <div className="plans-card__badges">
-                        {plan.isPopular && <span className="badge badge--ok">{t("plans.popular")}</span>}
- {plan.isSoldOut && <span className="badge badge--muted">{t("plans.soldOut")}</span>}
+                        {blocked && blockedKind === "soldOut" && (
+                          <span className="badge badge--muted">{t("plans.soldOut")}</span>
+                        )}
                         {scheduled && <span className="badge">{t("plans.cta.scheduled")}</span>}
                       </div>
                     </div>
-                    <div className="plans-card__price">{formatPlanPrice(plan)}</div>
-                    {plan.localizedPrice.amount > 0 && (
-                      <div className="plans-card__period">{t("plans.perMonth")}</div>
+
+                    {tagline && <div className="plans-card__tagline">{tagline}</div>}
+
+                    <div className="plans-card__price-row">
+                      <span className="plans-card__price">
+                        {formatCurrencyAmount(pricing.displayPrice, pricing.currency)}
+                      </span>
+                      {pricing.displayPrice > 0 && (
+                        <span className="plans-card__period">{t("plans.perMonth")}</span>
+                      )}
+                    </div>
+                    {pricing.billedYearly != null && (
+                      <div className="plans-card__billed">
+                        {t("plans.billedYearly")
+                          .replace("{price}", formatCurrencyAmount(pricing.billedYearly, pricing.currency))
+                          .replace("{months}", String(annualMonthsFree()))}
+                      </div>
                     )}
+                    {plan.maxRpm > 0 && (
+                      <div className="plans-card__rpm">
+                        {t("plans.rpm").replace("{count}", String(plan.maxRpm))}
+                      </div>
+                    )}
+
                     {cancelScheduled && (
                       <div className="plans-card__scheduled">
                         {t("plans.scheduled.cancel").replace("{date}", formatBillingDate(cancelScheduled.expiresAt))}
@@ -533,50 +698,96 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                         {t("plans.scheduled.starts").replace("{label}", scheduled.startsAtLabel)}
                       </div>
                     )}
-                    {plan.tagline && <div className="plans-card__tagline">{plan.tagline}</div>}
-                    <div className="plans-card__quotas">
-                      {plan.requestsPerWeek != null && (
-                        <span>
-                          {t("plans.requestsPerWeek").replace("{count}", formatQuota(plan.requestsPerWeek))}
-                        </span>
-                      )}
-                      {plan.requestsPerWindow != null && plan.windowHours != null && (
-                        <span>
-                          {t("plans.requestsPerWindow")
-                            .replace("{count}", formatQuota(plan.requestsPerWindow))
-                            .replace("{hours}", String(plan.windowHours))}
-                        </span>
-                      )}
-                      {plan.tokensPerWeek != null && (
-                        <span>
-                          {t("plans.tokensPerWeek").replace("{count}", formatQuota(plan.tokensPerWeek))}
-                        </span>
-                      )}
-                    </div>
+
                     {bullets.length > 0 && (
                       <ul className="plans-card__features">
                         {bullets.map((line, i) => (
-                          <li key={`${plan.id}-${i}`}>{line}</li>
+                          <li key={`${plan.id}-${i}`}>
+                            <Icon name="check" size={12} />
+                            <span>{line}</span>
+                          </li>
                         ))}
                       </ul>
                     )}
+
                     <div className="plans-card__foot">
                       <button
                         type="button"
-                        className={`btn ${pres.cta.key === "current" || isScheduledTarget ? "btn--outline" : ""}`}
+                        className={`btn ${pres.cta.key === "current" || isScheduledTarget || blocked ? "btn--outline" : ""}`}
                         disabled={ctaDisabled}
                         onClick={() => handleSelectPlan(plan.id)}
                       >
-                        {soldOut
-   ? t("plans.soldOut")
-   : isScheduledTarget
-   ? t("plans.cta.scheduled")
-   : t(CTA_KEYS[pres.cta.key] as Parameters<typeof t>[0])}
+                        {blocked
+                          ? blockedKind === "unavailable"
+                            ? t("plans.releaseUnavailable")
+                            : blockedKind === "beforeDrop"
+                              ? t("plans.availableAt").replace(
+                                  "{hour}",
+                                  String(release?.dropHourUtc ?? 0).padStart(2, "0"),
+                                )
+                              : t("plans.soldOut")
+                          : isScheduledTarget
+                            ? t("plans.cta.scheduled")
+                            : t(CTA_KEYS[pres.cta.key] as Parameters<typeof t>[0])}
                       </button>
+                      {blocked && countdown && (
+                        <div className="plans-card__countdown">
+                          {t("plans.releaseCountdown").replace("{countdown}", countdown)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {!loading && comparisonPlans.length > 1 && (
+            <div className="plans-view__compare">
+              <button
+                type="button"
+                className="plans-view__compare-toggle"
+                aria-expanded={showComparison}
+                onClick={() => setShowComparison((v) => !v)}
+              >
+                {showComparison ? t("plans.hideComparison") : t("plans.compareAll")}
+              </button>
+              {showComparison && (
+                <div className="plans-view__compare-scroll">
+                  <table className="plans-compare">
+                    <thead>
+                      <tr>
+                        <th scope="col" />
+                        {comparisonPlans.map((plan) => (
+                          <th key={plan.id} scope="col">
+                            {plan.name}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {comparisonRows.map((row) => (
+                        <tr key={row.label} className={row.highlight ? "plans-compare__row--highlight" : ""}>
+                          <th scope="row">{row.label}</th>
+                          {row.values.map((value, i) => (
+                            <td key={`${row.label}-${comparisonPlans[i]?.id ?? i}`}>
+                              {typeof value === "boolean" ? (
+                                value ? (
+                                  <Icon name="check" size={12} />
+                                ) : (
+                                  <span className="plans-compare__no">—</span>
+                                )
+                              ) : (
+                                value
+                              )}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>

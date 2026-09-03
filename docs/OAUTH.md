@@ -45,7 +45,14 @@ Register each client with the provider (see `OAuthStorage.getClient`):
 | `isPublic` | `true` (PKCE) | `true` |
 | `redirectUris` | `http://127.0.0.1:*/callback` | `http://127.0.0.1:*/callback` |
 | `grantTypes` | code, refresh, device | code, refresh, device |
-| `allowedScopes` | `openid profile email offline_access model:invoke` | subset as needed |
+| `allowedScopes` | `openid profile email offline_access model:invoke billing:manage` | subset as needed |
+
+`billing:manage` is first-party only: the issuer drops it from the grant for any
+client whose `oauth_clients.first_party` is 0, and the billing routes re-check that
+flag. Without it, `/api/billing/select-plan` and `/api/user/billing/overview` answer
+403 `Session login required` — they otherwise accept only a dashboard session token.
+A token minted before the scope existed keeps its old scopes across refresh, so an
+already-signed-in user has to sign in again once to manage billing in-app.
 
 Loopback redirect URIs use a `*` wildcard port, matched per RFC 8252, so the client can
 bind any free local port.

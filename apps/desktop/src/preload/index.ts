@@ -268,6 +268,7 @@ agent: {
   },
   plans: {
     list: () => ipcRenderer.invoke(CH.plansList),
+    releaseStatus: () => ipcRenderer.invoke(CH.plansReleaseStatus),
   },
   billing: {
     overview: () => ipcRenderer.invoke(CH.billingOverview),

@@ -1246,6 +1246,16 @@ code {
   padding: 6px 8px;
   font: inherit;
 }
+
+/* Selects carry .select (chevron, focus ring); re-apply the menu's tighter
+padding/colors without losing the chevron to the shorthand above. */
+.image-settings__field select {
+	padding-right: 26px;
+	background-color: var(--color-surface);
+	background-image: var(--select-chevron, none);
+	background-repeat: no-repeat;
+	background-position: right 8px center;
+}
 .image-settings__field input[type="range"] {
   width: 100%;
 }
@@ -4090,17 +4100,40 @@ body.is-resizing-ew {
 }
 
 .select {
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-strong);
-  color: var(--color-text);
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  font-size: 13px;
-  font-family: inherit;
+	/* Chevron data-URI lives in a var so scoped selects and the light theme can
+	 reuse/override it without repeating the URL (stroke can't use var()). */
+	--select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23686868' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+	appearance: none;
+	-webkit-appearance: none;
+	background: var(--color-surface-raised);
+	border: 1px solid var(--color-border-strong);
+	color: var(--color-text);
+	border-radius: var(--radius-md);
+	padding: 6px 28px 6px 10px;
+	font-size: 13px;
+	font-family: inherit;
+	background-image: var(--select-chevron);
+	background-repeat: no-repeat;
+	background-position: right 9px center;
+}
+.select:hover:not(:disabled) {
+	border-color: var(--color-text-faint);
+}
+.select:focus {
+	outline: none;
+	border-color: var(--color-accent);
+}
+.select:disabled {
+	opacity: 0.5;
+	cursor: default;
 }
 .select--small {
-  padding: 4px 8px;
-  font-size: 12px;
+	padding: 4px 24px 4px 8px;
+	font-size: 12px;
+	background-position: right 7px center;
+}
+:root[data-theme="light"] .select {
+	--select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a9a96' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 .input {
@@ -5290,6 +5323,37 @@ body.is-resizing-ew {
   gap: 4px;
   margin-bottom: 0;
 }
+.plans-view__cycle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.plans-view__save-chip {
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.plans-view__release-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.plans-view__release-countdown {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
 .plans-view__cycle-toggle {
   display: inline-flex;
   border: 1px solid var(--color-border);
@@ -5452,19 +5516,75 @@ body.is-resizing-ew {
 }
 .plans-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
   align-items: stretch;
 }
 .plans-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-surface);
-  padding: 14px;
-  min-height: 220px;
+  padding: 16px 14px 14px;
+  min-height: 260px;
+}
+.plans-card__ribbon {
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.plans-card__tiers {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.plans-card__tier {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.plans-card__tier--active {
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+}
+.plans-card__price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.plans-card__billed,
+.plans-card__rpm {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+.plans-card__rpm {
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 10px;
+}
+.plans-card__countdown {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
 }
 .plans-card--popular {
   border-color: var(--color-accent);
@@ -5485,14 +5605,13 @@ body.is-resizing-ew {
   font-size: 14px;
 }
 .plans-card__price {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 700;
-  margin-bottom: 2px;
+  line-height: 1.15;
 }
 .plans-card__period {
   font-size: 12px;
   color: var(--color-text-muted);
-  margin-bottom: 10px;
 }
 .plans-card__tagline {
   font-size: 12px;
@@ -5511,10 +5630,73 @@ body.is-resizing-ew {
 .plans-card__features {
   flex: 1;
   margin: 0;
-  padding-left: 16px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   font-size: 11.5px;
   color: var(--color-text-muted);
   line-height: 1.45;
+}
+.plans-card__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.plans-card__features svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+  color: var(--color-accent);
+}
+
+/* Plan comparison table ---------------------------------------------------- */
+.plans-view__compare {
+  margin-top: 20px;
+  text-align: center;
+}
+.plans-view__compare-toggle {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.plans-view__compare-scroll {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+.plans-compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  text-align: left;
+}
+.plans-compare th,
+.plans-compare td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  vertical-align: top;
+}
+.plans-compare thead th {
+  color: var(--color-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.plans-compare tbody th {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.plans-compare__row--highlight td,
+.plans-compare__row--highlight th {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.plans-compare__no {
+  color: var(--color-text-muted);
+  opacity: 0.6;
 }
 .plans-card__foot {
   margin-top: auto;

@@ -20,6 +20,8 @@ export * from "./image-intent.js";
 export * from "./image-parts.js";
 export * from "./account.js";
 export * from "./plans.js";
+export * from "./plan-copy.js";
+export * from "./plan-release.js";
 export * from "./billing.js";
 export * from "./identity.js";
 export * from "./redact.js";
