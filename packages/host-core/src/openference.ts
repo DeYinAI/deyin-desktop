@@ -1,6 +1,7 @@
 import type { ChatMessage, ProviderApiFormat } from "./types.js";
 import type { ReasoningEffort } from "./model-reasoning.js";
 import { ssePayloads } from "./sse-core.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 /** Token usage reported by the provider on the final stream frame. */
 export interface StreamUsage {
@@ -144,6 +145,7 @@ async function* streamChatCompletions(opts: StreamChatOptions): AsyncGenerator<s
       headers: {
         "content-type": "application/json",
         // Empty token = local provider (Ollama): no credentials sent.
+        "user-agent": deyinUserAgent(),
         ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
       },
       body: JSON.stringify({
@@ -207,6 +209,7 @@ async function* streamAnthropicChat(opts: StreamChatOptions): AsyncGenerator<str
     "content-type": "application/json",
     accept: "text/event-stream",
     "anthropic-version": "2023-06-01",
+    "user-agent": deyinUserAgent(),
   };
   if (opts.token) {
     if (opts.authHeader) headers.authorization = `Bearer ${opts.token}`;

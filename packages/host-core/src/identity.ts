@@ -1,5 +1,6 @@
 import type { DiagnosticsPayload, DiagnosticsResult } from "./types.js";
 import type { TokenSource } from "./models.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 /** Body of POST {issuer}/api/identity/sync: registers/updates this device for
  *  the signed-in account. Pseudonymous — the fingerprint is a hash, never a
@@ -27,7 +28,7 @@ export async function syncWorkspaceIdentity(
   try {
     const res = await fetch(`${opts.oauthIssuer.replace(/\/$/, "")}/api/identity/sync`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "user-agent": deyinUserAgent() },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
@@ -54,7 +55,7 @@ export async function sendDiagnosticsReport(
   try {
     const res = await fetch(`${opts.oauthIssuer.replace(/\/$/, "")}/api/diagnostics`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "user-agent": deyinUserAgent() },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(15_000),
     });

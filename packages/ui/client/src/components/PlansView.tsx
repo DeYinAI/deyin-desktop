@@ -38,7 +38,6 @@ import { CrossCurrencyDialog } from "./billing/CrossCurrencyDialog.js";
 import { PlanDowngradeDialog } from "./billing/PlanDowngradeDialog.js";
 import { PurchaseAgreementDialog } from "./billing/PurchaseAgreementDialog.js";
 
-type PlanTab = "coding" | "agent";
 type Step = "select" | "checkout" | "success";
 
 interface PurchasePending {
@@ -79,7 +78,6 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
   const [overview, setOverview] = useState<BillingOverview | null>(null);
   const [release, setRelease] = useState<ReleaseStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [planTab, setPlanTab] = useState<PlanTab>("coding");
   const [isAnnual, setIsAnnual] = useState(false);
   const [step, setStep] = useState<Step>("select");
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
@@ -96,7 +94,6 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
   const [pendingCrossCurrencyPlanId, setPendingCrossCurrencyPlanId] = useState<number | null>(null);
   const [pendingPurchase, setPendingPurchase] = useState<PurchasePending | null>(null);
   const webviewRef = useRef<HTMLElement | null>(null);
-  const tabInitialized = useRef(false);
   const mountedRef = useRef(true);
 
   useEffect(
@@ -170,29 +167,12 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
     void refreshRelease();
   }, [anyBlocked, countdown, refreshRelease, release?.nextDropAt]);
 
-  useEffect(() => {
-    if (tabInitialized.current || !plans?.length || !currentPlanName) return;
-    const current = plans.find((p) => p.name.trim().toLowerCase() === currentPlanName.trim().toLowerCase());
-    if (current) {
-      setPlanTab(current.planKind === "agent" ? "agent" : "coding");
-      tabInitialized.current = true;
-    }
-  }, [plans, currentPlanName]);
-
   const visiblePlans = useMemo(
-    () => (plans ?? []).filter((p) => (planTab === "agent" ? p.planKind === "agent" : p.planKind !== "agent")),
-    [plans, planTab],
+    () => (plans ?? []).filter((p) => p.planKind !== "agent"),
+    [plans],
   );
 
-  // Coding tiers collapse into the pricing page's columns (Pro/Pro+ and
-  // Max/Max+ share a card); agent SKUs stay one card each.
-  const columns = useMemo(
-    () =>
-      planTab === "agent"
-        ? visiblePlans.map((p) => ({ key: p.name, tiers: [p] }))
-        : buildPlanColumns(visiblePlans),
-    [planTab, visiblePlans],
-  );
+  const columns = useMemo(() => buildPlanColumns(visiblePlans), [visiblePlans]);
 
   const activeTierOf = useCallback(
     (column: { key: string; tiers: PublicPlan[] }): PublicPlan => {
@@ -209,7 +189,9 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
     [activeTierOf, columns],
   );
 
-  const upgradeUrl = `${oauthIssuer.replace(/\/$/, "")}/app/user/billing/upgrade`;
+  const issuerBase = oauthIssuer.replace(/\/$/, "");
+  const upgradeUrl = `${issuerBase}/app/user/billing/upgrade`;
+  const termsUrl = `${issuerBase}/terms-of-service`;
   const openExternalBilling = () => {
     if (platform === "desktop") window.deyin.shell.openExternal(upgradeUrl);
     else window.open(upgradeUrl, "_blank", "noopener");
@@ -479,7 +461,7 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
     if (!anyBlocked || !release) return null;
     if (!release.available) return t("plans.release.unavailableBanner");
     if (release.beforeDrop) return t("plans.release.beforeDropBanner");
-    return t("plans.release.soldOutBanner");
+    return null;
   })();
 
   const comparisonRows = showComparison ? getPlanComparisonRows(comparisonPlans) : [];
@@ -499,26 +481,6 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       {step === "select" && (
         <div className="plans-view__body">
           <div className="plans-view__toolbar">
-            <div className="plans-view__tabs" role="tablist">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={planTab === "coding"}
-                className={`wstab ${planTab === "coding" ? "wstab--active" : ""}`}
-                onClick={() => setPlanTab("coding")}
-              >
-                {t("plans.codingPlanTab")}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={planTab === "agent"}
-                className={`wstab ${planTab === "agent" ? "wstab--active" : ""}`}
-                onClick={() => setPlanTab("agent")}
-              >
-                {t("plans.agentPlanTab")}
-              </button>
-            </div>
             <div className="plans-view__cycle">
               <BillingCycleToggle isAnnual={isAnnual} onChange={setIsAnnual} />
               <span className="plans-view__save-chip">
@@ -568,9 +530,7 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
           )}
 
           {!loading && plans && plans.length > 0 && columns.length === 0 && (
-            <div className="plans-view__state">
-              {planTab === "agent" ? t("plans.noAgentPlans") : t("plans.noCodingPlans")}
-            </div>
+            <div className="plans-view__state">{t("plans.noCodingPlans")}</div>
           )}
 
           {!loading && columns.length > 0 && (
@@ -650,31 +610,38 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
                       ) : (
                         <div className="plans-card__name">{plan.name}</div>
                       )}
-                      <div className="plans-card__badges">
-                        {blocked && blockedKind === "soldOut" && (
-                          <span className="badge badge--muted">{t("plans.soldOut")}</span>
-                        )}
-                        {scheduled && <span className="badge">{t("plans.cta.scheduled")}</span>}
-                      </div>
+                      {scheduled && (
+                        <div className="plans-card__badges">
+                          <span className="badge">{t("plans.cta.scheduled")}</span>
+                        </div>
+                      )}
                     </div>
 
                     {tagline && <div className="plans-card__tagline">{tagline}</div>}
 
-                    <div className="plans-card__price-row">
-                      <span className="plans-card__price">
-                        {formatCurrencyAmount(pricing.displayPrice, pricing.currency)}
-                      </span>
-                      {pricing.displayPrice > 0 && (
-                        <span className="plans-card__period">{t("plans.perMonth")}</span>
-                      )}
-                    </div>
-                    {pricing.billedYearly != null && (
-                      <div className="plans-card__billed">
-                        {t("plans.billedYearly")
-                          .replace("{price}", formatCurrencyAmount(pricing.billedYearly, pricing.currency))
-                          .replace("{months}", String(annualMonthsFree()))}
+                    <div className="plans-card__price-block">
+                      <div className="plans-card__price-row">
+                        <span className="plans-card__price">
+                          {formatCurrencyAmount(pricing.displayPrice, pricing.currency)}
+                        </span>
+                        {pricing.displayPrice > 0 && (
+                          <span className="plans-card__period">{t("plans.perMonth")}</span>
+                        )}
                       </div>
-                    )}
+                      <div className="plans-card__billed-slot">
+                        {pricing.billedYearly != null ? (
+                          <div className="plans-card__billed">
+                            {t("plans.billedYearly")
+                              .replace("{price}", formatCurrencyAmount(pricing.billedYearly, pricing.currency))
+                              .replace("{months}", String(annualMonthsFree()))}
+                          </div>
+                        ) : (
+                          <div className="plans-card__billed plans-card__billed--placeholder" aria-hidden="true">
+                            &nbsp;
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     {plan.maxRpm > 0 && (
                       <div className="plans-card__rpm">
                         {t("plans.rpm").replace("{count}", String(plan.maxRpm))}
@@ -872,6 +839,8 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
 
       {pendingPurchase && (
         <PurchaseAgreementDialog
+          platform={platform}
+          termsUrl={termsUrl}
           planName={pendingPurchase.planName}
           displayPrice={pendingPurchase.displayPrice}
           currency={pendingPurchase.currency}

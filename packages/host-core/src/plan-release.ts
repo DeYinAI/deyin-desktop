@@ -11,6 +11,8 @@
  * 300s, and a stale countdown would be worse than one extra request.
  */
 
+import { deyinUserAgent } from "./user-agent.js";
+
 export interface ReleaseStatus {
   /** False when the release gate is off entirely — nothing is ever blocked. */
   enabled: boolean;
@@ -67,7 +69,7 @@ export async function fetchReleaseStatus(opts: {
     const url = apiBase
       ? `${apiBase}/public/release-status`
       : `${opts.oauthIssuer.replace(/\/$/, "")}/api/public/release-status`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: { "user-agent": deyinUserAgent() } });
     if (!res.ok) return disabledReleaseStatus();
     const body = (await res.json()) as ReleaseStatusApiResponse;
     return {

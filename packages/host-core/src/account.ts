@@ -1,5 +1,6 @@
 import type { AccountUsage, ServerIdentity } from "./types.js";
 import type { TokenSource } from "./models.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 interface MeResponse {
   usage?: {
@@ -64,7 +65,7 @@ export async function fetchAccountUsage(
 
   try {
     const res = await fetch(`${opts.oauthIssuer.replace(/\/$/, "")}/api/user/me`, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}`, "user-agent": deyinUserAgent() },
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;

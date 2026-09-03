@@ -1,6 +1,7 @@
 import { modelImageCapability, type ImageModelMeta } from "./images.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { ModelInfo } from "./types.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 interface OpenAIModelListItem {
   id: string;
@@ -118,7 +119,7 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
 
   try {
     const res = await fetch(`${opts.apiBaseUrl}/models`, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}`, "user-agent": deyinUserAgent() },
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return DEFAULT_MODELS;

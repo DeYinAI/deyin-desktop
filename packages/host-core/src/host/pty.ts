@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
 import type { TerminalCreateOptions } from "../types.js";
-import { resolveShellInfo } from "./env.js";
-import { bashSingleQuote, wslTerminalSpawn } from "./wsl-path.js";
+import { detectEnv, resolveShellInfo } from "./env.js";
+import { preferWslShellForCwd, toWslPath, wslLaunchArgs, wslTerminalSpawn, wslUncDistro } from "./wsl-path.js";
 
 interface IPty {
   onData(cb: (data: string) => void): void;
@@ -69,27 +69,33 @@ export class TerminalManager {
     if (!pty) throw new Error("Terminal support is unavailable (node-pty not built).");
 
     const id = randomUUID();
-    const shellInfo = await resolveShellInfo(opts.shell);
-    const rawCwd = opts.cwd ?? this.options.defaultCwd?.() ?? process.env.HOME ?? process.cwd();
-    let spawnCwd = rawCwd;
-    let wslInitialCd: string | null = null;
-    if (shellInfo.kind === "wsl" && platform() === "win32") {
-      const wsl = wslTerminalSpawn(rawCwd);
-      spawnCwd = wsl.spawnCwd;
-      wslInitialCd = wsl.initialCd;
-    }
+ const rawCwd = opts.cwd ?? this.options.defaultCwd?.() ?? process.env.HOME ?? process.cwd();
+ let shellInfo = await resolveShellInfo(opts.shell);
+ // A wsl.localhost distro workspace must get that distro's shell: the
+ // auto-detected or settings default can be a Windows shell that cannot even
+ // stat the working directory. An explicit WSL pick already matches; an
+ // explicit non-WSL pick (pwsh on a UNC workspace) is honored as-is.
+ if (platform() === "win32" && shellInfo.kind !== "wsl") {
+ const wslShellId = preferWslShellForCwd((await detectEnv()).shells, rawCwd);
+ if (wslShellId) shellInfo = await resolveShellInfo(wslShellId);
+ }
+ let spawnCwd = rawCwd;
+ let launchArgs = shellInfo.args ?? [];
+ if (shellInfo.kind === "wsl" && platform() === "win32") {
+ const wsl = wslTerminalSpawn(rawCwd);
+ spawnCwd = wsl.spawnCwd;
+ // Start inside the workspace directly (zcode/Cursor-style --cd) so the
+ // first prompt is already in the project - no racy post-spawn cd write.
+ launchArgs = [...launchArgs, ...wslLaunchArgs(wslUncDistro(rawCwd) ?? "", toWslPath(rawCwd))];
+ }
 
-    const term = pty.spawn(shellInfo.path, shellInfo.args ?? [], {
+ const term = pty.spawn(shellInfo.path, launchArgs, {
       name: "xterm-color",
       cols: opts.cols ?? 80,
       rows: opts.rows ?? 24,
       cwd: spawnCwd,
       env: process.env,
     });
-
-    if (wslInitialCd) {
-      term.write(`cd ${bashSingleQuote(wslInitialCd)}\n`);
-    }
 
     term.onData((data) => this.events.onData(id, data));
     term.onExit(({ exitCode }) => {

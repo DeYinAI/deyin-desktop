@@ -1,21 +1,37 @@
 import type { SearchResult } from "./types.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 /**
  * Built-in free web search: queries DuckDuckGo's HTML endpoint (no API key, no quota)
  * and parses the result list. Used by the Search overlay, the web host-server, and the
  * agent's websearch tool.
  */
-export async function webSearch(query: string, limit = 8): Promise<SearchResult[]> {
- const q = query.trim();
- if (!q) return [];
-
- const res = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`, {
+/**
+ * Some sites block non-browser agents; if the honest Deyin UA is refused, retry
+ * once with a browser-shaped UA so the built-in search keeps working. Normal
+ * responses (200 or any other status) are returned untouched.
+ */
+async function fetchDdgHtml(q: string): Promise<Response> {
+ const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+ const honest = await fetch(url, {
+ headers: { "user-agent": deyinUserAgent(), accept: "text/html" },
+ signal: AbortSignal.timeout(10_000),
+ });
+ if (honest.status !== 403 && honest.status !== 429) return honest;
+ return fetch(url, {
  headers: {
- "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Deyin/0.1",
+ "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
  accept: "text/html",
  },
  signal: AbortSignal.timeout(10_000),
  });
+}
+
+export async function webSearch(query: string, limit = 8): Promise<SearchResult[]> {
+ const q = query.trim();
+ if (!q) return [];
+
+ const res = await fetchDdgHtml(q);
  if (!res.ok) throw new Error(`Search failed (HTTP ${res.status})`);
  return parseDuckDuckGoHtml(await res.text(), limit);
 }

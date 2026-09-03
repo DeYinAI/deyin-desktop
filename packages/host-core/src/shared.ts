@@ -27,6 +27,7 @@ export * from "./identity.js";
 export * from "./redact.js";
 export * from "./i18n.js";
 export * from "./telemetry.js";
+export * from "./user-agent.js";
 export * from "./linked-thread-context.js";
 export * from "./recent-workspaces.js";
 export { formatUserMessageWithContext, dedupeContextRefs } from "./context-message.js";

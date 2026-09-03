@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
+import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
 import { agentsCommand, memoryCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
@@ -16,6 +17,9 @@ import { EXIT_ERROR, EXIT_INTERRUPT, runHeadless } from "./headless.js";
 import { errorLine, dim, red } from "./output.js";
 import { upgradeCommand } from "./upgrade.js";
 import { VERSION } from "./version.js";
+
+// One User-Agent identity for every outbound CLI request (providers, GitHub, search).
+initUserAgent("cli", VERSION);
 
 const sharedArgs = {
   model: { type: "string", alias: "m", description: "Model id (see `deyin models`)" },

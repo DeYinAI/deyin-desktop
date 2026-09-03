@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../types.js";
 import { asOptionalNumber, asString } from "./util.js";
+import { deyinUserAgent } from "@deyin/host-core";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_BODY_CHARS = 80_000;
@@ -38,7 +39,7 @@ export const webFetchTool: ToolDefinition = {
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { "User-Agent": "DeyinDesktop/1.0", Accept: "text/html,application/json,text/plain,*/*" },
+        headers: { "User-Agent": deyinUserAgent(), Accept: "text/html,application/json,text/plain,*/*" },
       });
       if (!res.ok) return `HTTP ${res.status} ${res.statusText} for ${url}`;
       const contentType = res.headers.get("content-type") ?? "";

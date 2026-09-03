@@ -1,5 +1,6 @@
 import { chmodSync, renameSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { deyinUserAgent } from "@deyin/host-core";
 import { basename } from "node:path";
 import { RELEASES_REPO, VERSION, binaryAssetName, compareVersions, fetchLatestVersion } from "./version.js";
 import { bold, dim, errorLine, green } from "./output.js";
@@ -38,7 +39,7 @@ export async function upgradeCommand(): Promise<number> {
   const asset = binaryAssetName();
   const url = `https://github.com/${RELEASES_REPO}/releases/download/v${latest}/${asset}`;
   console.log(dim(`Downloading ${url}`));
-  const res = await fetch(url, { headers: { "user-agent": `deyin-cli/${VERSION}` } });
+  const res = await fetch(url, { headers: { "user-agent": deyinUserAgent() } });
   if (!res.ok) {
     errorLine(`download failed (HTTP ${res.status}).`);
     return 1;

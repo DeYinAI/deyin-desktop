@@ -12,6 +12,7 @@ import {
   type InstalledPlugin,
 } from "@deyin/agent-core";
 import type { PluginCatalogEntry, PluginInfo } from "@deyin/contract";
+import { deyinUserAgent } from "@deyin/host-core";
 import type { CapabilityService } from "./capabilities.js";
 
 const CATALOG_URL = "https://raw.githubusercontent.com/DeYinAI/registry/main/registry.json";
@@ -107,7 +108,7 @@ export class PluginService {
       return cached.entries;
     }
     try {
-      const res = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(10_000), headers: { "user-agent": "deyin" } });
+      const res = await fetch(CATALOG_URL, { signal: AbortSignal.timeout(10_000), headers: { "user-agent": deyinUserAgent() } });
       if (res.ok) {
         const body = (await res.json()) as { plugins?: PluginCatalogEntry[] } | PluginCatalogEntry[];
         const entries = Array.isArray(body) ? body : (body.plugins ?? []);

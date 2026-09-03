@@ -22,7 +22,7 @@ async function listWslDistros(): Promise<string[]> {
   try {
     const { stdout } = await execFileAsync("wsl.exe", ["-l", "-q"], {
       encoding: "buffer",
-      timeout: 4000,
+      timeout: 10_000,
     });
     // wsl.exe prints UTF-16LE.
     return stdout
@@ -68,10 +68,23 @@ function posixShells(): ShellInfo[] {
 }
 
 let cached: EnvInfo | undefined;
+/** When an empty win32 detection was cached; retried after this so a cold-boot
+ * distro (first wsl.exe call boots the VM, up to tens of seconds) eventually
+ * surfaces instead of pinning the PowerShell fallback for the whole session. */
+let emptyWin32CachedAt = 0;
+const DETECT_RETRY_MS = 60_000;
+
 
 /** Detect the local execution environment: platform, WSL2 availability, usable shells. */
 export async function detectEnv(): Promise<EnvInfo> {
-  if (cached) return cached;
+  if (
+ cached &&
+ (platform() !== "win32" ||
+ cached.wslDistros.length > 0 ||
+ Date.now() - emptyWin32CachedAt < DETECT_RETRY_MS)
+) {
+ return cached;
+}
 
   const os = platform();
   const shells: ShellInfo[] = [];
@@ -109,7 +122,9 @@ export async function detectEnv(): Promise<EnvInfo> {
     defaultShell: shells[0]?.id ?? "bash",
     hostname: hostname(),
   };
-  return cached;
+  // Remember when an empty Windows detection happened so it can be re-probed.
+ if (os === "win32" && wslDistros.length === 0) emptyWin32CachedAt = Date.now();
+ return cached;
 }
 
 /**
