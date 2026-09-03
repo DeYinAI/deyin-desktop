@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { formatCurrencyAmount } from "@deyin/host-core/shared";
 import { useT } from "../../i18n.js";
 
 interface PurchaseAgreementDialogProps {
+  platform: "desktop" | "web";
+  termsUrl: string;
   planName: string;
   displayPrice: number;
   currency: string;
@@ -13,6 +15,8 @@ interface PurchaseAgreementDialogProps {
 }
 
 export function PurchaseAgreementDialog({
+  platform,
+  termsUrl,
   planName,
   displayPrice,
   currency,
@@ -40,6 +44,12 @@ export function PurchaseAgreementDialog({
 
   const canContinue = agreedTerms && agreedNoRefunds;
 
+  const openTerms = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault();
+    if (platform === "desktop") window.deyin.shell.openExternal(termsUrl);
+    else window.open(termsUrl, "_blank", "noopener");
+  };
+
   return (
     <div className="plans-view__dialog-overlay" role="dialog" aria-modal="true">
       <div className="plans-view__dialog">
@@ -51,7 +61,13 @@ export function PurchaseAgreementDialog({
         </div>
         <label className="plans-view__dialog-check">
           <input type="checkbox" checked={agreedTerms} onChange={(e) => setAgreedTerms(e.target.checked)} />
-          <span>{t("plans.agreement.terms")}</span>
+          <span>
+            {t("plans.agreement.termsBefore")}
+            <a className="plans-view__dialog-link" href={termsUrl} onClick={openTerms}>
+              {t("plans.agreement.termsLink")}
+            </a>
+            {t("plans.agreement.termsAfter")}
+          </span>
         </label>
         <label className="plans-view__dialog-check">
           <input type="checkbox" checked={agreedNoRefunds} onChange={(e) => setAgreedNoRefunds(e.target.checked)} />

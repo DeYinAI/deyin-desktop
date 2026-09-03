@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import { findPwsh, resolveShellInfo } from "./env.js";
 import type { TerminalEvents } from "./pty.js";
-import { toWslPath, windowsSpawnCwd } from "./wsl-path.js";
+import { toWslPath, windowsSpawnCwd, wslLaunchArgs } from "./wsl-path.js";
 
 interface IPty {
   /** Session-leader pid of the spawned shell; also its process-group id. */
@@ -151,7 +151,7 @@ function posixBash(): AgentShellTarget {
  * configured default shell, so a WSL2 workspace gets a WSL2 agent shell instead
  * of a PowerShell one that cannot even reach the project directory.
  */
-async function agentShellExecutable(shellId?: string): Promise<AgentShellTarget> {
+async function agentShellExecutable(shellId: string | undefined, cwd: string): Promise<AgentShellTarget> {
   if (platform() !== "win32") return posixBash();
 
   const info = await resolveShellInfo(shellId);
@@ -159,8 +159,17 @@ async function agentShellExecutable(shellId?: string): Promise<AgentShellTarget>
     return {
       file: info.path,
       // `wsl.exe -d <distro>` starts the distro's login shell, which may be zsh
-      // or fish; force bash so the PS0/PS1 markers below apply.
-      args: [...(info.args ?? []), "--", "bash", "--norc", "--noprofile"],
+ // or fish; force bash so the PS0/PS1 markers below apply. --cd starts the
+ // shell inside the workspace, so even a slow sentinel sync cannot leave
+ // early commands running in the wrong directory.
+ args: [
+ ...(info.args ?? []),
+ ...wslLaunchArgs(info.id.slice("wsl:".length), toWslPath(cwd)),
+ "--",
+ "bash",
+ "--norc",
+ "--noprofile",
+ ],
       kind: "bash",
       mapPath: toWslPath,
       spawnCwd: windowsSpawnCwd,
@@ -316,7 +325,7 @@ export class AgentShell {
     this.killTerm({ suppressExit: true });
     if (this.disposed) throw new Error("AgentShell has been disposed.");
 
-    const target = await agentShellExecutable(this.shellId);
+ const target = await agentShellExecutable(this.shellId, this.cwd);
     if (this.disposed) throw new Error("AgentShell has been disposed.");
     this.kind = target.kind;
     this.mapPath = target.mapPath;

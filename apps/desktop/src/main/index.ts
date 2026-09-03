@@ -5,6 +5,7 @@ import { CH } from "@deyin/contract";
 import { resolveDeyinConfig } from "@deyin/contract";
 import { DEEP_LINK_SCHEME } from "@deyin/contract";
 import { initLogger } from "./logger.js";
+import { initUserAgent } from "@deyin/host-core";
 import { createMainWindow } from "./window.js";
 import { ensureTray } from "./tray.js";
 import { logShutdown, registerAppShutdownHandlers, requestQuit } from "./shutdown.js";
@@ -49,6 +50,9 @@ async function bootstrap(): Promise<void> {
   // First: every subsequent console.* line (auth, updater, agent) also persists
   // to <logs>/deyin.log, which the diagnostics upload reads.
   initLogger(app.getPath("logs"));
+
+ // One User-Agent for every outbound request (providers, search, GitHub, APIs).
+ initUserAgent("desktop", app.getVersion());
 
   const config = resolveDeyinConfig();
   const deepLinkAvailable = registerDeepLinkScheme();

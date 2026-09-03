@@ -2344,8 +2344,16 @@ padding/colors without losing the chevron to the shorthand above. */
 .tasklist__bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   width: 100%;
+  min-width: 0;
+}
+.tasklist__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
   padding: 7px 10px;
   border: none;
   background: transparent;
@@ -2353,10 +2361,27 @@ padding/colors without losing the chevron to the shorthand above. */
   font-size: 12px;
   cursor: pointer;
   text-align: left;
-  min-width: 0;
 }
-.tasklist__bar:hover {
+.tasklist__toggle:hover {
   background: var(--color-surface-overlay);
+}
+.tasklist__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-faint);
+  cursor: pointer;
+}
+.tasklist__dismiss:hover {
+  background: var(--color-surface-overlay);
+  color: var(--color-text-muted);
 }
 .tasklist__label {
   overflow: hidden;
@@ -5353,7 +5378,7 @@ body.is-resizing-ew {
 .plans-view__toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   flex-wrap: wrap;
   margin-bottom: 20px;
@@ -5408,6 +5433,8 @@ body.is-resizing-ew {
   font-size: 12px;
   padding: 6px 12px;
   cursor: pointer;
+  text-align: center;
+  min-width: 72px;
 }
 .plans-view__cycle-btn--active {
   background: var(--color-surface-raised);
@@ -5481,6 +5508,14 @@ body.is-resizing-ew {
   margin-bottom: 10px;
   cursor: pointer;
 }
+.plans-view__dialog-link {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.plans-view__dialog-link:hover {
+  color: var(--color-accent-hover, var(--color-accent));
+}
 .plans-view__dialog-option {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -5501,6 +5536,7 @@ body.is-resizing-ew {
 }
 .plans-view__dialog-actions .btn {
   width: 100%;
+  justify-content: center;
 }
 .plans-card__badges {
   display: flex;
@@ -5610,11 +5646,21 @@ body.is-resizing-ew {
   align-items: baseline;
   gap: 4px;
 }
+.plans-card__price-block {
+  margin-bottom: 2px;
+}
+.plans-card__billed-slot {
+  min-height: 1.35em;
+}
 .plans-card__billed,
 .plans-card__rpm {
   font-size: 11px;
   color: var(--color-text-muted);
   margin-top: 2px;
+}
+.plans-card__billed--placeholder {
+  visibility: hidden;
+  user-select: none;
 }
 .plans-card__rpm {
   font-variant-numeric: tabular-nums;
@@ -5745,6 +5791,7 @@ body.is-resizing-ew {
 }
 .plans-card__foot .btn {
   width: 100%;
+  justify-content: center;
 }
 
 /* Welcome / sign-in screen -------------------------------------------------- */

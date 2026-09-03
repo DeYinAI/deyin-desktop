@@ -10,6 +10,7 @@ import {
 } from "./defaults.js";
 import { classifyModelKinds, modelImageCapability } from "./images.js";
 import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
+import { deyinUserAgent } from "./user-agent.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { Storage } from "./storage.js";
 import type {
@@ -307,7 +308,7 @@ export class AgentsStore {
     const key = provider.keyCipher ? this.storage.cipher.decrypt(provider.keyCipher) : null;
     try {
       const res = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/models`, {
-        headers: key ? { authorization: `Bearer ${key}` } : {},
+        headers: { "user-agent": deyinUserAgent(), ...(key ? { authorization: `Bearer ${key}` } : {}) },
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return { ok: false, status: res.status, message: `HTTP ${res.status}` };
@@ -350,7 +351,7 @@ export class AgentsStore {
     const key = provider.keyCipher ? this.storage.cipher.decrypt(provider.keyCipher) : null;
     try {
       const res = await fetch(`${provider.baseUrl.replace(/\/$/, "")}/models`, {
-        headers: key ? { authorization: `Bearer ${key}` } : {},
+        headers: { "user-agent": deyinUserAgent(), ...(key ? { authorization: `Bearer ${key}` } : {}) },
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return { ok: false, status: res.status, message: `HTTP ${res.status}` };

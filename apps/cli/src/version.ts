@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { deyinUserAgent } from "@deyin/host-core";
 import type { FileStorage } from "@deyin/host-core";
 
 const FALLBACK_VERSION = "0.1.1";
@@ -34,7 +35,7 @@ export function compareVersions(a: string, b: string): number {
 export async function fetchLatestVersion(timeoutMs = 4000): Promise<string | null> {
   try {
     const res = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, {
-      headers: { accept: "application/vnd.github+json", "user-agent": `deyin-cli/${VERSION}` },
+      headers: { accept: "application/vnd.github+json", "user-agent": deyinUserAgent() },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;

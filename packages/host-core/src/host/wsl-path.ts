@@ -60,12 +60,45 @@ export interface WslTerminalSpawn {
 /**
  * node-pty cannot use WSL UNC or POSIX working directories (CreateProcess error
  * 267). Launch from a Windows directory and optionally cd inside the distro.
+ *
+ * Prefer `wslLaunchArgs` (wsl.exe --cd) for new call sites: the shell then
+ * starts inside the directory instead of relying on a post-spawn cd write,
+ * which can race shell startup on a cold distro.
  */
 export function wslTerminalSpawn(rawCwd: string): WslTerminalSpawn {
   const spawnCwd = windowsSpawnCwd(rawCwd);
   const linuxPath = toWslPath(rawCwd);
   const initialCd = linuxPath !== spawnCwd ? linuxPath : null;
   return { spawnCwd, initialCd };
+}
+
+/**
+ * Extra wsl.exe arguments that start the shell inside `linuxPath` directly
+ * (Cursor/zcode-style --cd), so the first prompt is already in the project.
+ * Appended to the shell descriptor's own args. An empty/root path keeps the
+ * distro default (--cd ~) instead of landing in C:\Windows\System32.
+ */
+export function wslLaunchArgs(distro: string, linuxPath: string | null): string[] {
+const distroArgs = distro ? ["-d", distro] : [];
+if (!linuxPath || linuxPath === "/") return [...distroArgs, "--cd", "~"];
+return [...distroArgs, "--cd", linuxPath];
+}
+
+/**
+ * Distro whose workspace the cwd points at, when the shell list can serve it.
+ * A wsl.localhost/wsl$ UNC cwd should get a WSL shell even when detection or
+ * settings picked a Windows one; returns null when the cwd is not a WSL UNC
+ * path or that distro is missing from `shells`.
+ */
+export function preferWslShellForCwd(
+shells: readonly { id: string; kind: string }[],
+cwd: string | null | undefined,
+): string | null {
+const distro = cwd ? wslUncDistro(cwd) : null;
+if (!distro) return null;
+const wanted = `wsl:${distro}`.toLowerCase();
+const match = shells.find((s) => s.kind === "wsl" && s.id.toLowerCase() === wanted);
+return match ? match.id : null;
 }
 
 /** Escape a path for a single-quoted bash `cd` argument. */

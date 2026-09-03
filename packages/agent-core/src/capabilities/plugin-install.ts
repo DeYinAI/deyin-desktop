@@ -1,6 +1,7 @@
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, normalize, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
+import { deyinUserAgent } from "@deyin/host-core";
 import { loadPlugin, type InstalledPlugin } from "./plugins.js";
 
 /**
@@ -39,7 +40,7 @@ export function parseGitHubSource(input: string): GitHubSource | null {
 async function resolveDefaultBranch(owner: string, repo: string): Promise<string> {
   try {
     const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      headers: { accept: "application/vnd.github+json", "user-agent": "deyin" },
+      headers: { accept: "application/vnd.github+json", "user-agent": deyinUserAgent() },
       signal: AbortSignal.timeout(10_000),
     });
     if (res.ok) {
@@ -121,7 +122,7 @@ export async function installPluginFromGitHub(
 
   let body: ArrayBuffer;
   try {
-    const res = await fetch(url, { headers: { "user-agent": "deyin" }, signal: AbortSignal.timeout(60_000) });
+    const res = await fetch(url, { headers: { "user-agent": deyinUserAgent() }, signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return { ok: false, message: `GitHub download failed (HTTP ${res.status}).` };
     body = await res.arrayBuffer();
   } catch (err) {

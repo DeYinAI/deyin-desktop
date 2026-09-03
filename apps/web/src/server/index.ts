@@ -1,11 +1,26 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { webSearch } from "@deyin/host-core";
+import { readFileSync } from "node:fs";
+import { initUserAgent, webSearch } from "@deyin/host-core";
 import { WebSocketServer } from "ws";
 import { Session } from "./session.js";
 
 const PORT = Number(process.env.PORT ?? 8790);
 const OAUTH_ISSUER = process.env.DEYIN_OAUTH_ISSUER ?? "https://openference.com";
 const OPENFERENCE_API = process.env.DEYIN_API_BASE_URL ?? "https://api.openference.com/v1";
+
+/** Package version for the User-Agent; compiled builds carry DEYIN_BUILD_VERSION. */
+function readPackageVersion(): string {
+ if (process.env.DEYIN_BUILD_VERSION) return process.env.DEYIN_BUILD_VERSION;
+ try {
+ const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version?: string };
+ return pkg.version ?? "0.1.1";
+ } catch {
+ return "0.1.1";
+ }
+}
+
+// One User-Agent identity for every outbound host-server request (search, plans proxy).
+initUserAgent("web-server", readPackageVersion());
 
 /**
  * Deyin web host-server: WebSocket host services at /host, and an HTTP proxy at /api/*

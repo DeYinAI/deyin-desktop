@@ -5,6 +5,7 @@
  */
 
 import { imagesFromMessage } from "./image-parts.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 /** Media types we accept back from an image endpoint. */
 export type GeneratedMediaType = "image/png" | "image/jpeg" | "image/webp" | "image/gif";
@@ -302,7 +303,7 @@ async function toImage(entry: unknown, signal?: AbortSignal): Promise<GeneratedI
 
 /** Download a hosted result (providers that return URLs) into base64. */
 async function fetchImageUrl(url: string, signal?: AbortSignal): Promise<GeneratedImage | null> {
-  const res = await fetch(url, { signal });
+  const res = await fetch(url, { headers: { "user-agent": deyinUserAgent() }, signal });
   if (!res.ok) return null;
   const buffer = await res.arrayBuffer();
   const declared = (res.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
@@ -403,7 +404,7 @@ export async function generateImages(opts: GenerateImagesOptions): Promise<Gener
   const post = (body: Record<string, unknown>) =>
     fetch(url, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${opts.token}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
       body: JSON.stringify(body),
       signal: opts.signal ?? AbortSignal.timeout(180_000),
     });
@@ -451,7 +452,7 @@ async function editImages(opts: GenerateImagesOptions): Promise<GeneratedImage[]
 
   const res = await fetch(url, {
     method: "POST",
-    headers: { authorization: `Bearer ${opts.token}` },
+    headers: { authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
     body: form,
     signal: opts.signal ?? AbortSignal.timeout(180_000),
   });
@@ -486,7 +487,7 @@ async function generateImagesViaChat(opts: GenerateImagesOptions): Promise<Gener
   }
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${opts.token}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
     body: JSON.stringify({
       model: opts.model,
       messages: [{ role: "user", content }],

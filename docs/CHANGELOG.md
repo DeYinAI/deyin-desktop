@@ -6,6 +6,14 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.16 — 2026-09-03
+
+### Highlights
+
+- Unified `User-Agent` header on every outbound HTTP request (LLM providers,
+  Openference, GitHub, web search): `Deyin/{version} ({surface}; {platform}; {runtime})`
+  — one identity per process, initialized at app startup for desktop, CLI, and web host
+
 ## 1.0.15 — 2026-09-03
 
 ### Highlights

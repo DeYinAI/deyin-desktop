@@ -1,5 +1,7 @@
 /** Public Openference pricing catalog (GET {issuer}/api/public/plans). */
 
+import { deyinUserAgent } from "./user-agent.js";
+
 export interface LocalizedPrice {
   amount: number;
   currency: string;
@@ -92,7 +94,7 @@ export async function fetchPublicPlans(opts: {
     const url = apiBase
       ? `${apiBase}/public/plans`
       : `${opts.oauthIssuer.replace(/\/$/, "")}/api/public/plans`;
-    const res = await fetch(url);
+    const res = await fetch(url, { headers: { "user-agent": deyinUserAgent() } });
     if (!res.ok) return null;
     const body = (await res.json()) as PlansApiResponse;
     if (!Array.isArray(body.plans)) return null;
