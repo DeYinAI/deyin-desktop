@@ -230,7 +230,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
-          release_id="$(gh api "repos/DeYinAI/deyin-releases/releases/tags/${{ github.ref_name }}" --jq .id)"
+          # Draft releases are invisible to GET /releases/tags/{tag} — list and match instead.
+          release_id="$(gh api "repos/DeYinAI/deyin-releases/releases" --paginate \
+            --jq ".[] | select(.tag_name==\"${{ github.ref_name }}\") | .id" | head -1)"
+          if [[ -z "$release_id" ]]; then
+            echo "Release ${{ github.ref_name }} not found on deyin-releases"
+            exit 1
+          fi
           gh api -X PATCH "repos/DeYinAI/deyin-releases/releases/${release_id}" \
             --input - <<EOF
           {"draft": false, "make_latest": true}
