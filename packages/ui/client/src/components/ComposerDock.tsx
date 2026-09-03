@@ -14,10 +14,11 @@
  */
 
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
-import { Composer } from "./Composer.js";
+import { Composer, type ComposerProps } from "./Composer.js";
 import { ComposerPendingBars } from "./ComposerPendingBars.js";
+import { ImageModelSettingsBar } from "./ImageModelSettingsBar.js";
 import { type ComposerDraftState, type DraftKeeper } from "../composer-draft.js";
-import type { ComposerProps } from "./Composer.js";
+import type { ImageModelParams } from "@deyin/host-core/shared";
 
 /** What the app can ask the dock to clear after (or during) a send. */
 export interface ComposerHandle {
@@ -40,6 +41,7 @@ type DockedComposerProps = Omit<
   | "onImagesChange"
   | "linkedThreads"
   | "onLinkedThreadsChange"
+  | "imageModelSettings"
 >;
 
 export interface ComposerDockProps extends DockedComposerProps {
@@ -57,6 +59,13 @@ export interface ComposerDockProps extends DockedComposerProps {
   onSendNow: (text: string, fromInput: boolean) => void;
   onStartMultitasking?: () => void;
   onClearQueue?: () => void;
+  /** Per-model diffusion tuning when a text-to-image model is selected. */
+  imageModelSettings?: {
+    providerId: string;
+    modelId: string;
+    saved?: ImageModelParams;
+    onChange: (providerId: string, modelId: string, params: ImageModelParams) => void;
+  };
   /** Rendered between the pending bars and the composer (the workspace bar). */
   children?: ReactNode;
 }
@@ -72,6 +81,7 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
     onSendNow,
     onStartMultitasking,
     onClearQueue,
+    imageModelSettings,
     children,
     ...composerProps
   } = props;
@@ -141,6 +151,14 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
             onSteer={handleSend}
             onDismissSteer={() => setInput("")}
           />
+          {imageModelSettings ? (
+            <ImageModelSettingsBar
+              providerId={imageModelSettings.providerId}
+              modelId={imageModelSettings.modelId}
+              saved={imageModelSettings.saved}
+              onChange={imageModelSettings.onChange}
+            />
+          ) : null}
           {children}
         </>
       )}

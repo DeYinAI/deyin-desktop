@@ -14,6 +14,8 @@ interface ImageModelSettingsMenuProps {
   modelId: string;
   saved?: ImageModelParams;
   onChange: (providerId: string, modelId: string, params: ImageModelParams) => void;
+  /** When "bar", the trigger stretches in the settings bar above the composer. */
+  variant?: "chip" | "bar";
 }
 
 function summaryLabel(params: ImageModelParams): string {
@@ -23,7 +25,13 @@ function summaryLabel(params: ImageModelParams): string {
 }
 
 /** Composer chip: tune diffusion params for the selected text-to-image model. */
-export function ImageModelSettingsMenu({ providerId, modelId, saved, onChange }: ImageModelSettingsMenuProps) {
+export function ImageModelSettingsMenu({
+  providerId,
+  modelId,
+  saved,
+  onChange,
+  variant = "chip",
+}: ImageModelSettingsMenuProps) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -149,17 +157,17 @@ export function ImageModelSettingsMenu({ providerId, modelId, saved, onChange }:
   ) : null;
 
   return (
-    <div className="menu">
+    <div className={`menu ${variant === "bar" ? "menu--image-settings-bar" : ""}`}>
       <button
         ref={anchorRef}
         type="button"
-        className="chip chip--on"
+        className={`chip chip--on ${variant === "bar" ? "chip--image-settings-bar" : ""}`}
         title={`Image settings for ${modelId}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <Icon name="sliders" size={12} />
+        {variant === "chip" ? <Icon name="sliders" size={12} /> : null}
         <span>{summaryLabel(resolved)}</span>
         <Icon name="chevronDown" size={11} />
       </button>
