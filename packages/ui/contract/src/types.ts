@@ -76,6 +76,7 @@ export type {
   UsageStats,
   AccountUsage,
   PublicPlan,
+  ReleaseStatus,
   SelectPlanOptions,
   SelectPlanResponse,
   BillingOverview,

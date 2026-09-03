@@ -19,7 +19,7 @@ import {
   type GitResult,
   webSearch,
 } from "@deyin/host-core";
-import { fetchPublicPlans, projectLocation } from "@deyin/host-core/shared";
+import { fetchPublicPlans, fetchReleaseStatus, projectLocation } from "@deyin/host-core/shared";
 import {
   abortCrossCurrencyUpgrade,
   completeCrossCurrencyUpgrade,
@@ -871,6 +871,7 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
   ipcMain.handle(CH.usageRecord, (_e, event: UsageEvent) => usage.record(event));
   ipcMain.handle(CH.usageAccount, (_e, force?: boolean) => accountCache.get(force ?? false));
   ipcMain.handle(CH.plansList, () => fetchPublicPlans({ oauthIssuer: config.oauthIssuer }));
+  ipcMain.handle(CH.plansReleaseStatus, () => fetchReleaseStatus({ oauthIssuer: config.oauthIssuer }));
 
   /* Telemetry (renderer-side feature events). */
   ipcMain.on(CH.telemetryRecord, (_e, name: string, props?: Record<string, string | number | boolean>) =>

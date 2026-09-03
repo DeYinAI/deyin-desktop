@@ -20,8 +20,12 @@ export interface PublicPlan {
   isPopular: boolean;
   planKind: "normal" | "agent";
   hasStripe: boolean;
- /** Server-reported availability; the API omits this today, so absent = available. */
- isSoldOut: boolean;
+  /** Discount applied to on-demand usage beyond the bundle (percent). */
+  paygoDiscountPercent: number;
+  /** Models this plan may call; null/empty means the full catalog. */
+  allowedModels: string[] | null;
+  /** Models reserved for a different tier — drives the "Excludes …" card line. */
+  excludedModels: string[] | null;
 }
 
 interface PlansApiPlan {
@@ -39,8 +43,9 @@ interface PlansApiPlan {
   isPopular?: boolean;
   planKind?: string;
   hasStripe?: boolean;
- /** Forward-compat: server may mark plans sold out; absent means available. */
- isSoldOut?: boolean;
+  paygoDiscountPercent?: number | null;
+  allowedModels?: string[] | null;
+  excludedModels?: string[] | null;
 }
 
 interface PlansApiResponse {
@@ -65,8 +70,10 @@ function normalizePlan(raw: PlansApiPlan): PublicPlan {
     isPopular: raw.isPopular ?? false,
     planKind: raw.planKind === "agent" ? "agent" : "normal",
     hasStripe: raw.hasStripe ?? false,
-   isSoldOut: raw.isSoldOut === true,
- };
+    paygoDiscountPercent: raw.paygoDiscountPercent ?? 0,
+    allowedModels: raw.allowedModels ?? null,
+    excludedModels: raw.excludedModels ?? null,
+  };
 }
 
 /**
@@ -95,9 +102,8 @@ export async function fetchPublicPlans(opts: {
   }
 }
 
-/** Format a localized monthly price for display. */
-export function formatPlanPrice(plan: PublicPlan): string {
-  const { amount, currency } = plan.localizedPrice;
+/** Format an amount in its currency; zero reads as "Free". */
+export function formatCurrencyAmount(amount: number, currency: string): string {
   if (amount === 0) return "Free";
   try {
     return new Intl.NumberFormat(undefined, {
@@ -108,6 +114,11 @@ export function formatPlanPrice(plan: PublicPlan): string {
   } catch {
     return `$${amount.toFixed(2)}`;
   }
+}
+
+/** Format a localized monthly price for display. */
+export function formatPlanPrice(plan: PublicPlan): string {
+  return formatCurrencyAmount(plan.localizedPrice.amount, plan.localizedPrice.currency);
 }
 
 /** Compact number formatter for quota lines (7.5k, 1.2M). */

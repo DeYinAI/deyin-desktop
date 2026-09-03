@@ -18,7 +18,10 @@ export const DEFAULT_CONFIG: DeyinConfig = {
   oauthIssuer: "https://openference.com",
   apiBaseUrl: "https://api.openference.com/v1",
   clientId: "deyin-desktop",
-  scopes: ["openid", "profile", "email", "offline_access", "model:invoke"],
+  // `billing:manage` is first-party-only on the issuer (it reaches
+  // select-plan); without it the billing routes answer 403 "Session login
+  // required" because the desktop never holds a dashboard session token.
+  scopes: ["openid", "profile", "email", "offline_access", "model:invoke", "billing:manage"],
   updateFeedUrl: "https://cdn.deyin.ai/desktop/releases",
   remoteConfigUrl: "https://cdn.deyin.ai/desktop/config/default.json",
 };

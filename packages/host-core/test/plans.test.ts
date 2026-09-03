@@ -61,31 +61,44 @@ test("fetchPublicPlans returns null when plans array is missing", async () => {
   }
 });
 
-test("normalizePlan defaults isSoldOut to false when the API omits it", async () => {
- const originalFetch = globalThis.fetch;
- globalThis.fetch = (async () =>
- new Response(JSON.stringify({ plans: [samplePlan] }), { status: 200 })) as typeof fetch;
+test("normalizePlan defaults the catalog access fields", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ plans: [samplePlan] }), { status: 200 })) as typeof fetch;
 
- try {
- const plans = await fetchPublicPlans({ oauthIssuer: "https://openference.com" });
- assert.equal(plans?.[0]?.isSoldOut, false);
- } finally {
- globalThis.fetch = originalFetch;
- }
+  try {
+    const plans = await fetchPublicPlans({ oauthIssuer: "https://openference.com" });
+    assert.equal(plans?.[0]?.paygoDiscountPercent, 0);
+    assert.equal(plans?.[0]?.allowedModels, null);
+    assert.equal(plans?.[0]?.excludedModels, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
-test("normalizePlan passes through a server-reported sold-out flag", async () => {
- const originalFetch = globalThis.fetch;
- globalThis.fetch = (async () =>
- new Response(
- JSON.stringify({ plans: [{ ...samplePlan, isSoldOut: true }] }),
- { status: 200 },
- )) as typeof fetch;
+test("normalizePlan passes through model access and paygo discount", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        plans: [
+          {
+            ...samplePlan,
+            paygoDiscountPercent: 20,
+            allowedModels: ["glm-5.2"],
+            excludedModels: ["kimi-k3"],
+          },
+        ],
+      }),
+      { status: 200 },
+    )) as typeof fetch;
 
- try {
- const plans = await fetchPublicPlans({ oauthIssuer: "https://openference.com" });
- assert.equal(plans?.[0]?.isSoldOut, true);
- } finally {
- globalThis.fetch = originalFetch;
- }
+  try {
+    const plans = await fetchPublicPlans({ oauthIssuer: "https://openference.com" });
+    assert.equal(plans?.[0]?.paygoDiscountPercent, 20);
+    assert.deepEqual(plans?.[0]?.allowedModels, ["glm-5.2"]);
+    assert.deepEqual(plans?.[0]?.excludedModels, ["kimi-k3"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
