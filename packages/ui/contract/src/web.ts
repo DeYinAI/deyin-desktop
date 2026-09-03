@@ -99,6 +99,26 @@ export type ClientMessage =
       seed?: number;
       strength?: number;
       provider: WebAgentProviderRouting;
+    }
+  | { type: "videos.save"; id: number; threadId: string; base64: string; mediaType?: string }
+  | { type: "videos.read"; id: number; threadId: string; file: string }
+  | {
+      type: "videos.generate";
+      id: number;
+      threadId: string;
+      prompt: string;
+      model: string;
+      aspectRatio?: string;
+      width?: number;
+      height?: number;
+      numFrames?: number;
+      frameRate?: number;
+      numInferenceSteps?: number;
+      seed?: number;
+      negativePrompt?: string;
+      mode?: string;
+      inputImages?: AgentImageInput[];
+      provider: WebAgentProviderRouting;
     };
 
 export type ServerMessage =
@@ -142,4 +162,4 @@ export interface ImagesReadResult {
 }
 
 export type { RepoStateResult, RepoShipResult, RepoProgressStage, RepoProgressEvent } from "./types.js";
-export type { ImageGenerateRequest, ImageGenerateResult, GeneratedImageInfo } from "./types.js";
+export type { ImageGenerateRequest, ImageGenerateResult, GeneratedImageInfo, VideoGenerateRequest, VideoGenerateResult, GeneratedVideoInfo } from "./types.js";

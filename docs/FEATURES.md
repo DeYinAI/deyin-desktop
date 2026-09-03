@@ -237,3 +237,22 @@ without adopting its operator/lifestyle scope:
 - Results are stored per thread (desktop: `userData/images/<thread>`, web: inside the
   session sandbox) and embedded in the reply as `::deyin-inline-image{file="…" alt="…"}`,
   which the chat renders as an inline picture, lazily decoded when it scrolls into view.
+
+## Video generation
+- Video models are classified from the `/v1/models` catalog (`host-core/src/videos.ts`,
+  `isVideoModel`): output modality `video`, capability tags like `text-to-video`, and
+  id heuristics (`agnes-video`, `Agnes-Video-2.5-Flash`, etc.). Tagged **Video** in
+  the picker; they use `POST /v1/videos`, not chat completions.
+- Picking a video model sends the prompt straight to the videos endpoint. The client
+  polls until the async task completes, downloads the result, stores it per thread
+  (desktop: `userData/videos/<thread>`, web: session sandbox + optional R2), and
+  embeds `::deyin-inline-video{file="…"}` — rendered as an inline player with expand
+  and download controls.
+- **Agnes video settings** (composer bar): aspect ratio, frame count / duration presets,
+  frame rate, inference steps, seed, mode (text-to-video, image-to-video, keyframes),
+  negative prompt. Saved as `videoModelParams` keyed by `providerId::modelId`.
+- **Auto generate videos** (`autoVideoGeneration`, Settings → General): when enabled,
+  prompts like “generate a video of…” on a text-only model route to the first video
+  model in the catalog.
+- Image-to-video: reference images attached in the composer are sent with the video
+  request when generating from a video model.

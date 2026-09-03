@@ -8,6 +8,7 @@ export * from "./automations.js";
 export * from "./memory.js";
 export * from "./host/files.js";
 export * from "./host/image-store.js";
+export * from "./host/video-store.js";
 export * from "./host/page-store.js";
 export * from "./host/artifact-keys.js";
 export * from "./host/image-bridge.js";

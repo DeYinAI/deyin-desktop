@@ -19,6 +19,8 @@ import type {
   EnvInfo,
   ImageGenerateRequest,
   ImageGenerateResult,
+  VideoGenerateRequest,
+  VideoGenerateResult,
   LocalVisionDescribeResult,
   LocalVisionStatus,
   FileNode,
@@ -229,6 +231,9 @@ export const CH = {
   imagesSave: "deyin:images:save",
   imagesRead: "deyin:images:read",
   imagesGenerate: "deyin:images:generate",
+  videosSave: "deyin:videos:save",
+  videosRead: "deyin:videos:read",
+  videosGenerate: "deyin:videos:generate",
   visionDescribeLocal: "deyin:vision:describeLocal",
   visionLocalStatus: "deyin:vision:localStatus",
   telemetryRecord: "deyin:telemetry:record",
@@ -568,6 +573,11 @@ export interface DeyinApi {
     read(threadId: string, fileName: string): Promise<string>;
     /** Run a text-to-image model and store the results for the thread. */
     generate(request: ImageGenerateRequest): Promise<ImageGenerateResult>;
+  };
+  videos: {
+    save(threadId: string, input: { base64: string; mediaType?: string }): Promise<{ file: string }>;
+    read(threadId: string, fileName: string): Promise<string>;
+    generate(request: VideoGenerateRequest): Promise<VideoGenerateResult>;
   };
   /**
    * On-device vision via the Local Vision plugin (Ollama). Desktop only.

@@ -142,6 +142,9 @@ export function GeneralPage({ settings, version, platform, chatOnly, onChange }:
   <SettingCard title={t("general.autoImageGeneration")} description={t("general.autoImageGenerationDesc")}>
           <Toggle checked={settings.autoImageGeneration ?? true} onChange={(v) => onChange({ autoImageGeneration: v })} />
         </SettingCard>
+        <SettingCard title={t("general.autoVideoGeneration")} description={t("general.autoVideoGenerationDesc")}>
+          <Toggle checked={settings.autoVideoGeneration ?? true} onChange={(v) => onChange({ autoVideoGeneration: v })} />
+        </SettingCard>
         <SettingCard title={t("general.keepRunningInBackground")} description={t("general.keepRunningInBackgroundDesc")}>
           <Toggle checked={settings.keepRunningInBackground} onChange={(v) => onChange({ keepRunningInBackground: v })} />
         </SettingCard>

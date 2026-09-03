@@ -3,6 +3,8 @@
  * module re-exports them so the renderer and main process keep their stable
  * `shared/types.js` import path.
  */
+import type { AgentImageInput } from "@deyin/host-core/shared";
+
 export type {
   Automation,
   AutomationInfo,
@@ -258,6 +260,49 @@ export interface GeneratedImageInfo {
 
 export interface ImageGenerateResult {
   images: GeneratedImageInfo[];
+  model: string;
+}
+
+/** Tunable parameters for text-to-video models (Agnes Video, etc.). */
+export interface VideoModelParams {
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
+  numFrames?: number;
+  frameRate?: number;
+  numInferenceSteps?: number;
+  seed?: number;
+  negativePrompt?: string;
+  mode?: string;
+}
+
+/** One text-to-video run requested from the chat composer. */
+export interface VideoGenerateRequest {
+  threadId: string;
+  prompt: string;
+  model: string;
+  providerId?: string;
+  aspectRatio?: string;
+  width?: number;
+  height?: number;
+  numFrames?: number;
+  frameRate?: number;
+  numInferenceSteps?: number;
+  seed?: number;
+  negativePrompt?: string;
+  mode?: string;
+  /** Reference images for image-to-video. */
+  inputImages?: AgentImageInput[];
+}
+
+export interface GeneratedVideoInfo {
+  /** Stored file name, embedded as ::deyin-inline-video{file="..."}. */
+  file: string;
+  mediaType: string;
+}
+
+export interface VideoGenerateResult {
+  video: GeneratedVideoInfo;
   model: string;
 }
 

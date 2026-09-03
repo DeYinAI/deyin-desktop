@@ -6,6 +6,23 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.17 — 2026-09-03
+
+### Highlights
+
+- **Video generation** for text-to-video models (Agnes Video, etc.): picking a
+  video model in the composer routes prompts to `POST /v1/videos` instead of chat
+  completions, polls until the async job finishes, and embeds the result inline
+  with a player and download button (`::deyin-inline-video{file="…"}`)
+- **Agnes video settings** bar when a video model is selected: aspect ratio
+  (16:9, 9:16, 1:1, 4:3, 3:4), duration (frame presets), frame rate, inference
+  steps, seed, mode (text-to-video / image-to-video / keyframes), and negative
+  prompt — saved per model in Settings
+- **Auto generate videos** toggle in Settings → General (like auto image
+  generation): “make me a video of…” on a text model routes to your video model
+- Image-to-video: attach reference images in the composer when a video model is
+  selected
+
 ## 1.0.16 — 2026-09-03
 
 ### Highlights

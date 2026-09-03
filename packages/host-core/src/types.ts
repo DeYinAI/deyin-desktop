@@ -1,5 +1,6 @@
 import type { DeyinConfig } from "./config.js";
 import type { ImageModelParams } from "./image-model-params.js";
+import type { VideoModelParams } from "./video-model-params.js";
 
 export interface UserProfile {
   sub: string;
@@ -26,8 +27,8 @@ export interface ModelInfo {
   maxOutputTokens?: number;
   /** Accepts image inputs: true/false when known, undefined when the catalog does not say (API decides). */
   vision?: boolean;
-  /** "image" models generate pictures (text-to-image) instead of chat text. */
-  kind?: "chat" | "image";
+  /** "image" models generate pictures; "video" models use POST /v1/videos. */
+  kind?: "chat" | "image" | "video";
   /**
    * Chat model that can return generated images inside its completion
    * (Gemini flash-image / nano-banana). Streams like any chat model; the picture
@@ -515,6 +516,8 @@ export interface DeyinSettings {
   modelEfforts: Record<string, string>;
   /** Per-model image generation tuning: "providerId::modelId" -> diffusion params. */
   imageModelParams: Record<string, ImageModelParams>;
+  /** Per-model video generation tuning: "providerId::modelId" -> Agnes-style params. */
+  videoModelParams: Record<string, VideoModelParams>;
   /** Default step cap for subagent runs (frontmatter max_steps overrides). */
   subagentMaxSteps: number;
  /**
@@ -565,6 +568,8 @@ export interface DeyinSettings {
    * an image model automatically instead of letting the chat model refuse.
    */
   autoImageGeneration: boolean;
+  /** When the user asks for a video on a text model, route to a video model automatically. */
+  autoVideoGeneration: boolean;
   /** Last version whose What's New modal was shown. */
   whatsNewSeenVersion: string | null;
 }
@@ -1045,8 +1050,8 @@ export interface ProviderModel {
   contextLength?: number;
   /** Accepts image inputs: true/false when known, undefined when the catalog does not say (API decides). */
   vision?: boolean;
-  /** "image" models generate pictures (text-to-image) instead of chat text. */
-  kind?: "chat" | "image";
+  /** "image" models generate pictures; "video" models use POST /v1/videos. */
+  kind?: "chat" | "image" | "video";
   /**
    * Chat model that can return generated images inside its completion
    * (Gemini flash-image / nano-banana). Streams like any chat model; the picture

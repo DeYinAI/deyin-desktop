@@ -105,7 +105,7 @@ function modelOptions(
     const disabled = new Set(p.disabledModels);
     for (const m of list) {
       // Image models take a prompt, not a conversation: never offer them here.
-      if (disabled.has(m.id) || m.kind === "image") continue;
+      if (disabled.has(m.id) || m.kind === "image" || m.kind === "video") continue;
       out.push({ value: `${p.id}::${m.id}`, label: `${p.name} · ${m.name}` });
     }
   }
