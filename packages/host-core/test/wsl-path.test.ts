@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { preferWslShellForCwd, toWslPath, windowsSpawnCwd, wslLaunchArgs, wslTerminalSpawn, wslUncDistro } from "../src/host/wsl-path.js";
+import { preferWslShellForCwd, toWslPath, mapPosixOntoWslUnc, windowsSpawnCwd, wslLaunchArgs, wslTerminalSpawn, wslUncDistro } from "../src/host/wsl-path.js";
 
 test("toWslPath converts WSL UNC paths to distro-local paths", () => {
  assert.equal(toWslPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj"), "/home/user/proj");
@@ -18,8 +18,18 @@ test("toWslPath maps Windows drives onto /mnt", () => {
 });
 
 test("toWslPath leaves POSIX paths untouched", () => {
- assert.equal(toWslPath("/home/user/proj"), "/home/user/proj");
- assert.equal(toWslPath("/"), "/");
+  assert.equal(toWslPath("/home/user/proj"), "/home/user/proj");
+  assert.equal(toWslPath("/"), "/");
+});
+
+test("mapPosixOntoWslUnc maps distro-local paths onto UNC roots", () => {
+  const unc = "\\\\wsl.localhost\\Ubuntu-22.04\\home\\anh\\project";
+  assert.equal(mapPosixOntoWslUnc(unc, "/home/anh/project"), unc);
+  assert.equal(
+    mapPosixOntoWslUnc(unc, "/home/anh/project/oracle_cloud_account.txt"),
+    `${unc}\\oracle_cloud_account.txt`,
+  );
+  assert.equal(mapPosixOntoWslUnc(unc, "/etc/passwd"), null);
 });
 
 test("wslUncDistro identifies the distro only for UNC paths", () => {

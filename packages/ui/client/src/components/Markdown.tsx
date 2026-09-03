@@ -16,6 +16,7 @@ interface MarkdownProps {
   display: ChatCodeDisplay;
   threadId?: string | null;
   workspaceRoot?: string | null;
+  homeDir?: string | null;
   /** Open a workspace file in the right-hand Files panel. */
   onOpenWorkspaceFile?: (path: string) => void;
 }
@@ -53,6 +54,7 @@ export function Markdown({
   display,
   threadId,
   workspaceRoot,
+  homeDir,
   onOpenWorkspaceFile,
 }: MarkdownProps) {
   const segments = splitInlineEmbeds(text);
@@ -72,6 +74,7 @@ export function Markdown({
             theme={theme}
             display={display}
             workspaceRoot={workspaceRoot}
+            homeDir={homeDir}
             onOpenWorkspaceFile={onOpenWorkspaceFile}
           />
         ) : null,
@@ -80,7 +83,7 @@ export function Markdown({
   );
 }
 
-function MarkdownBlock({ text, theme, display, workspaceRoot, onOpenWorkspaceFile }: MarkdownProps) {
+function MarkdownBlock({ text, theme, display, workspaceRoot, homeDir, onOpenWorkspaceFile }: MarkdownProps) {
   return (
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -107,7 +110,7 @@ function MarkdownBlock({ text, theme, display, workspaceRoot, onOpenWorkspaceFil
             if (isBlock) return <code className={className} {...rest}>{children}</code>;
             const label = flattenText(children);
             if (onOpenWorkspaceFile && looksLikeFilePath(label)) {
-              const target = resolveWorkspaceFilePath(workspaceRoot ?? null, label);
+              const target = resolveWorkspaceFilePath(workspaceRoot ?? null, label, homeDir);
               return (
                 <button
                   type="button"

@@ -1,4 +1,4 @@
-import { isPathInsideRoot, logicalResolve } from "@deyin/host-core/shared";
+import { isPathInsideRoot, logicalResolve, mapPosixOntoWslUnc } from "@deyin/host-core/shared";
 
 /** Common source/config extensions for inline backtick file refs in assistant text. */
 const FILE_EXT =
@@ -16,16 +16,42 @@ export function looksLikeFilePath(text: string): boolean {
   return false;
 }
 
+/** Normalize display labels (`~`, `host:/path`) into a path root for resolution. */
+export function normalizeWorkspaceRootForPaths(workspaceRoot: string, homeDir?: string | null): string {
+  let root = workspaceRoot.replace(/[\\/]+$/, "");
+  if (homeDir) {
+    const home = homeDir.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (root === "~") return home;
+    if (root.startsWith("~/")) return logicalResolve(home, root.slice(2));
+  }
+  // SSH display label `host:/remote/path` — not a Windows drive letter.
+  const remote = /^[^/\\]+:(\/.*|\\.*)$/.exec(root);
+  if (remote && !/^[a-zA-Z]:/.test(root)) {
+    return remote[1]!.replace(/\\/g, "/");
+  }
+  return root;
+}
+
 /** Resolve a chat/file reference against the workspace root when relative. */
-export function resolveWorkspaceFilePath(workspaceRoot: string | null, file: string): string {
+export function resolveWorkspaceFilePath(
+  workspaceRoot: string | null,
+  file: string,
+  homeDir?: string | null,
+): string {
   const trimmed = file.trim();
   if (!trimmed) return trimmed;
   if (/^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("/") || trimmed.startsWith("\\")) {
-    return logicalResolve(trimmed);
+    const absolute = logicalResolve(trimmed);
+    if (workspaceRoot) {
+      const mapped = mapPosixOntoWslUnc(workspaceRoot, absolute);
+      if (mapped) return mapped;
+    }
+    return absolute;
   }
   if (!workspaceRoot) return trimmed;
-  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  const root = normalizeWorkspaceRootForPaths(workspaceRoot, homeDir);
   const resolved = logicalResolve(root, trimmed.replace(/^[/\\]+/, ""));
   if (!isPathInsideRoot(root, resolved)) return trimmed;
-  return resolved;
+  const mapped = mapPosixOntoWslUnc(workspaceRoot, resolved);
+  return mapped ?? resolved;
 }

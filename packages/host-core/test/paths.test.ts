@@ -83,6 +83,19 @@ test("assertInsideRoot resolves relative paths against root even when cwd differ
   }
 });
 
+test("assertInsideRoot maps POSIX paths onto WSL UNC workspace roots", () => {
+  const root = mkdtempSync(join(tmpdir(), "deyin-wsl-"));
+  writeFileSync(join(root, "oracle_cloud_account.txt"), "creds");
+  try {
+    const unc = `\\\\wsl.localhost\\Ubuntu-22.04${root.replace(/\//g, "\\")}`;
+    const posix = `${root}/oracle_cloud_account.txt`;
+    const resolved = assertInsideRoot(unc, posix);
+    assert.equal(resolved, `${unc}\\oracle_cloud_account.txt`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("isPathInsideRoot allows in-root and rejects escapes (pure)", () => {
   const root = "/tmp/deyin-ws-foo";
   assert.equal(isPathInsideRoot(root, root), true);
