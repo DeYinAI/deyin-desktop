@@ -5,6 +5,7 @@
  */
 
 import { imagesFromMessage } from "./image-parts.js";
+import { isVideoModel } from "./videos.js";
 import { deyinUserAgent } from "./user-agent.js";
 
 /** Media types we accept back from an image endpoint. */
@@ -218,7 +219,9 @@ export function classifyModelKinds<T extends { id: string; kind?: "chat" | "imag
   models: T[],
 ): (T & { kind: "chat" | "image" | "video"; imageOutput: boolean })[] {
   return models.map((m) => {
-    if (m.kind === "video") return { ...m, kind: "video" as const, imageOutput: m.imageOutput ?? false };
+    if (m.kind === "video" || isVideoModel(m.id)) {
+      return { ...m, kind: "video" as const, imageOutput: m.imageOutput ?? false };
+    }
     const capability = modelImageCapability(m.id);
     return {
       ...m,

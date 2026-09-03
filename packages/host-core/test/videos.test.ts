@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isVideoModel } from "../src/videos.js";
+import { isVideoModel, modelIsVideo } from "../src/videos.js";
 import { detectVideoGenerationIntent, pickVideoModelForGeneration } from "../src/video-intent.js";
 
 test("isVideoModel: detects Agnes Video model ids", () => {
@@ -20,4 +20,18 @@ test("pickVideoModelForGeneration: prefers dedicated video models", () => {
     { id: "Agnes-Video-2.5-Flash", name: "Agnes Video", kind: "video" },
   ]);
   assert.equal(picked, "Agnes-Video-2.5-Flash");
+});
+
+test("pickVideoModelForGeneration: id heuristic when cache lacks kind video", () => {
+  const picked = pickVideoModelForGeneration([
+    { id: "GLM-5.2", name: "GLM", kind: "chat" },
+    { id: "Agnes-Video-2.5-Flash", name: "Agnes Video", kind: "chat" },
+  ]);
+  assert.equal(picked, "Agnes-Video-2.5-Flash");
+});
+
+test("modelIsVideo: kind or id heuristic", () => {
+  assert.equal(modelIsVideo("Agnes-Video-2.5-Flash"), true);
+  assert.equal(modelIsVideo("GLM-5.2", "chat"), false);
+  assert.equal(modelIsVideo("custom-video-model", "video"), true);
 });

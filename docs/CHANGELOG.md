@@ -14,6 +14,15 @@ See [archive/](./archive/) for pre-v1 internal notes.
   tree) no longer fails with “Path escapes workspace root” when paths use WSL
   UNC vs POSIX forms or remote workspace display labels
 
+## 1.0.18 — 2026-09-04
+
+### Highlights
+
+- **Fix:** `Agnes-Video-2.5-Flash` (and other video models) no longer get sent to
+  chat completions when the model cache predates video classification — stale
+  catalogs now backfill `kind: "video"` from the id heuristic, and send uses
+  `modelIsVideo()` so video models always route to `POST /v1/videos`
+
 ## 1.0.17 — 2026-09-03
 
 ### Highlights

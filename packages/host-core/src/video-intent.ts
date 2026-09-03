@@ -1,4 +1,5 @@
 import type { ModelInfo } from "./types.js";
+import { isVideoModel } from "./videos.js";
 
 export interface VideoGenerationIntent {
   prompt: string;
@@ -43,7 +44,7 @@ export function detectVideoGenerationIntent(text: string): VideoGenerationIntent
 
 /** Pick the first video model from the provider catalog. */
 export function pickVideoModelForGeneration(models: ModelInfo[]): string | undefined {
-  return models.find((m) => m.kind === "video")?.id;
+  return models.find((m) => m.kind === "video" || isVideoModel(m.id))?.id;
 }
 
 /** User-facing hint when video intent was detected but no video model is available. */

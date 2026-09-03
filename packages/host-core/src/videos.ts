@@ -15,7 +15,7 @@ export interface GeneratedVideo {
 
 /** Model ids from known text-to-video families served by POST /v1/videos. */
 const VIDEO_ID_RE =
-  /(agnes-video|agnes.*video|video-2\.5|video-v|text-to-video|sora|kling|luma|runway|veo|minimax-video|wan-video|hunyuan-video|seedance|cogvideo|mochi)/i;
+  /(agnes[._-]?video|agnes.*video|video-2\.5|video-v|text-to-video|sora|kling|luma|runway|veo|minimax-video|wan-video|hunyuan-video|seedance|cogvideo|mochi)/i;
 
 function isVideoToken(token: string): boolean {
   const t = token.trim().toLowerCase();
@@ -124,6 +124,11 @@ export function isVideoModel(id: string, meta?: ImageModelMeta): boolean {
   if (m.outputVideo) return true;
   if (m.declared) return false;
   return VIDEO_ID_RE.test(id);
+}
+
+/** Catalog `kind` or id heuristic — use at send time when the cache may predate video classification. */
+export function modelIsVideo(id: string, kind?: string, meta?: ImageModelMeta): boolean {
+  return kind === "video" || isVideoModel(id, meta);
 }
 
 export interface GenerateVideoOptions {
