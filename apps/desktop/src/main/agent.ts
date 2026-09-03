@@ -224,7 +224,16 @@ export class DesktopAgentHost {
     { resolve: (decision: "trust" | "skip") => void; timer: ReturnType<typeof setTimeout> }
   >();
   private readonly agentInbox = new Map<string, string[]>();
-  private readonly backgroundTasks = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
+  private readonly backgroundTasks = new Map<
+ string,
+ {
+ promise: Promise<{ output: string; exitCode: number | null }>;
+ done: boolean;
+ result?: { output: string; exitCode: number | null };
+ }
+ >();
+ /** How long a finished background task stays pollable after completion. */
+ private static readonly BACKGROUND_TASK_TTL_MS = 10 * 60 * 1000;
   private readonly store: SessionStore;
   /** Caps how many task-tool subagent runs execute in parallel (settings.subagentConcurrency). */
   private readonly subagentLimiter = new Semaphore(() => this.opts.settings.get().subagentConcurrency);
@@ -1071,8 +1080,11 @@ export class DesktopAgentHost {
           },
           pollBackgroundTask: (taskId, blockUntilMs) => this.pollBackgroundTask(taskId, blockUntilMs),
           registerBackgroundTask: (taskId, promise) => {
-            this.backgroundTasks.set(taskId, promise);
-            void promise.finally(() => this.backgroundTasks.delete(taskId));
+            // Keep the finished result pollable for a grace window: a fast command
+            // (echo, a quick file probe) can finish before the model first awaits,
+            // and deleting on settle made await report an unknown task with the
+            // output lost. The TTL bounds memory growth.
+            this.trackBackgroundTask(taskId, promise);
           },
           waitForJobs: async (jobIds, blockUntilMs) => {
             const jobs = await jobsMgr.waitFor(jobIds, blockUntilMs);
@@ -1628,9 +1640,45 @@ export class DesktopAgentHost {
     return `Switched to ${nextMode} mode.${change.explanation ? ` ${change.explanation}` : ""}`;
   }
 
+  /**
+   * Register a background task whose finished result stays pollable for a
+   * grace window. A fast command (echo, a quick probe) can settle before the
+   * model first awaits; evicting on settle lost the output and await reported
+   * an unknown task. The TTL bounds memory growth.
+   */
+  private trackBackgroundTask(
+    taskId: string,
+    promise: Promise<{ output: string; exitCode: number | null }>,
+  ): void {
+    const entry: {
+      promise: Promise<{ output: string; exitCode: number | null }>;
+      done: boolean;
+      result?: { output: string; exitCode: number | null };
+    } = { promise, done: false };
+    this.backgroundTasks.set(taskId, entry);
+    void promise
+      .then((result) => {
+        entry.done = true;
+        entry.result = result;
+      })
+      .catch(() => {
+        entry.done = true;
+        entry.result = { output: "(background task failed)", exitCode: null };
+      })
+      .finally(() => {
+        const timer = setTimeout(() => this.backgroundTasks.delete(taskId), AgentHost.BACKGROUND_TASK_TTL_MS);
+        timer.unref?.();
+      });
+  }
+
   private async pollBackgroundTask(taskId: string, blockUntilMs: number): Promise<string> {
-    const task = this.backgroundTasks.get(taskId);
-    if (!task) return `Unknown background task: ${taskId}`;
+    const entry = this.backgroundTasks.get(taskId);
+    if (!entry) return `Unknown background task: ${taskId}`;
+    // Fast tasks settle before the first await: serve the cached result.
+    if (entry.done && entry.result) {
+      return `Task ${taskId} finished (exit ${entry.result.exitCode ?? "?"}):\n${entry.result.output}`;
+ }
+ const task = entry.promise;
     const timeout = new Promise<{ output: string; exitCode: number | null }>((resolve) => {
       setTimeout(() => resolve({ output: "(still running)", exitCode: null }), blockUntilMs);
     });
