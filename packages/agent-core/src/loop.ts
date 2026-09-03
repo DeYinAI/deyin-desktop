@@ -49,6 +49,12 @@ import {
 import type { WireOptions } from "./wire.js";
 
 const DEFAULT_MAX_STEPS = 40;
+/**
+ * How many times per run the loop may nudge the model to reconcile an
+ * open todo list before letting a final answer through regardless. A
+ * budget keeps a model that refuses to call todo_write from wedging.
+ */
+const TODO_RECONCILE_NUDGE_BUDGET = 2;
 
 /**
  * Step cap semantics: `undefined` keeps the built-in default; `null`, 0,
@@ -167,6 +173,11 @@ export interface AgentRunOptions {
  * model stops calling tools; `undefined` keeps DEFAULT_MAX_STEPS.
  */
 maxSteps?: number | null;
+  /**
+  * Agent mode: nudge the model to reconcile open todos before a final
+  * answer (default true). Off for hosts/tests that script exact steps.
+  */
+  todoReconcile?: boolean;
   signal?: AbortSignal;
   todos?: TodoItem[];
   /** Optional host-backed persistent shell for the bash tool. */
@@ -335,6 +346,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   }
 
   let finalText = "";
+let todoReconcileNudges = 0;
   /** What the last step produced; drives the cheap `tool` role (see roleForStep). */
   let previousStep: PreviousStep | undefined;
   /** Model used by the previous step, so `model-routed` only fires on a change. */
@@ -495,7 +507,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         signal: opts.signal,
         tools: toolSchemas,
         ...(foldWire ? { wire: foldWire } : {}),
-        promptCacheKey,
+         // The tracker is exact state - pin it to the briefing so a post-fold
+ // run reconciles against the real list, not the summariser prose.
+ ...(todos.length > 0 ? { todos: [...todos] } : {}),
+      promptCacheKey,
       });
       droppedMessages = fold.droppedMessages;
       reclaimedTokens += fold.reclaimedTokens;
@@ -738,7 +753,31 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
           continue;
         }
       }
-      // Turn end: the natural cache-reset boundary. Compacting here rather than
+      // Agent mode: the model may finish its answer while todos are still
+  // open (seen in practice after a compaction resume, where the model
+  // answered a fresh question and silently dropped the tracker). Nudge a
+  // bounded number of times per run to reconcile - mark completed what
+  // is done, cancel what is obsolete - then let it finish.
+  const openTodos = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
+  if (
+    opts.todoReconcile !== false &&
+    openTodos.length > 0 &&
+    todoReconcileNudges < TODO_RECONCILE_NUDGE_BUDGET
+  ) {
+    todoReconcileNudges += 1;
+    emit({
+      type: "evidence-gate",
+      code: "open_todos",
+      message: `${openTodos.length} todo(s) still open at turn end.`,
+    });
+    append({
+      role: "user",
+      content:
+        `[todo reconcile] Your answer looks final, but the todo list still has open items:\n${openTodos.map((t) => `- ${t.id}: ${t.content} (${t.status})`).join("\n")}\nCall todo_write to mark finished items completed (or cancelled if obsolete) and continue any genuinely unfinished work; only then give your final answer. If the list no longer matches reality, rewrite it to match reality.`,
+    });
+    continue;
+  }
+  // Turn end: the natural cache-reset boundary. Compacting here rather than
       // mid-loop means the whole turn ran against one stable prefix, and the
       // next turn starts from a transcript that already fits.
       await maybeCompact("pressure", stepWindow);
