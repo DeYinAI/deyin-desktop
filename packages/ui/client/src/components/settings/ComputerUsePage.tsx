@@ -254,6 +254,7 @@ function ComputerUseSettings({ api, settings, onChange }: Props & { api: Compute
       <SectionTitle>Screenshot retention</SectionTitle>
       <SettingCard title="Keep screenshots" description="Local screenshots older than this are pruned on startup.">
         <select
+          className="select"
           value={settings.computerUseScreenshotRetentionDays}
           onChange={(e) => onChange({ computerUseScreenshotRetentionDays: Number(e.target.value) })}
         >
