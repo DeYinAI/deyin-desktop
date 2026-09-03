@@ -468,7 +468,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const restoredLoc = activeProject ? projectLocation(activeProject) : null;
   if (restoredLoc?.kind === "remote") {
     void workspaceService.connectRemote(restoredLoc.hostId, restoredLoc.root).then((state) => {
-      opts.setWorkspaceRoot(state.label);
+      const execRoot = state.location?.kind === "remote" ? state.location.root : state.label;
+      opts.setWorkspaceRoot(execRoot);
       broadcastLocation(state);
     });
   } else if (restored) {
@@ -604,12 +605,13 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     const host = hosts.find((h) => h.id === hostId);
     const state = await workspaceService.connectRemote(hostId, remotePath, host?.label ?? host?.host);
     if (state.connected && state.location?.kind === "remote") {
-      opts.setWorkspaceRoot(state.label);
-      projects.set({ workspaceRoot: state.label });
+      const execRoot = state.location.root;
+      opts.setWorkspaceRoot(execRoot);
+      projects.set({ workspaceRoot: execRoot });
       capabilities.invalidate();
       void index.setRoot(null);
       gitWatcher.watch(null);
-      broadcast(CH.workspaceRootChanged, state.label);
+      broadcast(CH.workspaceRootChanged, execRoot);
       broadcast(CH.gitChanged, undefined);
     }
     broadcastLocation(state);

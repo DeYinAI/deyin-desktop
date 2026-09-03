@@ -47,6 +47,7 @@ interface ChatViewProps {
   /** Open a workspace path in the right-hand Files panel (markdown file refs). */
   onOpenWorkspaceFile?: (path: string) => void;
   workspaceRoot?: string | null;
+  homeDir?: string | null;
   onUndo: (name: string) => void;
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
@@ -197,6 +198,7 @@ export function ChatView(props: ChatViewProps) {
               onOpenFile={props.onOpenFile}
               onOpenWorkspaceFile={props.onOpenWorkspaceFile}
               workspaceRoot={props.workspaceRoot}
+              homeDir={props.homeDir}
               onUndo={props.onUndo}
               onBuild={props.onBuild}
               onOpenPlan={props.onOpenPlan}
@@ -227,6 +229,7 @@ export function ChatView(props: ChatViewProps) {
             codeDisplay={props.codeDisplay}
             threadId={props.threadKey}
             workspaceRoot={props.workspaceRoot}
+            homeDir={props.homeDir}
             onOpenWorkspaceFile={props.onOpenWorkspaceFile}
             streaming
           />
@@ -500,6 +503,7 @@ function EventRow({
   onOpenFile,
   onOpenWorkspaceFile,
   workspaceRoot,
+  homeDir,
   onUndo,
   onBuild,
   onOpenPlan,
@@ -522,6 +526,7 @@ function EventRow({
   onOpenFile: (path: string) => void;
   onOpenWorkspaceFile?: (path: string) => void;
   workspaceRoot?: string | null;
+  homeDir?: string | null;
   onUndo: (name: string) => void;
   onBuild?: () => void;
   onOpenPlan?: () => void;
@@ -575,6 +580,7 @@ function EventRow({
           codeDisplay={codeDisplay}
           threadId={threadId}
           workspaceRoot={workspaceRoot}
+          homeDir={homeDir}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onOpenPreview={onOpenPreview}
           feedback={messageFeedback}
@@ -746,6 +752,7 @@ function AssistantMessage({
   codeDisplay,
   threadId,
   workspaceRoot,
+  homeDir,
   onOpenWorkspaceFile,
   onOpenPreview,
   streaming = false,
@@ -758,6 +765,7 @@ function AssistantMessage({
   codeDisplay: ChatCodeDisplay;
   threadId?: string | null;
   workspaceRoot?: string | null;
+  homeDir?: string | null;
   onOpenWorkspaceFile?: (path: string) => void;
   onOpenPreview?: () => void;
   streaming?: boolean;
@@ -789,6 +797,7 @@ function AssistantMessage({
           display={codeDisplay}
           threadId={threadId}
           workspaceRoot={workspaceRoot}
+          homeDir={homeDir}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
         />
       </div>

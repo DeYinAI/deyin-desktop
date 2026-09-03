@@ -25,3 +25,14 @@ test("resolveWorkspaceFilePath: joins relative paths to workspace root", () => {
   assert.equal(resolveWorkspaceFilePath(root, "/etc/passwd"), "/etc/passwd");
   assert.equal(resolveWorkspaceFilePath(null, "vote.py"), "vote.py");
 });
+
+test("resolveWorkspaceFilePath: strips SSH display labels and expands tilde", () => {
+  assert.equal(
+    resolveWorkspaceFilePath("myhost:/home/me/project", "oracle_cloud_account.txt"),
+    "/home/me/project/oracle_cloud_account.txt",
+  );
+  assert.equal(
+    resolveWorkspaceFilePath("~/project", "notes.txt", "/home/me"),
+    "/home/me/project/notes.txt",
+  );
+});

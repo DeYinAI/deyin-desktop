@@ -1,5 +1,10 @@
 import { dirname, resolve, sep } from "node:path";
 import { realpathSync } from "node:fs";
+import { mapPosixOntoWslUnc, toWslPath } from "./wsl-path.js";
+
+function isAbsolutePath(p: string): boolean {
+  return p.startsWith("/") || p.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(p) || /^[\\/]{2}/.test(p);
+}
 
 /**
  * Resolve `path` relative to `root` (or as absolute) and ensure it sits inside `root`.
@@ -15,8 +20,19 @@ import { realpathSync } from "node:fs";
  * follow.
  */
 export function assertInsideRoot(root: string, path: string): string {
+  const mapped = mapPosixOntoWslUnc(root, path);
+  if (mapped) {
+    const linuxRoot = toWslPath(root).replace(/\/+$/, "") || "/";
+    const linuxAbs = toWslPath(mapped).replace(/\/+$/, "") || "/";
+    if (linuxAbs !== linuxRoot && !linuxAbs.startsWith(`${linuxRoot}/`)) {
+      throw new Error("Path escapes workspace root");
+    }
+    return mapped;
+  }
+
+  const candidate = path;
   const r = resolve(root);
-  const abs = resolve(r, path);
+  const abs = isAbsolutePath(candidate) ? resolve(candidate) : resolve(r, candidate);
 
   const realRoot = resolveReal(r);
   const realAbs = resolveReal(abs);

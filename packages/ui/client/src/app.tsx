@@ -958,7 +958,7 @@ export function App() {
       if (loc?.kind === "remote") {
         const state = await window.deyin.workspace.connectRemote(loc.hostId, loc.root);
         setWorkspaceState(state);
-        if (state.connected) setWorkspaceRoot(state.label);
+        if (state.connected) setWorkspaceRoot(state.location?.kind === "remote" ? state.location.root : state.label);
         return;
       }
       const root = project.root;
@@ -988,7 +988,7 @@ export function App() {
           const location: WorkspaceLocation = { kind: "remote", hostId: action.hostId, root: action.remotePath };
           const project = ensureFolderProject(location, state.label);
           setActiveProjectId(project.id);
-          setWorkspaceRoot(state.label);
+          setWorkspaceRoot(state.location?.kind === "remote" ? state.location.root : state.label);
           markOnboard("workspaceOpened");
           setProjectPickerOpen(false);
           break;
@@ -2692,6 +2692,7 @@ const continueFromStepLimit = useCallback(() => {
                 onOpenFile={chatOnlyHosted ? noop : openFileDiff}
                 onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
                 workspaceRoot={workspaceRoot}
+                homeDir={boot?.homeDir ?? null}
                 onUndo={chatOnlyHosted ? noop : undoFileChange}
                 onBuild={chatOnlyHosted ? undefined : buildFromPlan}
                 canBuildPlan={chatOnlyHosted ? false : planCardBuildable}

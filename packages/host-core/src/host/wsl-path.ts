@@ -16,6 +16,22 @@ export function wslUncDistro(p: string): string | null {
   return WSL_UNC_RE.exec(p)?.[1] ?? null;
 }
 
+/**
+ * When the workspace root is a WSL UNC path, map a POSIX twin onto it.
+ * Returns null when `posixPath` is not under the distro-local root.
+ */
+export function mapPosixOntoWslUnc(wslUncRoot: string, posixPath: string): string | null {
+  if (!posixPath.startsWith("/") || !wslUncDistro(wslUncRoot)) return null;
+  const linuxRoot = toWslPath(wslUncRoot).replace(/\/+$/, "") || "/";
+  const posix = posixPath.replace(/\/+$/, "") || "/";
+  if (posix !== linuxRoot && !posix.startsWith(`${linuxRoot}/`)) return null;
+  const rel = posix === linuxRoot ? "" : posix.slice(linuxRoot.length + 1);
+  const rootTrimmed = wslUncRoot.replace(/[\\/]+$/, "");
+  if (!rel) return rootTrimmed;
+  const sep = rootTrimmed.includes("\\") ? "\\" : "/";
+  return `${rootTrimmed}${sep}${rel.replace(/\//g, sep)}`;
+}
+
 /** Convert a host path to the form bash sees inside a WSL2 distro. */
 export function toWslPath(p: string): string {
   if (!p) return p;
