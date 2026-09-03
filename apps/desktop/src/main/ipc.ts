@@ -211,7 +211,20 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     ? join(process.resourcesPath, "bundled-plugins")
     : join(app.getAppPath(), "bundled-plugins");
   const plugins = new PluginService(pluginsDir, storage, agents, capabilities, existsSync(bundledSrcDir) ? bundledSrcDir : undefined);
-  const browser = new BrowserControlService(opts.getWorkspaceRoot, () => settings.get().browserControlEnabled);
+  const imagesService = new ImageService();
+ const browser = new BrowserControlService(
+ opts.getWorkspaceRoot,
+ () => settings.get().browserControlEnabled,
+ // Screenshots also land in the thread image store so inline-image directives
+ // can render them in chat (see BrowserControlService.screenshot).
+ (threadId, image) => {
+ try {
+ return imagesService.save(threadId, image).file;
+ } catch {
+ return null;
+ }
+ },
+ );
 
   const computerUse = new ComputerUseService(
     () => settings.get().computerUseEnabled,
@@ -275,7 +288,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const security = new SecurityService();
   const visualize = new VisualizeService();
   const pages = new PageService();
-  const images = new ImageService();
+  const images = imagesService;
   const localVision = new LocalVisionService(pluginsDir, agents);
 
   /** Provider routing for image generation, mirroring the chat/agent routing. */

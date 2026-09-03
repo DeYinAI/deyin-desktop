@@ -63,6 +63,7 @@ export class BrowserControlService {
   constructor(
     private readonly getWorkspaceRoot: () => string | null,
     private readonly isEnabled: () => boolean,
+    private readonly saveImage?: (threadId: string, image: { base64: string; mediaType: string }) => string | null,
   ) {
     this.logDir = join(app.getPath("userData"), "browser-logs");
     this.shotDir = join(app.getPath("userData"), "browser-shots");
@@ -340,13 +341,32 @@ export class BrowserControlService {
     });
   }
 
-  async screenshot(): Promise<string> {
+  async screenshot(threadId?: string): Promise<string> {
     return this.withBrowserTool(async () => {
       const wc = await this.target();
       const image = await wc.capturePage();
       const file = join(this.shotDir, `shot-${Date.now()}.png`);
       writeFileSync(file, image.toPNG());
-      return `Screenshot saved to ${file}. Read that file to view it.`;
+      // Also land the shot in the thread image store: the inline-image
+      // directive renders it directly in chat, sparing the agent a doomed
+      // binary read through the text read tool.
+      let directive = "";
+      if (threadId && this.saveImage) {
+        try {
+          const stored = this.saveImage(threadId, {
+            base64: image.toPNG().toString("base64"),
+            mediaType: "image/png",
+          });
+          if (stored) {
+            directive =
+              `\n::deyin-inline-image{file="${stored}" alt="Browser screenshot"}\n` +
+              "Put the directive line above in your reply to embed this screenshot.";
+          }
+        } catch {
+          // Fall back to the file-path message below.
+        }
+      }
+      return `Screenshot saved to ${file}.` + directive;
     });
   }
 
@@ -540,11 +560,11 @@ export class BrowserControlService {
       },
       {
         name: "browser_screenshot",
-        description: "Capture the browser tab to a PNG file; read the file to view it.",
+        description: "Capture the browser tab to a PNG file and get an inline-image directive to embed it.",
         tier: "read",
         parameters: { type: "object", properties: {} },
         summarize: () => "screenshot",
-        execute: () => wrap(() => this.screenshot()),
+        execute: (_args, ctx) => wrap(() => this.screenshot(ctx?.sessionMeta?.threadId)),
       },
       {
         name: "browser_console",
@@ -668,6 +688,13 @@ export class BrowserControlService {
 }
 
 function normalizeUrl(url: string): string {
+  // file://, http(s)://, data:, about: and blob: URLs pass through untouched.
+  // Schemeless localhost-style addresses are local dev servers - http, not
+  // https (no TLS locally). Anything else that looks like a host gets https.
+  if (/^(file|https?|data|about|blob):/i.test(url)) return url;
+  if (/^localhost([:/]|$)/i.test(url) || /^127\.0\.0\.1[:/]/.test(url) || /^\[::1\][:/]/.test(url)) {
+    return `http://${url}`;
+  }
   return /^https?:\/\//.test(url) ? url : `https://${url}`;
 }
 
