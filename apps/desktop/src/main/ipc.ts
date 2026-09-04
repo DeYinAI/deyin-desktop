@@ -12,6 +12,13 @@ import {
   TelemetryReporter,
   TerminalManager,
   UsageStore,
+  CheckpointStore,
+  revertCheckpoint,
+  revertCheckpoints,
+  checkpointIdsFromEventsAfterIndex,
+  collectCheckpointIdsInThread,
+  type CheckpointFileOps,
+  type HostBackend,
   detectEnv,
   git,
   GitWatcher,
@@ -126,6 +133,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const agents = new AgentsStore(storage);
   const usage = new UsageStore(storage);
   const projects = new ProjectsStore(storage);
+  const checkpoints = new CheckpointStore(storage);
 
   /* Server-side caches (P1): plan/account snapshot + 1-week model list. */
   const accountCache = new AccountCache(storage, config, () => auth.getAccessToken());
@@ -407,6 +415,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     terminals,
     memory,
     review,
+    checkpoints,
     mcpAuth: createMcpAuthBridge(mcpModules, mcpOAuth),
     security,
     trust,
@@ -858,6 +867,100 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     });
   });
 ipcMain.on(CH.agentStop, (_e, threadId: string) => agentHost.stop(threadId));
+ipcMain.handle(CH.agentResetSession, (_e, threadId: string) => {
+  agentHost.resetSession(threadId);
+});
+
+function checkpointFileOps(backend: HostBackend): CheckpointFileOps {
+  return {
+    readText: (path) => backend.readText(path),
+    writeText: (path, content) => backend.writeText(path, content),
+    delete: async (path) => {
+      const safe = await backend.resolveInsideRoot(path);
+      const { unlink } = await import("node:fs/promises");
+      await unlink(safe).catch(() => undefined);
+    },
+    exists: async (path) => {
+      try {
+        const safe = await backend.resolveInsideRoot(path);
+        const { access } = await import("node:fs/promises");
+        await access(safe);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    resolveInsideRoot: (path) => backend.resolveInsideRoot(path),
+  };
+}
+
+const checkpointGuards = {
+  isAgentRunning: (threadId: string) => agentHost.isRunning(threadId),
+  hasPendingReview: (threadId: string) => review.list(threadId).some((c) => c.status === "pending"),
+};
+
+ipcMain.handle(
+  CH.checkpointsRevertRun,
+  async (_e, threadId: string, checkpointId: string) => {
+    const backend = workspaceService.getBackend();
+    if (!backend) return { ok: false, revertedPaths: [], error: "No workspace open." };
+    return revertCheckpoint(
+      checkpoints,
+      storage,
+      checkpointFileOps(backend),
+      threadId,
+      checkpointId,
+      checkpointGuards,
+    );
+  },
+);
+
+ipcMain.handle(
+  CH.checkpointsRevertFile,
+  async (_e, threadId: string, checkpointId: string, path: string) => {
+    const backend = workspaceService.getBackend();
+    if (!backend) return { ok: false, revertedPaths: [], error: "No workspace open." };
+    return revertCheckpoint(
+      checkpoints,
+      storage,
+      checkpointFileOps(backend),
+      threadId,
+      checkpointId,
+      checkpointGuards,
+      { paths: [path] },
+    );
+  },
+);
+
+ipcMain.handle(
+  CH.checkpointsRevertAfterEvent,
+  async (_e, threadId: string, eventIndex: number, eventsFromClient?: import("@deyin/contract").ThreadEvent[]) => {
+    const backend = workspaceService.getBackend();
+    if (!backend) return { ok: false, revertedPaths: [], error: "No workspace open." };
+    const events =
+      eventsFromClient ??
+      projects
+        .get()
+        .projects.flatMap((p) => p.threads)
+        .find((t) => t.id === threadId)?.events;
+    if (!events) return { ok: false, revertedPaths: [], error: "Thread not found." };
+    const ids = checkpointIdsFromEventsAfterIndex(events, eventIndex);
+    if (ids.length === 0) return { ok: true, revertedPaths: [] };
+    const result = await revertCheckpoints(
+      checkpoints,
+      storage,
+      checkpointFileOps(backend),
+      threadId,
+      ids,
+      checkpointGuards,
+    );
+    if (result.ok) {
+      const keep = collectCheckpointIdsInThread(events.slice(0, eventIndex));
+      await checkpoints.pruneCheckpoints(threadId, keep);
+    }
+    return result;
+  },
+);
 ipcMain.on(CH.agentApprove, (_e, requestId: string, decision: PermissionDecision) =>
  agentHost.approve(requestId, decision),
 );

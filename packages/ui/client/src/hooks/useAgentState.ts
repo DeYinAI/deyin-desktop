@@ -215,6 +215,20 @@ function newCheckpointId(): string {
   return `cp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function stopThought(
+  runId: string,
+  runEvents: ThreadEvent[],
+  label: string,
+): Extract<ThreadEvent, { kind: "thought" }> {
+  const hadFileChanges = runEvents.some((e) => e.kind === "file");
+  return {
+    kind: "thought",
+    label,
+    checkpointId: runId,
+    revertable: hadFileChanges,
+  };
+}
+
 function freshThreadRun(mode: ChatMode = "agent"): ThreadRunMutable {
   return {
     mode,
@@ -887,8 +901,12 @@ class AgentStateStore {
             preview: planPreviewFromMarkdown(planText),
           });
         }
-        if (event.reason === "aborted") finished.push({ kind: "thought", label: "Run stopped" });
-        if (event.reason === "max-steps") finished.push({ kind: "thought", label: STEP_LIMIT_LABEL });
+        if (event.reason === "aborted") {
+          finished.push(stopThought(t.runId, t.runEvents, "Run stopped"));
+        }
+        if (event.reason === "max-steps") {
+          finished.push(stopThought(t.runId, t.runEvents, STEP_LIMIT_LABEL));
+        }
         const opt = t.optimization;
         if (
           opt &&
@@ -936,7 +954,7 @@ class AgentStateStore {
   /** Force-fold a run (stop watchdog path). */
   forceStop(threadId: string): ThreadEvent[] {
     const t = this.thread(threadId);
-    const finished = [...t.runEvents, { kind: "thought" as const, label: "Run stopped" }];
+    const finished = [...t.runEvents, stopThought(t.runId, t.runEvents, "Run stopped")];
     t.running = false;
     t.turnActive = false;
     t.runEvents = [];

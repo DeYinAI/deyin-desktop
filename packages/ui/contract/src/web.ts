@@ -73,9 +73,30 @@ export type ClientMessage =
       disabledCaps?: string[];
     }
   | { type: "agent.stop"; threadId: string }
+  | { type: "agent.resetSession"; id: number; threadId: string }
   | { type: "agent.disposeShell"; threadId: string }
   | { type: "agent.approve"; requestId: string; decision: "allow" | "allow-always" | "deny" }
   | { type: "agent.answer"; requestId: string; answers: Record<string, string | string[]> }
+  | {
+      type: "checkpoints.revertRun";
+      id: number;
+      threadId: string;
+      checkpointId: string;
+    }
+  | {
+      type: "checkpoints.revertFile";
+      id: number;
+      threadId: string;
+      checkpointId: string;
+      path: string;
+    }
+  | {
+      type: "checkpoints.revertAfterEvent";
+      id: number;
+      threadId: string;
+      eventIndex: number;
+      checkpointIds: string[];
+    }
   | { type: "term.create"; id: number; opts: TerminalCreateOptions }
   | { type: "term.attach"; id: number; termId: string }
   | { type: "term.write"; termId: string; data: string }
@@ -109,13 +130,9 @@ export type ClientMessage =
       prompt: string;
       model: string;
       aspectRatio?: string;
-      width?: number;
-      height?: number;
-      numFrames?: number;
-      frameRate?: number;
-      numInferenceSteps?: number;
+      seconds?: number;
+      size?: string;
       seed?: number;
-      negativePrompt?: string;
       mode?: string;
       inputImages?: AgentImageInput[];
       provider: WebAgentProviderRouting;

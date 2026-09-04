@@ -71,6 +71,8 @@ import type {
   ResolvedContextFile,
   PendingChange,
   SecurityFindingsReport,
+  RevertResult,
+  ThreadEvent,
   RepoConnectRequest,
   RepoStateResult,
   RepoShipResult,
@@ -205,6 +207,7 @@ export const CH = {
   indexStatusEvent: "deyin:index:statusEvent",
   agentStart: "deyin:agent:start",
   agentStop: "deyin:agent:stop",
+  agentResetSession: "deyin:agent:resetSession",
   agentApprove: "deyin:agent:approve",
   agentAnswerQuestion: "deyin:agent:answerQuestion",
   agentDisposeShell: "deyin:agent:disposeShell",
@@ -280,6 +283,9 @@ export const CH = {
   reviewReject: "deyin:review:reject",
   reviewApproveAll: "deyin:review:approveAll",
   reviewRejectAll: "deyin:review:rejectAll",
+  checkpointsRevertRun: "deyin:checkpoints:revertRun",
+  checkpointsRevertFile: "deyin:checkpoints:revertFile",
+  checkpointsRevertAfterEvent: "deyin:checkpoints:revertAfterEvent",
   securityListFindings: "deyin:security:listFindings",
   securityClearFindings: "deyin:security:clearFindings",
   securityScanDiff: "deyin:security:scanDiff",
@@ -512,11 +518,18 @@ export interface DeyinApi {
     /** Start (or continue) an agent run for a chat thread. */
     start(options: AgentStartOptions): Promise<void>;
     stop(threadId: string): void;
+    /** Drop in-memory session state so the next run rebuilds from UI history. */
+    resetSession(threadId: string): Promise<void>;
     approve(requestId: string, decision: AgentPermissionDecision): void;
     answerQuestion(requestId: string, answers: Record<string, string | string[]>): void;
     disposeShell(threadId: string): void;
     /** Agent lifecycle events for a thread; `runId` (when present) must match the active run. */
     onEvent(cb: (envelope: AgentEventEnvelope) => void): () => void;
+  };
+  checkpoints: {
+    revertRun(threadId: string, checkpointId: string): Promise<RevertResult>;
+    revertFile(threadId: string, checkpointId: string, path: string): Promise<RevertResult>;
+    revertAfterEvent(threadId: string, eventIndex: number, events?: ThreadEvent[]): Promise<RevertResult>;
   };
   browserControl: {
     /** Register the active workspace <webview> as the controlled browser tab. */

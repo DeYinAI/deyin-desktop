@@ -27,6 +27,8 @@ export interface ComposerHandle {
   clearImages(): void;
   /** Clear the whole draft: text, attachments, linked threads, images. */
   clearComposerState(): void;
+  /** Prefill the composer (edit-and-resend). */
+  setDraft(draft: Partial<ComposerDraftState>): void;
 }
 
 type DockedComposerProps = Omit<
@@ -132,6 +134,12 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
         setLinked([]);
         setImages([]);
       },
+      setDraft: (draft) => {
+        if (draft.input !== undefined) setInput(draft.input);
+        if (draft.attachments !== undefined) setAttachments(draft.attachments);
+        if (draft.linked !== undefined) setLinked(draft.linked);
+        if (draft.images !== undefined) setImages(draft.images);
+      },
     }),
     [],
   );
@@ -150,35 +158,33 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
   return (
     <>
       {!chatOnly && (
-        <>
-          <ComposerPendingBars
-            queued={queued}
-            steer={steerActive ? input : null}
-            onSendNow={handleSendNow}
-            onStartMultitasking={onStartMultitasking}
-            onClearQueue={onClearQueue}
-            onSteer={handleSend}
-            onDismissSteer={() => setInput("")}
-          />
-          {imageModelSettings ? (
-            <ImageModelSettingsBar
-              providerId={imageModelSettings.providerId}
-              modelId={imageModelSettings.modelId}
-              saved={imageModelSettings.saved}
-              onChange={imageModelSettings.onChange}
-            />
-          ) : null}
-          {videoModelSettings ? (
-            <VideoModelSettingsBar
-              providerId={videoModelSettings.providerId}
-              modelId={videoModelSettings.modelId}
-              saved={videoModelSettings.saved}
-              onChange={videoModelSettings.onChange}
-            />
-          ) : null}
-          {children}
-        </>
+        <ComposerPendingBars
+          queued={queued}
+          steer={steerActive ? input : null}
+          onSendNow={handleSendNow}
+          onStartMultitasking={onStartMultitasking}
+          onClearQueue={onClearQueue}
+          onSteer={handleSend}
+          onDismissSteer={() => setInput("")}
+        />
       )}
+      {imageModelSettings ? (
+        <ImageModelSettingsBar
+          providerId={imageModelSettings.providerId}
+          modelId={imageModelSettings.modelId}
+          saved={imageModelSettings.saved}
+          onChange={imageModelSettings.onChange}
+        />
+      ) : null}
+      {videoModelSettings ? (
+        <VideoModelSettingsBar
+          providerId={videoModelSettings.providerId}
+          modelId={videoModelSettings.modelId}
+          saved={videoModelSettings.saved}
+          onChange={videoModelSettings.onChange}
+        />
+      ) : null}
+      {!chatOnly ? children : null}
       <Composer
         {...composerProps}
         value={input}

@@ -1,3 +1,6 @@
+export * from "./checkpoints.js";
+export * from "./checkpoint-revert.js";
+export * from "./checkpoint-events.js";
 export * from "./session-journal.js";
 export * from "./agent-run.js";
 export * from "./sse.js";

@@ -55,5 +55,12 @@ export type {
   OllamaHealth,
 } from "./local-vision.js";
 export { isPathInsideRoot, logicalResolve } from "./pathInside.js";
+export {
+  checkpointIdsFromEventsAfterIndex,
+  collectCheckpointIdsInThread,
+  inferCheckpointOperation,
+  isRevertableStopThought,
+} from "./checkpoint-events.js";
+export type { RevertResult, FileCheckpointEntry } from "./types.js";
 export { mapPosixOntoWslUnc } from "./host/wsl-path.js";
 export type { ContextRef, ContextSearchHit, ResolvedContextFile } from "./types.js";

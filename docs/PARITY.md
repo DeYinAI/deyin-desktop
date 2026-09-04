@@ -22,6 +22,8 @@ full UX is not yet fleshed out. All implementation here is original Deyin code.
 | Markdown chat output (GFM tables, themed code blocks) | Done | `components/Markdown.tsx` (react-markdown + remark-gfm over the custom `CodeBlock`) |
 | Reasoning ("thinking") cards, live + collapsed with duration | Done | `components/ChatView.tsx` (`ThinkingCard`), `app.tsx` (reasoning-delta handling) |
 | File-change cards with +/− counts feeding the Diff tab | Done | `agent-core` `file-change` event, `main/agent.ts` forward, `app.tsx` (`diffStats`) |
+| Per-run checkpoint revert (Undo file, Revert run after stop) | Done | `host-core/src/checkpoints.ts`, `host-core/src/checkpoint-revert.ts`, `ChatView.tsx`, `app.tsx` |
+| Edit user message and resend (truncate + revert files + reset session) | Done | `app.tsx`, `ComposerDock.tsx`, `agent.resetSession`, `checkpoints.revertAfterEvent` |
 | Projects / threads sidebar | Done (persisted via ProjectsStore) | `components/Sidebar.tsx`, `renderer/threads.ts`, `host-core/src/stores.ts` |
 | Workspace panel: Plan tab | Done (agent-fed live stream + todos) | `components/WorkspacePanel.tsx`, `app.tsx` (`planStream`) |
 | Workspace panel: Diff tab | Done (LCS line diff + source preview + review Accept/Reject) | `components/WorkspacePanel.tsx`, `renderer/diff.ts`, `components/ReviewBanner.tsx` |

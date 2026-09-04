@@ -6,6 +6,9 @@ import {
   TerminalManager,
   createImageBridge,
   storeAttachedImages,
+  CheckpointStore,
+  FileStorage,
+  inferCheckpointOperation,
   type ImageModelChoice,
 } from "@deyin/host-core";
 import type { GatedArtifactStore } from "./gated-artifacts.js";
@@ -132,6 +135,7 @@ export class WebAgentHost {
   private optimizationPluginLoading: Promise<OptimizationPlugin | null> | null = null;
   /** Append-only event journal inside the sandbox (session-event-log spine). */
   private readonly journal: SessionEventJournal;
+  private readonly checkpoints: CheckpointStore;
 
   constructor(
     private readonly root: string,
@@ -144,6 +148,7 @@ export class WebAgentHost {
     private readonly artifacts?: GatedArtifactStore,
   ) {
     this.journal = new SessionEventJournal(join(this.root, "journal"));
+    this.checkpoints = new CheckpointStore(new FileStorage(join(this.root, ".deyin", "data")));
   }
 
   /**
@@ -202,6 +207,40 @@ export class WebAgentHost {
       this.emit(options.threadId, { type: "error", message: err instanceof Error ? err.message : String(err) }, options.runId);
       this.finish(options.threadId, "aborted", "", options.runId);
     });
+  }
+
+  isRunning(threadId: string): boolean {
+    return this.active.has(threadId);
+  }
+
+  getCheckpointStore(): CheckpointStore {
+    return this.checkpoints;
+  }
+
+  resetSession(threadId: string): void {
+    this.stop(threadId);
+    this.disposeShell(threadId);
+    this.permissionGrants.delete(threadId);
+  }
+
+  private recordFileCheckpoint(
+    threadId: string,
+    runId: string | undefined,
+    change: { path: string; before: string; after: string },
+  ): void {
+    if (!runId) return;
+    void this.checkpoints
+      .record(threadId, runId, {
+        path: change.path,
+        before: change.before,
+        after: change.after,
+        operation: inferCheckpointOperation(change.before, change.after),
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          `[deyin:web] checkpoint record failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 
   stop(threadId: string): void {
@@ -866,6 +905,7 @@ export class WebAgentHost {
         }, runId);
         break;
       case "file-change": {
+        this.recordFileCheckpoint(threadId, runId, event.change);
         const oversized =
           event.change.before.length > FILE_DIFF_CAP || event.change.after.length > FILE_DIFF_CAP;
         this.emit(
