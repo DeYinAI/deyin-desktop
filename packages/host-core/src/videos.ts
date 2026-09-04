@@ -302,7 +302,12 @@ async function pollVideoTask(
   const base = apiBaseUrl.replace(/\/$/, "");
   const pollMs = opts.pollIntervalMs ?? 8_000;
   const deadline = Date.now() + (opts.maxWaitMs ?? 1_800_000);
-  const pollPaths = (id: string) => [`${base}/videos/${encodeURIComponent(id)}`, `${base}/agnesapi?video_id=${encodeURIComponent(id)}`];
+  const modelQuery = encodeURIComponent(opts.model);
+  const pollPaths = (id: string) => [
+    `${base}/videos/${encodeURIComponent(id)}`,
+    `${base}/agnesapi?video_id=${encodeURIComponent(id)}&model_name=${modelQuery}`,
+    `${base}/agnesapi?video_id=${encodeURIComponent(id)}`,
+  ];
 
   while (Date.now() < deadline) {
     if (opts.signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -365,14 +370,23 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<Generat
     ...(opts.extra ?? {}),
   };
 
+  const mode = typeof payload.mode === "string" ? payload.mode : "text";
   const inputs = opts.inputImages ?? [];
-  if (inputs.length === 1) {
-    const image = inputs[0]!;
-    payload.image = `data:${image.mediaType};base64,${image.base64}`;
+  const toDataUrl = (image: { base64: string; mediaType: string }) =>
+    `data:${image.mediaType};base64,${image.base64}`;
+
+  if (mode === "reference" && inputs.length > 0) {
+    payload.images = inputs.slice(0, 5).map(toDataUrl);
+  } else if (mode === "keyframe" && inputs.length > 0) {
+    if (inputs[0]) payload.first_frame = toDataUrl(inputs[0]);
+    if (inputs[1]) payload.last_frame = toDataUrl(inputs[1]);
+  } else if (inputs.length === 1) {
+    // Non-Agnes providers that accept a single reference image field.
+    payload.image = toDataUrl(inputs[0]!);
   } else if (inputs.length > 1) {
     payload.extra_body = {
       ...(typeof payload.extra_body === "object" && payload.extra_body ? payload.extra_body : {}),
-      image: inputs.map((image) => `data:${image.mediaType};base64,${image.base64}`),
+      image: inputs.map(toDataUrl),
     };
   }
 
