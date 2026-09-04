@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   VIDEO_ASPECT_PRESETS,
-  VIDEO_FRAME_PRESETS,
+  VIDEO_SECONDS_PRESETS,
   resolveVideoModelParams,
   videoModelParamsKey,
   type VideoModelParams,
@@ -18,17 +18,28 @@ interface VideoModelSettingsMenuProps {
   variant?: "chip" | "bar";
 }
 
+function modeLabel(mode: string | undefined): string {
+  switch (mode) {
+    case "reference":
+      return "reference";
+    case "keyframe":
+      return "keyframe";
+    default:
+      return "text";
+  }
+}
+
 function summaryLabel(params: VideoModelParams): string {
   const parts = [
     params.aspectRatio ?? "16:9",
-    `${params.numFrames ?? 121}f`,
-    `${params.frameRate ?? 24}fps`,
+    `${params.seconds ?? 5}s`,
+    modeLabel(params.mode),
   ];
   if (params.seed != null) parts.push(`seed ${params.seed}`);
   return parts.join(" · ");
 }
 
-/** Composer chip: tune Agnes-style video params for the selected text-to-video model. */
+/** Composer bar/chip: tune Agnes Video params for the selected text-to-video model. */
 export function VideoModelSettingsMenu({
   providerId,
   modelId,
@@ -70,26 +81,13 @@ export function VideoModelSettingsMenu({
     };
   }, [open]);
 
-  const applyAspect = (aspectRatio: string) => {
-    const preset = VIDEO_ASPECT_PRESETS.find((p) => p.id === aspectRatio);
-    setDraft((d: VideoModelParams) => ({
-      ...d,
-      aspectRatio,
-      ...(preset ? { width: preset.width, height: preset.height } : {}),
-    }));
-  };
-
   const commit = () => {
     const seedTrim = seedText.trim();
     const seed = seedTrim === "" ? undefined : Math.floor(Number(seedTrim));
     onChange(providerId, modelId, {
       aspectRatio: draft.aspectRatio,
-      width: draft.width,
-      height: draft.height,
-      numFrames: draft.numFrames,
-      frameRate: draft.frameRate,
-      numInferenceSteps: draft.numInferenceSteps,
-      negativePrompt: draft.negativePrompt,
+      seconds: draft.seconds,
+      size: draft.size,
       mode: draft.mode,
       ...(seed != null && Number.isFinite(seed) ? { seed } : {}),
     });
@@ -108,87 +106,65 @@ export function VideoModelSettingsMenu({
       className="anchored-menu__panel image-settings video-settings"
       style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? "visible" : "hidden" }}
     >
-      <div className="image-settings__header">Agnes video settings</div>
+      <div className="image-settings__header">Video settings</div>
+      <p className="image-settings__hint">
+        Agnes Video API: duration 4–12s, 720P on Flash, attach images in the composer for reference or keyframe
+        modes.
+      </p>
+      <label className="image-settings__field">
+        <span>Mode</span>
+        <select
+          className="select"
+          value={draft.mode ?? "text"}
+          onChange={(e) =>
+            setDraft((d: VideoModelParams) => ({
+              ...d,
+              mode: e.target.value as VideoModelParams["mode"],
+            }))
+          }
+        >
+          <option value="text">Text-to-video</option>
+          <option value="reference">Reference (image/audio)</option>
+          <option value="keyframe">Keyframe (first/last frame)</option>
+        </select>
+      </label>
       <label className="image-settings__field">
         <span>Aspect ratio</span>
         <select
           className="select"
           value={draft.aspectRatio ?? "16:9"}
-          onChange={(e) => applyAspect(e.target.value)}
+          onChange={(e) => setDraft((d: VideoModelParams) => ({ ...d, aspectRatio: e.target.value }))}
         >
           {VIDEO_ASPECT_PRESETS.map((preset) => (
             <option key={preset.id} value={preset.id}>
-              {preset.label} ({preset.width}×{preset.height})
+              {preset.label} ({preset.pixels})
             </option>
           ))}
         </select>
       </label>
       <label className="image-settings__field">
-        <span>Duration (frames)</span>
+        <span>Duration</span>
         <select
           className="select"
-          value={draft.numFrames ?? 121}
-          onChange={(e) => setDraft((d: VideoModelParams) => ({ ...d, numFrames: Number(e.target.value) }))}
+          value={draft.seconds ?? 5}
+          onChange={(e) => setDraft((d: VideoModelParams) => ({ ...d, seconds: Number(e.target.value) }))}
         >
-          {VIDEO_FRAME_PRESETS.map((preset) => (
-            <option key={preset.frames} value={preset.frames}>
-              {preset.frames} frames — {preset.label}
+          {VIDEO_SECONDS_PRESETS.map((seconds) => (
+            <option key={seconds} value={seconds}>
+              {seconds} seconds
             </option>
           ))}
         </select>
       </label>
-      <label className="image-settings__field">
-        <span>Frame rate ({draft.frameRate ?? 24} fps)</span>
-        <input
-          type="range"
-          min={1}
-          max={60}
-          step={1}
-          value={draft.frameRate ?? 24}
-          onChange={(e) => setDraft((d: VideoModelParams) => ({ ...d, frameRate: Number(e.target.value) }))}
-        />
-      </label>
-      <label className="image-settings__field">
-        <span>Inference steps ({draft.numInferenceSteps ?? 20})</span>
-        <input
-          type="range"
-          min={1}
-          max={50}
-          step={1}
-          value={draft.numInferenceSteps ?? 20}
-          onChange={(e) =>
-            setDraft((d: VideoModelParams) => ({ ...d, numInferenceSteps: Number(e.target.value) }))
-          }
-        />
-      </label>
+      {draft.size ? (
+        <label className="image-settings__field">
+          <span>Resolution</span>
+          <input className="select" value={draft.size} readOnly aria-readonly />
+        </label>
+      ) : null}
       <label className="image-settings__field">
         <span>Seed (optional)</span>
         <input type="number" placeholder="Random" value={seedText} onChange={(e) => setSeedText(e.target.value)} />
-      </label>
-      <label className="image-settings__field">
-        <span>Mode (optional)</span>
-        <select
-          className="select"
-          value={draft.mode ?? ""}
-          onChange={(e) =>
-            setDraft((d: VideoModelParams) => ({
-              ...d,
-              mode: e.target.value.trim() ? e.target.value : undefined,
-            }))
-          }
-        >
-          <option value="">Default (text-to-video)</option>
-          <option value="ti2vid">Image-to-video (ti2vid)</option>
-          <option value="keyframes">Keyframe animation</option>
-        </select>
-      </label>
-      <label className="image-settings__field image-settings__field--area">
-        <span>Negative prompt</span>
-        <textarea
-          rows={3}
-          value={draft.negativePrompt ?? ""}
-          onChange={(e) => setDraft((d: VideoModelParams) => ({ ...d, negativePrompt: e.target.value }))}
-        />
       </label>
       <div className="image-settings__actions">
         <button type="button" className="menu__item" onClick={resetDefaults}>

@@ -6,6 +6,20 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.20 — 2026-09-04
+
+### Highlights
+
+- **Fix:** Video generation sends required Agnes API fields (`mode`, `seconds`,
+  `aspect_ratio`, `720P` size) — fixes HTTP 400 “mode is required” on
+  `Agnes-Video-2.5-Flash`
+- **Video settings** bar above the composer (like image quality): mode
+  (text / reference / keyframe), duration 4–12s, aspect ratio, seed — aligned
+  with [Agnes Video 2.5 Flash](https://www.agnes-ai.com/en/docs/agnes-video-25-flash)
+  docs; visible on web chat and desktop when a video model is selected
+- Reference and keyframe modes map composer attachments to `images[]`,
+  `first_frame`, and `last_frame`; polling includes `model_name` for Agnes retrieval
+
 ## 1.0.19 — 2026-09-04
 
 ### Highlights

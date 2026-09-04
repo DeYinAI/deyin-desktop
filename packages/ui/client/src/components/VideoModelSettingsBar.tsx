@@ -15,7 +15,7 @@ export function VideoModelSettingsBar({ providerId, modelId, saved, onChange }: 
     <div className="image-settings-bar video-settings-bar">
       <div className="image-settings-bar__label">
         <Icon name="sliders" size={12} />
-        <span>Agnes video settings</span>
+        <span>Video settings</span>
       </div>
       <VideoModelSettingsMenu
         providerId={providerId}

@@ -1,75 +1,90 @@
 import { modelEffortKey } from "./model-reasoning.js";
 
+/** Agnes POST /v1/videos generation mode. */
+export type VideoGenerationMode = "text" | "keyframe" | "reference";
+
 /** Per-model video generation tuning saved in settings (providerId::modelId key). */
 export interface VideoModelParams {
-  /** Preset aspect ratio; maps to width/height when generating. */
+  /** Output aspect ratio (`aspect_ratio` in the Agnes API). */
   aspectRatio?: string;
-  width?: number;
-  height?: number;
-  numFrames?: number;
-  frameRate?: number;
-  numInferenceSteps?: number;
+  /** Clip length in seconds (4–12); sent as a string in the API body. */
+  seconds?: number;
+  /** Output resolution label; Flash models require `"720P"`. */
+  size?: string;
   seed?: number;
-  negativePrompt?: string;
-  /** Image-to-video / keyframe mode when supported (e.g. keyframes, ti2vid). */
-  mode?: string;
+  /** text = prompt-only; reference = image/audio refs; keyframe = first/last frame. */
+  mode?: VideoGenerationMode | string;
 }
 
+/** Supported `aspect_ratio` values for Agnes Video 2.5 / Flash ([docs](https://www.agnes-ai.com/en/docs/agnes-video-25-flash)). */
 export const VIDEO_ASPECT_PRESETS = [
-  { id: "16:9", label: "16:9 landscape", width: 1152, height: 768 },
-  { id: "9:16", label: "9:16 portrait", width: 768, height: 1152 },
-  { id: "1:1", label: "1:1 square", width: 768, height: 768 },
-  { id: "4:3", label: "4:3 landscape", width: 1024, height: 768 },
-  { id: "3:4", label: "3:4 portrait", width: 768, height: 1024 },
+  { id: "21:9", label: "21:9 ultrawide", pixels: "1680×720" },
+  { id: "16:9", label: "16:9 landscape", pixels: "1280×704" },
+  { id: "4:3", label: "4:3 landscape", pixels: "960×720" },
+  { id: "1:1", label: "1:1 square", pixels: "720×720" },
+  { id: "3:4", label: "3:4 portrait", pixels: "720×960" },
+  { id: "9:16", label: "9:16 portrait", pixels: "720×1280" },
 ] as const;
 
-/** Allowed frame counts for Agnes-style video models (8n+1, max 441). */
-export const VIDEO_FRAME_PRESETS = [
-  { frames: 81, label: "~3s @ 24fps" },
-  { frames: 121, label: "~5s @ 24fps" },
-  { frames: 161, label: "~7s @ 24fps" },
-  { frames: 241, label: "~10s @ 24fps" },
-  { frames: 441, label: "~18s @ 24fps" },
-] as const;
-
-export const DEFAULT_VIDEO_NEGATIVE_PROMPT =
-  "blurry, low quality, distorted, watermark, text overlay, flickering, jittery motion, deformed";
+/** Allowed clip lengths (seconds) for Agnes Video API. */
+export const VIDEO_SECONDS_PRESETS = [4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 
 const AGNES_VIDEO_RE = /agnes-video|agnes.*video/i;
+const AGNES_VIDEO_FLASH_RE = /agnes-video.*flash|agnes.*video.*flash/i;
+
+export function isAgnesVideoModel(modelId: string): boolean {
+  return AGNES_VIDEO_RE.test(modelId);
+}
+
+export function isAgnesVideoFlashModel(modelId: string): boolean {
+  return AGNES_VIDEO_FLASH_RE.test(modelId);
+}
+
+/** Map saved/UI mode strings onto the API enum (includes legacy ti2vid / keyframes). */
+export function normalizeVideoMode(mode?: string | null): VideoGenerationMode | undefined {
+  if (!mode?.trim()) return undefined;
+  const m = mode.trim().toLowerCase();
+  switch (m) {
+    case "text":
+      return "text";
+    case "keyframe":
+    case "keyframes":
+      return "keyframe";
+    case "reference":
+    case "ti2vid":
+    case "i2v":
+    case "image-to-video":
+      return "reference";
+    default:
+      return undefined;
+  }
+}
+
+/** Required by Agnes video API — default text, or reference when reference images are attached. */
+export function resolveVideoGenerationMode(
+  params: VideoModelParams,
+  hasInputImages = false,
+): VideoGenerationMode {
+  const normalized = normalizeVideoMode(params.mode);
+  if (normalized) return normalized;
+  return hasInputImages ? "reference" : "text";
+}
 
 /** Suggested defaults when the user has not saved overrides for this model. */
 export function defaultVideoModelParams(modelId: string): Required<
-  Pick<VideoModelParams, "aspectRatio" | "width" | "height" | "numFrames" | "frameRate" | "negativePrompt">
-> {
-  const agnes = AGNES_VIDEO_RE.test(modelId);
+  Pick<VideoModelParams, "aspectRatio" | "seconds" | "mode">
+> & Pick<VideoModelParams, "size"> {
+  const flash = isAgnesVideoFlashModel(modelId);
   return {
     aspectRatio: "16:9",
-    width: 1152,
-    height: 768,
-    numFrames: agnes ? 121 : 121,
-    frameRate: 24,
-    negativePrompt: DEFAULT_VIDEO_NEGATIVE_PROMPT,
+    seconds: 5,
+    mode: "text",
+    ...(flash || isAgnesVideoModel(modelId) ? { size: "720P" } : {}),
   };
 }
 
 export function videoModelParamsKey(providerId: string, modelId: string): string {
   return modelEffortKey(providerId, modelId);
-}
-
-function resolveDimensions(
-  saved: VideoModelParams | null | undefined,
-  defaults: ReturnType<typeof defaultVideoModelParams>,
-): { width: number; height: number; aspectRatio: string } {
-  const preset = VIDEO_ASPECT_PRESETS.find((p) => p.id === (saved?.aspectRatio ?? defaults.aspectRatio));
-  if (saved?.width != null && saved?.height != null) {
-    return {
-      width: saved.width,
-      height: saved.height,
-      aspectRatio: saved.aspectRatio ?? defaults.aspectRatio,
-    };
-  }
-  if (preset) return { width: preset.width, height: preset.height, aspectRatio: preset.id };
-  return { width: defaults.width, height: defaults.height, aspectRatio: defaults.aspectRatio };
 }
 
 /** Merge saved overrides with model-specific defaults. */
@@ -78,33 +93,54 @@ export function resolveVideoModelParams(
   saved?: VideoModelParams | null,
 ): VideoModelParams {
   const defaults = defaultVideoModelParams(modelId);
-  const dims = resolveDimensions(saved, defaults);
+  const legacy = saved as LegacyVideoModelParams | null | undefined;
+  const seconds =
+    saved?.seconds != null
+      ? clampSeconds(saved.seconds)
+      : legacySecondsFromFrames(legacy?.numFrames) ?? defaults.seconds;
   return {
-    aspectRatio: dims.aspectRatio,
-    width: dims.width,
-    height: dims.height,
-    numFrames: saved?.numFrames ?? defaults.numFrames,
-    frameRate: saved?.frameRate ?? defaults.frameRate,
-    negativePrompt: saved?.negativePrompt ?? defaults.negativePrompt,
-    ...(saved?.numInferenceSteps != null ? { numInferenceSteps: saved.numInferenceSteps } : {}),
+    aspectRatio: saved?.aspectRatio ?? defaults.aspectRatio,
+    seconds,
+    size: saved?.size ?? defaults.size,
+    mode: normalizeVideoMode(saved?.mode) ?? defaults.mode,
     ...(saved?.seed != null ? { seed: saved.seed } : {}),
-    ...(saved?.mode?.trim() ? { mode: saved.mode.trim() } : {}),
   };
 }
 
-/** Map UI/settings fields onto the OpenAI-shaped POST /videos body. */
-export function videoParamsToExtra(params: VideoModelParams): Record<string, unknown> {
-  const extra: Record<string, unknown> = {};
-  if (params.width != null) extra.width = params.width;
-  if (params.height != null) extra.height = params.height;
-  if (params.numFrames != null) extra.num_frames = params.numFrames;
-  if (params.frameRate != null) extra.frame_rate = params.frameRate;
-  if (params.numInferenceSteps != null) extra.num_inference_steps = params.numInferenceSteps;
-  if (params.negativePrompt?.trim()) extra.negative_prompt = params.negativePrompt.trim();
+function clampSeconds(value: number): number {
+  return Math.max(4, Math.min(12, Math.floor(value)));
+}
+
+/** Migrate pre-Agnes settings that stored frame counts instead of seconds. */
+function legacySecondsFromFrames(numFrames?: number): number | undefined {
+  if (numFrames == null || !Number.isFinite(numFrames)) return undefined;
+  return clampSeconds(Math.round(numFrames / 24));
+}
+
+export interface VideoParamsToExtraOptions {
+  /** When > 0 and mode is unset, defaults to `reference`. */
+  inputImageCount?: number;
+  modelId?: string;
+}
+
+/** Map UI/settings fields onto the Agnes/OpenAI-shaped POST /videos body. */
+export function videoParamsToExtra(
+  params: VideoModelParams,
+  opts?: VideoParamsToExtraOptions,
+): Record<string, unknown> {
+  const modelId = opts?.modelId ?? "";
+  const defaults = defaultVideoModelParams(modelId);
+  const mode = resolveVideoGenerationMode(params, (opts?.inputImageCount ?? 0) > 0);
+  const seconds = params.seconds ?? defaults.seconds;
+  const extra: Record<string, unknown> = {
+    mode,
+    seconds: String(clampSeconds(seconds)),
+    aspect_ratio: params.aspectRatio ?? defaults.aspectRatio,
+    n: 1,
+  };
+  const size = params.size ?? defaults.size;
+  if (size) extra.size = size;
   if (params.seed != null) extra.seed = params.seed;
-  if (params.mode?.trim()) {
-    extra.extra_body = { mode: params.mode.trim() };
-  }
   return extra;
 }
 
@@ -118,29 +154,32 @@ export function pickVideoModelParamsRecord(value: unknown): Record<string, Video
     if (typeof raw.aspectRatio === "string" && raw.aspectRatio.trim()) {
       params.aspectRatio = raw.aspectRatio.trim();
     }
-    if (typeof raw.width === "number" && Number.isFinite(raw.width)) {
-      params.width = Math.max(256, Math.min(2048, Math.floor(raw.width)));
+    if (typeof raw.seconds === "number" && Number.isFinite(raw.seconds)) {
+      params.seconds = clampSeconds(raw.seconds);
+    } else if (typeof raw.numFrames === "number" && Number.isFinite(raw.numFrames)) {
+      params.seconds = legacySecondsFromFrames(raw.numFrames);
     }
-    if (typeof raw.height === "number" && Number.isFinite(raw.height)) {
-      params.height = Math.max(256, Math.min(2048, Math.floor(raw.height)));
-    }
-    if (typeof raw.numFrames === "number" && Number.isFinite(raw.numFrames)) {
-      params.numFrames = Math.max(9, Math.min(441, Math.floor(raw.numFrames)));
-    }
-    if (typeof raw.frameRate === "number" && Number.isFinite(raw.frameRate)) {
-      params.frameRate = Math.max(1, Math.min(60, raw.frameRate));
-    }
-    if (typeof raw.numInferenceSteps === "number" && Number.isFinite(raw.numInferenceSteps)) {
-      params.numInferenceSteps = Math.max(1, Math.min(50, Math.floor(raw.numInferenceSteps)));
+    if (typeof raw.size === "string" && raw.size.trim()) {
+      params.size = raw.size.trim();
     }
     if (typeof raw.seed === "number" && Number.isFinite(raw.seed)) {
       params.seed = Math.floor(raw.seed);
     }
-    if (typeof raw.negativePrompt === "string" && raw.negativePrompt.trim()) {
-      params.negativePrompt = raw.negativePrompt.trim();
+    if (typeof raw.mode === "string" && raw.mode.trim()) {
+      const normalized = normalizeVideoMode(raw.mode);
+      if (normalized) params.mode = normalized;
     }
-    if (typeof raw.mode === "string" && raw.mode.trim()) params.mode = raw.mode.trim();
     if (Object.keys(params).length > 0) clean[key] = params;
   }
   return clean;
+}
+
+/** @deprecated Legacy field kept for settings migration only. */
+export interface LegacyVideoModelParams extends VideoModelParams {
+  width?: number;
+  height?: number;
+  numFrames?: number;
+  frameRate?: number;
+  numInferenceSteps?: number;
+  negativePrompt?: string;
 }

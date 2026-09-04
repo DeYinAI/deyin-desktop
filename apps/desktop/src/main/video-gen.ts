@@ -21,24 +21,23 @@ export async function runVideoGeneration(
 ): Promise<VideoGenerateResult> {
   const token = await routing.getToken();
   if (token === null) throw new Error("Signed out — sign in to Openference to generate videos.");
-  const extra = videoParamsToExtra({
-    aspectRatio: req.aspectRatio,
-    width: req.width,
-    height: req.height,
-    numFrames: req.numFrames,
-    frameRate: req.frameRate,
-    numInferenceSteps: req.numInferenceSteps,
-    negativePrompt: req.negativePrompt,
-    seed: req.seed,
-    mode: req.mode,
-  });
+  const extra = videoParamsToExtra(
+    {
+      aspectRatio: req.aspectRatio,
+      seconds: req.seconds,
+      size: req.size,
+      seed: req.seed,
+      mode: req.mode,
+    },
+    { inputImageCount: req.inputImages?.length ?? 0, modelId: req.model },
+  );
   const generated = await generateVideo({
     apiBaseUrl: routing.apiBaseUrl,
     token,
     model: req.model,
     prompt: req.prompt,
     inputImages: req.inputImages,
-    ...(Object.keys(extra).length > 0 ? { extra } : {}),
+    extra,
     ...(req.signal ? { signal: req.signal } : {}),
   });
   const saved = store.save(req.threadId, { base64: generated.base64, mediaType: generated.mediaType });
