@@ -16,6 +16,7 @@ interface FileChangeLike {
   path: string;
   before: string;
   after: string;
+  operation?: "write" | "edit" | "delete";
 }
 
 /** Per-thread queue of file mutations awaiting user review. */
@@ -48,7 +49,12 @@ export class PendingReviewQueue {
   ): Promise<Outcome> {
     if (!reviewEnabled) {
       await applyFileMutationDirect(request);
-      onApplied({ path: request.path, before: request.before, after: request.after });
+      onApplied({
+        path: request.path,
+        before: request.before,
+        after: request.after,
+        operation: request.operation,
+      });
       return "applied";
     }
 
@@ -154,6 +160,7 @@ export class PendingReviewQueue {
         path: entry.request.path,
         before: entry.request.before,
         after: entry.request.after,
+        operation: entry.request.operation,
       });
       entry.resolve("applied");
     } catch {

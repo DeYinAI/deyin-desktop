@@ -175,6 +175,7 @@ const api: DeyinApi = {
 agent: {
  start: (options) => ipcRenderer.invoke(CH.agentStart, options),
  stop: (threadId) => ipcRenderer.send(CH.agentStop, threadId),
+ resetSession: (threadId) => ipcRenderer.invoke(CH.agentResetSession, threadId),
  approve: (requestId, decision) => ipcRenderer.send(CH.agentApprove, requestId, decision),
  answerQuestion: (requestId, answers) => ipcRenderer.send(CH.agentAnswerQuestion, requestId, answers),
  disposeShell: (threadId) => ipcRenderer.send(CH.agentDisposeShell, threadId),
@@ -184,6 +185,14 @@ agent: {
  return () => ipcRenderer.removeListener(CH.agentEvent, listener);
  },
  },
+  checkpoints: {
+    revertRun: (threadId, checkpointId) =>
+      ipcRenderer.invoke(CH.checkpointsRevertRun, threadId, checkpointId),
+    revertFile: (threadId, checkpointId, path) =>
+      ipcRenderer.invoke(CH.checkpointsRevertFile, threadId, checkpointId, path),
+    revertAfterEvent: (threadId, eventIndex, events) =>
+      ipcRenderer.invoke(CH.checkpointsRevertAfterEvent, threadId, eventIndex, events),
+  },
   browserControl: {
     register: (webContentsId) => ipcRenderer.send(CH.browserRegister, webContentsId),
     syncTab: (webContentsId, url, title) => ipcRenderer.send(CH.browserTabSync, webContentsId, url, title),

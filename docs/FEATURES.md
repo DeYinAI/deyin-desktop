@@ -34,6 +34,12 @@ functional specification the apps are built against; it contains no third-party 
 - Goal mode: set a verifiable objective; the agent iterates until it reports the goal met.
 - Change review: file edits are presented as a reviewable diff before they are applied
   (Settings → Change review, or automatically in Ask before changes mode).
+- **Checkpoints & revert**: each agent run records full before/after snapshots on disk
+  (including files too large for the Diff tab). After a stop you can **Revert changes**
+  on the run divider, **Undo** an individual file card, or **Edit** a user message to
+  truncate history, revert downstream file changes, and resend. Reverts are atomic with
+  a rollback journal if any write fails; blocked while a run is active or review queue
+  is pending.
 
 ## LobeHub-inspired UX checklist (interaction polish)
 

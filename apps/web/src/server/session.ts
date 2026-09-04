@@ -2,7 +2,8 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { GitWatcher, generateImages, generateVideo, git as gitService, imageDataUrl, imageParamsToExtra, isValidArtifactUserSub, modelImageCapability, runGit, videoDataUrl, videoParamsToExtra } from "@deyin/host-core";
+import { GitWatcher, generateImages, generateVideo, git as gitService, imageDataUrl, imageParamsToExtra, isValidArtifactUserSub, modelImageCapability, runGit, videoDataUrl, videoParamsToExtra, revertCheckpoint, revertCheckpoints, assertInsideRoot } from "@deyin/host-core";
+import type { CheckpointFileOps } from "@deyin/host-core";
 import type { ClientMessage, ServerMessage } from "@deyin/contract/web";
 import { SessionHost } from "./host.js";
 import { WebAgentHost, type WebAgentStartOptions } from "./agent-host.js";
@@ -156,6 +157,10 @@ export class Session {
         case "agent.stop":
           this.agentHost.stop(msg.threadId);
           break;
+        case "agent.resetSession":
+          this.agentHost.resetSession(msg.threadId);
+          this.send({ type: "reply", id: msg.id, ok: true, result: undefined });
+          break;
         case "agent.disposeShell":
           this.agentHost.disposeShell(msg.threadId);
           break;
@@ -165,6 +170,36 @@ export class Session {
         case "agent.answer":
           this.agentHost.answerQuestion(msg.requestId, msg.answers);
           break;
+        case "checkpoints.revertRun": {
+          const result = await this.revertCheckpoint(msg.threadId, msg.checkpointId);
+          this.send({ type: "reply", id: msg.id, ok: true, result });
+          break;
+        }
+        case "checkpoints.revertFile": {
+          const result = await this.revertCheckpoint(msg.threadId, msg.checkpointId, msg.path);
+          this.send({ type: "reply", id: msg.id, ok: true, result });
+          break;
+        }
+        case "checkpoints.revertAfterEvent": {
+          const store = this.agentHost.getCheckpointStore();
+          const result = await revertCheckpoints(
+            store,
+            store.getStorage(),
+            this.checkpointFileOps(),
+            msg.threadId,
+            msg.checkpointIds,
+            { isAgentRunning: (threadId) => this.agentHost!.isRunning(threadId) },
+          );
+          if (result.ok && msg.checkpointIds.length > 0) {
+            const drop = new Set(msg.checkpointIds);
+            const keep = new Set(
+              store.list(msg.threadId).map((e) => e.checkpointId).filter((id) => !drop.has(id)),
+            );
+            await store.pruneCheckpoints(msg.threadId, keep);
+          }
+          this.send({ type: "reply", id: msg.id, ok: true, result });
+          break;
+        }
         case "git.call": {
           const result = await this.dispatchGit(msg.op, msg.args);
           this.send({ type: "reply", id: msg.id, ok: true, result });
@@ -248,24 +283,23 @@ export class Session {
         }
         case "videos.generate": {
           if (!this.artifacts) throw new Error("Session not ready.");
-          const extra = videoParamsToExtra({
-            aspectRatio: msg.aspectRatio,
-            width: msg.width,
-            height: msg.height,
-            numFrames: msg.numFrames,
-            frameRate: msg.frameRate,
-            numInferenceSteps: msg.numInferenceSteps,
-            negativePrompt: msg.negativePrompt,
-            seed: msg.seed,
-            mode: msg.mode,
-          });
+          const extra = videoParamsToExtra(
+            {
+              aspectRatio: msg.aspectRatio,
+              seconds: msg.seconds,
+              size: msg.size,
+              seed: msg.seed,
+              mode: msg.mode,
+            },
+            { inputImageCount: msg.inputImages?.length ?? 0, modelId: msg.model },
+          );
           const generated = await generateVideo({
             apiBaseUrl: msg.provider.baseUrl,
             token: msg.provider.token,
             model: msg.model,
             prompt: msg.prompt,
             inputImages: msg.inputImages,
-            ...(Object.keys(extra).length > 0 ? { extra } : {}),
+            extra,
           });
           const saved = this.artifacts.videos.save(msg.threadId, {
             base64: generated.base64,
@@ -377,6 +411,44 @@ export class Session {
 
   private authArgs(): string[] {
     return this.repo?.authArgs() ?? [];
+  }
+
+  private checkpointFileOps(): CheckpointFileOps {
+    const host = this.host!;
+    const root = host.root;
+    return {
+      readText: (path) => host.read(path),
+      writeText: (path, content) => host.write(path, content),
+      delete: async (path) => {
+        const safe = assertInsideRoot(root, path);
+        const { unlink } = await import("node:fs/promises");
+        await unlink(safe).catch(() => undefined);
+      },
+      exists: async (path) => {
+        try {
+          const safe = assertInsideRoot(root, path);
+          const { access } = await import("node:fs/promises");
+          await access(safe);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      resolveInsideRoot: async (path) => assertInsideRoot(root, path),
+    };
+  }
+
+  private async revertCheckpoint(threadId: string, checkpointId: string, path?: string) {
+    const store = this.agentHost!.getCheckpointStore();
+    return revertCheckpoint(
+      store,
+      store.getStorage(),
+      this.checkpointFileOps(),
+      threadId,
+      checkpointId,
+      { isAgentRunning: (id) => this.agentHost!.isRunning(id) },
+      path ? { paths: [path] } : undefined,
+    );
   }
 
   dispose(): void {

@@ -103,6 +103,7 @@ export type {
   ResolvedContextFile,
   PendingChange,
   ReviewMode,
+  RevertResult,
   ThreadGoal,
   GitLogEntry,
   McpAuthMode,
@@ -266,13 +267,9 @@ export interface ImageGenerateResult {
 /** Tunable parameters for text-to-video models (Agnes Video, etc.). */
 export interface VideoModelParams {
   aspectRatio?: string;
-  width?: number;
-  height?: number;
-  numFrames?: number;
-  frameRate?: number;
-  numInferenceSteps?: number;
+  seconds?: number;
+  size?: string;
   seed?: number;
-  negativePrompt?: string;
   mode?: string;
 }
 
@@ -283,13 +280,9 @@ export interface VideoGenerateRequest {
   model: string;
   providerId?: string;
   aspectRatio?: string;
-  width?: number;
-  height?: number;
-  numFrames?: number;
-  frameRate?: number;
-  numInferenceSteps?: number;
+  seconds?: number;
+  size?: string;
   seed?: number;
-  negativePrompt?: string;
   mode?: string;
   /** Reference images for image-to-video. */
   inputImages?: AgentImageInput[];

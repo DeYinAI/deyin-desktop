@@ -14,6 +14,8 @@ import {
   type MemoryStore,
   type SettingsStore,
   type TerminalManager,
+  type CheckpointStore,
+  inferCheckpointOperation,
 } from "@deyin/host-core";
 import {
   PermissionEngine,
@@ -186,6 +188,8 @@ export interface AgentHostOptions {
   memory: MemoryStore;
   /** Shared change-review queue (review mode) — also surfaced over IPC. */
   review: PendingReviewQueue;
+  /** Durable file mutation checkpoints for revert / edit-and-resend. */
+  checkpoints: CheckpointStore;
   /** Native OAuth provider store for MCP modules (token-backed connections). */
   mcpAuth?: McpAuthBridge;
   /** Security scan findings store (wraps MCP security tools after connect). */
@@ -498,6 +502,35 @@ export class DesktopAgentHost {
       session.shell = undefined;
     }
     session.shellAnnounced = false;
+  }
+
+  /**
+   * Drop the in-memory agent session so the next start rebuilds history from the
+   * UI timeline (edit-and-resend / truncate).
+   */
+  resetSession(threadId: string): void {
+    this.stop(threadId);
+    this.sessions.delete(threadId);
+    this.disposeShell(threadId);
+  }
+
+  private recordFileCheckpoint(
+    threadId: string,
+    runId: string,
+    change: { path: string; before: string; after: string; operation?: "write" | "edit" | "delete" },
+  ): void {
+    void this.opts.checkpoints
+      .record(threadId, runId, {
+        path: change.path,
+        before: change.before,
+        after: change.after,
+        operation: change.operation ?? inferCheckpointOperation(change.before, change.after),
+      })
+      .catch((err: unknown) => {
+        console.warn(
+          `[deyin] checkpoint record failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 
   disposeAllShells(): void {
@@ -983,6 +1016,12 @@ export class DesktopAgentHost {
           wcId,
           (change) => this.send(options.threadId, { type: "pending-change", change }),
           (change) => {
+            this.recordFileCheckpoint(options.threadId, active.runId, {
+              path: change.path,
+              before: change.before,
+              after: change.after,
+              operation: change.operation,
+            });
             this.send(options.threadId, {
               type: "file-change",
               path: change.path,
@@ -1171,6 +1210,7 @@ export class DesktopAgentHost {
               });
               break;
             case "file-change": {
+              this.recordFileCheckpoint(options.threadId, active.runId, event.change);
               // Feeds the renderer's diff view; huge files ship without content
               // (the card still shows, the diff falls back to empty).
               const oversized =
@@ -1666,7 +1706,7 @@ export class DesktopAgentHost {
         entry.result = { output: "(background task failed)", exitCode: null };
       })
       .finally(() => {
-        const timer = setTimeout(() => this.backgroundTasks.delete(taskId), AgentHost.BACKGROUND_TASK_TTL_MS);
+        const timer = setTimeout(() => this.backgroundTasks.delete(taskId), DesktopAgentHost.BACKGROUND_TASK_TTL_MS);
         timer.unref?.();
       });
   }

@@ -823,12 +823,42 @@ export function createBrowserTransport(): DeyinApi {
         }));
       },
       stop: (threadId) => host.fireAndForget({ type: "agent.stop", threadId }),
+      resetSession: (threadId) =>
+        host.invoke<void>((id) => ({ type: "agent.resetSession", id, threadId })),
       approve: (requestId, decision) =>
         host.fireAndForget({ type: "agent.approve", requestId, decision }),
       answerQuestion: (requestId, answers) =>
         host.fireAndForget({ type: "agent.answer", requestId, answers }),
       disposeShell: (threadId) => host.fireAndForget({ type: "agent.disposeShell", threadId }),
       onEvent: (cb: (envelope: AgentEventEnvelope) => void) => host.onAgentEvent(cb),
+    },
+    checkpoints: {
+      revertRun: (threadId, checkpointId) =>
+        host.invoke<import("@deyin/contract").RevertResult>((id) => ({
+          type: "checkpoints.revertRun",
+          id,
+          threadId,
+          checkpointId,
+        })),
+      revertFile: (threadId, checkpointId, path) =>
+        host.invoke<import("@deyin/contract").RevertResult>((id) => ({
+          type: "checkpoints.revertFile",
+          id,
+          threadId,
+          checkpointId,
+          path,
+        })),
+      revertAfterEvent: async (threadId, eventIndex, events) => {
+        const { checkpointIdsFromEventsAfterIndex } = await import("@deyin/host-core/shared");
+        const ids = checkpointIdsFromEventsAfterIndex(events ?? [], eventIndex);
+        return host.invoke<import("@deyin/contract").RevertResult>((id) => ({
+          type: "checkpoints.revertAfterEvent",
+          id,
+          threadId,
+          eventIndex,
+          checkpointIds: ids,
+        }));
+      },
     },
     context: {
       search: async () => [],
@@ -999,24 +1029,23 @@ export function createBrowserTransport(): DeyinApi {
           authHeader: provider?.authHeader,
         };
         if (CHAT_ONLY) {
-          const extra = videoParamsToExtra({
-            aspectRatio: request.aspectRatio,
-            width: request.width,
-            height: request.height,
-            numFrames: request.numFrames,
-            frameRate: request.frameRate,
-            numInferenceSteps: request.numInferenceSteps,
-            negativePrompt: request.negativePrompt,
-            seed: request.seed,
-            mode: request.mode,
-          });
+          const extra = videoParamsToExtra(
+            {
+              aspectRatio: request.aspectRatio,
+              seconds: request.seconds,
+              size: request.size,
+              seed: request.seed,
+              mode: request.mode,
+            },
+            { inputImageCount: request.inputImages?.length ?? 0, modelId: request.model },
+          );
           const generated = await generateVideo({
             apiBaseUrl: routing.baseUrl,
             token: routing.token,
             model: request.model,
             prompt: request.prompt,
             inputImages: request.inputImages,
-            ...(Object.keys(extra).length > 0 ? { extra } : {}),
+            extra,
           });
           const saved = await saveBrowserVideo(request.threadId, {
             base64: generated.base64,
@@ -1031,13 +1060,9 @@ export function createBrowserTransport(): DeyinApi {
           prompt: request.prompt,
           model: request.model,
           aspectRatio: request.aspectRatio,
-          width: request.width,
-          height: request.height,
-          numFrames: request.numFrames,
-          frameRate: request.frameRate,
-          numInferenceSteps: request.numInferenceSteps,
+          seconds: request.seconds,
+          size: request.size,
           seed: request.seed,
-          negativePrompt: request.negativePrompt,
           mode: request.mode,
           inputImages: request.inputImages,
           provider: routing,

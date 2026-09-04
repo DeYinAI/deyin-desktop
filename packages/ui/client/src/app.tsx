@@ -318,6 +318,9 @@ export function App() {
   const [compactionNoticeByThread, setCompactionNoticeByThread] = useState<Record<string, string | null>>({});
   /** Interrupt-and-send: start this prompt once the current run's `done` arrives (per thread). */
   const pendingSendNowByThreadRef = useRef<Record<string, { text: string; mode: ChatMode }>>({});
+  /** Edit-and-resend: truncate at this user event index on the next send. */
+  const pendingEditRef = useRef<{ threadId: string; eventIndex: number } | null>(null);
+  const [reverting, setReverting] = useState(false);
   /** After the 3s stop watchdog force-clears, ignore the late `done` event. */
   const stopWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** In-flight plain-chat aborts, keyed by thread (parallel chats each own one). */
@@ -1108,19 +1111,71 @@ export function App() {
     [appendEvents, chatOnlyHosted, openPanelTab, updateThread],
   );
 
-  /** Restore the pre-change content of a file card (uses the tracked diff). */
+  const showRevertToast = useCallback((result: import("@deyin/contract").RevertResult) => {
+    if (!activeThreadIdRef.current) return;
+    const msg = result.ok
+      ? `Reverted ${result.revertedPaths.length} file(s)`
+      : result.error ?? "Revert failed — no files were changed";
+    setCompactionNoticeByThread((cur) => ({ ...cur, [activeThreadIdRef.current!]: msg }));
+    setTimeout(() => {
+      setCompactionNoticeByThread((cur) => {
+        if (cur[activeThreadIdRef.current!] !== msg) return cur;
+        const next = { ...cur };
+        delete next[activeThreadIdRef.current!];
+        return next;
+      });
+    }, 4000);
+  }, []);
+
   const undoFileChange = useCallback(
-    (name: string) => {
-      if (!activeThreadId) return;
-      const cur = diffByThread[activeThreadId];
-      if (cur && cur.fileName === name) {
-        void window.deyin.files
-          .write(cur.fileName, cur.before)
-          .catch((err: unknown) => console.warn("undo failed", err));
-        setDiffForThread(activeThreadId, null);
+    async (path: string, checkpointId: string) => {
+      if (!activeThreadId || !window.deyin.checkpoints) return;
+      setReverting(true);
+      try {
+        const result = await window.deyin.checkpoints.revertFile(activeThreadId, checkpointId, path);
+        showRevertToast(result);
+        if (result.ok) setDiffForThread(activeThreadId, null);
+      } finally {
+        setReverting(false);
       }
     },
-    [activeThreadId, diffByThread, setDiffForThread],
+    [activeThreadId, setDiffForThread, showRevertToast],
+  );
+
+  const revertRunChanges = useCallback(
+    async (checkpointId: string) => {
+      if (!activeThreadId || !window.deyin.checkpoints) return;
+      setReverting(true);
+      try {
+        const result = await window.deyin.checkpoints.revertRun(activeThreadId, checkpointId);
+        showRevertToast(result);
+        if (result.ok) setDiffForThread(activeThreadId, null);
+      } finally {
+        setReverting(false);
+      }
+    },
+    [activeThreadId, setDiffForThread, showRevertToast],
+  );
+
+  const editMessageAtEvent = useCallback(
+    (eventIndex: number) => {
+      if (!activeThreadId || chatOnlyHosted) return;
+      const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === activeThreadId);
+      const event = thread?.events[eventIndex];
+      if (!event || event.kind !== "user") return;
+      pendingEditRef.current = { threadId: activeThreadId, eventIndex };
+      composerRef.current?.setDraft({
+        input: event.text,
+        attachments: event.attachments ?? [],
+        linked: (event.linkedThreadIds ?? []).map((threadId) => ({
+          threadId,
+          title:
+            projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId)?.title ?? "thread",
+        })),
+      });
+      setComposerFocus((n) => n + 1);
+    },
+    [activeThreadId, chatOnlyHosted],
   );
 
   /**
@@ -1692,10 +1747,12 @@ export function App() {
       const runModel = meta?.model ?? threadModelId;
       let agentPrompt = text;
       if (agentStateStore.isRunning(thread.id)) return;
-      const isFirstMessage = toChatMessages(thread.events).length === 0;
+      const liveThread =
+        projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === thread.id) ?? thread;
+      const isFirstMessage = toChatMessages(liveThread.events).length === 0;
       appendEvents(thread.id, [
         { kind: "user", text: meta?.displayText ?? text, attachments, linkedThreadIds },
- ]);
+      ]);
       const runId = agentStateStore.startRun(thread.id, mode);
       try {
         const refs = dedupeContextRefs(attachments.map((a) => ({ kind: a.kind, path: a.path })));
@@ -1710,6 +1767,8 @@ export function App() {
       if (!thread.model || thread.providerId !== runProviderId) {
         updateThread(thread.id, { model: runModel, providerId: runProviderId });
       }
+      const historyThread =
+        projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === thread.id) ?? liveThread;
       window.deyin.agent.start({
         threadId: thread.id,
         runId,
@@ -1720,7 +1779,7 @@ export function App() {
         ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, runProviderId, runModel),
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
-        history: toChatMessages(thread.events),
+        history: toChatMessages(historyThread.events),
         initialTodos: thread.todos,
         goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
         images: meta?.images,
@@ -1965,6 +2024,31 @@ const continueFromStepLimit = useCallback(() => {
 
     const thread = activeThread ?? ensureThread();
 
+    const pendingEdit = pendingEditRef.current;
+    if (pendingEdit?.threadId === thread.id && window.deyin.checkpoints && window.deyin.agent.resetSession) {
+      pendingEditRef.current = null;
+      const liveThread =
+        projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === thread.id) ?? thread;
+      setReverting(true);
+      try {
+        const result = await window.deyin.checkpoints.revertAfterEvent(
+          thread.id,
+          pendingEdit.eventIndex,
+          liveThread.events,
+        );
+        showRevertToast(result);
+        const truncated = liveThread.events.slice(0, pendingEdit.eventIndex);
+        updateThread(thread.id, {
+          events: truncated,
+          ...(truncated.every((e) => e.kind !== "plan-ready") ? { planMarkdown: undefined, planFilePath: undefined, planApproved: undefined } : {}),
+          ...(truncated.every((e) => e.kind !== "page-ready") ? { pageTitle: undefined, pageFileName: undefined } : {}),
+        });
+        await window.deyin.agent.resetSession(thread.id);
+      } finally {
+        setReverting(false);
+      }
+    }
+
     const { providerId: runProviderId, modelId: runModelId } = resolveThreadModel(thread);
 
     // While this thread's run is active, Enter/Send queues the follow-up (Cursor-like).
@@ -2088,12 +2172,8 @@ const continueFromStepLimit = useCallback(() => {
           model: directVideoModelId,
           providerId: runProviderId,
           aspectRatio: videoParams.aspectRatio,
-          width: videoParams.width,
-          height: videoParams.height,
-          numFrames: videoParams.numFrames,
-          frameRate: videoParams.frameRate,
-          numInferenceSteps: videoParams.numInferenceSteps,
-          negativePrompt: videoParams.negativePrompt,
+          seconds: videoParams.seconds,
+          size: videoParams.size,
           seed: videoParams.seed,
           mode: videoParams.mode,
           inputImages,
@@ -2208,12 +2288,8 @@ const continueFromStepLimit = useCallback(() => {
           model: runModelId,
           providerId: runProviderId,
           aspectRatio: videoParams.aspectRatio,
-          width: videoParams.width,
-          height: videoParams.height,
-          numFrames: videoParams.numFrames,
-          frameRate: videoParams.frameRate,
-          numInferenceSteps: videoParams.numInferenceSteps,
-          negativePrompt: videoParams.negativePrompt,
+          seconds: videoParams.seconds,
+          size: videoParams.size,
           seed: videoParams.seed,
           mode: videoParams.mode,
         });
@@ -2735,6 +2811,10 @@ const continueFromStepLimit = useCallback(() => {
                 workspaceRoot={workspaceRoot}
                 homeDir={boot?.homeDir ?? null}
                 onUndo={chatOnlyHosted ? noop : undoFileChange}
+                onRevertRun={chatOnlyHosted ? undefined : revertRunChanges}
+                onEditMessage={chatOnlyHosted ? undefined : editMessageAtEvent}
+                agentRunning={agentRunState?.running ?? false}
+                reverting={reverting}
                 onBuild={chatOnlyHosted ? undefined : buildFromPlan}
                 canBuildPlan={chatOnlyHosted ? false : planCardBuildable}
                 planMarkdown={chatOnlyHosted ? null : (activeThread?.planMarkdown ?? null)}

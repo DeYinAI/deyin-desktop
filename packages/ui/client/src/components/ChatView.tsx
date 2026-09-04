@@ -48,7 +48,11 @@ interface ChatViewProps {
   onOpenWorkspaceFile?: (path: string) => void;
   workspaceRoot?: string | null;
   homeDir?: string | null;
-  onUndo: (name: string) => void;
+  onUndo: (path: string, checkpointId: string) => void;
+  onRevertRun?: (checkpointId: string) => void;
+  onEditMessage?: (eventIndex: number) => void;
+  agentRunning?: boolean;
+  reverting?: boolean;
   /** Plan-ready card actions (plan mode). */
   onBuild?: () => void;
   onOpenPlan?: () => void;
@@ -186,6 +190,8 @@ export function ChatView(props: ChatViewProps) {
               onOpenAgentTerminal={props.onOpenAgentTerminal}
               onOpenFile={props.onOpenFile}
               onUndo={props.onUndo}
+              agentRunning={props.agentRunning}
+              reverting={props.reverting}
               codeDisplay={props.codeDisplay}
             />
           ) : (
@@ -200,6 +206,10 @@ export function ChatView(props: ChatViewProps) {
               workspaceRoot={props.workspaceRoot}
               homeDir={props.homeDir}
               onUndo={props.onUndo}
+              onRevertRun={props.onRevertRun}
+              onEditMessage={props.onEditMessage}
+              agentRunning={props.agentRunning}
+              reverting={props.reverting}
               onBuild={props.onBuild}
               onOpenPlan={props.onOpenPlan}
               onOpenPreview={props.onOpenPreview}
@@ -330,13 +340,17 @@ function ActivityBlock({
   onOpenAgentTerminal,
   onOpenFile,
   onUndo,
+  agentRunning,
+  reverting,
   codeDisplay,
 }: {
   items: ThreadEvent[];
   compact?: boolean;
   onOpenAgentTerminal?: () => void;
   onOpenFile: (path: string) => void;
-  onUndo: (name: string) => void;
+  onUndo: (path: string, checkpointId: string) => void;
+  agentRunning?: boolean;
+  reverting?: boolean;
   codeDisplay: ChatCodeDisplay;
 }) {
   return (
@@ -348,6 +362,8 @@ function ActivityBlock({
         onOpenAgentTerminal={onOpenAgentTerminal}
         onOpenFile={onOpenFile}
         onUndo={onUndo}
+        agentRunning={agentRunning}
+        reverting={reverting}
         codeDisplay={codeDisplay}
       />
     </div>
@@ -398,6 +414,8 @@ function ActivityGroup({
   onOpenAgentTerminal,
   onOpenFile,
   onUndo,
+  agentRunning,
+  reverting,
   codeDisplay,
 }: {
   events: Extract<ThreadEvent, { kind: "tool" }>[];
@@ -405,7 +423,9 @@ function ActivityGroup({
   reasonings?: Extract<ThreadEvent, { kind: "reasoning" }>[];
   onOpenAgentTerminal?: () => void;
   onOpenFile: (path: string) => void;
-  onUndo: (name: string) => void;
+  onUndo: (path: string, checkpointId: string) => void;
+  agentRunning?: boolean;
+  reverting?: boolean;
   codeDisplay: ChatCodeDisplay;
 }) {
   const [open, setOpen] = useState(false);
@@ -445,7 +465,15 @@ function ActivityGroup({
             ),
           )}
           {files.map((file, i) => (
-            <FileCard key={`file-${i}`} event={file} codeDisplay={codeDisplay} onOpenFile={onOpenFile} onUndo={onUndo} />
+            <FileCard
+              key={`file-${i}`}
+              event={file}
+              codeDisplay={codeDisplay}
+              onOpenFile={onOpenFile}
+              onUndo={onUndo}
+              agentRunning={agentRunning}
+              reverting={reverting}
+            />
           ))}
         </div>
       )}
@@ -505,6 +533,10 @@ function EventRow({
   workspaceRoot,
   homeDir,
   onUndo,
+  onRevertRun,
+  onEditMessage,
+  agentRunning,
+  reverting,
   onBuild,
   onOpenPlan,
   onOpenPreview,
@@ -527,7 +559,11 @@ function EventRow({
   onOpenWorkspaceFile?: (path: string) => void;
   workspaceRoot?: string | null;
   homeDir?: string | null;
-  onUndo: (name: string) => void;
+  onUndo: (path: string, checkpointId: string) => void;
+  onRevertRun?: (checkpointId: string) => void;
+  onEditMessage?: (eventIndex: number) => void;
+  agentRunning?: boolean;
+  reverting?: boolean;
   onBuild?: () => void;
   onOpenPlan?: () => void;
   onOpenPreview?: () => void;
@@ -557,7 +593,7 @@ function EventRow({
         chips.push(`# ${threadTitles?.[id] ?? "thread"}`);
       }
       return (
-        <div className="bubble-row">
+        <div className="bubble-row bubble-row--user">
           <div className="bubble bubble--user">
             {chips.length > 0 && (
               <div className="bubble__chips">
@@ -568,6 +604,19 @@ function EventRow({
             )}
             {event.text}
           </div>
+          {onEditMessage && !agentRunning && (
+            <div className="assistant-message__actions">
+              <button
+                type="button"
+                className="assistant-message__action"
+                onClick={() => onEditMessage(eventIndex)}
+                title={t("chat.editMessage")}
+                aria-label={t("chat.editMessage")}
+              >
+                <Icon name="pencil" size={14} />
+              </button>
+            </div>
+          )}
         </div>
       );
     }
@@ -621,7 +670,16 @@ function EventRow({
       return <TodoCard event={event} />;
 
     case "file":
-      return <FileCard event={event} codeDisplay={codeDisplay} onOpenFile={onOpenFile} onUndo={onUndo} />;
+      return (
+        <FileCard
+          event={event}
+          codeDisplay={codeDisplay}
+          onOpenFile={onOpenFile}
+          onUndo={onUndo}
+          agentRunning={agentRunning}
+          reverting={reverting}
+        />
+      );
 
     case "model-switch":
       return (
@@ -684,9 +742,43 @@ function EventRow({
                 {t("chat.continue")}
               </button>
             )}
+            {event.revertable && event.checkpointId && onRevertRun && !agentRunning && (
+              <button
+                type="button"
+                className="chip chip--small"
+                disabled={reverting}
+                onClick={() => onRevertRun(event.checkpointId!)}
+              >
+                <Icon name="undo" size={11} />
+                {reverting ? t("chat.revertInProgress") : t("chat.revertRun")}
+              </button>
+            )}
           </span>
           <span className="divider-note__line" />
         </div>
+        );
+      }
+      if (event.label === "Run stopped" && event.revertable && event.checkpointId && onRevertRun) {
+        return (
+          <div className="divider-note">
+            <span className="divider-note__line" />
+            <span className="divider-note__label">
+              <Icon name="clock" size={12} />
+              {event.label}
+              {!agentRunning && (
+                <button
+                  type="button"
+                  className="chip chip--small"
+                  disabled={reverting}
+                  onClick={() => onRevertRun(event.checkpointId!)}
+                >
+                  <Icon name="undo" size={11} />
+                  {reverting ? t("chat.revertInProgress") : t("chat.revertRun")}
+                </button>
+              )}
+            </span>
+            <span className="divider-note__line" />
+          </div>
         );
       }
       return <StatusLine icon={statusIconForLabel(event.label)} label={event.label} />;
@@ -1283,12 +1375,18 @@ function ShellCard({
 function FileCard({
   event,
   onOpenFile,
+  onUndo,
+  agentRunning,
+  reverting,
 }: {
   event: Extract<ThreadEvent, { kind: "file" }>;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
-  onUndo: (name: string) => void;
+  onUndo: (path: string, checkpointId: string) => void;
+  agentRunning?: boolean;
+  reverting?: boolean;
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const snippet = event.snippet ?? [];
   const hasSnippet = snippet.length > 0;
@@ -1319,6 +1417,17 @@ function FileCard({
         <button type="button" className="file-card__review" onClick={() => onOpenFile(openTarget)}>
           Review
         </button>
+        {event.checkpointId && !agentRunning && (
+          <button
+            type="button"
+            className="file-card__review"
+            disabled={reverting}
+            onClick={() => onUndo(openTarget, event.checkpointId!)}
+            title={t("chat.undoFile")}
+          >
+            {reverting ? t("chat.revertInProgress") : t("chat.undoFile")}
+          </button>
+        )}
       </div>
       {hasSnippet && open && (
         <div className="file-card__diff">

@@ -170,7 +170,7 @@ export type ThreadEvent =
   /** Timeline note for the /goal command; text null = goal cleared. */
   | { kind: "goal-set"; text: string | null }
   | { kind: "skill"; name: string }
-  | { kind: "thought"; label: string }
+  | { kind: "thought"; label: string; checkpointId?: string; revertable?: boolean }
   | { kind: "worked"; actions: number; seconds?: number }
   | {
       kind: "tool";
@@ -280,6 +280,28 @@ export interface ThreadGoal {
   reportedAt?: string;
   /** Last report_goal_met reason. */
   reason?: string;
+}
+
+/* Checkpoint revert ----------------------------------------------------------- */
+
+/** One applied file mutation recorded for undo / checkpoint revert. */
+export interface FileCheckpointEntry {
+  path: string;
+  operation: "write" | "edit" | "delete";
+  before: string;
+  after: string;
+  checkpointId: string;
+  appliedAt: number;
+  revertedAt?: number;
+}
+
+/** Result of a checkpoint revert operation. */
+export interface RevertResult {
+  ok: boolean;
+  revertedPaths: string[];
+  failed?: string;
+  rolledBack?: boolean;
+  error?: string;
 }
 
 /* Change review queue --------------------------------------------------------- */
