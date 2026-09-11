@@ -164,6 +164,7 @@ Transcripts persist as JSONL under `~/.deyin/sessions/`. `deyin sessions` lists 
 rolls a long conversation into a model-written summary in a new session.
 Use `deyin export` and `deyin import` to move a transcript between machines. Use
 `deyin session delete <id> --yes` to remove one explicitly.
+For automation, use `deyin sessions --format json --max-count 20`.
 
 ## Local agent API
 

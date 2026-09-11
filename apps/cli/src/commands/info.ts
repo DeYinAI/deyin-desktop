@@ -54,13 +54,19 @@ export async function usageCommand(ctx: CliContext): Promise<number> {
   return 0;
 }
 
-export async function sessionsCommand(ctx: CliContext): Promise<number> {
-  const sessions = ctx.sessions.list();
+export async function sessionsCommand(ctx: CliContext, opts: { maxCount?: number; format?: string } = {}): Promise<number> {
+  const all = ctx.sessions.list();
+  const maxCount = opts.maxCount === undefined ? 30 : Math.min(Math.max(Math.floor(opts.maxCount), 1), 500);
+  const sessions = all.slice(0, maxCount);
+  if (opts.format === "json") {
+    process.stdout.write(`${JSON.stringify(sessions)}\n`);
+    return 0;
+  }
   if (sessions.length === 0) {
     console.log("No sessions yet. Start one with `deyin`.");
     return 0;
   }
-  for (const s of sessions.slice(0, 30)) {
+  for (const s of sessions) {
     const when = s.updatedAt.slice(0, 16).replace("T", " ");
     console.log(`${cyan(s.id)}  ${dim(when)}  ${s.title.slice(0, 60)}  ${dim(s.cwd)}`);
   }

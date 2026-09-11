@@ -181,17 +181,40 @@ const main = defineCommand({
     models: simple("models", "List available models", modelsCommand),
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
-    sessions: simple("sessions", "List saved sessions", sessionsCommand),
+    sessions: defineCommand({
+      meta: { name: "sessions", description: "List saved sessions" },
+      args: {
+        cwd: sharedArgs.cwd,
+        "max-count": { type: "string", description: "Limit to the N most recent sessions" },
+        format: { type: "string", description: "Output format: table or json" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        const maxCount = Number(args["max-count"]);
+        process.exitCode = await sessionsCommand(ctx, {
+          maxCount: Number.isFinite(maxCount) && maxCount > 0 ? maxCount : undefined,
+          format: typeof args.format === "string" ? args.format : undefined,
+        });
+      },
+    }),
     session: defineCommand({
       meta: { name: "session", description: "List or delete saved sessions" },
       args: { cwd: sharedArgs.cwd },
       subCommands: {
         list: defineCommand({
           meta: { name: "list", description: "List saved sessions" },
-          args: { cwd: sharedArgs.cwd },
+          args: {
+            cwd: sharedArgs.cwd,
+            "max-count": { type: "string", description: "Limit to the N most recent sessions" },
+            format: { type: "string", description: "Output format: table or json" },
+          },
           async run({ args }) {
             const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
-            process.exitCode = await sessionsCommand(ctx);
+            const maxCount = Number(args["max-count"]);
+            process.exitCode = await sessionsCommand(ctx, {
+              maxCount: Number.isFinite(maxCount) && maxCount > 0 ? maxCount : undefined,
+              format: typeof args.format === "string" ? args.format : undefined,
+            });
           },
         }),
         delete: defineCommand({
