@@ -7,8 +7,9 @@ import { PermissionEngine, type PermissionResolver, type PermissionRule } from "
 import { buildSystemPrompt } from "./prompt.js";
 import { createBuiltinRegistry } from "./tools/index.js";
 import type { ProviderApiFormat } from "./transports.js";
+<<<<<<< HEAD
 import type { SubagentStateStore } from "./subagent-state.js";
-import type { ImageGenBridge, ToolDefinition, AgentMessage } from "./types.js";
+import type { ImageGenBridge, ToolDefinition, AgentMessage, ToolShell } from "./types.js";
 import type { SubagentDefinition } from "./capabilities/subagents.js";
 
 /**
@@ -140,6 +141,8 @@ export interface SubagentRunRequest {
    * can draw; without it generate_image is dropped from the child's toolset.
    */
   imageGen?: ImageGenBridge;
+  /** Optional persistent shell owned by the host for this child run. */
+  shell?: ToolShell;
   /**
    * Parent's wire options (compression + prompt caching). Passed on so child
    * runs get the same token savings as the parent; hosts set this alongside
@@ -289,6 +292,7 @@ export async function runSubagent(
       permissions: req.permissionEngine,
       resolvePermission: req.resolvePermission,
       cwd,
+      shell: req.shell,
       thinking: req.parent.thinking,
       signal: req.signal,
       onEvent: req.onEvent,

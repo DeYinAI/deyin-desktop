@@ -11,7 +11,7 @@ import {
   type SubagentDefinition,
 } from "@deyin/agent-core";
 import type { CliContext } from "../context.js";
-import { tokenSource } from "../context.js";
+import { createCliShell, tokenSource } from "../context.js";
 import { bold, dim, green, red, yellow } from "../output.js";
 
 const EFFORTS = ["low", "medium", "high"] as const;
@@ -249,21 +249,28 @@ async function runSubagentOnce(
   const routing = { apiBaseUrl: ctx.config.apiBaseUrl, getToken };
   const def: SubagentDefinition = args["max-steps"] !== undefined && args["max-steps"] !== "" ? { ...target, maxSteps: Number(args["max-steps"]) } : target;
   const readonly = forceReadonly || def.readonly;
-  const result = await runSubagent(def, task, {
-    cwd,
-    parent: { model: ctx.config.model, providerId: "openference", thinking: ctx.config.thinking },
-    modelOverride: args.model?.trim() || ctx.config.subagentModels[name],
-    effortOverride: undefined,
-    maxStepsDefault: ctx.config.subagentMaxSteps,
-    parentRouting: routing,
-    resolveProvider: (providerId) => (providerId === "openference" ? routing : undefined),
-    permissionEngine: new PermissionEngine({
-      agentRules: [],
-      configRules: [...ctx.config.permissions, ...subagentReadonlyRules({ readonly })],
-      skipAll: Boolean(args.yes) && !readonly,
-    }),
-    resolvePermission: async () => "deny",
-  });
+  const shell = await createCliShell(cwd);
+  let result: Awaited<ReturnType<typeof runSubagent>>;
+  try {
+    result = await runSubagent(def, task, {
+      cwd,
+      parent: { model: ctx.config.model, providerId: "openference", thinking: ctx.config.thinking },
+      modelOverride: args.model?.trim() || ctx.config.subagentModels[name],
+      effortOverride: undefined,
+      maxStepsDefault: ctx.config.subagentMaxSteps,
+      parentRouting: routing,
+      resolveProvider: (providerId) => (providerId === "openference" ? routing : undefined),
+      permissionEngine: new PermissionEngine({
+        agentRules: [],
+        configRules: [...ctx.config.permissions, ...subagentReadonlyRules({ readonly })],
+        skipAll: Boolean(args.yes) && !readonly,
+      }),
+      resolvePermission: async () => "deny",
+      shell: shell ?? undefined,
+    });
+  } finally {
+    shell?.dispose();
+  }
   if (result.ok) {
     process.stdout.write(`${result.report}${result.report.endsWith("\n") ? "" : "\n"}`);
     return 0;
