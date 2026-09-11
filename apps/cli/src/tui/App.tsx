@@ -611,6 +611,10 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const openPicker = useCallback(
     (kind: PickerState["kind"]): void => {
       if (kind === "model") {
+        if (initial.remote) {
+          notice("Remote attach uses the server's configured model. Change it on the server or start a local TUI.", "warn");
+          return;
+        }
         setPicker({
           kind,
           title: "Select model",
@@ -638,7 +642,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         });
       }
     },
-    [ctx.config, ctx.sessions, modelList],
+    [ctx.config, ctx.sessions, initial, modelList, notice],
   );
 
   const onPickerSelect = useCallback(
@@ -967,7 +971,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
 
       {updateLine ? <Text color="yellow">{updateLine}</Text> : null}
       <Box justifyContent="space-between">
-        <Text dimColor>{`${model} \u00b7 ${agentName} \u00b7 ${shortenPath(ctx.cwd)} \u00b7 ${userLabel ?? "signed out"}`}</Text>
+        <Text dimColor>{`${initial.remote ? "remote" : model} \u00b7 ${agentName} \u00b7 ${shortenPath(ctx.cwd)} \u00b7 ${userLabel ?? (initial.remote ? "attached" : "signed out")}`}</Text>
         <Text dimColor>
           {`${usageTokens > 0 ? `${usageTokens.toLocaleString()} tok \u00b7 ` : ""}${
             exitArmed ? "press ctrl+c again to quit" : running ? "esc to cancel" : "ctrl+c twice to quit"
