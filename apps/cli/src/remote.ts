@@ -7,6 +7,13 @@ export interface RemoteRunOptions {
   resumeId?: string;
   fork?: boolean;
   files?: string[];
+  cwd?: string;
+  provider?: string;
+  model?: string;
+  agent?: string;
+  thinking?: boolean;
+  maxSteps?: number;
+  trustWorkspace?: boolean;
   token?: string;
   username?: string;
   password?: string;
@@ -54,6 +61,13 @@ export async function runRemote(options: RemoteRunOptions): Promise<number> {
         resumeId: options.resumeId,
         fork: options.fork === true,
         files: options.files,
+        cwd: options.cwd,
+        provider: options.provider,
+        model: options.model,
+        agent: options.agent,
+        thinking: options.thinking,
+        maxSteps: options.maxSteps,
+        ...(options.trustWorkspace === true ? { trustWorkspace: true } : {}),
       }),
       signal: options.signal,
     });
