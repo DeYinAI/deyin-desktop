@@ -200,6 +200,6 @@ bun scripts/compile.mjs bun-linux-x64 dist-bin/deyin-linux-x64
 
 CI cross-compiles macOS (x64/arm64), Linux (x64/arm64) and Windows (x64) from dell-runner
 and attaches binaries to GitHub Releases (`DeYinAI/deyin-desktop` + CLI assets). The CLI
-version is resolved from the monorepo release version when built, so `--version` and
+version is resolved from the desktop release package when built, so `--version` and
 `upgrade` compare the same value.
 See [PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md).
