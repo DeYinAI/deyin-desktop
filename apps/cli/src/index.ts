@@ -454,7 +454,28 @@ const main = defineCommand({
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
     agent: simple("agent", "List agents (alias for `deyin agents`)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
-    stats: simple("stats", "Show local usage statistics (alias for `deyin usage`)", usageCommand),
+    stats: defineCommand({
+      meta: { name: "stats", description: "Show local usage statistics" },
+      args: {
+        cwd: sharedArgs.cwd,
+        days: { type: "string", description: "Show stats for the last N days" },
+        models: { type: "string", description: "Show the top N models" },
+        tools: { type: "string", description: "Compatibility filter (tool usage is not persisted yet)" },
+        project: { type: "string", description: "Compatibility project filter" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        const days = Number(args.days);
+        const models = Number(args.models);
+        const tools = Number(args.tools);
+        process.exitCode = await usageCommand(ctx, {
+          days: Number.isFinite(days) && days > 0 ? days : undefined,
+          models: Number.isFinite(models) && models > 0 ? models : undefined,
+          tools: Number.isFinite(tools) ? tools : undefined,
+          project: typeof args.project === "string" ? args.project : undefined,
+        });
+      },
+    }),
     sessions: defineCommand({
       meta: { name: "sessions", description: "List saved sessions" },
       args: {
