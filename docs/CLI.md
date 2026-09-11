@@ -24,6 +24,8 @@ deyin login            # device flow: open the printed URL, enter the code
 deyin login --browser  # RFC 8252 loopback flow (opens your browser)
 deyin whoami
 deyin logout
+deyin auth list
+deyin auth login --provider deepseek --key "$DEEPSEEK_API_KEY"
 ```
 
 Tokens are stored in `~/.deyin/credentials.json` with 0600 permissions and refresh
@@ -44,6 +46,8 @@ deyin checkpoint revert <session-id> <checkpoint-id> --yes
 deyin providers
 deyin provider connect deepseek --key "$DEEPSEEK_API_KEY"
 deyin run -m deepseek::deepseek-chat "review this change"
+deyin run --attach http://127.0.0.1:7789 "review this change on the running server"
+deyin attach http://127.0.0.1:7789 "continue the remote review"
 deyin serve --port 7789
 deyin -m GLM-5.2 -a plan
 ```
@@ -84,11 +88,14 @@ deyin run --format json --auto --session SESSION_ID "continue the implementation
   final `result` record with `reason`, `steps`, `usage`, `sessionId`, `finalText`, and `checkpointId`).
 - `--format json` is an alias for `--json`; `--auto` is an alias for `--yes`; and
   `--session <id>` is an alias for `--resume <id>` for OpenCode-style scripts.
+- `--fork` branches a continued/resumed transcript before adding the new prompt.
 - Permission prompts are **auto-denied** headlessly; pass `--yes` to allow everything.
 - `-c` / `--resume <id>` continue existing sessions.
 - `--trust` enables workspace-owned hooks and MCP definitions for the run.
 - `--provider <id>` selects a provider from the shared desktop registry; `--model`
   also accepts `provider::model` (for example `deepseek::deepseek-chat`).
+- `--attach <url>` sends the run to an existing `deyin serve` process; use
+  `--token` or `--username`/`--password` when that server is protected.
 - Exit codes: `0` completed, `1` error or step-cap, `2` not signed in, `130` interrupted.
 
 Inspect the effective runtime without starting an agent:
@@ -204,9 +211,12 @@ and returns the same NDJSON event stream as `deyin run --json`. Bind to another 
 only when required, and set `DEYIN_SERVER_TOKEN` (or `--token`) before exposing it beyond
 the local machine.
 
+`deyin run --attach http://host:7789 "..."` is the command-line client for that API;
+it preserves streamed text, JSON events, session continuation, and file attachments.
+
 `deyin acp` serves ACP v1 over stdin/stdout for editors that launch agents as a
-subprocess. It supports initialization, in-process session setup, streamed assistant
-text and tool updates, prompt cancellation, and text/resource prompt blocks.
+subprocess. It supports durable new/load/resume sessions, transcript replay, streamed
+assistant text and tool updates, prompt cancellation, and text/image/resource blocks.
 
 ## Built-in tools
 

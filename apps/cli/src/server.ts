@@ -96,6 +96,7 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           yes?: boolean;
           continueLast?: boolean;
           resumeId?: string;
+          fork?: boolean;
           maxSteps?: number;
           trustWorkspace?: boolean;
           files?: string[];
@@ -109,6 +110,7 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           yes: request.yes === true,
           continueLast: request.continueLast === true,
           resumeId: request.resumeId,
+          fork: request.fork === true,
           maxSteps: request.maxSteps,
           trustWorkspace: request.trustWorkspace === true,
           files: Array.isArray(request.files) ? request.files.filter((file): file is string => typeof file === "string") : undefined,

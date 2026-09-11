@@ -7,9 +7,16 @@ import { cliProviderRouting, tokenSource } from "../context.js";
 import { cliMcpDefinitions, loadCliCapabilities } from "../capabilities.js";
 import { bold, cyan, dim, green } from "../output.js";
 
-export async function modelsCommand(ctx: CliContext, providerId?: string): Promise<number> {
+export async function modelsCommand(ctx: CliContext, providerId?: string, refresh = false, verbose = false): Promise<number> {
   const id = providerId?.trim() || ctx.config.providerId;
   const route = cliProviderRouting(ctx, id);
+  if (refresh && route.provider?.kind === "custom") {
+    const result = await ctx.agents.fetchModels(id);
+    if (!result.ok) {
+      console.error(`could not refresh models: ${result.message ?? `HTTP ${result.status ?? "error"}`}`);
+      return 1;
+    }
+  }
   const signedIn = (await route.getToken()) !== null || route.provider?.local === true;
   const models = await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken);
   if (!signedIn) console.log(dim("Not signed in: showing the default catalog. Run `deyin login` for your live model list.\n"));
@@ -17,7 +24,7 @@ export async function modelsCommand(ctx: CliContext, providerId?: string): Promi
     const marks: string[] = [];
     if (m.id === ctx.config.model || `${id}::${m.id}` === ctx.config.model) marks.push(green("default"));
     if (m.contextLength) marks.push(dim(`${Math.round(m.contextLength / 1000)}k ctx`));
-    console.log(`${bold(m.id.padEnd(28))} ${marks.join("  ")}`);
+    console.log(`${bold(m.id.padEnd(28))} ${marks.join("  ")}${verbose ? `  ${dim(JSON.stringify(m))}` : ""}`);
   }
   console.log(dim(`\nProvider: ${id}. Switch with \`deyin -m ${id}::<model>\`, /model in the TUI, or "providerId" + "model" in ~/.deyin/config.json.`));
   return 0;
