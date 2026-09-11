@@ -39,6 +39,8 @@ deyin resume           # pick a session from a list
 deyin fork <id>        # branch a transcript (optionally: --at-seq <n>)
 deyin export <id> -o session.json
 deyin import session.json
+deyin checkpoint list <session-id>
+deyin checkpoint revert <session-id> <checkpoint-id> --yes
 deyin serve --port 7789
 deyin -m GLM-5.2 -a plan
 ```
@@ -75,7 +77,7 @@ deyin run "summarize this repo" --json | jq -r 'select(.type=="result").finalTex
 - `-p` / positional / piped stdin provide the prompt (they concatenate).
 - Assistant text streams to stdout; tool activity goes to stderr.
 - `--json` emits NDJSON events (`text-delta`, `tool-start`, `tool-end`, `usage`, ...,
-  final `result` record with `reason`, `steps`, `usage`, `sessionId`, `finalText`).
+  final `result` record with `reason`, `steps`, `usage`, `sessionId`, `finalText`, and `checkpointId`).
 - Permission prompts are **auto-denied** headlessly; pass `--yes` to allow everything.
 - `-c` / `--resume <id>` continue existing sessions.
 - `--trust` enables workspace-owned hooks and MCP definitions for the run.
@@ -165,6 +167,12 @@ rolls a long conversation into a model-written summary in a new session.
 Use `deyin export` and `deyin import` to move a transcript between machines. Use
 `deyin session delete <id> --yes` to remove one explicitly.
 For automation, use `deyin sessions --format json --max-count 20`.
+
+Every interactive or headless run records file mutations under a durable checkpoint ID.
+The run ID is printed in plain mode and included as `checkpointId` in the final JSON result.
+Use `deyin checkpoint list <session-id>` to inspect changed paths, then
+`deyin checkpoint revert <session-id> <checkpoint-id> --yes` to restore the files safely.
+Add `--path file1,file2` to revert only selected paths; paths are constrained to the workspace.
 
 ## Local agent API
 

@@ -27,9 +27,10 @@ import {
   type TodoItem,
   type ToolRegistry,
 } from "@deyin/agent-core";
-import { createImageBridge, ImageStore, listModels, type ModelInfo } from "@deyin/host-core";
+import { CheckpointStore, createImageBridge, ImageStore, listModels, type ModelInfo } from "@deyin/host-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import { loginWithDevice } from "@deyin/oauth-client/node";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
@@ -348,6 +349,24 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       const before = messagesRef.current.length;
       let runStarted = false;
       let stopReason = "error";
+      const checkpointId = randomUUID();
+      const checkpoints = new CheckpointStore(ctx.storage);
+      let checkpointWrites: Promise<void> = Promise.resolve();
+      let checkpointCount = 0;
+      const onRunEvent = (event: AgentEvent): void => {
+        if (event.type === "file-change") {
+          checkpointCount += 1;
+          checkpointWrites = checkpointWrites.then(async () => {
+            await checkpoints.record(sessionIdRef.current!, checkpointId, {
+              path: event.change.path,
+              before: event.change.before,
+              after: event.change.after,
+              operation: event.change.before === "" ? "write" : event.change.after === "" ? "delete" : "edit",
+            });
+          });
+        }
+        handleEvent(event);
+      };
 
       try {
         if (!shellRef.current) shellRef.current = await createCliShell(ctx.cwd);
@@ -447,7 +466,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             memory: ctx.config.memoryEnabled ? ctx.memory : undefined,
           },
           memory: ctx.config.memoryEnabled ? ctx.memory : undefined,
-          onEvent: handleEvent,
+          onEvent: onRunEvent,
           onMessage: (message) => {
             if (sessionIdRef.current) ctx.sessions.append(sessionIdRef.current, message);
           },
@@ -468,6 +487,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           // The wire and prompt cache settings above keep TUI transcripts aligned
           // with Desktop, web, and headless runs.
         });
+        await checkpointWrites;
         const tokens = result.usage.totalTokens || estimateTokens(messagesRef.current.slice(before));
         ctx.usage.record({ model, tokens, newSession: newSessionRef.current });
         newSessionRef.current = false;
@@ -477,6 +497,9 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         stopReason = result.reason;
         if (result.reason === "max-steps") notice("Stopped: step limit reached. Send a message to continue.", "warn");
         if (result.reason === "aborted") notice("Cancelled.", "warn");
+        if (checkpointCount > 0) {
+          notice(`Checkpoint ${checkpointId} recorded (${checkpointCount} file change${checkpointCount === 1 ? "" : "s"}).`);
+        }
       } catch (err) {
         if (err instanceof AuthRequiredError) {
           notice("Not signed in. Use /login or run `deyin login` in another terminal.", "error");
@@ -484,6 +507,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           notice(`Error: ${err instanceof Error ? err.message : String(err)}`, "error");
         }
       } finally {
+        await checkpointWrites.catch(() => undefined);
         if (runStarted) {
           await runHooks(capsRef.current?.hooks ?? [], "stop", "stop", { reason: stopReason, cwd: ctx.cwd });
         }

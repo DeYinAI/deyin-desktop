@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { resolveAgents } from "@deyin/agent-core";
-import { listModels } from "@deyin/host-core";
+import { CheckpointStore, checkpointFileOpsFromRoot, listModels, revertCheckpoint } from "@deyin/host-core";
 import type { CliContext } from "../context.js";
 import { tokenSource } from "../context.js";
 import { cliMcpDefinitions, loadCliCapabilities } from "../capabilities.js";
@@ -157,6 +157,111 @@ export async function forkSessionCommand(ctx: CliContext, id?: string, atSeq?: s
   console.log(forked.id);
   console.log(dim(`Forked ${sourceId} into a new session. Resume with "deyin resume ${forked.id}".`));
   return 0;
+}
+
+function resolveCheckpointPath(cwd: string, path: string): string {
+  const root = resolve(cwd);
+  const absolute = isAbsolute(path) ? resolve(path) : resolve(root, path);
+  const rel = relative(root, absolute);
+  if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`Path escapes workspace: ${path}`);
+  return absolute;
+}
+
+function checkpointSessionId(ctx: CliContext, id?: string): string | undefined {
+  return id?.trim() || ctx.sessions.latest(ctx.cwd)?.id;
+}
+
+/** List durable file-mutation checkpoints recorded by agent runs. */
+export async function checkpointListCommand(
+  ctx: CliContext,
+  id?: string,
+  format?: string,
+): Promise<number> {
+  const sessionId = checkpointSessionId(ctx, id);
+  if (!sessionId) {
+    console.error("no session found; pass a session id or start a session first");
+    return 1;
+  }
+  const entries = new CheckpointStore(ctx.storage).list(sessionId);
+  const groups = new Map<string, { checkpointId: string; entries: typeof entries }>();
+  for (const entry of entries) {
+    const group = groups.get(entry.checkpointId) ?? { checkpointId: entry.checkpointId, entries: [] };
+    group.entries.push(entry);
+    groups.set(entry.checkpointId, group);
+  }
+  const checkpoints = [...groups.values()].map((group) => ({
+    checkpointId: group.checkpointId,
+    active: group.entries.filter((entry) => entry.revertedAt === undefined).length,
+    reverted: group.entries.filter((entry) => entry.revertedAt !== undefined).length,
+    paths: [...new Set(group.entries.map((entry) => entry.path))],
+    appliedAt: Math.min(...group.entries.map((entry) => entry.appliedAt)),
+  }));
+  if (format === "json") {
+    process.stdout.write(`${JSON.stringify({ sessionId, checkpoints })}\n`);
+    return 0;
+  }
+  if (checkpoints.length === 0) {
+    console.log(`No checkpoints for session ${sessionId}.`);
+    return 0;
+  }
+  console.log(`${bold("Session")} ${cyan(sessionId)}`);
+  for (const checkpoint of checkpoints) {
+    const when = new Date(checkpoint.appliedAt).toISOString().slice(0, 19).replace("T", " ");
+    console.log(`${cyan(checkpoint.checkpointId)}  ${dim(when)}  ${checkpoint.active} active  ${checkpoint.paths.length} path(s)`);
+    for (const path of checkpoint.paths) console.log(dim(`  ${path}`));
+  }
+  console.log(dim("\nRevert with `deyin checkpoint revert <session-id> <checkpoint-id> --yes`."));
+  return 0;
+}
+
+/** Revert all active file changes from one agent run. */
+export async function checkpointRevertCommand(
+  ctx: CliContext,
+  id: string | undefined,
+  checkpointId: string | undefined,
+  confirmed: boolean,
+  paths?: string,
+): Promise<number> {
+  const sessionId = checkpointSessionId(ctx, id);
+  if (!sessionId || !checkpointId?.trim()) {
+    console.error("usage: deyin checkpoint revert <session-id> <checkpoint-id> --yes [--path file,...]");
+    return 1;
+  }
+  if (!confirmed) {
+    console.error("refusing to revert without --yes");
+    return 1;
+  }
+  try {
+    const store = new CheckpointStore(ctx.storage);
+    const ops = checkpointFileOpsFromRoot(ctx.cwd, async (path) => resolveCheckpointPath(ctx.cwd, path));
+    const result = await revertCheckpoint(
+      store,
+      ctx.storage,
+      ops,
+      sessionId,
+      checkpointId.trim(),
+      undefined,
+      paths?.trim()
+        ? {
+            paths: paths
+              .split(",")
+              .map((path) => path.trim())
+              .filter(Boolean)
+              .map((path) => resolveCheckpointPath(ctx.cwd, path)),
+          }
+        : undefined,
+    );
+    if (!result.ok) {
+      console.error(`revert failed: ${result.error ?? "unknown error"}`);
+      return 1;
+    }
+    console.log(`reverted ${result.revertedPaths.length} path(s) from ${checkpointId.trim()}`);
+    for (const path of result.revertedPaths) console.log(dim(`  ${path}`));
+    return 0;
+  } catch (err) {
+    console.error(`could not revert checkpoint: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
 }
 
 export async function memoryCommand(ctx: CliContext, query?: string): Promise<number> {

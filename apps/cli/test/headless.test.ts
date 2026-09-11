@@ -6,6 +6,7 @@ import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { createContext } from "../src/context.js";
 import { EXIT_AUTH, EXIT_OK, runHeadless } from "../src/headless.js";
+import { CheckpointStore } from "@deyin/host-core";
 import { startMockOpenAI, textResponse, toolCallResponse } from "./helpers/mock-openai.js";
 
 function capture(): { stream: PassThrough; text: () => string } {
@@ -132,17 +133,24 @@ test("write tools are auto-denied without --yes and executed with it", async () 
   // With --yes: executed.
   const server2 = await startMockOpenAI(script);
   const two = makeCtx(server2.url);
+  const err2 = capture();
   try {
     const code = await runHeadless({
       ctx: two.ctx,
       prompt: "write the file",
       yes: true,
       stdout: capture().stream,
-      stderr: capture().stream,
+      stderr: err2.stream,
       getToken: async () => "t",
     });
     assert.equal(code, EXIT_OK);
     assert.ok(existsSync(join(two.ctx.cwd, "out.txt")));
+    const session = two.ctx.sessions.list()[0];
+    assert.ok(session);
+    const entries = new CheckpointStore(two.ctx.storage).list(session.id);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.path, join(two.ctx.cwd, "out.txt"));
+    assert.match(err2.text(), /\[checkpoint\]/);
   } finally {
     await server2.close();
     two.cleanup();
