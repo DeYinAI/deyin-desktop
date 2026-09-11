@@ -35,7 +35,7 @@ import { join } from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import type { CliContext } from "../context.js";
-import { createCliShell, tokenSource } from "../context.js";
+import { cliProviderRouting, createCliShell, resolveCliModel } from "../context.js";
 import { cliMcpDefinitions, loadCliCapabilities, resolveCliPrompt } from "../capabilities.js";
 import { registerCliSubagentTool } from "../subagents.js";
 import { updateNotice } from "../version.js";
@@ -96,7 +96,8 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const [running, setRunning] = useState(false);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [usageTokens, setUsageTokens] = useState(0);
-  const [model, setModel] = useState(ctx.config.model);
+  const initialModel = resolveCliModel(ctx);
+  const [model, setModel] = useState(initialModel.model);
   const [agentName, setAgentName] = useState(ctx.config.agent);
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [updateLine, setUpdateLine] = useState<string | null>(null);
@@ -209,7 +210,8 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       } catch {
         // profile fetch failed; stay signed-out
       }
-      const models = await listModels(ctx.config, tokenSource(ctx));
+      const route = cliProviderRouting(ctx, ctx.config.providerId);
+      const models = await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken);
       if (!cancelled) setModelList(models);
       const update = await updateNotice(ctx.storage);
       if (update && !cancelled) setUpdateLine(update);
@@ -299,7 +301,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     async (text: string): Promise<void> => {
       const agent = agentDef();
       if (!sessionIdRef.current) {
-        const meta = ctx.sessions.create({ cwd: ctx.cwd, model, agent: agent.name });
+        const meta = ctx.sessions.create({ cwd: ctx.cwd, model: `${ctx.config.providerId}::${model}`, agent: agent.name });
         sessionIdRef.current = meta.id;
         newSessionRef.current = true;
         const system: AgentMessage = {
@@ -347,6 +349,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       const controller = new AbortController();
       abortRef.current = controller;
       const before = messagesRef.current.length;
+      const route = cliProviderRouting(ctx, ctx.config.providerId);
       let runStarted = false;
       let stopReason = "error";
       const checkpointId = randomUUID();
@@ -375,8 +378,8 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         const imageGen = createImageBridge({
           store: imageStore,
           threadId: sessionIdRef.current!,
-          apiBaseUrl: ctx.config.apiBaseUrl,
-          getToken: tokenSource(ctx),
+          apiBaseUrl: route.apiBaseUrl,
+          getToken: route.getToken,
           models: () => modelList
             .filter((entry) => entry.kind === "image" || entry.imageOutput)
             .map((entry) => ({ id: entry.id, route: entry.kind === "image" ? "endpoint" as const : "chat" as const })),
@@ -384,9 +387,11 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           signal: controller.signal,
         });
         const result = await runAgent({
-          apiBaseUrl: ctx.config.apiBaseUrl,
-          getToken: tokenSource(ctx),
+          apiBaseUrl: route.apiBaseUrl,
+          getToken: route.getToken,
           model,
+          apiFormat: route.apiFormat,
+          authHeader: route.authHeader,
           contextLength: modelList.find((m) => m.id === model)?.contextLength,
           messages: messagesRef.current,
           tools: toolsRef.current,
@@ -396,10 +401,20 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             roleModels: ctx.config.roleModels,
             base: {
               model,
-              providerId: "cli",
-              apiBaseUrl: ctx.config.apiBaseUrl,
-              getToken: tokenSource(ctx),
+              providerId: ctx.config.providerId,
+              apiBaseUrl: route.apiBaseUrl,
+              getToken: route.getToken,
+              apiFormat: route.apiFormat,
+              authHeader: route.authHeader,
               contextLength: modelList.find((m) => m.id === model)?.contextLength,
+            },
+            resolveProvider: (providerId) => cliProviderRouting(ctx, providerId),
+            getContextLength: (providerId, modelId) => {
+              const provider = ctx.agents.listProviders(true).find((entry) => entry.id === providerId);
+              return provider?.models.find((entry) => entry.id === modelId)?.contextLength ??
+                (providerId === ctx.config.providerId && modelId === model
+                  ? modelList.find((entry) => entry.id === modelId)?.contextLength
+                  : undefined);
             },
           }),
           beforeTool: async (call, args, summary) => {
@@ -477,10 +492,10 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             enableCompression: true,
             compressionMode: "balanced",
             enablePromptCaching: true,
-            provider: resolveWireProvider({ providerId: "cli", model, cwd: ctx.cwd, apiFormat: "chat-completions" }),
+            provider: resolveWireProvider({ providerId: ctx.config.providerId, model, cwd: ctx.cwd, apiFormat: route.apiFormat }),
             model,
           },
-          promptCacheKey: buildPromptCacheKeyFor({ providerId: "cli", model, cwd: ctx.cwd }),
+          promptCacheKey: buildPromptCacheKeyFor({ providerId: ctx.config.providerId, model, cwd: ctx.cwd }),
           imageOutput: modelList.find((entry) => entry.id === model)?.imageOutput === true,
           maxSteps: agent.maxSteps ?? ctx.config.maxSteps,
           signal: controller.signal,
@@ -489,7 +504,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         });
         await checkpointWrites;
         const tokens = result.usage.totalTokens || estimateTokens(messagesRef.current.slice(before));
-        ctx.usage.record({ model, tokens, newSession: newSessionRef.current });
+        ctx.usage.record({ model: `${ctx.config.providerId}::${model}`, tokens, newSession: newSessionRef.current });
         newSessionRef.current = false;
         if (result.summary && sessionIdRef.current) {
           ctx.sessions.appendEvent(sessionIdRef.current, { kind: "run-summary", summary: result.summary });
@@ -601,18 +616,21 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       notice("Nothing to compact yet.", "warn");
       return;
     }
-    const token = await tokenSource(ctx)();
+    const route = cliProviderRouting(ctx, ctx.config.providerId);
+    const token = await route.getToken();
     if (!token) {
-      notice("Not signed in.", "error");
+      if (route.provider?.local !== true) notice("Not signed in.", "error");
       return;
     }
     const beforeTokens = estimateTokens(messagesRef.current);
     notice("Compacting conversation\u2026");
     try {
       const compacted = await compactWithModel({
-        apiBaseUrl: ctx.config.apiBaseUrl,
+        apiBaseUrl: route.apiBaseUrl,
         token,
         model,
+        apiFormat: route.apiFormat,
+        authHeader: route.authHeader,
         messages: messagesRef.current,
       });
       if (compacted === messagesRef.current) {
@@ -620,7 +638,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         return;
       }
       messagesRef.current = compacted;
-      const meta = ctx.sessions.create({ cwd: ctx.cwd, model, agent: agentName });
+      const meta = ctx.sessions.create({ cwd: ctx.cwd, model: `${ctx.config.providerId}::${model}`, agent: agentName });
       sessionIdRef.current = meta.id;
       for (const message of messagesRef.current) ctx.sessions.append(meta.id, message);
       notice(`Compacted ~${beforeTokens} \u2192 ~${estimateTokens(messagesRef.current)} tokens (continued as ${meta.id}).`);
@@ -644,7 +662,8 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       const user = await ctx.oauth.getUser();
       setUserLabel(user.name ?? user.email ?? user.sub);
       notice(`Signed in as ${user.name ?? user.sub}.`);
-      setModelList(await listModels(ctx.config, tokenSource(ctx)));
+      const route = cliProviderRouting(ctx, ctx.config.providerId);
+      setModelList(await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken));
     } catch (err) {
       notice(`Login failed: ${err instanceof Error ? err.message : String(err)}`, "error");
     }

@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   AuthRequiredError,
@@ -16,13 +17,14 @@ import {
   runAgent,
   BUILD_AGENT,
   type AgentEvent,
+  type AgentImage,
   type AgentMessage,
   type McpConnection,
 } from "@deyin/agent-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import { CheckpointStore, createImageBridge, ImageStore, listModels } from "@deyin/host-core";
 import type { CliContext } from "./context.js";
-import { createCliShell, tokenSource } from "./context.js";
+import { cliProviderRouting, createCliShell, resolveCliModel, tokenSource } from "./context.js";
 import { cliMcpDefinitions, loadCliCapabilities, resolveCliPrompt } from "./capabilities.js";
 import { dim, red } from "./output.js";
 import { registerCliSubagentTool } from "./subagents.js";
@@ -41,6 +43,8 @@ export interface HeadlessOptions {
   maxSteps?: number;
   /** Trust workspace-owned hooks and MCP configuration for this run. */
   trustWorkspace?: boolean;
+  /** Comma-separated CLI file attachments (images become multimodal input). */
+  files?: string[];
   signal?: AbortSignal;
   /** Injectable for tests. */
   stdout?: NodeJS.WritableStream;
@@ -53,6 +57,49 @@ export const EXIT_ERROR = 1;
 export const EXIT_AUTH = 2;
 export const EXIT_INTERRUPT = 130;
 
+const IMAGE_TYPES: Record<string, "image/png" | "image/jpeg" | "image/webp" | "image/gif"> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+function loadCliAttachments(cwd: string, paths: string[] | undefined): { note: string; images: AgentImage[] } | { error: string } {
+  const files = (paths ?? []).map((path) => path.trim()).filter(Boolean);
+  if (files.length === 0) return { note: "", images: [] };
+  const root = resolve(cwd);
+  const textParts: string[] = [];
+  const images: AgentImage[] = [];
+  try {
+    for (const input of files) {
+      const absolute = isAbsolute(input) ? resolve(input) : resolve(root, input);
+      const rel = relative(root, absolute);
+      if (rel.startsWith("..") || isAbsolute(rel)) return { error: `attachment escapes workspace: ${input}` };
+      const real = realpathSync(absolute);
+      const realRel = relative(root, real);
+      if (realRel.startsWith("..") || isAbsolute(realRel)) return { error: `attachment escapes workspace: ${input}` };
+      const stat = statSync(real);
+      if (!stat.isFile()) return { error: `attachment is not a file: ${input}` };
+      if (stat.size > 10 * 1024 * 1024) return { error: `attachment is larger than 10 MB: ${input}` };
+      const type = IMAGE_TYPES[extname(real).toLowerCase()];
+      if (type) {
+        images.push({ mediaType: type, base64: readFileSync(real).toString("base64") });
+        textParts.push(`[Attached image: ${rel}]`);
+      } else {
+        if (stat.size > 512 * 1024) return { error: `text attachment is larger than 512 KB: ${input}` };
+        textParts.push(`--- ${rel} ---\n${readFileSync(real, "utf8")}`);
+      }
+    }
+  } catch (err) {
+    return { error: `could not read attachment: ${err instanceof Error ? err.message : String(err)}` };
+  }
+  return {
+    note: `\n\n<attachments>\n${textParts.join("\n\n")}\n</attachments>`,
+    images,
+  };
+}
+
 /**
  * Non-interactive agent run for scripting/CI: prints the assistant's text to stdout
  * (or NDJSON events with --json), tool activity to stderr, and returns an exit code.
@@ -64,7 +111,10 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const stderr = opts.stderr ?? process.stderr;
   const getToken = opts.getToken ?? tokenSource(ctx);
 
-  if ((await getToken()) === null) {
+  const selected = resolveCliModel(ctx);
+  const baseRoute = cliProviderRouting(ctx, selected.providerId, getToken);
+  const providerIsLocal = selected.provider?.local === true;
+  if ((await baseRoute.getToken()) === null && !providerIsLocal) {
     stderr.write(`${red("error:")} not signed in. Run \`deyin login\` first.\n`);
     return EXIT_AUTH;
   }
@@ -112,7 +162,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     messages = loaded.messages;
   } else {
     newSession = true;
-    const meta = ctx.sessions.create({ cwd: ctx.cwd, model: ctx.config.model, agent: agent.name });
+    const meta = ctx.sessions.create({ cwd: ctx.cwd, model: `${selected.providerId}::${selected.model}`, agent: agent.name });
     sessionId = meta.id;
     const contextFiles = await loadContextFiles(ctx.cwd);
     const system: AgentMessage = {
@@ -125,6 +175,12 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const resolvedPrompt = resolveCliPrompt(opts.prompt, caps);
   if (resolvedPrompt.error) {
     stderr.write(`${red("error:")} ${resolvedPrompt.error}\n`);
+    await closeMcp();
+    return EXIT_ERROR;
+  }
+  const attachments = loadCliAttachments(ctx.cwd, opts.files);
+  if ("error" in attachments) {
+    stderr.write(`${red("error:")} ${attachments.error}\n`);
     await closeMcp();
     return EXIT_ERROR;
   }
@@ -146,7 +202,11 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const prompt = hookContext.length > 0 && !newSession
     ? `${resolvedPrompt.prompt}\n\n<session_hook_context>\n${hookContext.join("\n\n")}\n</session_hook_context>`
     : resolvedPrompt.prompt;
-  const userMessage: AgentMessage = { role: "user", content: prompt };
+  const userMessage: AgentMessage = {
+    role: "user",
+    content: prompt + attachments.note,
+    ...(attachments.images.length > 0 ? { images: attachments.images } : {}),
+  };
   messages.push(userMessage);
   ctx.sessions.append(sessionId, userMessage);
 
@@ -161,8 +221,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   };
 
   const toolStartedAt = new Map<string, number>();
-  const modelCatalog = await listModels({ apiBaseUrl: ctx.config.apiBaseUrl }, getToken);
-  const selectedModel = modelCatalog.find((entry) => entry.id === ctx.config.model);
+  const modelCatalog = await listModels({ apiBaseUrl: baseRoute.apiBaseUrl }, baseRoute.getToken);
+  const selectedModel = modelCatalog.find((entry) => entry.id === selected.model);
   const imageStore = new ImageStore(join(ctx.dataDir, "images"));
   const checkpoints = new CheckpointStore(ctx.storage);
   const checkpointId = randomUUID();
@@ -228,8 +288,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     const imageGen = createImageBridge({
       store: imageStore,
       threadId: sessionId,
-      apiBaseUrl: ctx.config.apiBaseUrl,
-      getToken,
+      apiBaseUrl: baseRoute.apiBaseUrl,
+      getToken: baseRoute.getToken,
       models: () => modelCatalog
         .filter((entry) => entry.kind === "image" || entry.imageOutput)
         .map((entry) => ({ id: entry.id, route: entry.kind === "image" ? "endpoint" as const : "chat" as const })),
@@ -237,18 +297,32 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       signal: opts.signal,
     });
     const result = await runAgent({
-      apiBaseUrl: ctx.config.apiBaseUrl,
-      getToken,
-      model: ctx.config.model,
+      apiBaseUrl: baseRoute.apiBaseUrl,
+      getToken: baseRoute.getToken,
+      model: selected.model,
+      apiFormat: baseRoute.apiFormat,
+      authHeader: baseRoute.authHeader,
       // Per-phase model routing. The CLI talks to one endpoint, so a role's
       // "providerId::" prefix (if any) is ignored and only the model swaps.
       router: createRoleRouter({
         roleModels: ctx.config.roleModels,
         base: {
-          model: ctx.config.model,
-          providerId: "cli",
-          apiBaseUrl: ctx.config.apiBaseUrl,
-          getToken,
+          model: selected.model,
+          providerId: selected.providerId,
+          apiBaseUrl: baseRoute.apiBaseUrl,
+          getToken: baseRoute.getToken,
+          apiFormat: baseRoute.apiFormat,
+          authHeader: baseRoute.authHeader,
+          contextLength: selectedModel?.contextLength,
+        },
+        resolveProvider: (providerId) => {
+          const route = cliProviderRouting(ctx, providerId, getToken);
+          return route.apiBaseUrl ? route : undefined;
+        },
+        getContextLength: (providerId, model) => {
+          const provider = ctx.agents.listProviders(true).find((entry) => entry.id === providerId);
+          return provider?.models.find((entry) => entry.id === model)?.contextLength ??
+            (providerId === selected.providerId && model === selected.model ? selectedModel?.contextLength : undefined);
         },
       }),
       messages,
@@ -299,7 +373,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         },
         // The configured agent doubles as the composer mode, so role routing
         // picks the plan/ask/delivery model when running under those agents.
-        sessionMeta: { mode: agent.name, model: ctx.config.model, cwd: ctx.cwd },
+        sessionMeta: { mode: agent.name, model: selected.model, cwd: ctx.cwd },
         resolveInteraction: async (request) => {
           if (request.type !== "ask-question") return "Interaction not supported.";
           if (opts.yes) {
@@ -324,16 +398,16 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         compressionMode: "balanced",
         enablePromptCaching: true,
         provider: resolveWireProvider({
-          providerId: "cli",
-          model: ctx.config.model,
+          providerId: selected.providerId,
+          model: selected.model,
           cwd: ctx.cwd,
-          apiFormat: "chat-completions",
+          apiFormat: baseRoute.apiFormat,
         }),
-        model: ctx.config.model,
+        model: selected.model,
       },
       promptCacheKey: buildPromptCacheKeyFor({
-        providerId: "cli",
-        model: ctx.config.model,
+        providerId: selected.providerId,
+        model: selected.model,
         cwd: ctx.cwd,
       }),
       imageOutput: selectedModel?.imageOutput === true,
@@ -342,7 +416,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     await Promise.all(checkpointWrites);
 
     const tokens = result.usage.totalTokens || estimateTokens(messages.slice(before));
-    ctx.usage.record({ model: ctx.config.model, tokens, newSession });
+    ctx.usage.record({ model: `${selected.providerId}::${selected.model}`, tokens, newSession });
     if (result.summary) ctx.sessions.appendEvent(sessionId, { kind: "run-summary", summary: result.summary });
 
     if (opts.json) {

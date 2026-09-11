@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { loadCliCapabilities } from "./capabilities.js";
+import { cliProviderRouting } from "./context.js";
 import type { CliContext } from "./context.js";
 import { runHeadless } from "./headless.js";
 import { VERSION } from "./version.js";
@@ -66,15 +67,10 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
         return;
       }
       if (req.method === "GET" && url.pathname === "/v1/models") {
-        const models = await listModels(ctx.config, async () => {
-          try {
-            if (!(await ctx.oauth.isAuthenticated())) return null;
-            return await ctx.oauth.getAccessToken();
-          } catch {
-            return null;
-          }
-        });
-        json(res, 200, { models });
+        const providerId = url.searchParams.get("provider")?.trim() || ctx.config.providerId;
+        const route = cliProviderRouting(ctx, providerId);
+        const models = await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken);
+        json(res, 200, { provider: providerId, models });
         return;
       }
       if (req.method === "GET" && url.pathname === "/v1/capabilities") {
@@ -102,6 +98,7 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           resumeId?: string;
           maxSteps?: number;
           trustWorkspace?: boolean;
+          files?: string[];
         };
         const out = capture();
         const errors = capture();
@@ -114,6 +111,7 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           resumeId: request.resumeId,
           maxSteps: request.maxSteps,
           trustWorkspace: request.trustWorkspace === true,
+          files: Array.isArray(request.files) ? request.files.filter((file): file is string => typeof file === "string") : undefined,
           stdout: out.stream,
           stderr: errors.stream,
         });

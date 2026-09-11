@@ -3,22 +3,133 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { resolveAgents } from "@deyin/agent-core";
 import { CheckpointStore, checkpointFileOpsFromRoot, listModels, revertCheckpoint } from "@deyin/host-core";
 import type { CliContext } from "../context.js";
-import { tokenSource } from "../context.js";
+import { cliProviderRouting, tokenSource } from "../context.js";
 import { cliMcpDefinitions, loadCliCapabilities } from "../capabilities.js";
 import { bold, cyan, dim, green } from "../output.js";
 
-export async function modelsCommand(ctx: CliContext): Promise<number> {
-  const getToken = tokenSource(ctx);
-  const signedIn = (await getToken()) !== null;
-  const models = await listModels(ctx.config, getToken);
+export async function modelsCommand(ctx: CliContext, providerId?: string): Promise<number> {
+  const id = providerId?.trim() || ctx.config.providerId;
+  const route = cliProviderRouting(ctx, id);
+  const signedIn = (await route.getToken()) !== null || route.provider?.local === true;
+  const models = await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken);
   if (!signedIn) console.log(dim("Not signed in: showing the default catalog. Run `deyin login` for your live model list.\n"));
   for (const m of models) {
     const marks: string[] = [];
-    if (m.id === ctx.config.model) marks.push(green("default"));
+    if (m.id === ctx.config.model || `${id}::${m.id}` === ctx.config.model) marks.push(green("default"));
     if (m.contextLength) marks.push(dim(`${Math.round(m.contextLength / 1000)}k ctx`));
     console.log(`${bold(m.id.padEnd(28))} ${marks.join("  ")}`);
   }
-  console.log(dim(`\nSwitch with \`deyin -m <model>\`, /model in the TUI, or "model" in ~/.deyin/config.json.`));
+  console.log(dim(`\nProvider: ${id}. Switch with \`deyin -m ${id}::<model>\`, /model in the TUI, or "providerId" + "model" in ~/.deyin/config.json.`));
+  return 0;
+}
+
+/** List the same provider registry exposed by the desktop Identity page. */
+export async function providersCommand(ctx: CliContext, format?: string): Promise<number> {
+  const primaryToken = tokenSource(ctx);
+  const connected = (await primaryToken()) !== null;
+  const providers = ctx.agents.listProviders(connected).map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    kind: provider.kind,
+    status: provider.status,
+    enabled: provider.enabled,
+    baseUrl: provider.baseUrl,
+    apiFormat: provider.apiFormat,
+    hasKey: provider.hasKey,
+    local: provider.local === true,
+    modelCount: provider.models.length,
+  }));
+  if (format === "json") {
+    process.stdout.write(`${JSON.stringify(providers)}\n`);
+    return 0;
+  }
+  for (const provider of providers) {
+    const state = provider.status === "connected" || provider.local ? green("connected") : dim("not-connected");
+    const key = provider.kind === "primary" ? "oauth" : provider.local ? "local" : provider.hasKey ? "key" : "no-key";
+    console.log(`${bold(provider.id.padEnd(14))} ${provider.name.padEnd(18)} ${state}  ${key.padEnd(8)} ${provider.apiFormat}`);
+  }
+  console.log(dim("\nUse `deyin provider connect <id> --key <secret>` or `DEYIN_API_KEY` for custom providers."));
+  return 0;
+}
+
+export async function providerAddCommand(ctx: CliContext, name?: string, baseUrl?: string): Promise<number> {
+  if (!name?.trim() || !baseUrl?.trim()) {
+    console.error("usage: deyin provider add <name> --url <https://endpoint/v1>");
+    return 1;
+  }
+  const before = ctx.agents.listProviders(true).length;
+  ctx.agents.addProvider({ name: name.trim(), baseUrl: baseUrl.trim() });
+  const added = ctx.agents.listProviders(true).find((provider) => provider.name.toLowerCase() === name.trim().toLowerCase());
+  if (!added || ctx.agents.listProviders(true).length === before) {
+    console.error(`could not add provider "${name.trim()}" (duplicate or invalid URL)`);
+    return 1;
+  }
+  console.log(`${added.id} -> ${added.baseUrl}`);
+  return 0;
+}
+
+export async function providerConnectCommand(ctx: CliContext, id?: string, key?: string): Promise<number> {
+  const providerId = id?.trim();
+  const provider = providerId ? ctx.agents.listProviders(true).find((entry) => entry.id === providerId) : undefined;
+  if (!provider) {
+    console.error(`provider not found: ${providerId ?? ""}`.trim());
+    return 1;
+  }
+  if (provider.kind === "primary") {
+    console.error("Openference uses `deyin login`; provider keys are only for custom providers.");
+    return 1;
+  }
+  const secret = key?.trim() || process.env.DEYIN_API_KEY?.trim();
+  if (!secret && !provider.local) {
+    console.error("missing key; pass --key or set DEYIN_API_KEY (it is never printed)");
+    return 1;
+  }
+  ctx.agents.setKey(provider.id, provider.local ? "" : secret ?? "");
+  console.log(`${provider.id} connected${provider.local ? " (keyless local endpoint)" : ""}`);
+  return 0;
+}
+
+export async function providerRemoveCommand(ctx: CliContext, id?: string, confirmed = false): Promise<number> {
+  const providerId = id?.trim();
+  if (!providerId) {
+    console.error("usage: deyin provider remove <id> --yes");
+    return 1;
+  }
+  if (!confirmed) {
+    console.error("refusing to remove without --yes");
+    return 1;
+  }
+  const provider = ctx.agents.listProviders(true).find((entry) => entry.id === providerId);
+  if (!provider) {
+    console.error(`provider not found: ${providerId}`);
+    return 1;
+  }
+  if (provider.kind === "primary") {
+    console.error("cannot remove the primary Openference provider");
+    return 1;
+  }
+  ctx.agents.removeProvider(providerId);
+  console.log(`removed ${providerId}`);
+  return 0;
+}
+
+export async function providerModelsCommand(ctx: CliContext, id?: string): Promise<number> {
+  const providerId = id?.trim();
+  if (!providerId) {
+    console.error("usage: deyin provider models <id>");
+    return 1;
+  }
+  const provider = ctx.agents.listProviders(true).find((entry) => entry.id === providerId);
+  if (!provider) {
+    console.error(`provider not found: ${providerId}`);
+    return 1;
+  }
+  const result = await ctx.agents.fetchModels(providerId);
+  if (!result.ok) {
+    console.error(`could not fetch models: ${result.message ?? `HTTP ${result.status ?? "error"}`}`);
+    return 1;
+  }
+  console.log(`${providerId}: ${result.modelCount ?? 0} model(s) fetched`);
   return 0;
 }
 

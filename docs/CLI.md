@@ -41,6 +41,9 @@ deyin export <id> -o session.json
 deyin import session.json
 deyin checkpoint list <session-id>
 deyin checkpoint revert <session-id> <checkpoint-id> --yes
+deyin providers
+deyin provider connect deepseek --key "$DEEPSEEK_API_KEY"
+deyin run -m deepseek::deepseek-chat "review this change"
 deyin serve --port 7789
 deyin -m GLM-5.2 -a plan
 ```
@@ -72,15 +75,20 @@ and MCP servers remain disabled; user-level definitions still load.
 deyin run "fix the failing test in src/utils.test.ts" --yes
 git diff | deyin -p "review this diff for bugs"
 deyin run "summarize this repo" --json | jq -r 'select(.type=="result").finalText'
+deyin run --format json --auto --session SESSION_ID "continue the implementation"
 ```
 
 - `-p` / positional / piped stdin provide the prompt (they concatenate).
 - Assistant text streams to stdout; tool activity goes to stderr.
 - `--json` emits NDJSON events (`text-delta`, `tool-start`, `tool-end`, `usage`, ...,
   final `result` record with `reason`, `steps`, `usage`, `sessionId`, `finalText`, and `checkpointId`).
+- `--format json` is an alias for `--json`; `--auto` is an alias for `--yes`; and
+  `--session <id>` is an alias for `--resume <id>` for OpenCode-style scripts.
 - Permission prompts are **auto-denied** headlessly; pass `--yes` to allow everything.
 - `-c` / `--resume <id>` continue existing sessions.
 - `--trust` enables workspace-owned hooks and MCP definitions for the run.
+- `--provider <id>` selects a provider from the shared desktop registry; `--model`
+  also accepts `provider::model` (for example `deepseek::deepseek-chat`).
 - Exit codes: `0` completed, `1` error or step-cap, `2` not signed in, `130` interrupted.
 
 Inspect the effective runtime without starting an agent:
@@ -92,7 +100,18 @@ deyin mcp add filesystem --command npx --args "-y,@modelcontextprotocol/server-f
 deyin plugin list
 deyin plugin install owner/repo
 deyin plugin uninstall plugin-name --yes
+deyin providers --format json
+deyin provider add my-gateway --url https://api.example.com/v1
+deyin provider connect my-gateway --key "$MY_GATEWAY_KEY"
+deyin provider models my-gateway
+deyin acp                  # JSON-RPC Agent Client Protocol for editor integrations
 ```
+
+Providers use the same encrypted `~/.deyin/agents.json` registry as the desktop.
+Openference uses `deyin login`; custom providers use an encrypted API key, while
+local Ollama is keyless. The agent loop supports chat-completions, Responses, and
+Anthropic-compatible transports. Role overrides can route different phases to
+different providers, for example `"plan": "anthropic::claude-sonnet"` in config.
 
 ## Agents
 
@@ -108,6 +127,7 @@ Layered, later wins: defaults -> `~/.deyin/config.json` -> project `deyin.json` 
 ```jsonc
 // deyin.json
 {
+  "providerId": "openference",
   "model": "GLM-5.2",
   "agent": "build",
   "thinking": true,
@@ -129,8 +149,9 @@ Layered, later wins: defaults -> `~/.deyin/config.json` -> project `deyin.json` 
 }
 ```
 
-Env vars: `DEYIN_MODEL`, `DEYIN_AGENT`, `DEYIN_API_BASE_URL`, `DEYIN_OAUTH_ISSUER`,
-`DEYIN_CLIENT_ID`, `DEYIN_THINKING`, `DEYIN_MAX_STEPS`, `DEYIN_DATA_DIR`.
+Env vars: `DEYIN_PROVIDER` / `DEYIN_PROVIDER_ID`, `DEYIN_MODEL`, `DEYIN_AGENT`,
+`DEYIN_API_BASE_URL`, `DEYIN_OAUTH_ISSUER`, `DEYIN_CLIENT_ID`, `DEYIN_THINKING`,
+`DEYIN_MAX_STEPS`, `DEYIN_DATA_DIR`.
 
 ### Project instructions
 
@@ -182,6 +203,10 @@ The run endpoint accepts JSON such as `{ "prompt": "inspect the tests", "yes": t
 and returns the same NDJSON event stream as `deyin run --json`. Bind to another address
 only when required, and set `DEYIN_SERVER_TOKEN` (or `--token`) before exposing it beyond
 the local machine.
+
+`deyin acp` serves ACP v1 over stdin/stdout for editors that launch agents as a
+subprocess. It supports initialization, in-process session setup, streamed assistant
+text and tool updates, prompt cancellation, and text/resource prompt blocks.
 
 ## Built-in tools
 

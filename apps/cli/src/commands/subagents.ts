@@ -11,7 +11,7 @@ import {
   type SubagentDefinition,
 } from "@deyin/agent-core";
 import type { CliContext } from "../context.js";
-import { createCliShell, tokenSource } from "../context.js";
+import { cliProviderRouting, createCliShell, resolveCliModel } from "../context.js";
 import { bold, dim, green, red, yellow } from "../output.js";
 
 const EFFORTS = ["low", "medium", "high"] as const;
@@ -241,12 +241,12 @@ async function runSubagentOnce(
     return 1;
   }
   const cwd = args.dir ? join(process.cwd(), args.dir) : ctx.cwd;
-  const getToken = tokenSource(ctx);
-  if ((await getToken()) === null) {
+  const selected = resolveCliModel(ctx);
+  const routing = cliProviderRouting(ctx, selected.providerId);
+  if ((await routing.getToken()) === null && selected.provider?.local !== true) {
     console.error(`${red("error:")} not signed in. Run \`deyin login\` first.`);
     return 2;
   }
-  const routing = { apiBaseUrl: ctx.config.apiBaseUrl, getToken };
   const def: SubagentDefinition = args["max-steps"] !== undefined && args["max-steps"] !== "" ? { ...target, maxSteps: Number(args["max-steps"]) } : target;
   const readonly = forceReadonly || def.readonly;
   const shell = await createCliShell(cwd);
@@ -254,12 +254,12 @@ async function runSubagentOnce(
   try {
     result = await runSubagent(def, task, {
       cwd,
-      parent: { model: ctx.config.model, providerId: "openference", thinking: ctx.config.thinking },
+      parent: { model: selected.model, providerId: selected.providerId, thinking: ctx.config.thinking },
       modelOverride: args.model?.trim() || ctx.config.subagentModels[name],
       effortOverride: undefined,
       maxStepsDefault: ctx.config.subagentMaxSteps,
       parentRouting: routing,
-      resolveProvider: (providerId) => (providerId === "openference" ? routing : undefined),
+      resolveProvider: (providerId) => cliProviderRouting(ctx, providerId),
       permissionEngine: new PermissionEngine({
         agentRules: [],
         configRules: [...ctx.config.permissions, ...subagentReadonlyRules({ readonly })],
