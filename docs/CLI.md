@@ -37,6 +37,8 @@ deyin                  # new session in the current directory
 deyin -c               # continue the latest session for this workspace
 deyin resume           # pick a session from a list
 deyin fork <id>        # branch a transcript (optionally: --at-seq <n>)
+deyin export <id> -o session.json
+deyin import session.json
 deyin -m GLM-5.2 -a plan
 ```
 
@@ -158,6 +160,8 @@ Transcripts persist as JSONL under `~/.deyin/sessions/`. `deyin sessions` lists 
 `deyin resume <id>` reopens one, `deyin -c` continues the newest for the cwd, and
 `deyin fork <id>` creates a new session from the full transcript (or through `--at-seq`). `/compact`
 rolls a long conversation into a model-written summary in a new session.
+Use `deyin export` and `deyin import` to move a transcript between machines. Use
+`deyin session delete <id> --yes` to remove one explicitly.
 
 ## Built-in tools
 

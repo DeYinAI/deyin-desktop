@@ -1,3 +1,5 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { resolveAgents } from "@deyin/agent-core";
 import { listModels } from "@deyin/host-core";
 import type { CliContext } from "../context.js";
@@ -63,6 +65,69 @@ export async function sessionsCommand(ctx: CliContext): Promise<number> {
     console.log(`${cyan(s.id)}  ${dim(when)}  ${s.title.slice(0, 60)}  ${dim(s.cwd)}`);
   }
   console.log(dim("\nResume with `deyin resume <id>` or continue the latest with `deyin -c`."));
+  return 0;
+}
+
+/** Export one session as a portable JSON snapshot. */
+export async function exportSessionCommand(ctx: CliContext, id?: string, outputPath?: string): Promise<number> {
+  const sessionId = id?.trim() || ctx.sessions.latest(ctx.cwd)?.id;
+  if (!sessionId) {
+    console.error("no session found; pass a session id or start a session first");
+    return 1;
+  }
+  const snapshot = ctx.sessions.exportSnapshot(sessionId);
+  if (!snapshot) {
+    console.error(`session not found: ${sessionId}`);
+    return 1;
+  }
+  const json = `${JSON.stringify(snapshot, null, 2)}\n`;
+  if (outputPath?.trim()) {
+    const target = resolve(ctx.cwd, outputPath);
+    writeFileSync(target, json, { encoding: "utf8", mode: 0o600 });
+    console.log(target);
+  } else {
+    process.stdout.write(json);
+  }
+  return 0;
+}
+
+/** Import a portable session snapshot into the current workspace. */
+export async function importSessionCommand(ctx: CliContext, inputPath?: string): Promise<number> {
+  if (!inputPath?.trim()) {
+    console.error("usage: deyin import <session.json>");
+    return 1;
+  }
+  try {
+    const snapshot = JSON.parse(readFileSync(resolve(ctx.cwd, inputPath), "utf8")) as unknown;
+    const imported = ctx.sessions.importSnapshot(snapshot, { cwd: ctx.cwd });
+    if (!imported) {
+      console.error("invalid DeYin session export");
+      return 1;
+    }
+    console.log(imported.id);
+    return 0;
+  } catch (err) {
+    console.error(`could not import session: ${err instanceof Error ? err.message : String(err)}`);
+    return 1;
+  }
+}
+
+/** Delete one saved session, requiring an explicit confirmation flag. */
+export async function deleteSessionCommand(ctx: CliContext, id?: string, confirmed = false): Promise<number> {
+  const sessionId = id?.trim();
+  if (!sessionId) {
+    console.error("usage: deyin session delete <session-id> --yes");
+    return 1;
+  }
+  if (!confirmed) {
+    console.error("refusing to delete without --yes");
+    return 1;
+  }
+  if (!ctx.sessions.remove(sessionId)) {
+    console.error(`session not found: ${sessionId}`);
+    return 1;
+  }
+  console.log(`deleted ${sessionId}`);
   return 0;
 }
 

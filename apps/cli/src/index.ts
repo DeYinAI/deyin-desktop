@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, capabilitiesCommand, forkSessionCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -136,7 +136,10 @@ const SUBCOMMAND_NAMES = new Set([
   "agents",
   "usage",
   "sessions",
+  "session",
   "fork",
+  "export",
+  "import",
   "upgrade",
   "subagent",
   "memory",
@@ -177,6 +180,38 @@ const main = defineCommand({
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
     sessions: simple("sessions", "List saved sessions", sessionsCommand),
+    session: defineCommand({
+      meta: { name: "session", description: "List or delete saved sessions" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        list: defineCommand({
+          meta: { name: "list", description: "List saved sessions" },
+          args: { cwd: sharedArgs.cwd },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await sessionsCommand(ctx);
+          },
+        }),
+        delete: defineCommand({
+          meta: { name: "delete", description: "Delete a saved session" },
+          args: {
+            cwd: sharedArgs.cwd,
+            id: { type: "positional", required: true, description: "Session id" },
+            yes: { type: "boolean", alias: "y", description: "Confirm deletion" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await deleteSessionCommand(ctx, typeof args.id === "string" ? args.id : undefined, Boolean(args.yes));
+          },
+        }),
+      },
+      async run({ rawArgs }) {
+        const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
+        if (firstPositional === "list" || firstPositional === "delete") return;
+        console.error(`${red("usage:")} deyin session <list|delete> ...`);
+        process.exitCode = 1;
+      },
+    }),
     fork: defineCommand({
       meta: { name: "fork", description: "Fork a saved session transcript" },
       args: {
@@ -191,6 +226,33 @@ const main = defineCommand({
           typeof args.id === "string" ? args.id : undefined,
           typeof args["at-seq"] === "string" ? args["at-seq"] : undefined,
         );
+      },
+    }),
+    "export": defineCommand({
+      meta: { name: "export", description: "Export a session as JSON" },
+      args: {
+        cwd: sharedArgs.cwd,
+        id: { type: "positional", required: false, description: "Session id (defaults to the latest for this workspace)" },
+        output: { type: "string", alias: "o", description: "Write JSON to this file instead of stdout" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await exportSessionCommand(
+          ctx,
+          typeof args.id === "string" ? args.id : undefined,
+          typeof args.output === "string" ? args.output : undefined,
+        );
+      },
+    }),
+    "import": defineCommand({
+      meta: { name: "import", description: "Import a DeYin session JSON export" },
+      args: {
+        cwd: sharedArgs.cwd,
+        file: { type: "positional", required: true, description: "Path to a session JSON export" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await importSessionCommand(ctx, typeof args.file === "string" ? args.file : undefined);
       },
     }),
     memory: defineCommand({
