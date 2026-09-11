@@ -31,8 +31,9 @@ export async function upgradeCommand(): Promise<number> {
   }
 
   if (!isCompiledBinary()) {
-    console.log(`Version ${bold(latest)} is available. Installed via npm; update with:`);
-    console.log(`\n  npm install -g @deyin/cli@latest\n`);
+    console.log(`Version ${bold(latest)} is available. This process is running from source.`);
+    console.log("Install the official binary from GitHub Releases or rebuild the CLI from this checkout.");
+    console.log(`\n  https://github.com/${RELEASES_REPO}/releases/latest\n`);
     return 0;
   }
 
