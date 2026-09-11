@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, capabilitiesCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, forkSessionCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -136,6 +136,7 @@ const SUBCOMMAND_NAMES = new Set([
   "agents",
   "usage",
   "sessions",
+  "fork",
   "upgrade",
   "subagent",
   "memory",
@@ -176,6 +177,22 @@ const main = defineCommand({
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
     sessions: simple("sessions", "List saved sessions", sessionsCommand),
+    fork: defineCommand({
+      meta: { name: "fork", description: "Fork a saved session transcript" },
+      args: {
+        cwd: sharedArgs.cwd,
+        id: { type: "positional", required: true, description: "Session id (see `deyin sessions`)" },
+        "at-seq": { type: "string", description: "Copy only through this transcript event sequence" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await forkSessionCommand(
+          ctx,
+          typeof args.id === "string" ? args.id : undefined,
+          typeof args["at-seq"] === "string" ? args["at-seq"] : undefined,
+        );
+      },
+    }),
     memory: defineCommand({
       meta: { name: "memory", description: "List or search saved background memories" },
       args: {
