@@ -9,9 +9,14 @@ function readPackageVersion(): string {
   // Compiled single binaries carry the version as a build-time define
   // (see scripts/compile.mjs); source runs read package.json directly.
   if (process.env.DEYIN_BUILD_VERSION) return process.env.DEYIN_BUILD_VERSION;
-  // Source runs inside the monorepo, where the root package is the release
-  // authority. Packaged npm/source copies fall back to apps/cli/package.json.
-  for (const url of [new URL("../../../package.json", import.meta.url), new URL("../package.json", import.meta.url)]) {
+  // Source runs inside the monorepo, where the desktop package carries the
+  // published release version. Packaged/source copies fall back to the root
+  // package and then apps/cli/package.json.
+  for (const url of [
+    new URL("../../desktop/package.json", import.meta.url),
+    new URL("../../../package.json", import.meta.url),
+    new URL("../package.json", import.meta.url),
+  ]) {
     try {
       const version = (JSON.parse(readFileSync(fileURLToPath(url), "utf8")) as { version?: string }).version;
       if (version) return version;
