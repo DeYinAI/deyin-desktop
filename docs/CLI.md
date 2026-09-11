@@ -116,6 +116,7 @@ deyin plugin uninstall plugin-name --yes
 deyin plug owner/repo       # short install alias
 deyin debug --format json   # runtime/capability diagnostics
 deyin db path               # file-backed data directory
+deyin stats --days 30 --models 5
 deyin providers --format json
 deyin provider add my-gateway --url https://api.example.com/v1
 deyin provider connect my-gateway --key "$MY_GATEWAY_KEY"
