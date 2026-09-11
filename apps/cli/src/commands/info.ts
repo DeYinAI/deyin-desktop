@@ -66,6 +66,28 @@ export async function sessionsCommand(ctx: CliContext): Promise<number> {
   return 0;
 }
 
+/** Create a new session log from an existing transcript prefix. */
+export async function forkSessionCommand(ctx: CliContext, id?: string, atSeq?: string): Promise<number> {
+  const sourceId = id?.trim();
+  if (!sourceId) {
+    console.error("usage: deyin fork <session-id> [--at-seq <n>]");
+    return 1;
+  }
+  const parsedSeq = atSeq === undefined || atSeq.trim() === "" ? undefined : Number(atSeq);
+  if (parsedSeq !== undefined && (!Number.isInteger(parsedSeq) || parsedSeq < 0)) {
+    console.error("--at-seq must be a non-negative integer");
+    return 1;
+  }
+  const forked = ctx.sessions.fork(sourceId, parsedSeq === undefined ? undefined : { atSeq: parsedSeq });
+  if (!forked) {
+    console.error(`session not found: ${sourceId}`);
+    return 1;
+  }
+  console.log(forked.id);
+  console.log(dim(`Forked ${sourceId} into a new session. Resume with "deyin resume ${forked.id}".`));
+  return 0;
+}
+
 export async function memoryCommand(ctx: CliContext, query?: string): Promise<number> {
   const q = query?.trim();
   const facts = q ? ctx.memory.search(q).map((h) => h.fact) : ctx.memory.list();
