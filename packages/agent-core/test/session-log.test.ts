@@ -193,3 +193,24 @@ test("run-summary lifecycle record round-trips and forks without leaking into th
     "fork carries the run-summary record",
   );
 });
+
+test("portable session snapshots round-trip and can be removed", () => {
+  const s = store();
+  const meta = s.create({ cwd: "/source", model: "m", agent: "build" });
+  s.append(meta.id, { role: "user", content: "export me" });
+  s.append(meta.id, { role: "assistant", content: "done" });
+  const snapshot = s.exportSnapshot(meta.id);
+  assert.ok(snapshot);
+  assert.equal(snapshot!.format, "deyin-session");
+  const imported = s.importSnapshot(snapshot, { cwd: "/imported" });
+  assert.ok(imported);
+  assert.notEqual(imported!.id, meta.id);
+  assert.equal(imported!.cwd, "/imported");
+  assert.deepEqual(s.load(imported!.id)?.messages, [
+    { role: "user", content: "export me" },
+    { role: "assistant", content: "done" },
+  ]);
+  assert.equal(s.remove(imported!.id), true);
+  assert.equal(s.load(imported!.id), null);
+  assert.equal(s.remove(imported!.id), false);
+});

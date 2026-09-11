@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { computePrefixShape } from "./cache/prefix-tracker.js";
 import type { RunSummary } from "./loop.js";
@@ -31,6 +31,15 @@ export type SessionLifecycleEvent =
 export type SessionLogEvent =
   | { seq: number; type: "message"; message: AgentMessage }
   | { seq: number; type: "lifecycle"; ts: string; event: SessionLifecycleEvent };
+
+/** Portable JSON representation used by `deyin export` and `deyin import`. */
+export interface SessionExportSnapshot {
+  format: "deyin-session";
+  version: 1;
+  exportedAt: string;
+  meta: SessionMeta;
+  events: SessionLogEvent[];
+}
 
 type SessionRecord =
   | { type: "meta"; meta: SessionMetaRecord }
@@ -143,6 +152,63 @@ export class SessionStore {
     appendLine(this.file(id), JSON.stringify(record));
   }
 
+  /** Return a portable snapshot without exposing the on-disk JSONL format. */
+  exportSnapshot(id: string): SessionExportSnapshot | null {
+    const loaded = this.load(id);
+    if (!loaded) return null;
+    return {
+      format: "deyin-session",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      meta: loaded.meta,
+      events: this.events(id),
+    };
+  }
+
+  /** Import a portable snapshot into a fresh session, optionally rebasing its cwd. */
+  importSnapshot(input: unknown, opts?: { cwd?: string }): SessionMeta | null {
+    if (!input || typeof input !== "object") return null;
+    const raw = input as Partial<SessionExportSnapshot> & { meta?: unknown; events?: unknown };
+    if (raw.format !== "deyin-session" || raw.version !== 1 || !raw.meta || !Array.isArray(raw.events)) return null;
+    const source = migrateSessionMeta(raw.meta);
+    if (!source.id || !source.cwd || !source.model || !source.agent) return null;
+    const created = this.create({
+      cwd: opts?.cwd ?? source.cwd,
+      model: source.model,
+      agent: source.agent,
+    });
+    if (source.title) this.appendEvent(created.id, { kind: "title-set", title: source.title });
+    for (const candidate of raw.events) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const event = candidate as Partial<SessionLogEvent>;
+      if (event.type === "message" && event.message && typeof event.message === "object") {
+        const message = event.message as AgentMessage;
+        if (typeof message.role === "string") this.append(created.id, message);
+      } else if (event.type === "lifecycle" && event.event && typeof event.event === "object") {
+        const lifecycle = event.event as SessionLifecycleEvent;
+        if (typeof lifecycle.kind === "string" && lifecycle.kind !== "session-created") {
+          this.appendEvent(created.id, lifecycle);
+        }
+      }
+    }
+    return this.load(created.id)?.meta ?? null;
+  }
+
+  /** Delete one session transcript. */
+  remove(id: string): boolean {
+    try {
+      unlinkSync(this.file(id));
+      const index = this.readIndex();
+      if (index[id]) {
+        delete index[id];
+        this.writeIndex(index);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Replay the log: every non-meta record in append order with its seq.
    * Malformed lines (a crash mid-append) are skipped — same tolerance as
@@ -226,6 +292,7 @@ export class SessionStore {
     }
     const messages: AgentMessage[] = [];
     let metaBase: SessionMetaRecord | null = null;
+    let titleOverride: string | undefined;
     let needsPersist = false;
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
@@ -243,6 +310,7 @@ export class SessionStore {
           metaBase = migrateSessionMeta(record.meta);
         }
       } else if (record.type === "message") messages.push(record.message);
+      else if (record.type === "lifecycle" && record.event.kind === "title-set") titleOverride = record.event.title;
     }
     if (!metaBase) return null;
 
@@ -276,7 +344,7 @@ export class SessionStore {
       // keep createdAt
     }
     const firstUser = messages.find((m) => m.role === "user");
-    const title = metaBase.title || (firstUser ? firstUser.content.replace(/\s+/g, " ").slice(0, 80) : "(empty session)");
+    const title = titleOverride || metaBase.title || (firstUser ? firstUser.content.replace(/\s+/g, " ").slice(0, 80) : "(empty session)");
     return {
       meta: { ...metaBase, title, updatedAt, messageCount: messages.length },
       messages,
