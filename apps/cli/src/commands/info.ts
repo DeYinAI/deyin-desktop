@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { resolveAgents } from "@deyin/agent-core";
 import { listModels } from "@deyin/host-core";
@@ -203,5 +203,39 @@ export async function mcpListCommand(ctx: CliContext, trustWorkspace = false): P
     console.log(`${bold(server.name.padEnd(20))} ${status}  ${server.transport.padEnd(6)}  ${endpoint ?? ""}  ${dim(server.source)}`);
   }
   console.log(dim(`\n${defs.length} server(s). Start a run with deyin run; use --trust for workspace-owned definitions.`));
+  return 0;
+}
+
+/** Add a stdio or remote MCP definition to the user or workspace config. */
+export async function mcpAddCommand(
+  ctx: CliContext,
+  input: { name?: string; command?: string; args?: string; url?: string; type?: string; global?: boolean },
+): Promise<number> {
+  const name = input.name?.trim();
+  const command = input.command?.trim();
+  const url = input.url?.trim();
+  if (!name || (!command && !url) || (command && url)) {
+    console.error("usage: deyin mcp add <name> (--command <program> [--args a,b] | --url <endpoint> [--type sse|http])");
+    return 1;
+  }
+  const target = input.global ? resolve(ctx.dataDir, "mcp.json") : resolve(ctx.cwd, ".deyin", "mcp.json");
+  let config: { mcpServers?: Record<string, Record<string, unknown>> } = {};
+  try {
+    config = JSON.parse(readFileSync(target, "utf8")) as typeof config;
+  } catch {
+    // A missing or invalid file is replaced only after the new definition is validated.
+  }
+  const server: Record<string, unknown> = {};
+  if (command) {
+    server.command = command;
+    if (input.args?.trim()) server.args = input.args.split(",").map((arg) => arg.trim()).filter(Boolean);
+  } else {
+    server.url = url;
+    if (input.type === "sse" || input.type === "http") server.type = input.type;
+  }
+  config.mcpServers = { ...(config.mcpServers ?? {}), [name]: server };
+  mkdirSync(resolve(target, ".."), { recursive: true, mode: 0o700 });
+  writeFileSync(target, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  console.log(`${name} -> ${target}`);
   return 0;
 }

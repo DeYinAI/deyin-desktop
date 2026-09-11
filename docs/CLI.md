@@ -86,6 +86,7 @@ Inspect the effective runtime without starting an agent:
 ```bash
 deyin capabilities
 deyin mcp
+deyin mcp add filesystem --command npx --args "-y,@modelcontextprotocol/server-filesystem,."
 deyin plugin list
 deyin plugin install owner/repo
 deyin plugin uninstall plugin-name --yes

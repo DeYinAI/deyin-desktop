@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, capabilitiesCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -279,7 +279,42 @@ const main = defineCommand({
     mcp: defineCommand({
       meta: { name: "mcp", description: "List effective MCP server definitions" },
       args: { cwd: sharedArgs.cwd, trust: sharedArgs.trust },
-      async run({ args }) {
+      subCommands: {
+        list: defineCommand({
+          meta: { name: "list", description: "List effective MCP server definitions" },
+          args: { cwd: sharedArgs.cwd, trust: sharedArgs.trust },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await mcpListCommand(ctx, Boolean(args.trust));
+          },
+        }),
+        add: defineCommand({
+          meta: { name: "add", description: "Add an MCP server to user or workspace config" },
+          args: {
+            cwd: sharedArgs.cwd,
+            name: { type: "positional", required: true, description: "Server name" },
+            command: { type: "string", description: "stdio command" },
+            args: { type: "string", description: "Comma-separated stdio arguments" },
+            url: { type: "string", description: "SSE or Streamable HTTP endpoint" },
+            type: { type: "string", description: "Remote transport: sse or http" },
+            global: { type: "boolean", alias: "g", description: "Write to ~/.deyin/mcp.json" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await mcpAddCommand(ctx, {
+              name: typeof args.name === "string" ? args.name : undefined,
+              command: typeof args.command === "string" ? args.command : undefined,
+              args: typeof args.args === "string" ? args.args : undefined,
+              url: typeof args.url === "string" ? args.url : undefined,
+              type: typeof args.type === "string" ? args.type : undefined,
+              global: Boolean(args.global),
+            });
+          },
+        }),
+      },
+      async run({ args, rawArgs }) {
+        const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
+        if (firstPositional === "list" || firstPositional === "add") return;
         const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
         process.exitCode = await mcpListCommand(ctx, Boolean(args.trust));
       },
