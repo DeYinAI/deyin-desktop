@@ -27,6 +27,10 @@ import { writeTool } from "./write.js";
 import { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 import { GIT_TOOLS } from "./git.js";
 import { fileTreeTool } from "./tree.js";
+import { notebookEditTool } from "./notebook-edit.js";
+import { envInfoTool } from "./env-info.js";
+import { diffTextTool } from "./diff.js";
+import { processListTool } from "./process-list.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell } from "./bash.js";
@@ -122,6 +126,10 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   completeStepTool,
   createWaitJobsTool(),
   generateImageTool,
+  notebookEditTool,
+  envInfoTool,
+  diffTextTool,
+  processListTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

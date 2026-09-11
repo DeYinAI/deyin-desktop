@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { diffTextTool, envInfoTool, fileTreeTool, lcsDiff, processListTool, redactArgs } from "../src/tools/index.js";
+import { createBuiltinRegistry, diffTextTool, envInfoTool, fileTreeTool, lcsDiff, processListTool, redactArgs } from "../src/tools/index.js";
 import type { ToolContext } from "../src/types.js";
 
 function tempDir(): string {
@@ -11,6 +11,13 @@ function tempDir(): string {
 }
 
 const ctx = (cwd: string): ToolContext => ({ cwd, todos: [] });
+
+test("CLI registry includes the safe local parity tools", () => {
+  const names = new Set(createBuiltinRegistry().names());
+  for (const name of ["notebook_edit", "env_info", "diff_text", "process_list"]) {
+    assert.ok(names.has(name), `${name} should be available to the agent`);
+  }
+});
 
 test("file_tree renders shape, skips ignored dirs, respects depth cap", async () => {
   const dir = tempDir();
