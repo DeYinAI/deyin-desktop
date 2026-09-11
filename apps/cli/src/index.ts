@@ -124,6 +124,13 @@ const run = defineCommand({
           resumeId,
           fork: Boolean(args.fork),
           files: filesFrom(args),
+          cwd: ctx.cwd,
+          provider: ctx.config.providerId,
+          model: ctx.config.model,
+          agent: ctx.config.agent,
+          thinking: ctx.config.thinking,
+          maxSteps: ctx.config.maxSteps ?? undefined,
+          trustWorkspace: Boolean(args.trust),
           token: typeof args.token === "string" ? args.token : undefined,
           username: typeof args.username === "string" ? args.username : undefined,
           password: typeof args.password === "string" ? args.password : undefined,
@@ -857,6 +864,7 @@ const main = defineCommand({
             ? args.session
             : undefined;
       if (typeof args.attach === "string" && args.attach) {
+        const remoteCtx = createContext({ cwd, overrides });
         await headlessWithSigint((signal) =>
           runRemote({
             url: args.attach as string,
@@ -867,6 +875,13 @@ const main = defineCommand({
             resumeId,
             fork: Boolean(args.fork),
             files: filesFrom(args),
+            cwd: remoteCtx.cwd,
+            provider: remoteCtx.config.providerId,
+            model: remoteCtx.config.model,
+            agent: remoteCtx.config.agent,
+            thinking: remoteCtx.config.thinking,
+            maxSteps: remoteCtx.config.maxSteps ?? undefined,
+            trustWorkspace: Boolean(args.trust),
             token: typeof args.token === "string" ? args.token : undefined,
             username: typeof args.username === "string" ? args.username : undefined,
             password: typeof args.password === "string" ? args.password : undefined,

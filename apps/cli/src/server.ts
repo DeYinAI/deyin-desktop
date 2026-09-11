@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { loadCliCapabilities } from "./capabilities.js";
-import { cliProviderRouting } from "./context.js";
+import { cliProviderRouting, createContext } from "./context.js";
 import type { CliContext } from "./context.js";
 import { runHeadless } from "./headless.js";
 import { VERSION } from "./version.js";
@@ -100,11 +100,25 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           maxSteps?: number;
           trustWorkspace?: boolean;
           files?: string[];
+          cwd?: string;
+          provider?: string;
+          model?: string;
+          agent?: string;
+          thinking?: boolean;
         };
+        const overrides = {
+          ...(typeof request.provider === "string" && request.provider ? { providerId: request.provider } : {}),
+          ...(typeof request.model === "string" && request.model ? { model: request.model } : {}),
+          ...(typeof request.agent === "string" && request.agent ? { agent: request.agent } : {}),
+          ...(typeof request.thinking === "boolean" ? { thinking: request.thinking } : {}),
+        };
+        const requestCtx = Object.keys(overrides).length > 0 || typeof request.cwd === "string"
+          ? createContext({ cwd: request.cwd ?? ctx.cwd, overrides })
+          : ctx;
         const out = capture();
         const errors = capture();
         const exitCode = await runHeadless({
-          ctx,
+          ctx: requestCtx,
           prompt: request.prompt,
           json: true,
           yes: request.yes === true,

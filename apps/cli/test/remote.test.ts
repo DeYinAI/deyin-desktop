@@ -31,6 +31,13 @@ test("remote run forwards streamed server events and bearer auth", async () => {
       prompt: "remote prompt",
       yes: true,
       token: "secret",
+      cwd: "/workspace",
+      provider: "deepseek",
+      model: "deepseek::deepseek-chat",
+      agent: "plan",
+      thinking: true,
+      maxSteps: 8,
+      trustWorkspace: true,
       stdout: out.stream,
       stderr: capture().stream,
       onEvent: (event) => events.push(event),
@@ -39,7 +46,19 @@ test("remote run forwards streamed server events and bearer auth", async () => {
     assert.equal(out.text(), "remote answer");
     assert.equal(auth, "Bearer secret");
     assert.deepEqual(events.map((event) => (event as { type: string }).type), ["text-delta", "result"]);
-    assert.deepEqual(JSON.parse(requestBody), { prompt: "remote prompt", yes: true, continueLast: false, fork: false });
+    assert.deepEqual(JSON.parse(requestBody), {
+      prompt: "remote prompt",
+      yes: true,
+      continueLast: false,
+      fork: false,
+      cwd: "/workspace",
+      provider: "deepseek",
+      model: "deepseek::deepseek-chat",
+      agent: "plan",
+      thinking: true,
+      maxSteps: 8,
+      trustWorkspace: true,
+    });
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
