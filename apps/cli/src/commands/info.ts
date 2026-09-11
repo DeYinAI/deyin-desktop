@@ -6,6 +6,7 @@ import type { CliContext } from "../context.js";
 import { cliProviderRouting, tokenSource } from "../context.js";
 import { cliMcpDefinitions, loadCliCapabilities } from "../capabilities.js";
 import { bold, cyan, dim, green } from "../output.js";
+import { VERSION } from "../version.js";
 
 export async function modelsCommand(ctx: CliContext, providerId?: string, refresh = false, verbose = false): Promise<number> {
   const id = providerId?.trim() || ctx.config.providerId;
@@ -415,6 +416,54 @@ export async function capabilitiesCommand(ctx: CliContext, trustWorkspace = fals
   }
   for (const [kind, name, source] of rows) console.log(`${bold(kind.padEnd(9))} ${name.padEnd(24)} ${dim(source)}`);
   console.log(dim(`\n${rows.length} capability(s). Workspace hooks/MCP require --trust when sourced from this repository.`));
+  return 0;
+}
+
+/** Print a deterministic runtime snapshot for support and troubleshooting. */
+export async function debugCommand(ctx: CliContext, format?: string, trustWorkspace = false): Promise<number> {
+  const caps = await loadCliCapabilities({ cwd: ctx.cwd, dataDir: ctx.dataDir, trustedWorkspace: trustWorkspace });
+  const providers = ctx.agents.listProviders(true).map((provider) => ({
+    id: provider.id,
+    kind: provider.kind,
+    status: provider.status,
+    local: provider.local === true,
+    modelCount: provider.models.length,
+  }));
+  const snapshot = {
+    version: VERSION,
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    cwd: ctx.cwd,
+    dataDir: ctx.dataDir,
+    config: { providerId: ctx.config.providerId, model: ctx.config.model, agent: ctx.config.agent },
+    providers,
+    sessions: ctx.sessions.list().length,
+    capabilities: {
+      plugins: caps.plugins.length,
+      skills: caps.skills.length,
+      commands: caps.commands.length,
+      subagents: caps.subagents.length,
+      hooks: caps.hooks.length,
+      mcpServers: caps.mcpServers.length,
+    },
+  };
+  if (format === "json") {
+    process.stdout.write(`${JSON.stringify(snapshot)}\n`);
+    return 0;
+  }
+  console.log(`${bold("DeYin")} ${snapshot.version}  ${snapshot.platform}/${snapshot.arch}  ${snapshot.node}`);
+  console.log(`${bold("Workspace")} ${snapshot.cwd}`);
+  console.log(`${bold("Data")}      ${snapshot.dataDir}`);
+  console.log(`${bold("Agent")}     ${snapshot.config.agent}  ${snapshot.config.providerId}::${snapshot.config.model}`);
+  console.log(`${bold("Sessions")}  ${snapshot.sessions}`);
+  console.log(`${bold("Providers")} ${snapshot.providers.length}  ${bold("Capabilities")} ${Object.values(snapshot.capabilities).reduce((a, b) => a + b, 0)}`);
+  return 0;
+}
+
+/** DeYin uses a file-backed data directory rather than a SQLite database. */
+export function dbPathCommand(ctx: CliContext): number {
+  console.log(ctx.dataDir);
   return 0;
 }
 

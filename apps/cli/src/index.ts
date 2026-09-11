@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, capabilitiesCommand, checkpointListCommand, checkpointRevertCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, providerAddCommand, providerConnectCommand, providerModelsCommand, providerRemoveCommand, providersCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, checkpointListCommand, checkpointRevertCommand, dbPathCommand, debugCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, providerAddCommand, providerConnectCommand, providerModelsCommand, providerRemoveCommand, providersCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -208,6 +208,9 @@ const SUBCOMMAND_NAMES = new Set([
   "capabilities",
   "mcp",
   "plugin",
+  "plug",
+  "db",
+  "debug",
   "checkpoint",
 ]);
 
@@ -712,6 +715,17 @@ const main = defineCommand({
         process.exitCode = 1;
       },
     }),
+    plug: defineCommand({
+      meta: { name: "plug", description: "Install a capability plugin (alias for `deyin plugin install`)" },
+      args: {
+        cwd: sharedArgs.cwd,
+        source: { type: "positional", required: true, description: "owner/repo, owner/repo@ref, or a GitHub URL" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await pluginInstallCommand(ctx, typeof args.source === "string" ? args.source : undefined);
+      },
+    }),
     subagent: defineCommand({
       meta: { name: "subagent", description: "List, create, edit, delete and run subagents (shared with the desktop app)" },
       args: { cwd: sharedArgs.cwd },
@@ -808,6 +822,34 @@ const main = defineCommand({
         console.error(`${red("usage:")} deyin subagent <list|create|edit|delete|run|try> ...`);
         console.error(dim("Run \`deyin subagent create --help\` for the create options."));
         process.exitCode = 1;
+      },
+    }),
+    debug: defineCommand({
+      meta: { name: "debug", description: "Print runtime and capability diagnostics" },
+      args: { cwd: sharedArgs.cwd, format: { type: "string", description: "Output format: table or json" }, trust: sharedArgs.trust },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await debugCommand(ctx, typeof args.format === "string" ? args.format : undefined, Boolean(args.trust));
+      },
+    }),
+    db: defineCommand({
+      meta: { name: "db", description: "Inspect the file-backed DeYin data store" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        path: defineCommand({
+          meta: { name: "path", description: "Print the DeYin data directory" },
+          args: { cwd: sharedArgs.cwd },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = dbPathCommand(ctx);
+          },
+        }),
+      },
+      async run({ args, rawArgs }) {
+        const firstPositional = rawArgs.find((value) => !value.startsWith("-"));
+        if (firstPositional === "path") return;
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = dbPathCommand(ctx);
       },
     }),
     upgrade: defineCommand({
