@@ -20,6 +20,7 @@ import { upgradeCommand } from "./upgrade.js";
 import { VERSION } from "./version.js";
 import { serveCli } from "./server.js";
 import { runAcp } from "./acp.js";
+import { runRemote } from "./remote.js";
 
 // One User-Agent identity for every outbound CLI request (providers, GitHub, search).
 initUserAgent("cli", VERSION);
@@ -30,6 +31,7 @@ const sharedArgs = {
   agent: { type: "string", alias: "a", description: "Agent: build, plan, or a custom agent" },
   cwd: { type: "string", alias: "C", description: "Workspace directory (defaults to the current directory)" },
   "max-steps": { type: "string", description: "Cap agent loop steps for one run" },
+  thinking: { type: "boolean", description: "Enable reasoning/thinking output" },
   trust: { type: "boolean", description: "Trust workspace hooks and MCP configuration for this run" },
 } as const;
 
@@ -40,6 +42,7 @@ function overridesFrom(args: Record<string, unknown>): Partial<DeyinCliConfigFil
   if (typeof args.agent === "string" && args.agent) overrides.agent = args.agent;
   const maxSteps = Number(args["max-steps"]);
   if (Number.isFinite(maxSteps) && maxSteps > 0) overrides.maxSteps = maxSteps;
+  if (typeof args.thinking === "boolean") overrides.thinking = args.thinking;
   return overrides;
 }
 
@@ -88,6 +91,11 @@ const run = defineCommand({
     continue: { type: "boolean", alias: "c", description: "Continue the latest session for this workspace" },
     resume: { type: "string", description: "Resume a specific session id" },
     session: { type: "string", description: "Alias for --resume" },
+    fork: { type: "boolean", description: "Fork the resumed session before running" },
+    attach: { type: "string", description: "Run through an existing `deyin serve` URL" },
+    token: { type: "string", description: "Bearer token for an attached server" },
+    username: { type: "string", description: "Basic auth username for an attached server" },
+    password: { type: "string", description: "Basic auth password for an attached server" },
   },
   async run({ args }) {
     const stdinText = await readPipedStdin();
@@ -99,6 +107,30 @@ const run = defineCommand({
       process.exit(EXIT_ERROR);
     }
     const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined, overrides: overridesFrom(args) });
+    const resumeId =
+      typeof args.resume === "string" && args.resume
+        ? args.resume
+        : typeof args.session === "string" && args.session
+          ? args.session
+          : undefined;
+    if (typeof args.attach === "string" && args.attach) {
+      return headlessWithSigint((signal) =>
+        runRemote({
+          url: args.attach as string,
+          prompt,
+          json: Boolean(args.json) || args.format === "json",
+          yes: Boolean(args.yes) || Boolean(args.auto),
+          continueLast: Boolean(args.continue),
+          resumeId,
+          fork: Boolean(args.fork),
+          files: filesFrom(args),
+          token: typeof args.token === "string" ? args.token : undefined,
+          username: typeof args.username === "string" ? args.username : undefined,
+          password: typeof args.password === "string" ? args.password : undefined,
+          signal,
+        }),
+      );
+    }
     await headlessWithSigint((signal) =>
       runHeadless({
         ctx,
@@ -106,12 +138,8 @@ const run = defineCommand({
         json: Boolean(args.json) || args.format === "json",
         yes: Boolean(args.yes) || Boolean(args.auto),
         continueLast: Boolean(args.continue),
-        resumeId:
-          typeof args.resume === "string" && args.resume
-            ? args.resume
-            : typeof args.session === "string" && args.session
-              ? args.session
-              : undefined,
+        resumeId,
+        fork: Boolean(args.fork),
         signal,
         trustWorkspace: Boolean(args.trust),
         files: filesFrom(args),
@@ -147,8 +175,10 @@ function simple(name: string, description: string, handler: (ctx: ReturnType<typ
 
 const SUBCOMMAND_NAMES = new Set([
   "run",
+  "attach",
   "resume",
   "login",
+  "auth",
   "logout",
   "whoami",
   "models",
@@ -193,9 +223,66 @@ const main = defineCommand({
     continue: { type: "boolean", alias: "c", description: "Continue the latest session for this workspace" },
     resume: { type: "string", description: "Resume a specific session id" },
     session: { type: "string", description: "Alias for --resume" },
+    fork: { type: "boolean", description: "Fork the resumed session before running" },
+    attach: { type: "string", description: "Run through an existing `deyin serve` URL" },
+    token: { type: "string", description: "Bearer token for an attached server" },
+    username: { type: "string", description: "Basic auth username for an attached server" },
+    password: { type: "string", description: "Basic auth password for an attached server" },
   },
   subCommands: {
     run,
+    attach: defineCommand({
+      meta: { name: "attach", description: "Run a prompt through an existing deyin serve URL" },
+      args: {
+        cwd: sharedArgs.cwd,
+        url: { type: "positional", required: true, description: "deyin serve URL" },
+        prompt: { type: "positional", required: false, description: "Prompt (or pipe it on stdin)" },
+        p: { type: "string", description: "Prompt text" },
+        file: { type: "string", alias: "f", description: "Comma-separated files to attach" },
+        json: { type: "boolean", description: "Emit NDJSON events" },
+        format: { type: "string", description: "Output format: default or json" },
+        yes: { type: "boolean", alias: "y", description: "Auto-approve tools" },
+        auto: { type: "boolean", description: "Alias for --yes" },
+        continue: { type: "boolean", alias: "c", description: "Continue the latest remote session" },
+        resume: { type: "string", description: "Resume a remote session id" },
+        session: { type: "string", description: "Alias for --resume" },
+        token: { type: "string", description: "Bearer token" },
+        username: { type: "string", description: "Basic auth username" },
+        password: { type: "string", description: "Basic auth password" },
+      },
+      async run({ args }) {
+        const stdinText = await readPipedStdin();
+        const prompt = [typeof args.p === "string" ? args.p : "", typeof args.prompt === "string" ? args.prompt : "", stdinText]
+          .filter(Boolean)
+          .join("\n\n");
+        if (!prompt) {
+          errorLine("no prompt. Pass one as an argument, with -p, or pipe it on stdin.");
+          process.exit(EXIT_ERROR);
+        }
+        const resumeId =
+          typeof args.resume === "string" && args.resume
+            ? args.resume
+            : typeof args.session === "string" && args.session
+              ? args.session
+              : undefined;
+        await headlessWithSigint((signal) =>
+          runRemote({
+            url: args.url as string,
+            prompt,
+            json: Boolean(args.json) || args.format === "json",
+            yes: Boolean(args.yes) || Boolean(args.auto),
+            continueLast: Boolean(args.continue),
+            resumeId,
+            fork: Boolean(args.fork),
+            files: filesFrom(args),
+            token: typeof args.token === "string" ? args.token : undefined,
+            username: typeof args.username === "string" ? args.username : undefined,
+            password: typeof args.password === "string" ? args.password : undefined,
+            signal,
+          }),
+        );
+      },
+    }),
     resume,
     login: defineCommand({
       meta: { name: "login", description: "Sign in with Openference (device flow; --browser for loopback)" },
@@ -204,14 +291,71 @@ const main = defineCommand({
         process.exitCode = await loginCommand(createContext(), { browser: Boolean(args.browser) });
       },
     }),
+    auth: defineCommand({
+      meta: { name: "auth", description: "Manage provider credentials" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        login: defineCommand({
+          meta: { name: "login", description: "Sign in or store a provider credential" },
+          args: {
+            cwd: sharedArgs.cwd,
+            browser: { type: "boolean", description: "Use the browser loopback flow for Openference" },
+            provider: { type: "string", alias: "p", description: "Custom provider id" },
+            key: { type: "string", description: "Custom provider API key (or DEYIN_API_KEY)" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            if (typeof args.provider === "string" && args.provider) {
+              process.exitCode = await providerConnectCommand(ctx, args.provider, typeof args.key === "string" ? args.key : undefined);
+            } else {
+              process.exitCode = await loginCommand(ctx, { browser: Boolean(args.browser) });
+            }
+          },
+        }),
+        list: defineCommand({
+          meta: { name: "list", description: "List configured provider credentials" },
+          args: { cwd: sharedArgs.cwd, format: { type: "string", description: "Output format: table or json" } },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await providersCommand(ctx, typeof args.format === "string" ? args.format : undefined);
+          },
+        }),
+        ls: defineCommand({
+          meta: { name: "ls", description: "Alias for auth list" },
+          args: { cwd: sharedArgs.cwd, format: { type: "string", description: "Output format: table or json" } },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await providersCommand(ctx, typeof args.format === "string" ? args.format : undefined);
+          },
+        }),
+        logout: simple("logout", "Sign out of Openference", logoutCommand),
+      },
+      async run({ args, rawArgs }) {
+        const firstPositional = rawArgs.find((value) => !value.startsWith("-"));
+        if (firstPositional && new Set(["login", "list", "ls", "logout"]).has(firstPositional)) return;
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await providersCommand(ctx);
+      },
+    }),
     logout: simple("logout", "Sign out and delete stored credentials", logoutCommand),
     whoami: simple("whoami", "Show the signed-in account", whoamiCommand),
     models: defineCommand({
       meta: { name: "models", description: "List models for a provider" },
-      args: { cwd: sharedArgs.cwd, provider: sharedArgs.provider },
+      args: {
+        cwd: sharedArgs.cwd,
+        provider: sharedArgs.provider,
+        id: { type: "positional", required: false, description: "Provider id (optional)" },
+        refresh: { type: "boolean", description: "Refresh the provider model cache" },
+        verbose: { type: "boolean", description: "Include model metadata" },
+      },
       async run({ args }) {
         const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
-        process.exitCode = await modelsCommand(ctx, typeof args.provider === "string" ? args.provider : undefined);
+        process.exitCode = await modelsCommand(
+          ctx,
+          typeof args.provider === "string" ? args.provider : typeof args.id === "string" ? args.id : undefined,
+          Boolean(args.refresh),
+          Boolean(args.verbose),
+        );
       },
     }),
     providers: defineCommand({
@@ -312,6 +456,14 @@ const main = defineCommand({
               maxCount: Number.isFinite(maxCount) && maxCount > 0 ? maxCount : undefined,
               format: typeof args.format === "string" ? args.format : undefined,
             });
+          },
+        }),
+        ls: defineCommand({
+          meta: { name: "ls", description: "Alias for mcp list" },
+          args: { cwd: sharedArgs.cwd, trust: sharedArgs.trust },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await mcpListCommand(ctx, Boolean(args.trust));
           },
         }),
         delete: defineCommand({
@@ -482,7 +634,7 @@ const main = defineCommand({
       },
       async run({ args, rawArgs }) {
         const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
-        if (firstPositional === "list" || firstPositional === "add") return;
+        if (firstPositional === "list" || firstPositional === "ls" || firstPositional === "add") return;
         const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
         process.exitCode = await mcpListCommand(ctx, Boolean(args.trust));
       },
@@ -675,6 +827,30 @@ const main = defineCommand({
 
     // Headless when a prompt was provided (flag or pipe), or when there is no TTY to draw on.
     if (prompt) {
+      const resumeId =
+        typeof args.resume === "string" && args.resume
+          ? args.resume
+          : typeof args.session === "string" && args.session
+            ? args.session
+            : undefined;
+      if (typeof args.attach === "string" && args.attach) {
+        await headlessWithSigint((signal) =>
+          runRemote({
+            url: args.attach as string,
+            prompt,
+            json: Boolean(args.json) || args.format === "json",
+            yes: Boolean(args.yes) || Boolean(args.auto),
+            continueLast: Boolean(args.continue),
+            resumeId,
+            files: filesFrom(args),
+            token: typeof args.token === "string" ? args.token : undefined,
+            username: typeof args.username === "string" ? args.username : undefined,
+            password: typeof args.password === "string" ? args.password : undefined,
+            signal,
+          }),
+        );
+        return;
+      }
       const ctx = createContext({ cwd, overrides });
       await headlessWithSigint((signal) =>
         runHeadless({
@@ -683,12 +859,8 @@ const main = defineCommand({
           json: Boolean(args.json) || args.format === "json",
           yes: Boolean(args.yes) || Boolean(args.auto),
           continueLast: Boolean(args.continue),
-          resumeId:
-            typeof args.resume === "string" && args.resume
-              ? args.resume
-              : typeof args.session === "string" && args.session
-                ? args.session
-                : undefined,
+          resumeId,
+          fork: Boolean(args.fork),
           signal,
           trustWorkspace: Boolean(args.trust),
           files: filesFrom(args),

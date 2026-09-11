@@ -40,11 +40,15 @@ export interface HeadlessOptions {
   continueLast?: boolean;
   /** Resume a specific session id. */
   resumeId?: string;
+  /** Fork the resumed/continued session before appending the prompt. */
+  fork?: boolean;
   maxSteps?: number;
   /** Trust workspace-owned hooks and MCP configuration for this run. */
   trustWorkspace?: boolean;
   /** Comma-separated CLI file attachments (images become multimodal input). */
   files?: string[];
+  /** Images supplied by protocol adapters such as ACP. */
+  images?: AgentImage[];
   signal?: AbortSignal;
   /** Injectable for tests. */
   stdout?: NodeJS.WritableStream;
@@ -149,9 +153,10 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   let messages: AgentMessage[];
   let newSession = false;
   if (opts.resumeId || opts.continueLast) {
-    const meta = opts.resumeId
+    let meta = opts.resumeId
       ? ctx.sessions.load(opts.resumeId)?.meta
       : (ctx.sessions.latest(ctx.cwd) ?? undefined);
+    if (meta && opts.fork) meta = ctx.sessions.fork(meta.id) ?? undefined;
     const loaded = meta ? ctx.sessions.load(meta.id) : null;
     if (!loaded) {
       stderr.write(`${red("error:")} session not found.\n`);
@@ -205,7 +210,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const userMessage: AgentMessage = {
     role: "user",
     content: prompt + attachments.note,
-    ...(attachments.images.length > 0 ? { images: attachments.images } : {}),
+    ...((opts.images && opts.images.length > 0) || attachments.images.length > 0
+      ? { images: [...(opts.images ?? []), ...attachments.images] }
+      : {}),
   };
   messages.push(userMessage);
   ctx.sessions.append(sessionId, userMessage);
