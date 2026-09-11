@@ -246,6 +246,7 @@ const main = defineCommand({
         continue: { type: "boolean", alias: "c", description: "Continue the latest remote session" },
         resume: { type: "string", description: "Resume a remote session id" },
         session: { type: "string", description: "Alias for --resume" },
+        fork: { type: "boolean", description: "Fork the resumed remote session before running" },
         token: { type: "string", description: "Bearer token" },
         username: { type: "string", description: "Basic auth username" },
         password: { type: "string", description: "Basic auth password" },
@@ -842,6 +843,7 @@ const main = defineCommand({
             yes: Boolean(args.yes) || Boolean(args.auto),
             continueLast: Boolean(args.continue),
             resumeId,
+            fork: Boolean(args.fork),
             files: filesFrom(args),
             token: typeof args.token === "string" ? args.token : undefined,
             username: typeof args.username === "string" ? args.username : undefined,
@@ -870,6 +872,10 @@ const main = defineCommand({
     }
     if (!process.stdout.isTTY || !process.stdin.isTTY) {
       errorLine("no TTY and no prompt. Use `deyin run \"...\"`, -p, or pipe a prompt on stdin.");
+      process.exit(EXIT_ERROR);
+    }
+    if (typeof args.attach === "string" && args.attach) {
+      errorLine("`--attach` needs a prompt. Use `deyin attach <url> \"...\"` for a remote run.");
       process.exit(EXIT_ERROR);
     }
 
