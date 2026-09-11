@@ -13,6 +13,8 @@ export interface RemoteRunOptions {
   signal?: AbortSignal;
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
+  /** Receive decoded NDJSON events in addition to optional stream output. */
+  onEvent?: (event: unknown) => void;
 }
 
 function write(stream: NodeJS.WritableStream, value: string): void {
@@ -70,12 +72,13 @@ export async function runRemote(options: RemoteRunOptions): Promise<number> {
   let exitCode = Number(response.headers.get("x-deyin-exit-code") ?? (response.ok ? "0" : "1"));
   const consume = (line: string): void => {
     if (!line.trim()) return;
-    if (options.json) {
-      write(stdout, `${line}\n`);
-      return;
-    }
     try {
       const event = JSON.parse(line) as { type?: string; delta?: string; finalText?: string; error?: string };
+      options.onEvent?.(event);
+      if (options.json) {
+        write(stdout, `${line}\n`);
+        return;
+      }
       if (event.type === "text-delta" && typeof event.delta === "string") write(stdout, event.delta);
       if (event.type === "error" && typeof event.error === "string") write(stderr, `error: ${event.error}\n`);
     } catch {

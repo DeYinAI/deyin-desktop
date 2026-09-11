@@ -24,6 +24,7 @@ test("remote run forwards streamed server events and bearer auth", async () => {
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const out = capture();
+  const events: unknown[] = [];
   try {
     const code = await runRemote({
       url: `http://127.0.0.1:${address.port}`,
@@ -32,10 +33,12 @@ test("remote run forwards streamed server events and bearer auth", async () => {
       token: "secret",
       stdout: out.stream,
       stderr: capture().stream,
+      onEvent: (event) => events.push(event),
     });
     assert.equal(code, 0);
     assert.equal(out.text(), "remote answer");
     assert.equal(auth, "Bearer secret");
+    assert.deepEqual(events.map((event) => (event as { type: string }).type), ["text-delta", "result"]);
     assert.deepEqual(JSON.parse(requestBody), { prompt: "remote prompt", yes: true, continueLast: false, fork: false });
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));

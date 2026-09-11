@@ -48,6 +48,7 @@ deyin provider connect deepseek --key "$DEEPSEEK_API_KEY"
 deyin run -m deepseek::deepseek-chat "review this change"
 deyin run --attach http://127.0.0.1:7789 "review this change on the running server"
 deyin attach http://127.0.0.1:7789 "continue the remote review"
+deyin attach http://127.0.0.1:7789       # interactive TUI attached to the server
 deyin serve --port 7789
 deyin -m GLM-5.2 -a plan
 ```
@@ -96,6 +97,11 @@ deyin run --format json --auto --session SESSION_ID "continue the implementation
   also accepts `provider::model` (for example `deepseek::deepseek-chat`).
 - `--attach <url>` sends the run to an existing `deyin serve` process; use
   `--token` or `--username`/`--password` when that server is protected.
+- `deyin attach <url>` with no prompt starts the same interactive TUI against the
+  running server. The TUI keeps the returned remote session id across prompts;
+  `--continue`, `--session`, and `--fork` select the initial remote transcript.
+- Remote TUI attach currently uses the server's auto-approval path because the
+  `/v1/run` transport does not yet expose interactive permission callbacks.
 - Exit codes: `0` completed, `1` error or step-cap, `2` not signed in, `130` interrupted.
 
 Inspect the effective runtime without starting an agent:
