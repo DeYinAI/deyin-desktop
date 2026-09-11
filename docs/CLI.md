@@ -10,15 +10,12 @@ as an interactive TUI or fully headless for scripts and CI.
 # Single binary (macOS / Linux)
 curl -fsSL https://cdn.deyin.ai/cli/install.sh | bash
 
-# npm (all platforms, requires Node >= 20)
-npm install -g @deyin/cli
-
 # From source
 pnpm install && pnpm --filter "./packages/**" build && pnpm --filter @deyin/cli dev
 ```
 
 Binaries are published on GitHub Releases as `deyin-<os>-<arch>` and are self-updating
-via `deyin upgrade`. npm installs update with `npm install -g @deyin/cli@latest`.
+via `deyin upgrade`. Source checkouts should rebuild or install the matching release binary.
 
 ## Sign in
 
@@ -59,6 +56,10 @@ While chatting:
 Tool calls stream in as cards. Tools that modify the machine (write, edit, bash, MCP
 tools) prompt first: allow once, always allow for this session, or deny.
 
+Use `--trust` on the initial command when the workspace contains `.deyin/hooks.json`
+or `.deyin/mcp.json` that you want to activate. Without it, workspace-owned hooks
+and MCP servers remain disabled; user-level definitions still load.
+
 ## Headless mode (scripts / CI)
 
 ```bash
@@ -73,7 +74,18 @@ deyin run "summarize this repo" --json | jq -r 'select(.type=="result").finalTex
   final `result` record with `reason`, `steps`, `usage`, `sessionId`, `finalText`).
 - Permission prompts are **auto-denied** headlessly; pass `--yes` to allow everything.
 - `-c` / `--resume <id>` continue existing sessions.
+- `--trust` enables workspace-owned hooks and MCP definitions for the run.
 - Exit codes: `0` completed, `1` error or step-cap, `2` not signed in, `130` interrupted.
+
+Inspect the effective runtime without starting an agent:
+
+```bash
+deyin capabilities
+deyin mcp
+deyin plugin list
+deyin plugin install owner/repo
+deyin plugin uninstall plugin-name --yes
+```
 
 ## Agents
 
@@ -126,9 +138,18 @@ the tool for the rest of the session. `--yes` skips everything (headless/CI).
 
 ### MCP servers
 
-Configured stdio servers are launched on startup; their tools appear to the model as
-`mcp__<server>__<tool>` and go through the same permission prompts (execute tier).
-Servers that fail to start are skipped with a warning.
+Configured stdio, SSE, and HTTP servers are discovered from workspace, user,
+installed module, plugin, and legacy config layers. They are launched on startup;
+their tools appear to the model as `mcp__<server>__<tool>` and go through the same
+permission prompts (execute tier). Servers that fail to start are skipped with a warning.
+Workspace definitions require `--trust`.
+
+### Hooks, skills, and plugins
+
+The CLI loads built-in skills plus user/workspace/plugin skills, slash commands,
+subagents, and lifecycle hooks. Hooks can add session context or block a tool call
+(`preToolUse`, `beforeShellExecution`, `postToolUse`, and `stop`). Installable plugins
+live under `~/.deyin/plugins` and can contribute these same capability types.
 
 ## Sessions
 
@@ -138,10 +159,11 @@ rolls a long conversation into a model-written summary in a new session.
 
 ## Built-in tools
 
-`bash` (one-shot shell via spawn — the desktop app uses a persistent PTY instead;
-timeout + output caps), `read`, `write`, `edit` (exact-match string replace),
-`grep` (ripgrep with JS fallback), `glob`, `ls`, `websearch` (DuckDuckGo, no API
-key), `todo_write` (task tracking shown in the TUI).
+`bash` (persistent PTY when available, with safe process-tree cancellation and a
+one-shot fallback), `read`, `write`, `edit` (exact-match string replace), `delete`,
+`grep`, `glob`, `ls`, `websearch`, `web_fetch`, `todo_write`, `ask_question`,
+`generate_image`, `memory`, plan/mode tools, process tools, git/codebase search,
+session context, and subagent delegation. MCP tools are added dynamically.
 
 ## Updating
 
@@ -159,6 +181,7 @@ bun scripts/compile.mjs bun-linux-x64 dist-bin/deyin-linux-x64
 ```
 
 CI cross-compiles macOS (x64/arm64), Linux (x64/arm64) and Windows (x64) from dell-runner
-and attaches binaries to GitHub Releases (`DeYinAI/deyin-desktop` + CLI assets). **npm publish
-is not part of v1** — install via [install.sh](../scripts/install.sh) or release binaries.
+and attaches binaries to GitHub Releases (`DeYinAI/deyin-desktop` + CLI assets). The CLI
+version is resolved from the monorepo release version when built, so `--version` and
+`upgrade` compare the same value.
 See [PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md).
