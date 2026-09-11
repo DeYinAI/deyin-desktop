@@ -113,6 +113,9 @@ deyin mcp add filesystem --command npx --args "-y,@modelcontextprotocol/server-f
 deyin plugin list
 deyin plugin install owner/repo
 deyin plugin uninstall plugin-name --yes
+deyin plug owner/repo       # short install alias
+deyin debug --format json   # runtime/capability diagnostics
+deyin db path               # file-backed data directory
 deyin providers --format json
 deyin provider add my-gateway --url https://api.example.com/v1
 deyin provider connect my-gateway --key "$MY_GATEWAY_KEY"
