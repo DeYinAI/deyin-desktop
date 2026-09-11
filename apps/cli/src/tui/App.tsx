@@ -37,6 +37,7 @@ import { Box, Static, Text, useApp, useInput } from "ink";
 import type { CliContext } from "../context.js";
 import { cliProviderRouting, createCliShell, resolveCliModel } from "../context.js";
 import { cliMcpDefinitions, loadCliCapabilities, resolveCliPrompt } from "../capabilities.js";
+import { runRemote } from "../remote.js";
 import { registerCliSubagentTool } from "../subagents.js";
 import { updateNotice } from "../version.js";
 import { Composer } from "./Composer.js";
@@ -68,6 +69,15 @@ export interface AppInitialState {
   resumeId?: string;
   openSessionPicker?: boolean;
   trustWorkspace?: boolean;
+  remote?: {
+    url: string;
+    token?: string;
+    username?: string;
+    password?: string;
+    continueLast?: boolean;
+    resumeId?: string;
+    fork?: boolean;
+  };
 }
 
 interface PermissionState {
@@ -111,6 +121,8 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
 
   const messagesRef = useRef<AgentMessage[]>([]);
   const sessionIdRef = useRef<string | null>(null);
+  const remoteSessionIdRef = useRef<string | null>(initial.remote?.resumeId ?? null);
+  const remoteStartedRef = useRef(false);
   const newSessionRef = useRef(false);
   const toolsRef = useRef<ToolRegistry>(createBuiltinRegistry());
   const abortRef = useRef<AbortController | null>(null);
@@ -185,39 +197,43 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         dataDir: ctx.dataDir,
         trustedWorkspace: initial.trustWorkspace,
       });
-      const connections = await connectMcpDefinitions(cliMcpDefinitions(capsRef.current, ctx.config.mcpServers), toolsRef.current, {
-        onError: (server, err) =>
-          !cancelled && notice(`mcp ${server}: failed to start (${err instanceof Error ? err.message : String(err)})`, "warn"),
-      });
-      mcpRef.current = connections;
-      await registerCliSubagentTool(toolsRef.current, {
-        ctx,
-        sessionId: () => sessionIdRef.current,
-        skipAll: false,
-        resolvePermission: requestPermission,
-        onBackgroundDone: (_jobId, def) => notice(`Background subagent \u201c${def.name}\u201d finished`, "info"),
-      });
-      if (!cancelled) {
-        for (const c of connections) notice(`mcp ${c.name}: ${c.toolCount} tool(s) connected`);
-      }
-      try {
-        if (await ctx.oauth.isAuthenticated()) {
-          const user = await ctx.oauth.getUser();
-          if (!cancelled) setUserLabel(user.name ?? user.email ?? user.sub);
-        } else if (!cancelled) {
-          notice("Not signed in. Use /login (or run `deyin login`) to connect your Openference account.", "warn");
+      if (initial.remote) {
+        if (!cancelled) notice(`Attached to ${initial.remote.url}. The remote server owns tools, providers, and the session.`);
+      } else {
+        const connections = await connectMcpDefinitions(cliMcpDefinitions(capsRef.current, ctx.config.mcpServers), toolsRef.current, {
+          onError: (server, err) =>
+            !cancelled && notice(`mcp ${server}: failed to start (${err instanceof Error ? err.message : String(err)})`, "warn"),
+        });
+        mcpRef.current = connections;
+        await registerCliSubagentTool(toolsRef.current, {
+          ctx,
+          sessionId: () => sessionIdRef.current,
+          skipAll: false,
+          resolvePermission: requestPermission,
+          onBackgroundDone: (_jobId, def) => notice(`Background subagent \u201c${def.name}\u201d finished`, "info"),
+        });
+        if (!cancelled) {
+          for (const c of connections) notice(`mcp ${c.name}: ${c.toolCount} tool(s) connected`);
         }
-      } catch {
-        // profile fetch failed; stay signed-out
+        try {
+          if (await ctx.oauth.isAuthenticated()) {
+            const user = await ctx.oauth.getUser();
+            if (!cancelled) setUserLabel(user.name ?? user.email ?? user.sub);
+          } else if (!cancelled) {
+            notice("Not signed in. Use /login (or run `deyin login`) to connect your Openference account.", "warn");
+          }
+        } catch {
+          // profile fetch failed; stay signed-out
+        }
+        const route = cliProviderRouting(ctx, ctx.config.providerId);
+        const models = await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken);
+        if (!cancelled) setModelList(models);
       }
-      const route = cliProviderRouting(ctx, ctx.config.providerId);
-      const models = await listModels({ apiBaseUrl: route.apiBaseUrl }, route.getToken);
-      if (!cancelled) setModelList(models);
       const update = await updateNotice(ctx.storage);
       if (update && !cancelled) setUpdateLine(update);
       if (!cancelled) {
-        if (initial.resumeId) loadSession(initial.resumeId);
-        else if (initial.continueLast) loadSession(ctx.sessions.latest(ctx.cwd)?.id);
+        if (!initial.remote && initial.resumeId) loadSession(initial.resumeId);
+        else if (!initial.remote && initial.continueLast) loadSession(ctx.sessions.latest(ctx.cwd)?.id);
         if (initial.openSessionPicker) openPicker("session");
       }
     })();
@@ -299,6 +315,62 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
 
   const startRun = useCallback(
     async (text: string): Promise<void> => {
+      if (initial.remote) {
+        const firstRemotePrompt = !remoteStartedRef.current;
+        remoteStartedRef.current = true;
+        pushItem({ kind: "user", id: nextId(), text });
+        setRunning(true);
+        setStreamText("");
+        setStreamReasoning("");
+        const controller = new AbortController();
+        abortRef.current = controller;
+        let exitCode = 1;
+        try {
+          exitCode = await runRemote({
+            url: initial.remote.url,
+            prompt: text,
+            // The current /v1/run transport has no interactive permission
+            // round-trip. The attached TUI therefore opts into the same
+            // explicit auto-approval mode as `--auto`.
+            yes: true,
+            continueLast: firstRemotePrompt && initial.remote.continueLast === true,
+            resumeId: remoteSessionIdRef.current ?? undefined,
+            fork: firstRemotePrompt && initial.remote.fork === true,
+            token: initial.remote.token,
+            username: initial.remote.username,
+            password: initial.remote.password,
+            signal: controller.signal,
+            json: true,
+            stdout: { write: () => true } as unknown as NodeJS.WritableStream,
+            onEvent: (value) => {
+              if (!value || typeof value !== "object") return;
+              const event = value as { type?: string; sessionId?: unknown; error?: unknown };
+              if (event.type === "result") {
+                if (typeof event.sessionId === "string") {
+                  remoteSessionIdRef.current = event.sessionId;
+                  sessionIdRef.current = event.sessionId;
+                }
+                return;
+              }
+              if (event.type === "error") {
+                notice(typeof event.error === "string" ? event.error : "remote run failed", "error");
+                return;
+              }
+              handleEvent(value as AgentEvent);
+            },
+          });
+          if (exitCode !== 0 && !controller.signal.aborted) notice(`Remote run exited with code ${exitCode}.`, "error");
+        } catch (err) {
+          if (!controller.signal.aborted) notice(`Remote run failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+        } finally {
+          setRunning(false);
+          setActiveTool(null);
+          setStreamText("");
+          setStreamReasoning("");
+          abortRef.current = null;
+        }
+        return;
+      }
       const agent = agentDef();
       if (!sessionIdRef.current) {
         const meta = ctx.sessions.create({ cwd: ctx.cwd, model: `${ctx.config.providerId}::${model}`, agent: agent.name });
@@ -533,7 +605,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         abortRef.current = null;
       }
     },
-    [agentDef, ctx, handleEvent, model, modelList, notice, pushItem, requestPermission],
+    [agentDef, ctx, handleEvent, initial, model, modelList, notice, pushItem, requestPermission],
   );
 
   const openPicker = useCallback(
@@ -686,6 +758,10 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           abortRef.current?.abort();
           messagesRef.current = [];
           sessionIdRef.current = null;
+          if (initial.remote) {
+            remoteSessionIdRef.current = null;
+            remoteStartedRef.current = false;
+          }
           goalTextRef.current = undefined;
           setTodos([]);
           setUsageTokens(0);
@@ -762,7 +838,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           notice(`Unknown command ${command}. Try /help.`, "warn");
       }
     },
-    [ctx.usage, doCompact, doLogin, exit, notice, openPicker, pushItem],
+    [ctx.usage, doCompact, doLogin, exit, initial, notice, openPicker, pushItem],
   );
 
   const handleSubmit = useCallback(

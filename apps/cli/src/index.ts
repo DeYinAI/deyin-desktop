@@ -257,8 +257,30 @@ const main = defineCommand({
           .filter(Boolean)
           .join("\n\n");
         if (!prompt) {
-          errorLine("no prompt. Pass one as an argument, with -p, or pipe it on stdin.");
-          process.exit(EXIT_ERROR);
+          if (!process.stdout.isTTY || !process.stdin.isTTY) {
+            errorLine("no TTY and no prompt. Use `deyin attach <url> \"...\"`, -p, or pipe a prompt on stdin.");
+            process.exit(EXIT_ERROR);
+          }
+          const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+          const { launchTui } = await import("./tui/run.js");
+          const resumeId =
+            typeof args.resume === "string" && args.resume
+              ? args.resume
+              : typeof args.session === "string" && args.session
+                ? args.session
+                : undefined;
+          process.exitCode = await launchTui(ctx, {
+            remote: {
+              url: args.url as string,
+              token: typeof args.token === "string" ? args.token : undefined,
+              username: typeof args.username === "string" ? args.username : undefined,
+              password: typeof args.password === "string" ? args.password : undefined,
+              continueLast: Boolean(args.continue),
+              resumeId,
+              fork: Boolean(args.fork),
+            },
+          });
+          return;
         }
         const resumeId =
           typeof args.resume === "string" && args.resume
@@ -870,12 +892,34 @@ const main = defineCommand({
       );
       return;
     }
+    if (typeof args.attach === "string" && args.attach) {
+      if (!process.stdout.isTTY || !process.stdin.isTTY) {
+        errorLine("no TTY and no prompt. Use `deyin run --attach <url> \"...\"`, -p, or pipe a prompt on stdin.");
+        process.exit(EXIT_ERROR);
+      }
+      const ctx = createContext({ cwd, overrides });
+      const { launchTui } = await import("./tui/run.js");
+      const resumeId =
+        typeof args.resume === "string" && args.resume
+          ? args.resume
+          : typeof args.session === "string" && args.session
+            ? args.session
+            : undefined;
+      process.exitCode = await launchTui(ctx, {
+        remote: {
+          url: args.attach,
+          token: typeof args.token === "string" ? args.token : undefined,
+          username: typeof args.username === "string" ? args.username : undefined,
+          password: typeof args.password === "string" ? args.password : undefined,
+          continueLast: Boolean(args.continue),
+          resumeId,
+          fork: Boolean(args.fork),
+        },
+      });
+      return;
+    }
     if (!process.stdout.isTTY || !process.stdin.isTTY) {
       errorLine("no TTY and no prompt. Use `deyin run \"...\"`, -p, or pipe a prompt on stdin.");
-      process.exit(EXIT_ERROR);
-    }
-    if (typeof args.attach === "string" && args.attach) {
-      errorLine("`--attach` needs a prompt. Use `deyin attach <url> \"...\"` for a remote run.");
       process.exit(EXIT_ERROR);
     }
 
