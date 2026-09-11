@@ -18,6 +18,7 @@ import { errorLine, dim, red } from "./output.js";
 import { pluginInstallCommand, pluginsListCommand, pluginUninstallCommand } from "./commands/plugins.js";
 import { upgradeCommand } from "./upgrade.js";
 import { VERSION } from "./version.js";
+import { serveCli } from "./server.js";
 
 // One User-Agent identity for every outbound CLI request (providers, GitHub, search).
 initUserAgent("cli", VERSION);
@@ -141,6 +142,7 @@ const SUBCOMMAND_NAMES = new Set([
   "export",
   "import",
   "upgrade",
+  "serve",
   "subagent",
   "memory",
   "capabilities",
@@ -427,6 +429,24 @@ const main = defineCommand({
       meta: { name: "upgrade", description: "Update deyin to the latest release" },
       async run() {
         process.exitCode = await upgradeCommand();
+      },
+    }),
+    serve: defineCommand({
+      meta: { name: "serve", description: "Start a localhost HTTP agent API" },
+      args: {
+        cwd: sharedArgs.cwd,
+        port: { type: "string", description: "Listen port (default 7789)" },
+        hostname: { type: "string", description: "Listen address (default 127.0.0.1)" },
+        token: { type: "string", description: "Require this Bearer token for requests" },
+      },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        const port = Number(args.port);
+        process.exitCode = await serveCli(ctx, {
+          port: Number.isInteger(port) && port >= 0 ? port : undefined,
+          hostname: typeof args.hostname === "string" ? args.hostname : undefined,
+          authToken: typeof args.token === "string" ? args.token : undefined,
+        });
       },
     }),
   },

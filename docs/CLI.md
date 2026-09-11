@@ -39,6 +39,7 @@ deyin resume           # pick a session from a list
 deyin fork <id>        # branch a transcript (optionally: --at-seq <n>)
 deyin export <id> -o session.json
 deyin import session.json
+deyin serve --port 7789
 deyin -m GLM-5.2 -a plan
 ```
 
@@ -162,6 +163,15 @@ Transcripts persist as JSONL under `~/.deyin/sessions/`. `deyin sessions` lists 
 rolls a long conversation into a model-written summary in a new session.
 Use `deyin export` and `deyin import` to move a transcript between machines. Use
 `deyin session delete <id> --yes` to remove one explicitly.
+
+## Local agent API
+
+`deyin serve` starts a localhost-only HTTP API for editor integrations and automation.
+It exposes `GET /health`, `GET /v1/models`, `GET /v1/capabilities`, and `POST /v1/run`.
+The run endpoint accepts JSON such as `{ "prompt": "inspect the tests", "yes": true }`
+and returns the same NDJSON event stream as `deyin run --json`. Bind to another address
+only when required, and set `DEYIN_SERVER_TOKEN` (or `--token`) before exposing it beyond
+the local machine.
 
 ## Built-in tools
 
