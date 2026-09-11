@@ -460,14 +460,26 @@ export class AgentShell {
   private waitForSentinelPrompt(needle: string, timeoutMs: number): Promise<number> {
     return new Promise((resolve, reject) => {
       let buf = "";
+      let sawBegin = false;
       let sawNeedle = false;
       const onData = (chunk: string) => {
         buf += chunk;
+        // PTYs echo the command before executing it. That echoed line contains
+        // the sentinel too, so only accept the sentinel after the OSC begin
+        // marker emitted immediately before command output.
+        if (!sawBegin) {
+          const beginAt = buf.indexOf(BEGIN_MARKER);
+          if (beginAt < 0) return;
+          sawBegin = true;
+          buf = buf.slice(beginAt + BEGIN_MARKER.length);
+        }
         if (!sawNeedle) {
-          if (!buf.includes(needle)) return;
+          const needleAt = buf.indexOf(needle);
+          if (needleAt < 0) return;
           sawNeedle = true;
-          // Keep only the tail after the needle so a prior end-marker cannot match.
-          buf = buf.slice(buf.indexOf(needle) + needle.length);
+          // Keep only the tail after the real output sentinel so a prior
+          // end-marker from the echoed command cannot false-positive.
+          buf = buf.slice(needleAt + needle.length);
         }
         const m = END_MARKER_RE.exec(buf);
         if (m) {
