@@ -178,6 +178,53 @@ test("exits 2 when not signed in", async () => {
   }
 });
 
+test("routes a provider::model reference through the shared provider registry", async () => {
+  const server = await startMockOpenAI(() => textResponse("custom provider"));
+  const { ctx, cleanup } = makeCtx("http://127.0.0.1:9/unused");
+  ctx.agents.addProvider({ name: "Test Provider", baseUrl: server.url });
+  ctx.agents.setKey("test-provider", "provider-secret");
+  ctx.config.model = "test-provider::test-model";
+  try {
+    const code = await runHeadless({
+      ctx,
+      prompt: "use the custom provider",
+      stdout: capture().stream,
+      stderr: capture().stream,
+      getToken: async () => null,
+    });
+    assert.equal(code, EXIT_OK);
+    assert.equal(server.requests.length, 1);
+    assert.equal(server.requests[0]?.model, "test-model");
+  } finally {
+    await server.close();
+    cleanup();
+  }
+});
+
+test("attaches workspace text files to a headless prompt", async () => {
+  const server = await startMockOpenAI(() => textResponse("attachment read"));
+  const { ctx, cleanup } = makeCtx(server.url);
+  writeFileSync(join(ctx.cwd, "notes.txt"), "attachment payload");
+  try {
+    const code = await runHeadless({
+      ctx,
+      prompt: "summarize the attachment",
+      files: ["notes.txt"],
+      stdout: capture().stream,
+      stderr: capture().stream,
+      getToken: async () => "t",
+    });
+    assert.equal(code, EXIT_OK);
+    const messages = server.requests[0]?.messages as Array<{ role: string; content?: unknown }>;
+    const user = messages.find((message) => message.role === "user");
+    assert.equal(typeof user?.content, "string");
+    assert.match(user?.content as string, /attachment payload/);
+  } finally {
+    await server.close();
+    cleanup();
+  }
+});
+
 test("--continue reuses the previous session transcript", async () => {
   const server = await startMockOpenAI(() => textResponse("first"));
   const { ctx, cleanup } = makeCtx(server.url);

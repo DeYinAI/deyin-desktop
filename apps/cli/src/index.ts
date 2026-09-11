@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, capabilitiesCommand, checkpointListCommand, checkpointRevertCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, checkpointListCommand, checkpointRevertCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, providerAddCommand, providerConnectCommand, providerModelsCommand, providerRemoveCommand, providersCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -19,11 +19,13 @@ import { pluginInstallCommand, pluginsListCommand, pluginUninstallCommand } from
 import { upgradeCommand } from "./upgrade.js";
 import { VERSION } from "./version.js";
 import { serveCli } from "./server.js";
+import { runAcp } from "./acp.js";
 
 // One User-Agent identity for every outbound CLI request (providers, GitHub, search).
 initUserAgent("cli", VERSION);
 
 const sharedArgs = {
+  provider: { type: "string", description: "Provider id (or use provider::model in --model)" },
   model: { type: "string", alias: "m", description: "Model id (see `deyin models`)" },
   agent: { type: "string", alias: "a", description: "Agent: build, plan, or a custom agent" },
   cwd: { type: "string", alias: "C", description: "Workspace directory (defaults to the current directory)" },
@@ -33,11 +35,17 @@ const sharedArgs = {
 
 function overridesFrom(args: Record<string, unknown>): Partial<DeyinCliConfigFile> {
   const overrides: Partial<DeyinCliConfigFile> = {};
+  if (typeof args.provider === "string" && args.provider) overrides.providerId = args.provider;
   if (typeof args.model === "string" && args.model) overrides.model = args.model;
   if (typeof args.agent === "string" && args.agent) overrides.agent = args.agent;
   const maxSteps = Number(args["max-steps"]);
   if (Number.isFinite(maxSteps) && maxSteps > 0) overrides.maxSteps = maxSteps;
   return overrides;
+}
+
+function filesFrom(args: Record<string, unknown>): string[] | undefined {
+  if (typeof args.file !== "string" || !args.file.trim()) return undefined;
+  return args.file.split(",").map((path) => path.trim()).filter(Boolean);
 }
 
 async function readPipedStdin(): Promise<string> {
@@ -72,10 +80,14 @@ const run = defineCommand({
     ...sharedArgs,
     prompt: { type: "positional", required: false, description: "The prompt (or pipe it on stdin / use -p)" },
     p: { type: "string", description: "Prompt text (alternative to the positional)" },
+    file: { type: "string", alias: "f", description: "Comma-separated files to attach (images and text)" },
     json: { type: "boolean", description: "Emit NDJSON events on stdout" },
+    format: { type: "string", description: "Output format: default or json" },
     yes: { type: "boolean", alias: "y", description: "Allow every tool without asking (headless default is deny)" },
+    auto: { type: "boolean", description: "Alias for --yes (auto-approve non-denied tools)" },
     continue: { type: "boolean", alias: "c", description: "Continue the latest session for this workspace" },
     resume: { type: "string", description: "Resume a specific session id" },
+    session: { type: "string", description: "Alias for --resume" },
   },
   async run({ args }) {
     const stdinText = await readPipedStdin();
@@ -91,12 +103,18 @@ const run = defineCommand({
       runHeadless({
         ctx,
         prompt,
-        json: Boolean(args.json),
-        yes: Boolean(args.yes),
+        json: Boolean(args.json) || args.format === "json",
+        yes: Boolean(args.yes) || Boolean(args.auto),
         continueLast: Boolean(args.continue),
-        resumeId: typeof args.resume === "string" && args.resume ? args.resume : undefined,
+        resumeId:
+          typeof args.resume === "string" && args.resume
+            ? args.resume
+            : typeof args.session === "string" && args.session
+              ? args.session
+              : undefined,
         signal,
         trustWorkspace: Boolean(args.trust),
+        files: filesFrom(args),
       }),
     );
   },
@@ -134,6 +152,8 @@ const SUBCOMMAND_NAMES = new Set([
   "logout",
   "whoami",
   "models",
+  "providers",
+  "provider",
   "agents",
   "agent",
   "usage",
@@ -145,6 +165,7 @@ const SUBCOMMAND_NAMES = new Set([
   "import",
   "upgrade",
   "serve",
+  "acp",
   "subagent",
   "memory",
   "capabilities",
@@ -164,10 +185,14 @@ const main = defineCommand({
   args: {
     ...sharedArgs,
     prompt: { type: "string", alias: "p", description: "Run headless with this prompt instead of the TUI" },
+    file: { type: "string", alias: "f", description: "Comma-separated files to attach (images and text)" },
     json: { type: "boolean", description: "With -p: emit NDJSON events" },
+    format: { type: "string", description: "With -p: output format default or json" },
     yes: { type: "boolean", alias: "y", description: "With -p: allow every tool without asking" },
+    auto: { type: "boolean", description: "With -p: alias for --yes" },
     continue: { type: "boolean", alias: "c", description: "Continue the latest session for this workspace" },
     resume: { type: "string", description: "Resume a specific session id" },
+    session: { type: "string", description: "Alias for --resume" },
   },
   subCommands: {
     run,
@@ -181,7 +206,74 @@ const main = defineCommand({
     }),
     logout: simple("logout", "Sign out and delete stored credentials", logoutCommand),
     whoami: simple("whoami", "Show the signed-in account", whoamiCommand),
-    models: simple("models", "List available models", modelsCommand),
+    models: defineCommand({
+      meta: { name: "models", description: "List models for a provider" },
+      args: { cwd: sharedArgs.cwd, provider: sharedArgs.provider },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await modelsCommand(ctx, typeof args.provider === "string" ? args.provider : undefined);
+      },
+    }),
+    providers: defineCommand({
+      meta: { name: "providers", description: "List configured model providers" },
+      args: { cwd: sharedArgs.cwd, format: { type: "string", description: "Output format: table or json" } },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await providersCommand(ctx, typeof args.format === "string" ? args.format : undefined);
+      },
+    }),
+    provider: defineCommand({
+      meta: { name: "provider", description: "Add, connect, refresh, or remove a model provider" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        add: defineCommand({
+          meta: { name: "add", description: "Add a custom OpenAI-compatible provider" },
+          args: {
+            cwd: sharedArgs.cwd,
+            name: { type: "positional", required: true, description: "Provider name" },
+            url: { type: "string", required: true, description: "Provider base URL" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await providerAddCommand(ctx, typeof args.name === "string" ? args.name : undefined, typeof args.url === "string" ? args.url : undefined);
+          },
+        }),
+        connect: defineCommand({
+          meta: { name: "connect", description: "Store a provider API key" },
+          args: {
+            cwd: sharedArgs.cwd,
+            id: { type: "positional", required: true, description: "Provider id" },
+            key: { type: "string", description: "API key (or use DEYIN_API_KEY)" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await providerConnectCommand(ctx, typeof args.id === "string" ? args.id : undefined, typeof args.key === "string" ? args.key : undefined);
+          },
+        }),
+        models: defineCommand({
+          meta: { name: "models", description: "Fetch and cache a provider model catalog" },
+          args: { cwd: sharedArgs.cwd, id: { type: "positional", required: true, description: "Provider id" } },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await providerModelsCommand(ctx, typeof args.id === "string" ? args.id : undefined);
+          },
+        }),
+        remove: defineCommand({
+          meta: { name: "remove", description: "Remove a custom provider" },
+          args: { cwd: sharedArgs.cwd, id: { type: "positional", required: true, description: "Provider id" }, yes: { type: "boolean", alias: "y", description: "Confirm removal" } },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await providerRemoveCommand(ctx, typeof args.id === "string" ? args.id : undefined, Boolean(args.yes));
+          },
+        }),
+      },
+      async run({ args, rawArgs }) {
+        const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
+        if (firstPositional && new Set(["add", "connect", "models", "remove"]).has(firstPositional)) return;
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await providersCommand(ctx);
+      },
+    }),
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
     agent: simple("agent", "List agents (alias for `deyin agents`)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
@@ -560,6 +652,14 @@ const main = defineCommand({
         });
       },
     }),
+    acp: defineCommand({
+      meta: { name: "acp", description: "Serve the Agent Client Protocol over stdin/stdout" },
+      args: { cwd: sharedArgs.cwd },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await runAcp(ctx);
+      },
+    }),
   },
   async run({ args, rawArgs }) {
     // citty invokes the parent run() after a subcommand too; mirror its dispatch
@@ -580,12 +680,18 @@ const main = defineCommand({
         runHeadless({
           ctx,
           prompt,
-          json: Boolean(args.json),
-          yes: Boolean(args.yes),
+          json: Boolean(args.json) || args.format === "json",
+          yes: Boolean(args.yes) || Boolean(args.auto),
           continueLast: Boolean(args.continue),
-          resumeId: typeof args.resume === "string" && args.resume ? args.resume : undefined,
+          resumeId:
+            typeof args.resume === "string" && args.resume
+              ? args.resume
+              : typeof args.session === "string" && args.session
+                ? args.session
+                : undefined,
           signal,
           trustWorkspace: Boolean(args.trust),
+          files: filesFrom(args),
         }),
       );
       return;

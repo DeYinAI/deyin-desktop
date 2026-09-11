@@ -14,6 +14,9 @@ import {
   UsageStore,
   defaultDataDir,
 } from "@deyin/host-core";
+import { AgentsStore } from "@deyin/host-core";
+import { parseModelRef, type ProviderRouting } from "@deyin/agent-core";
+import type { ProviderInfo } from "@deyin/host-core";
 import { OAuthClient } from "@deyin/oauth-client";
 import { FileTokenStore } from "@deyin/oauth-client/node";
 
@@ -26,6 +29,8 @@ export interface CliContext {
   sessions: SessionStore;
   usage: UsageStore;
   memory: MemoryStore;
+  /** Shared desktop provider registry (keys stay encrypted in agents.json). */
+  agents: AgentsStore;
 }
 
 /** Storage instances created this process; flushed once when the loop drains. */
@@ -77,6 +82,7 @@ export function createContext(opts: { cwd?: string; overrides?: Partial<DeyinCli
     sessions: new SessionStore(join(dataDir, "sessions")),
     usage: new UsageStore(storage),
     memory: new MemoryStore(dataDir),
+    agents: new AgentsStore(storage),
   };
 }
 
@@ -92,6 +98,47 @@ export function tokenSource(ctx: CliContext): () => Promise<string | null> {
       return null;
     }
   };
+}
+
+export interface CliProviderRoute extends ProviderRouting {
+  providerId: string;
+  provider?: ProviderInfo;
+}
+
+/** Resolve a provider exactly as DesktopAgentHost does: OAuth for primary, stored
+ * API key for custom providers, and an empty token for keyless local endpoints. */
+export function cliProviderRouting(
+  ctx: CliContext,
+  providerId: string,
+  primaryToken: () => Promise<string | null> = tokenSource(ctx),
+): CliProviderRoute {
+  const provider = ctx.agents.listProviders(true).find((entry) => entry.id === providerId);
+  if (provider?.kind === "custom") {
+    return {
+      providerId,
+      provider,
+      apiBaseUrl: provider.baseUrl ?? ctx.config.apiBaseUrl,
+      getToken: () => Promise.resolve(ctx.agents.getKey(provider.id) ?? process.env.DEYIN_API_KEY?.trim() ?? (provider.local ? "" : null)),
+      apiFormat: provider.apiFormat,
+      authHeader: provider.authHeader,
+    };
+  }
+  return {
+    providerId,
+    provider,
+    apiBaseUrl: ctx.config.apiBaseUrl,
+    getToken: primaryToken,
+    apiFormat: provider?.apiFormat ?? "chat-completions",
+    authHeader: provider?.authHeader,
+  };
+}
+
+/** Resolve `providerId::modelId` references used by flags and role settings. */
+export function resolveCliModel(ctx: CliContext): { providerId: string; model: string; provider?: ProviderInfo } {
+  const ref = parseModelRef(ctx.config.model);
+  const providerId = ref?.providerId ?? ctx.config.providerId;
+  const route = cliProviderRouting(ctx, providerId);
+  return { providerId, model: ref?.model ?? ctx.config.model, provider: route.provider };
 }
 
 /**

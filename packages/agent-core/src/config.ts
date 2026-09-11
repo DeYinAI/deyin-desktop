@@ -22,6 +22,8 @@ export interface CustomAgentConfig {
 
 /** Shape of ~/.deyin/config.json and <project>/deyin.json (all fields optional). */
 export interface DeyinCliConfigFile {
+  /** Provider id (openference, deepseek, openai, custom, or local). */
+  providerId?: string;
   model?: string;
   agent?: string;
   oauthIssuer?: string;
@@ -47,6 +49,7 @@ export interface DeyinCliConfigFile {
 }
 
 export interface ResolvedCliConfig {
+  providerId: string;
   model: string;
   agent: string;
   oauthIssuer: string;
@@ -96,6 +99,7 @@ function projectConfigs(cwd: string): { path: string; config: DeyinCliConfigFile
 }
 
 function mergeLayer(base: ResolvedCliConfig, layer: DeyinCliConfigFile, source: string): void {
+  if (layer.providerId !== undefined) base.providerId = layer.providerId;
   if (layer.model !== undefined) base.model = layer.model;
   if (layer.agent !== undefined) base.agent = layer.agent;
   if (layer.oauthIssuer !== undefined) base.oauthIssuer = layer.oauthIssuer;
@@ -127,6 +131,7 @@ export function loadCliConfig(opts: {
   const env = opts.env ?? process.env;
 
   const resolved: ResolvedCliConfig = {
+    providerId: "openference",
     model: DEFAULT_MODELS[0]?.id ?? "GLM-5.2",
     agent: "build",
     oauthIssuer: DEFAULT_CONFIG.oauthIssuer,
@@ -153,6 +158,7 @@ export function loadCliConfig(opts: {
   }
 
   const envLayer: DeyinCliConfigFile = {};
+  if (env.DEYIN_PROVIDER || env.DEYIN_PROVIDER_ID) envLayer.providerId = env.DEYIN_PROVIDER ?? env.DEYIN_PROVIDER_ID;
   if (env.DEYIN_MODEL) envLayer.model = env.DEYIN_MODEL;
   if (env.DEYIN_AGENT) envLayer.agent = env.DEYIN_AGENT;
   if (env.DEYIN_OAUTH_ISSUER) envLayer.oauthIssuer = env.DEYIN_OAUTH_ISSUER;
