@@ -135,7 +135,9 @@ const SUBCOMMAND_NAMES = new Set([
   "whoami",
   "models",
   "agents",
+  "agent",
   "usage",
+  "stats",
   "sessions",
   "session",
   "fork",
@@ -181,7 +183,9 @@ const main = defineCommand({
     whoami: simple("whoami", "Show the signed-in account", whoamiCommand),
     models: simple("models", "List available models", modelsCommand),
     agents: simple("agents", "List agents (build, plan, custom)", agentsCommand),
+    agent: simple("agent", "List agents (alias for `deyin agents`)", agentsCommand),
     usage: simple("usage", "Show local usage statistics", usageCommand),
+    stats: simple("stats", "Show local usage statistics (alias for `deyin usage`)", usageCommand),
     sessions: defineCommand({
       meta: { name: "sessions", description: "List saved sessions" },
       args: {
