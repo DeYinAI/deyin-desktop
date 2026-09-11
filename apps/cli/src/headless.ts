@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import {
   AuthRequiredError,
   PermissionEngine,
@@ -19,7 +20,7 @@ import {
   type McpConnection,
 } from "@deyin/agent-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
-import { createImageBridge, ImageStore, listModels } from "@deyin/host-core";
+import { CheckpointStore, createImageBridge, ImageStore, listModels } from "@deyin/host-core";
 import type { CliContext } from "./context.js";
 import { createCliShell, tokenSource } from "./context.js";
 import { cliMcpDefinitions, loadCliCapabilities, resolveCliPrompt } from "./capabilities.js";
@@ -163,10 +164,26 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const modelCatalog = await listModels({ apiBaseUrl: ctx.config.apiBaseUrl }, getToken);
   const selectedModel = modelCatalog.find((entry) => entry.id === ctx.config.model);
   const imageStore = new ImageStore(join(ctx.dataDir, "images"));
+  const checkpoints = new CheckpointStore(ctx.storage);
+  const checkpointId = randomUUID();
+  const checkpointWrites: Promise<void>[] = [];
+  let checkpointWriteChain: Promise<void> = Promise.resolve();
   let shell: Awaited<ReturnType<typeof createCliShell>>;
   let runStarted = false;
   let stopReason = "error";
+  const recordFileChange = (change: Extract<AgentEvent, { type: "file-change" }>["change"]): void => {
+    checkpointWriteChain = checkpointWriteChain.then(async () => {
+      await checkpoints.record(sessionId, checkpointId, {
+        path: change.path,
+        before: change.before,
+        after: change.after,
+        operation: change.before === "" ? "write" : change.after === "" ? "delete" : "edit",
+      });
+    });
+    checkpointWrites.push(checkpointWriteChain);
+  };
   const onEvent = (event: AgentEvent): void => {
+    if (event.type === "file-change") recordFileChange(event.change);
     if (opts.json) {
       emitJson(event);
       return;
@@ -322,6 +339,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       imageOutput: selectedModel?.imageOutput === true,
     });
 
+    await Promise.all(checkpointWrites);
+
     const tokens = result.usage.totalTokens || estimateTokens(messages.slice(before));
     ctx.usage.record({ model: ctx.config.model, tokens, newSession });
     if (result.summary) ctx.sessions.appendEvent(sessionId, { kind: "run-summary", summary: result.summary });
@@ -335,10 +354,12 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         sessionId,
         finalText: result.finalText,
         summary: result.summary ?? null,
+        checkpointId,
       });
     } else {
       if (result.finalText && !result.finalText.endsWith("\n")) stdout.write("\n");
       if (result.reason === "max-steps") stderr.write(`${red("error:")} stopped after ${result.steps} steps (max-steps).\n`);
+      if (checkpointWrites.length > 0) stderr.write(dim(`[checkpoint] ${checkpointId}\n`));
     }
 
     stopReason = result.reason;
@@ -352,6 +373,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     stderr.write(`${red("error:")} ${err instanceof Error ? err.message : String(err)}\n`);
     return EXIT_ERROR;
   } finally {
+    await Promise.allSettled(checkpointWrites);
     if (runStarted) {
       await runHooks(caps.hooks, "stop", "stop", { reason: stopReason, cwd: ctx.cwd });
     }

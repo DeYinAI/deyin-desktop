@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, capabilitiesCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, checkpointListCommand, checkpointRevertCommand, deleteSessionCommand, exportSessionCommand, forkSessionCommand, importSessionCommand, mcpAddCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -148,6 +148,7 @@ const SUBCOMMAND_NAMES = new Set([
   "capabilities",
   "mcp",
   "plugin",
+  "checkpoint",
 ]);
 
 const SUBAGENT_SUBCOMMANDS = new Set(["list", "create", "edit", "delete", "run", "try"]);
@@ -289,6 +290,54 @@ const main = defineCommand({
       async run({ args }) {
         const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
         process.exitCode = await memoryCommand(ctx, typeof args.query === "string" ? args.query : undefined);
+      },
+    }),
+    checkpoint: defineCommand({
+      meta: { name: "checkpoint", description: "List or revert durable file-mutation checkpoints" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        list: defineCommand({
+          meta: { name: "list", description: "List checkpoints recorded by agent runs" },
+          args: {
+            cwd: sharedArgs.cwd,
+            id: { type: "positional", required: false, description: "Session id (defaults to the latest)" },
+            format: { type: "string", description: "Output format: table or json" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await checkpointListCommand(
+              ctx,
+              typeof args.id === "string" ? args.id : undefined,
+              typeof args.format === "string" ? args.format : undefined,
+            );
+          },
+        }),
+        revert: defineCommand({
+          meta: { name: "revert", description: "Revert a run's file changes" },
+          args: {
+            cwd: sharedArgs.cwd,
+            id: { type: "positional", required: false, description: "Session id (defaults to the latest)" },
+            checkpoint: { type: "positional", required: true, description: "Checkpoint/run id" },
+            yes: { type: "boolean", alias: "y", description: "Confirm the revert" },
+            path: { type: "string", description: "Only revert these comma-separated paths" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await checkpointRevertCommand(
+              ctx,
+              typeof args.id === "string" ? args.id : undefined,
+              typeof args.checkpoint === "string" ? args.checkpoint : undefined,
+              Boolean(args.yes),
+              typeof args.path === "string" ? args.path : undefined,
+            );
+          },
+        }),
+      },
+      async run({ args, rawArgs }) {
+        const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
+        if (firstPositional === "list" || firstPositional === "revert") return;
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await checkpointListCommand(ctx);
       },
     }),
     capabilities: defineCommand({
