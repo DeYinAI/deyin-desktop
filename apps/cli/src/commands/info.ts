@@ -153,16 +153,42 @@ export async function agentsCommand(ctx: CliContext): Promise<number> {
   return 0;
 }
 
-export async function usageCommand(ctx: CliContext): Promise<number> {
+export async function usageCommand(
+  ctx: CliContext,
+  opts: { days?: number; models?: number; project?: string; tools?: number } = {},
+): Promise<number> {
   const stats = ctx.usage.stats();
-  console.log(`${bold("Total tokens")}   ${stats.totalTokens.toLocaleString()}`);
-  console.log(`${bold("Messages")}       ${stats.messages.toLocaleString()}`);
-  console.log(`${bold("Sessions")}       ${stats.sessions.toLocaleString()}`);
-  console.log(`${bold("Active days")}    ${stats.activeDays} (streak: ${stats.currentStreak})`);
-  if (stats.favoriteModel) {
-    console.log(`${bold("Favorite model")} ${stats.favoriteModel.id} (${stats.favoriteModel.share}%)`);
+  const visibleDays = opts.days && opts.days > 0 ? stats.days.slice(-Math.floor(opts.days)) : stats.days;
+  const byModel = new Map<string, number>();
+  let totalTokens = 0;
+  let messages = 0;
+  let sessions = 0;
+  for (const day of visibleDays) {
+    messages += day.messages;
+    sessions += day.sessions;
+    for (const [model, tokens] of Object.entries(day.byModel)) {
+      totalTokens += tokens;
+      byModel.set(model, (byModel.get(model) ?? 0) + tokens);
+    }
   }
-  const recent = stats.days.slice(-7);
+  const favorite = [...byModel.entries()].sort((a, b) => b[1] - a[1])[0];
+  console.log(`${bold("Total tokens")}   ${totalTokens.toLocaleString()}`);
+  console.log(`${bold("Messages")}       ${messages.toLocaleString()}`);
+  console.log(`${bold("Sessions")}       ${sessions.toLocaleString()}`);
+  console.log(`${bold("Active days")}    ${visibleDays.filter((day) => day.messages > 0 || Object.keys(day.byModel).length > 0).length} (streak: ${stats.currentStreak})`);
+  if (favorite) {
+    console.log(`${bold("Favorite model")} ${favorite[0]} (${totalTokens > 0 ? Math.round((favorite[1] / totalTokens) * 100) : 0}%)`);
+  }
+  if (opts.models && opts.models > 0 && byModel.size > 0) {
+    console.log(`\n${dim("Models:")}`);
+    for (const [model, tokens] of [...byModel.entries()].sort((a, b) => b[1] - a[1]).slice(0, Math.floor(opts.models))) {
+      console.log(dim(`  ${model.padEnd(32)} ${tokens.toLocaleString()} tokens`));
+    }
+  }
+  if (opts.project || opts.tools !== undefined) {
+    console.log(dim("\nProject and tool filters are accepted for OpenCode compatibility; DeYin's usage log currently records tokens by day and model only."));
+  }
+  const recent = visibleDays.slice(-7);
   if (recent.length > 0) {
     console.log(`\n${dim("Last days:")}`);
     for (const day of recent) {
