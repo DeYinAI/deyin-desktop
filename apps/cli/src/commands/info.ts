@@ -2,6 +2,7 @@ import { resolveAgents } from "@deyin/agent-core";
 import { listModels } from "@deyin/host-core";
 import type { CliContext } from "../context.js";
 import { tokenSource } from "../context.js";
+import { cliMcpDefinitions, loadCliCapabilities } from "../capabilities.js";
 import { bold, cyan, dim, green } from "../output.js";
 
 export async function modelsCommand(ctx: CliContext): Promise<number> {
@@ -79,5 +80,41 @@ export async function memoryCommand(ctx: CliContext, query?: string): Promise<nu
     if (f.description) console.log(dim(`  ${f.description}`));
   }
   console.log(dim(`\n${facts.length} fact(s)${q ? ` for "${q}"` : ""}. Forget with the agent's forget tool or delete the file under ${ctx.dataDir}/memory.`));
+  return 0;
+}
+
+/** Show every capability source the CLI can load for the current workspace. */
+export async function capabilitiesCommand(ctx: CliContext, trustWorkspace = false): Promise<number> {
+  const caps = await loadCliCapabilities({ cwd: ctx.cwd, dataDir: ctx.dataDir, trustedWorkspace: trustWorkspace });
+  const rows: Array<[string, string, string]> = [];
+  for (const plugin of caps.plugins) rows.push(["plugin", plugin.name, plugin.source]);
+  for (const skill of caps.skills) rows.push(["skill", skill.name, skill.source]);
+  for (const command of caps.commands) rows.push(["command", `/${command.name}`, command.source]);
+  for (const subagent of caps.subagents) rows.push(["subagent", subagent.name, subagent.source]);
+  for (const hook of caps.hooks) rows.push(["hook", hook.event, hook.source]);
+  for (const server of caps.mcpServers) rows.push(["mcp", server.name, `${server.source} (${server.transport})`]);
+  if (rows.length === 0) {
+    console.log("No capabilities discovered for this workspace.");
+    return 0;
+  }
+  for (const [kind, name, source] of rows) console.log(`${bold(kind.padEnd(9))} ${name.padEnd(24)} ${dim(source)}`);
+  console.log(dim(`\n${rows.length} capability(s). Workspace hooks/MCP require --trust when sourced from this repository.`));
+  return 0;
+}
+
+/** List effective MCP definitions without starting their processes. */
+export async function mcpListCommand(ctx: CliContext, trustWorkspace = false): Promise<number> {
+  const caps = await loadCliCapabilities({ cwd: ctx.cwd, dataDir: ctx.dataDir, trustedWorkspace: trustWorkspace });
+  const defs = cliMcpDefinitions(caps, ctx.config.mcpServers);
+  if (defs.length === 0) {
+    console.log("No MCP servers configured.");
+    return 0;
+  }
+  for (const server of defs) {
+    const endpoint = server.transport === "stdio" ? [server.command, ...(server.args ?? [])].filter(Boolean).join(" ") : server.url;
+    const status = server.enabled ? green("enabled") : dim("disabled");
+    console.log(`${bold(server.name.padEnd(20))} ${status}  ${server.transport.padEnd(6)}  ${endpoint ?? ""}  ${dim(server.source)}`);
+  }
+  console.log(dim(`\n${defs.length} server(s). Start a run with deyin run; use --trust for workspace-owned definitions.`));
   return 0;
 }

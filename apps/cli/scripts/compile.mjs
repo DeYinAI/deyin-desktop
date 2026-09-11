@@ -28,13 +28,14 @@ const stubDevtools = {
 
 // Compiled binaries have no package.json next to them, so bake the version in.
 const pkg = await Bun.file(new URL("../package.json", import.meta.url)).json();
+const rootPkg = await Bun.file(new URL("../../../package.json", import.meta.url)).json();
 
 const result = await Bun.build({
   entrypoints: ["./src/index.ts"],
   plugins: [stubDevtools],
   define: {
     "process.env.DEV": '"false"',
-    "process.env.DEYIN_BUILD_VERSION": JSON.stringify(pkg.version),
+    "process.env.DEYIN_BUILD_VERSION": JSON.stringify(rootPkg.version ?? pkg.version),
   },
   compile: { target, outfile },
 });
