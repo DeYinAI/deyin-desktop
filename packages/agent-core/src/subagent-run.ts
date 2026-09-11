@@ -7,7 +7,6 @@ import { PermissionEngine, type PermissionResolver, type PermissionRule } from "
 import { buildSystemPrompt } from "./prompt.js";
 import { createBuiltinRegistry } from "./tools/index.js";
 import type { ProviderApiFormat } from "./transports.js";
-<<<<<<< HEAD
 import type { SubagentStateStore } from "./subagent-state.js";
 import type { ImageGenBridge, ToolDefinition, AgentMessage, ToolShell } from "./types.js";
 import type { SubagentDefinition } from "./capabilities/subagents.js";
