@@ -36,6 +36,7 @@ used, so one account covers both.
 deyin                  # new session in the current directory
 deyin -c               # continue the latest session for this workspace
 deyin resume           # pick a session from a list
+deyin fork <id>        # branch a transcript (optionally: --at-seq <n>)
 deyin -m GLM-5.2 -a plan
 ```
 
@@ -154,7 +155,8 @@ live under `~/.deyin/plugins` and can contribute these same capability types.
 ## Sessions
 
 Transcripts persist as JSONL under `~/.deyin/sessions/`. `deyin sessions` lists them,
-`deyin resume <id>` reopens one, `deyin -c` continues the newest for the cwd. `/compact`
+`deyin resume <id>` reopens one, `deyin -c` continues the newest for the cwd, and
+`deyin fork <id>` creates a new session from the full transcript (or through `--at-seq`). `/compact`
 rolls a long conversation into a model-written summary in a new session.
 
 ## Built-in tools
