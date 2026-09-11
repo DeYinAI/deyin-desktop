@@ -16,7 +16,7 @@ import {
   type ToolRegistry,
 } from "@deyin/agent-core";
 import type { CliContext } from "./context.js";
-import { tokenSource } from "./context.js";
+import { createCliShell, tokenSource } from "./context.js";
 
 /** Discover subagents the CLI can delegate to: built-ins + workspace/user .deyin/agents. */
 export async function loadCliSubagents(ctx: CliContext): Promise<SubagentDefinition[]> {
@@ -49,37 +49,43 @@ export async function registerCliSubagentTool(tools: ToolRegistry, opts: CliSuba
   tools.register(
     createTaskTool({
       subagents,
-      runSubagent: (def, prompt, overrides) => {
+      runSubagent: async (def, prompt, overrides) => {
         const routing = { apiBaseUrl: ctx.config.apiBaseUrl, getToken: tokenSource(ctx) };
         // A call may tighten a subagent to read-only; it can never loosen one.
         const readonly = effectiveSubagentReadonly(def, overrides.readonly);
-        return runSubagent(def, prompt, {
-          cwd: ctx.cwd,
-          parent: { model: ctx.config.model, providerId: "openference", thinking: ctx.config.thinking },
-          modelOverride: ctx.config.subagentModels[def.name],
-          callModel: overrides.model,
-          effortOverride: undefined,
-          maxStepsDefault: ctx.config.subagentMaxSteps,
-          parentRouting: routing,
-          // The CLI is Openference-only (plus DEYIN_* env); custom-provider
-          // overrides fall back to the parent routing.
-          resolveProvider: (providerId) => (providerId === "openference" ? routing : undefined),
-          permissionEngine: new PermissionEngine({
-            agentRules: [],
-            configRules: [...ctx.config.permissions, ...subagentReadonlyRules({ readonly })],
-            skipAll: opts.skipAll && !readonly,
-          }),
-          resolvePermission: opts.resolvePermission,
-          readonly,
-          hooks: opts.hooks,
-          // Transcripts live beside the CLI's jobs log, so resume/fork works
-          // across separate `deyin` invocations in the same session.
-          state: getSubagentStateStore(ctx.dataDir),
-          sessionId: opts.sessionId() ?? undefined,
-          resumeAgentId: overrides.resumeAgentId,
-          forkAgentId: overrides.forkAgentId,
-          signal: overrides.signal,
-        });
+        const shell = await createCliShell(ctx.cwd);
+        try {
+          return await runSubagent(def, prompt, {
+            cwd: ctx.cwd,
+            parent: { model: ctx.config.model, providerId: "openference", thinking: ctx.config.thinking },
+            modelOverride: ctx.config.subagentModels[def.name],
+            callModel: overrides.model,
+            effortOverride: undefined,
+            maxStepsDefault: ctx.config.subagentMaxSteps,
+            parentRouting: routing,
+            // The CLI is Openference-only (plus DEYIN_* env); custom-provider
+            // overrides fall back to the parent routing.
+            resolveProvider: (providerId) => (providerId === "openference" ? routing : undefined),
+            permissionEngine: new PermissionEngine({
+              agentRules: [],
+              configRules: [...ctx.config.permissions, ...subagentReadonlyRules({ readonly })],
+              skipAll: opts.skipAll && !readonly,
+            }),
+            resolvePermission: opts.resolvePermission,
+            readonly,
+            hooks: opts.hooks,
+            // Transcripts live beside the CLI's jobs log, so resume/fork works
+            // across separate `deyin` invocations in the same session.
+            state: getSubagentStateStore(ctx.dataDir),
+            sessionId: opts.sessionId() ?? undefined,
+            resumeAgentId: overrides.resumeAgentId,
+            forkAgentId: overrides.forkAgentId,
+            signal: overrides.signal,
+            shell: shell ?? undefined,
+          });
+        } finally {
+          shell?.dispose();
+        }
       },
       onBackgroundStart: (def, subPrompt) => {
         const sessionId = opts.sessionId();
