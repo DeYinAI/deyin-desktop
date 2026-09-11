@@ -5,7 +5,15 @@ import {
   type DeyinCliConfigFile,
   type ResolvedCliConfig,
 } from "@deyin/agent-core";
-import { DEFAULT_CONFIG, FileStorage, MemoryStore, UsageStore, defaultDataDir } from "@deyin/host-core";
+import {
+  AgentShell,
+  agentShellAvailable,
+  DEFAULT_CONFIG,
+  FileStorage,
+  MemoryStore,
+  UsageStore,
+  defaultDataDir,
+} from "@deyin/host-core";
 import { OAuthClient } from "@deyin/oauth-client";
 import { FileTokenStore } from "@deyin/oauth-client/node";
 
@@ -84,4 +92,27 @@ export function tokenSource(ctx: CliContext): () => Promise<string | null> {
       return null;
     }
   };
+}
+
+/**
+ * Create the same persistent PTY-backed shell used by Desktop when the native
+ * terminal dependency is available. CLI builds still fall back to the bash
+ * tool's safe one-shot runner when node-pty is unavailable.
+ */
+export async function createCliShell(cwd: string): Promise<AgentShell | undefined> {
+  if (!(await agentShellAvailable())) return undefined;
+  const shell = new AgentShell({
+    cwd,
+    events: {
+      onData: () => undefined,
+      onExit: () => undefined,
+    },
+  });
+  try {
+    await shell.ensureStarted();
+    return shell;
+  } catch {
+    shell.dispose();
+    return undefined;
+  }
 }

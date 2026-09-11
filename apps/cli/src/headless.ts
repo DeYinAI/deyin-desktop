@@ -4,13 +4,14 @@ import {
   PermissionEngine,
   autoSelectAskQuestionAnswers,
   buildSystemPrompt,
-  connectMcpServers,
+  connectMcpDefinitions,
   createBuiltinRegistry,
   createRoleRouter,
   estimateTokens,
   getSessionJobsManager,
   loadContextFiles,
   resolveAgent,
+  runHooks,
   runAgent,
   BUILD_AGENT,
   type AgentEvent,
@@ -18,9 +19,10 @@ import {
   type McpConnection,
 } from "@deyin/agent-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
+import { createImageBridge, ImageStore, listModels } from "@deyin/host-core";
 import type { CliContext } from "./context.js";
-import { tokenSource } from "./context.js";
-import { loadCliCapabilities, resolveCliPrompt } from "./capabilities.js";
+import { createCliShell, tokenSource } from "./context.js";
+import { cliMcpDefinitions, loadCliCapabilities, resolveCliPrompt } from "./capabilities.js";
 import { dim, red } from "./output.js";
 import { registerCliSubagentTool } from "./subagents.js";
 
@@ -36,6 +38,8 @@ export interface HeadlessOptions {
   /** Resume a specific session id. */
   resumeId?: string;
   maxSteps?: number;
+  /** Trust workspace-owned hooks and MCP configuration for this run. */
+  trustWorkspace?: boolean;
   signal?: AbortSignal;
   /** Injectable for tests. */
   stdout?: NodeJS.WritableStream;
@@ -65,11 +69,12 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   }
 
   const agent = resolveAgent(ctx.config, ctx.config.agent) ?? BUILD_AGENT;
-  const caps = await loadCliCapabilities(ctx.cwd);
+  const caps = await loadCliCapabilities({
+    cwd: ctx.cwd,
+    dataDir: ctx.dataDir,
+    trustedWorkspace: opts.trustWorkspace,
+  });
   const tools = createBuiltinRegistry();
-  // The CLI has no image store or picker, so nothing can render a generated
-  // picture: drop the tool rather than let the model promise one.
-  tools.unregister("generate_image");
   let sessionId = "";
   await registerCliSubagentTool(tools, {
     ctx,
@@ -81,7 +86,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     },
     onBackgroundDone: (_jobId, def) => stderr.write(dim(`[subagent] background \u201c${def.name}\u201d finished\n`)),
   });
-  const mcp: McpConnection[] = await connectMcpServers(ctx.config.mcpServers, tools, {
+  const mcp: McpConnection[] = await connectMcpDefinitions(cliMcpDefinitions(caps, ctx.config.mcpServers), tools, {
     onError: (server, err) =>
       stderr.write(dim(`[mcp] ${server}: failed to start (${err instanceof Error ? err.message : String(err)})\n`)),
   });
@@ -110,7 +115,6 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       content: buildSystemPrompt({ cwd: ctx.cwd, agent, contextFiles, skills: caps.skills }),
     };
     messages = [system];
-    ctx.sessions.append(sessionId, system);
   }
 
   const resolvedPrompt = resolveCliPrompt(opts.prompt, caps);
@@ -119,7 +123,23 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     return EXIT_ERROR;
   }
 
-  const userMessage: AgentMessage = { role: "user", content: resolvedPrompt.prompt };
+  const startHook = await runHooks(caps.hooks, "sessionStart", "sessionStart", { cwd: ctx.cwd, sessionId });
+  if (startHook.blocked) {
+    stderr.write(`${red("error:")} ${startHook.reason ?? "sessionStart hook blocked the run"}\n`);
+    return EXIT_ERROR;
+  }
+  const hookContext = startHook.additionalContext?.filter(Boolean) ?? [];
+  if (hookContext.length > 0 && newSession) {
+    const system = messages[0];
+    if (system?.role === "system") {
+      system.content += `\n\n<session_hook_context>\n${hookContext.join("\n\n")}\n</session_hook_context>`;
+    }
+  }
+  if (newSession) ctx.sessions.append(sessionId, messages[0]!);
+  const prompt = hookContext.length > 0 && !newSession
+    ? `${resolvedPrompt.prompt}\n\n<session_hook_context>\n${hookContext.join("\n\n")}\n</session_hook_context>`
+    : resolvedPrompt.prompt;
+  const userMessage: AgentMessage = { role: "user", content: prompt };
   messages.push(userMessage);
   ctx.sessions.append(sessionId, userMessage);
 
@@ -134,6 +154,12 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   };
 
   const toolStartedAt = new Map<string, number>();
+  const modelCatalog = await listModels({ apiBaseUrl: ctx.config.apiBaseUrl }, getToken);
+  const selectedModel = modelCatalog.find((entry) => entry.id === ctx.config.model);
+  const imageStore = new ImageStore(join(ctx.dataDir, "images"));
+  let shell: Awaited<ReturnType<typeof createCliShell>>;
+  let runStarted = false;
+  let stopReason = "error";
   const onEvent = (event: AgentEvent): void => {
     if (opts.json) {
       emitJson(event);
@@ -174,6 +200,19 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
 
   const before = messages.length;
   try {
+    shell = await createCliShell(ctx.cwd);
+    runStarted = true;
+    const imageGen = createImageBridge({
+      store: imageStore,
+      threadId: sessionId,
+      apiBaseUrl: ctx.config.apiBaseUrl,
+      getToken,
+      models: () => modelCatalog
+        .filter((entry) => entry.kind === "image" || entry.imageOutput)
+        .map((entry) => ({ id: entry.id, route: entry.kind === "image" ? "endpoint" as const : "chat" as const })),
+      cwd: ctx.cwd,
+      signal: opts.signal,
+    });
     const result = await runAgent({
       apiBaseUrl: ctx.config.apiBaseUrl,
       getToken,
@@ -196,7 +235,34 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         stderr.write(dim(`[permission] auto-denied ${req.toolName} (${req.summary}); pass --yes to allow\n`));
         return "deny";
       },
+      beforeTool: async (call, args, summary) => {
+        const pre = await runHooks(caps.hooks, "preToolUse", call.name, {
+          tool: call.name,
+          args,
+          summary,
+          cwd: ctx.cwd,
+        });
+        if (pre.blocked) return { block: pre.reason ?? "preToolUse hook" };
+        if (call.name === "bash") {
+          const command = typeof args.command === "string" ? args.command : "";
+          const shellHook = await runHooks(caps.hooks, "beforeShellExecution", command, {
+            command,
+            cwd: ctx.cwd,
+          });
+          if (shellHook.blocked) return { block: shellHook.reason ?? "beforeShellExecution hook" };
+        }
+        return undefined;
+      },
+      afterTool: async (call, resultText, ok) => {
+        await runHooks(caps.hooks, "postToolUse", call.name, {
+          tool: call.name,
+          ok,
+          resultChars: resultText.length,
+          cwd: ctx.cwd,
+        });
+      },
       toolContext: {
+        imageGen,
         skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
         waitForJobs: async (jobIds, blockUntilMs) => {
           const jobs = await getSessionJobsManager(sessionId, join(ctx.dataDir, "jobs")).waitFor(jobIds, blockUntilMs);
@@ -225,6 +291,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       onEvent,
       onMessage: (message) => ctx.sessions.append(sessionId, message),
       cwd: ctx.cwd,
+      shell,
       thinking: ctx.config.thinking,
       maxSteps: opts.maxSteps ?? ctx.config.maxSteps,
       signal: opts.signal,
@@ -246,6 +313,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         model: ctx.config.model,
         cwd: ctx.cwd,
       }),
+      imageOutput: selectedModel?.imageOutput === true,
     });
 
     const tokens = result.usage.totalTokens || estimateTokens(messages.slice(before));
@@ -267,6 +335,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       if (result.reason === "max-steps") stderr.write(`${red("error:")} stopped after ${result.steps} steps (max-steps).\n`);
     }
 
+    stopReason = result.reason;
     if (result.reason === "aborted") return EXIT_INTERRUPT;
     return result.reason === "completed" ? EXIT_OK : EXIT_ERROR;
   } catch (err) {
@@ -277,6 +346,10 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     stderr.write(`${red("error:")} ${err instanceof Error ? err.message : String(err)}\n`);
     return EXIT_ERROR;
   } finally {
+    if (runStarted) {
+      await runHooks(caps.hooks, "stop", "stop", { reason: stopReason, cwd: ctx.cwd });
+    }
+    shell?.dispose();
     await Promise.allSettled(mcp.map((c) => c.close()));
   }
 }

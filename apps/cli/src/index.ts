@@ -3,7 +3,7 @@ import { defineCommand, runMain } from "citty";
 import type { DeyinCliConfigFile } from "@deyin/agent-core";
 import { initUserAgent } from "@deyin/host-core";
 import { loginCommand, logoutCommand, whoamiCommand } from "./commands/auth.js";
-import { agentsCommand, memoryCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
+import { agentsCommand, capabilitiesCommand, memoryCommand, mcpListCommand, modelsCommand, sessionsCommand, usageCommand } from "./commands/info.js";
 import {
   subagentsCreateCommand,
   subagentsDeleteCommand,
@@ -15,6 +15,7 @@ import {
 import { createContext, flushCliStorage } from "./context.js";
 import { EXIT_ERROR, EXIT_INTERRUPT, runHeadless } from "./headless.js";
 import { errorLine, dim, red } from "./output.js";
+import { pluginInstallCommand, pluginsListCommand, pluginUninstallCommand } from "./commands/plugins.js";
 import { upgradeCommand } from "./upgrade.js";
 import { VERSION } from "./version.js";
 
@@ -26,6 +27,7 @@ const sharedArgs = {
   agent: { type: "string", alias: "a", description: "Agent: build, plan, or a custom agent" },
   cwd: { type: "string", alias: "C", description: "Workspace directory (defaults to the current directory)" },
   "max-steps": { type: "string", description: "Cap agent loop steps for one run" },
+  trust: { type: "boolean", description: "Trust workspace hooks and MCP configuration for this run" },
 } as const;
 
 function overridesFrom(args: Record<string, unknown>): Partial<DeyinCliConfigFile> {
@@ -93,6 +95,7 @@ const run = defineCommand({
         continueLast: Boolean(args.continue),
         resumeId: typeof args.resume === "string" && args.resume ? args.resume : undefined,
         signal,
+        trustWorkspace: Boolean(args.trust),
       }),
     );
   },
@@ -108,7 +111,7 @@ const resume = defineCommand({
     const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined, overrides: overridesFrom(args) });
     const { launchTui } = await import("./tui/run.js");
     const id = typeof args.id === "string" && args.id ? args.id : undefined;
-    process.exitCode = await launchTui(ctx, id ? { resumeId: id } : { openSessionPicker: true });
+    process.exitCode = await launchTui(ctx, id ? { resumeId: id, trustWorkspace: Boolean(args.trust) } : { openSessionPicker: true, trustWorkspace: Boolean(args.trust) });
   },
 });
 
@@ -136,6 +139,9 @@ const SUBCOMMAND_NAMES = new Set([
   "upgrade",
   "subagent",
   "memory",
+  "capabilities",
+  "mcp",
+  "plugin",
 ]);
 
 const SUBAGENT_SUBCOMMANDS = new Set(["list", "create", "edit", "delete", "run", "try"]);
@@ -179,6 +185,65 @@ const main = defineCommand({
       async run({ args }) {
         const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
         process.exitCode = await memoryCommand(ctx, typeof args.query === "string" ? args.query : undefined);
+      },
+    }),
+    capabilities: defineCommand({
+      meta: { name: "capabilities", description: "List skills, commands, subagents, hooks, plugins and MCP servers" },
+      args: { cwd: sharedArgs.cwd, trust: sharedArgs.trust },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await capabilitiesCommand(ctx, Boolean(args.trust));
+      },
+    }),
+    mcp: defineCommand({
+      meta: { name: "mcp", description: "List effective MCP server definitions" },
+      args: { cwd: sharedArgs.cwd, trust: sharedArgs.trust },
+      async run({ args }) {
+        const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+        process.exitCode = await mcpListCommand(ctx, Boolean(args.trust));
+      },
+    }),
+    plugin: defineCommand({
+      meta: { name: "plugin", description: "List, install and uninstall capability plugins" },
+      args: { cwd: sharedArgs.cwd },
+      subCommands: {
+        list: defineCommand({
+          meta: { name: "list", description: "List installed plugins" },
+          args: { cwd: sharedArgs.cwd },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await pluginsListCommand(ctx);
+          },
+        }),
+        install: defineCommand({
+          meta: { name: "install", description: "Install a plugin from GitHub" },
+          args: {
+            cwd: sharedArgs.cwd,
+            source: { type: "positional", required: true, description: "owner/repo, owner/repo@ref, or a GitHub URL" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await pluginInstallCommand(ctx, typeof args.source === "string" ? args.source : undefined);
+          },
+        }),
+        uninstall: defineCommand({
+          meta: { name: "uninstall", description: "Remove an installed plugin" },
+          args: {
+            cwd: sharedArgs.cwd,
+            name: { type: "positional", required: true, description: "Installed plugin name" },
+            yes: { type: "boolean", alias: "y", description: "Confirm uninstall" },
+          },
+          async run({ args }) {
+            const ctx = createContext({ cwd: typeof args.cwd === "string" ? args.cwd : undefined });
+            process.exitCode = await pluginUninstallCommand(ctx, typeof args.name === "string" ? args.name : undefined, Boolean(args.yes));
+          },
+        }),
+      },
+      async run({ rawArgs }) {
+        const firstPositional = rawArgs.find((a) => !a.startsWith("-"));
+        if (firstPositional && new Set(["list", "install", "uninstall"]).has(firstPositional)) return;
+        console.error(`${red("usage:")} deyin plugin <list|install|uninstall> ...`);
+        process.exitCode = 1;
       },
     }),
     subagent: defineCommand({
@@ -310,6 +375,7 @@ const main = defineCommand({
           continueLast: Boolean(args.continue),
           resumeId: typeof args.resume === "string" && args.resume ? args.resume : undefined,
           signal,
+          trustWorkspace: Boolean(args.trust),
         }),
       );
       return;
@@ -324,6 +390,7 @@ const main = defineCommand({
     process.exitCode = await launchTui(ctx, {
       continueLast: Boolean(args.continue),
       resumeId: typeof args.resume === "string" && args.resume ? args.resume : undefined,
+      trustWorkspace: Boolean(args.trust),
     });
   },
 });

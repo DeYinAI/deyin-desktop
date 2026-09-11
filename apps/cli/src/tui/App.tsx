@@ -4,8 +4,9 @@ import {
   PermissionEngine,
   buildSystemPrompt,
   compactWithModel,
-  connectMcpServers,
+  connectMcpDefinitions,
   createBuiltinRegistry,
+  createRoleRouter,
   estimateTokens,
   getSessionJobsManager,
   loadContextFiles,
@@ -13,6 +14,7 @@ import {
   matchCommand,
   resolveAgent,
   resolveAgents,
+  runHooks,
   runAgent,
   type AgentEvent,
   type AgentMessage,
@@ -25,15 +27,15 @@ import {
   type TodoItem,
   type ToolRegistry,
 } from "@deyin/agent-core";
-import { listModels, type ModelInfo } from "@deyin/host-core";
+import { createImageBridge, ImageStore, listModels, type ModelInfo } from "@deyin/host-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import { loginWithDevice } from "@deyin/oauth-client/node";
 import { join } from "node:path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import type { CliContext } from "../context.js";
-import { tokenSource } from "../context.js";
-import { loadCliCapabilities, resolveCliPrompt } from "../capabilities.js";
+import { createCliShell, tokenSource } from "../context.js";
+import { cliMcpDefinitions, loadCliCapabilities, resolveCliPrompt } from "../capabilities.js";
 import { registerCliSubagentTool } from "../subagents.js";
 import { updateNotice } from "../version.js";
 import { Composer } from "./Composer.js";
@@ -64,6 +66,7 @@ export interface AppInitialState {
   continueLast?: boolean;
   resumeId?: string;
   openSessionPicker?: boolean;
+  trustWorkspace?: boolean;
 }
 
 interface PermissionState {
@@ -114,6 +117,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const contextFilesRef = useRef<ContextFile[]>([]);
   const capsRef = useRef<CapabilitySnapshot | null>(null);
   const mcpRef = useRef<McpConnection[]>([]);
+  const shellRef = useRef<Awaited<ReturnType<typeof createCliShell>>>(undefined);
   const toolSummaryRef = useRef(new Map<string, string>());
   const exitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const permEngineRef = useRef(
@@ -174,8 +178,12 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     let cancelled = false;
     void (async () => {
       contextFilesRef.current = await loadContextFiles(ctx.cwd);
-      capsRef.current = await loadCliCapabilities(ctx.cwd);
-      const connections = await connectMcpServers(ctx.config.mcpServers, toolsRef.current, {
+      capsRef.current = await loadCliCapabilities({
+        cwd: ctx.cwd,
+        dataDir: ctx.dataDir,
+        trustedWorkspace: initial.trustWorkspace,
+      });
+      const connections = await connectMcpDefinitions(cliMcpDefinitions(capsRef.current, ctx.config.mcpServers), toolsRef.current, {
         onError: (server, err) =>
           !cancelled && notice(`mcp ${server}: failed to start (${err instanceof Error ? err.message : String(err)})`, "warn"),
       });
@@ -213,6 +221,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     return () => {
       cancelled = true;
       for (const c of mcpRef.current) void c.close();
+      shellRef.current?.dispose();
     };
   }, []);
 
@@ -302,11 +311,32 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           }),
         };
         messagesRef.current = [system];
-        ctx.sessions.append(meta.id, system);
       }
 
       pushItem({ kind: "user", id: nextId(), text });
-      const userMessage: AgentMessage = { role: "user", content: text };
+      const caps = capsRef.current;
+      const startHook = caps
+        ? await runHooks(caps.hooks, "sessionStart", "sessionStart", {
+            cwd: ctx.cwd,
+            sessionId: sessionIdRef.current ?? "",
+          })
+        : { blocked: false, additionalContext: [] as string[] };
+      if (startHook.blocked) {
+        notice(startHook.reason ?? "sessionStart hook blocked the run", "error");
+        return;
+      }
+      const hookContext = startHook.additionalContext?.filter(Boolean) ?? [];
+      if (hookContext.length > 0 && newSessionRef.current) {
+        const system = messagesRef.current[0];
+        if (system?.role === "system") {
+          system.content += `\n\n<session_hook_context>\n${hookContext.join("\n\n")}\n</session_hook_context>`;
+        }
+      }
+      if (newSessionRef.current) ctx.sessions.append(sessionIdRef.current!, messagesRef.current[0]!);
+      const prompt = hookContext.length > 0 && !newSessionRef.current
+        ? `${text}\n\n<session_hook_context>\n${hookContext.join("\n\n")}\n</session_hook_context>`
+        : text;
+      const userMessage: AgentMessage = { role: "user", content: prompt };
       messagesRef.current.push(userMessage);
       ctx.sessions.append(sessionIdRef.current, userMessage);
 
@@ -316,8 +346,24 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       const controller = new AbortController();
       abortRef.current = controller;
       const before = messagesRef.current.length;
+      let runStarted = false;
+      let stopReason = "error";
 
       try {
+        if (!shellRef.current) shellRef.current = await createCliShell(ctx.cwd);
+        runStarted = true;
+        const imageStore = new ImageStore(join(ctx.dataDir, "images"));
+        const imageGen = createImageBridge({
+          store: imageStore,
+          threadId: sessionIdRef.current!,
+          apiBaseUrl: ctx.config.apiBaseUrl,
+          getToken: tokenSource(ctx),
+          models: () => modelList
+            .filter((entry) => entry.kind === "image" || entry.imageOutput)
+            .map((entry) => ({ id: entry.id, route: entry.kind === "image" ? "endpoint" as const : "chat" as const })),
+          cwd: ctx.cwd,
+          signal: controller.signal,
+        });
         const result = await runAgent({
           apiBaseUrl: ctx.config.apiBaseUrl,
           getToken: tokenSource(ctx),
@@ -327,7 +373,42 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           tools: toolsRef.current,
           permissions: permEngineRef.current,
           resolvePermission: requestPermission,
+          router: createRoleRouter({
+            roleModels: ctx.config.roleModels,
+            base: {
+              model,
+              providerId: "cli",
+              apiBaseUrl: ctx.config.apiBaseUrl,
+              getToken: tokenSource(ctx),
+              contextLength: modelList.find((m) => m.id === model)?.contextLength,
+            },
+          }),
+          beforeTool: async (call, args, summary) => {
+            const hooks = capsRef.current?.hooks ?? [];
+            const pre = await runHooks(hooks, "preToolUse", call.name, {
+              tool: call.name,
+              args,
+              summary,
+              cwd: ctx.cwd,
+            });
+            if (pre.blocked) return { block: pre.reason ?? "preToolUse hook" };
+            if (call.name === "bash") {
+              const command = typeof args.command === "string" ? args.command : "";
+              const shellHook = await runHooks(hooks, "beforeShellExecution", command, { command, cwd: ctx.cwd });
+              if (shellHook.blocked) return { block: shellHook.reason ?? "beforeShellExecution hook" };
+            }
+            return undefined;
+          },
+          afterTool: async (call, resultText, ok) => {
+            await runHooks(capsRef.current?.hooks ?? [], "postToolUse", call.name, {
+              tool: call.name,
+              ok,
+              resultChars: resultText.length,
+              cwd: ctx.cwd,
+            });
+          },
           toolContext: {
+            imageGen,
             skills: capsRef.current?.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
             waitForJobs: async (jobIds, blockUntilMs) => {
               const sessionId = sessionIdRef.current;
@@ -371,27 +452,21 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             if (sessionIdRef.current) ctx.sessions.append(sessionIdRef.current, message);
           },
           cwd: ctx.cwd,
+          shell: shellRef.current ?? undefined,
           thinking: ctx.config.thinking,
-          maxSteps: agent.maxSteps ?? ctx.config.maxSteps,
-          signal: controller.signal,
-          // The interactive TUI used to pass neither of these, so `provider`
-          // defaulted to "auto", no cache_control marker was ever emitted, and
-          // the whole prompt was re-read cold on every step. Desktop, web and
-          // headless all pass this block; parity matters most here, because a
-          // TUI session is the longest-lived transcript we have.
           wire: {
             enableCompression: true,
             compressionMode: "balanced",
             enablePromptCaching: true,
-            provider: resolveWireProvider({
-              providerId: "cli",
-              model,
-              cwd: ctx.cwd,
-              apiFormat: "chat-completions",
-            }),
+            provider: resolveWireProvider({ providerId: "cli", model, cwd: ctx.cwd, apiFormat: "chat-completions" }),
             model,
           },
           promptCacheKey: buildPromptCacheKeyFor({ providerId: "cli", model, cwd: ctx.cwd }),
+          imageOutput: modelList.find((entry) => entry.id === model)?.imageOutput === true,
+          maxSteps: agent.maxSteps ?? ctx.config.maxSteps,
+          signal: controller.signal,
+          // The wire and prompt cache settings above keep TUI transcripts aligned
+          // with Desktop, web, and headless runs.
         });
         const tokens = result.usage.totalTokens || estimateTokens(messagesRef.current.slice(before));
         ctx.usage.record({ model, tokens, newSession: newSessionRef.current });
@@ -399,6 +474,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         if (result.summary && sessionIdRef.current) {
           ctx.sessions.appendEvent(sessionIdRef.current, { kind: "run-summary", summary: result.summary });
         }
+        stopReason = result.reason;
         if (result.reason === "max-steps") notice("Stopped: step limit reached. Send a message to continue.", "warn");
         if (result.reason === "aborted") notice("Cancelled.", "warn");
       } catch (err) {
@@ -408,6 +484,9 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           notice(`Error: ${err instanceof Error ? err.message : String(err)}`, "error");
         }
       } finally {
+        if (runStarted) {
+          await runHooks(capsRef.current?.hooks ?? [], "stop", "stop", { reason: stopReason, cwd: ctx.cwd });
+        }
         setRunning(false);
         setActiveTool(null);
         setStreamText("");

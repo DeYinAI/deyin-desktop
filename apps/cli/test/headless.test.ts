@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -63,6 +63,7 @@ test("plain run streams text to stdout, persists the session and exits 0", async
     assert.ok(messages[0]?.content?.includes("Deyin"));
     const tools = wire.tools as { function: { name: string } }[];
     assert.ok(tools.some((t) => t.function.name === "bash"));
+    assert.ok(tools.some((t) => t.function.name === "generate_image"));
 
     // Usage recorded locally.
     assert.equal(ctx.usage.stats().totalTokens, 15);
@@ -192,6 +193,47 @@ test("--continue reuses the previous session transcript", async () => {
     // system + user(one) + assistant(first) + user(two)
     assert.deepEqual(roles, ["system", "user", "assistant", "user"]);
     await server2.close();
+  } finally {
+    await server.close();
+    cleanup();
+  }
+});
+
+test("trusted workspace hooks add session context and can veto tools", async () => {
+  const server = await startMockOpenAI((i) =>
+    i === 0
+      ? toolCallResponse("hook_write", "write", { path: "blocked.txt", content: "nope" })
+      : textResponse("finished"),
+  );
+  const { ctx, cleanup } = makeCtx(server.url);
+  mkdirSync(join(ctx.cwd, ".deyin"), { recursive: true });
+  writeFileSync(
+    join(ctx.cwd, ".deyin", "hooks.json"),
+    JSON.stringify({
+      hooks: {
+        sessionStart: [{ command: "node -e \"console.log(JSON.stringify({additional_context:'hook-context'}))\"" }],
+        preToolUse: [{ command: "node -e \"process.exit(2)\"", matcher: "^write$" }],
+      },
+    }),
+  );
+  const out = capture();
+  try {
+    const code = await runHeadless({
+      ctx,
+      prompt: "write the file",
+      yes: true,
+      json: true,
+      trustWorkspace: true,
+      stdout: out.stream,
+      stderr: capture().stream,
+      getToken: async () => "t",
+    });
+    assert.equal(code, EXIT_OK);
+    const events = out.text().trim().split("\n").map((line) => JSON.parse(line) as { type: string; denied?: boolean });
+    assert.ok(events.some((event) => event.type === "tool-end" && event.denied === true));
+    assert.ok(!existsSync(join(ctx.cwd, "blocked.txt")));
+    const messages = server.requests[0]!.messages as { role: string; content?: string }[];
+    assert.ok(messages[0]?.content?.includes("hook-context"));
   } finally {
     await server.close();
     cleanup();
