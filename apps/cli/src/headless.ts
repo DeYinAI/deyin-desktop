@@ -90,6 +90,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     onError: (server, err) =>
       stderr.write(dim(`[mcp] ${server}: failed to start (${err instanceof Error ? err.message : String(err)})\n`)),
   });
+  const closeMcp = async (): Promise<void> => {
+    await Promise.allSettled(mcp.map((c) => c.close()));
+  };
 
   // Session: resume/continue an existing transcript, or start a fresh one.
   let messages: AgentMessage[];
@@ -101,6 +104,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     const loaded = meta ? ctx.sessions.load(meta.id) : null;
     if (!loaded) {
       stderr.write(`${red("error:")} session not found.\n`);
+      await closeMcp();
       return EXIT_ERROR;
     }
     sessionId = loaded.meta.id;
@@ -120,12 +124,14 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const resolvedPrompt = resolveCliPrompt(opts.prompt, caps);
   if (resolvedPrompt.error) {
     stderr.write(`${red("error:")} ${resolvedPrompt.error}\n`);
+    await closeMcp();
     return EXIT_ERROR;
   }
 
   const startHook = await runHooks(caps.hooks, "sessionStart", "sessionStart", { cwd: ctx.cwd, sessionId });
   if (startHook.blocked) {
     stderr.write(`${red("error:")} ${startHook.reason ?? "sessionStart hook blocked the run"}\n`);
+    await closeMcp();
     return EXIT_ERROR;
   }
   const hookContext = startHook.additionalContext?.filter(Boolean) ?? [];
@@ -350,6 +356,6 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       await runHooks(caps.hooks, "stop", "stop", { reason: stopReason, cwd: ctx.cwd });
     }
     shell?.dispose();
-    await Promise.allSettled(mcp.map((c) => c.close()));
+    await closeMcp();
   }
 }
