@@ -911,6 +911,17 @@ function toolResult(
   return { role: "tool", toolCallId: call.id, toolName: call.name, content: wire };
 }
 
+/**
+ * A few provider models occasionally concatenate a declared tool name (for
+ * example, emitting `bashbash`). Repair only an exact doubled name that maps
+ * to a registered tool; every other unknown tool remains an honest error.
+ */
+function repairRepeatedToolName(call: AgentToolCall, tools: AgentRunOptions["tools"]): AgentToolCall {
+  if (tools.get(call.name)) return call;
+  const repaired = tools.names().find((name) => call.name === `${name}${name}`);
+  return repaired ? { ...call, name: repaired } : call;
+}
+
 /** Fingerprint of the exact region a fold would summarise (the paid view). */
 function foldViewHash(messages: readonly AgentMessage[], region: CompactionRegion): string {
   const hash = createHash("sha256");
@@ -930,6 +941,7 @@ async function executeCall(
   ledger: EvidenceLedger | undefined,
   guard: LoopGuard,
 ): Promise<GuardOutcome> {
+  call = repairRepeatedToolName(call, opts.tools);
   const argsKey = call.arguments.trim();
   const out = (result: string, flags: { ok: boolean; denied?: boolean }): GuardOutcome => ({
     toolName: call.name,
