@@ -193,6 +193,37 @@ test("unknown tools produce an error result instead of crashing", async () => {
   }
 });
 
+test("repairs an exact repeated registered tool name", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-repeated-tool-"));
+  const server = await startMockOpenAI((i) =>
+    i === 0 ? toolCallResponse("call_repeated", "bashbash", { command: "printf repaired" }) : textResponse("ok"),
+  );
+  try {
+    const messages = baseMessages();
+    const started: string[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "t",
+      model: "m",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine(),
+      resolvePermission: async () => "allow",
+      cwd,
+      onEvent: (event) => {
+        if (event.type === "tool-start") started.push(event.call.name);
+      },
+    });
+    assert.equal(result.reason, "completed");
+    const toolMsg = messages.find((m) => m.role === "tool");
+    assert.ok(toolMsg && toolMsg.role === "tool" && toolMsg.content.includes("repaired"));
+    assert.deepEqual(started, ["bash"]);
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("executes multiple tool calls from one step concurrently and preserves result order", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "deyin-parallel-"));
   writeFileSync(join(cwd, "a.txt"), "alpha");
