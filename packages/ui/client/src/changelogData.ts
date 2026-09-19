@@ -10,6 +10,12 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    "version": "1.0.22",
+    "date": "2026-09-20",
+    "title": "v1.0.22 (2026-09-20)",
+    "content": "### Highlights\n\n- **Continuous Autonomous Execution:** Removed legacy turn-based step limits by\n  default (`agentMaxSteps: null`), aligning with modern ADE architectures for\n  uninterrupted multi-step problem solving. Added proactive warnings before finite\n  step caps so agents wrap up cleanly while retaining robust loop guards against\n  stalemates and repetition.\n- **Active Goal Completion Gate:** Goal-driven sessions now enforce objective verification.\n  If an active goal is set on the thread, the agent runtime verifies whether `report_goal_met`\n  was called and nudges up to a bounded budget to prevent premature exits without verified progress.\n- **Mid-Flight Steering:** Users can inject follow-up messages into an actively running\n  agent session without aborting or restarting. The agent runtime drains queued steering\n  messages dynamically between steps.\n- **Compiler & LSP Diagnostic Feedback Loop:** Added automated diagnostic loopback that\n  queries workspace compiler and LSP diagnostics on modified files after every step,\n  feeding errors and warnings back to the model for instant self-correction.\n- **On-Demand Diagnostics Tool:** Added the `diagnostics` tool to allow models to query\n  language server errors, syntax issues, and type diagnostics across files or the entire workspace.\n- **Subagent Resumption Flexibility:** The `task` tool now supports `task_id` and\n  `session_id` as aliases for `resume`, facilitating smoother workflow chaining across subagents.\n- **Dynamic In-App Release Notes:** Added an interactive \"What's New\" release notes modal\n  with version badges, feature highlights, and direct synchronization from repository release notes.\n- **Brand & Icon Refresh:** Modernized application mark, wordmark, and desktop/web icon\n  suites with refreshed geometric branding."
+  },
+  {
     "version": "1.0.21",
     "date": "2026-09-19",
     "title": "v1.0.21 (2026-09-19)",

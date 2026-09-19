@@ -3,7 +3,34 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.21`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.22`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.22 — 2026-09-20
+
+### Highlights
+
+- **Continuous Autonomous Execution:** Removed legacy turn-based step limits by
+  default (`agentMaxSteps: null`), aligning with modern ADE architectures for
+  uninterrupted multi-step problem solving. Added proactive warnings before finite
+  step caps so agents wrap up cleanly while retaining robust loop guards against
+  stalemates and repetition.
+- **Active Goal Completion Gate:** Goal-driven sessions now enforce objective verification.
+  If an active goal is set on the thread, the agent runtime verifies whether `report_goal_met`
+  was called and nudges up to a bounded budget to prevent premature exits without verified progress.
+- **Mid-Flight Steering:** Users can inject follow-up messages into an actively running
+  agent session without aborting or restarting. The agent runtime drains queued steering
+  messages dynamically between steps.
+- **Compiler & LSP Diagnostic Feedback Loop:** Added automated diagnostic loopback that
+  queries workspace compiler and LSP diagnostics on modified files after every step,
+  feeding errors and warnings back to the model for instant self-correction.
+- **On-Demand Diagnostics Tool:** Added the `diagnostics` tool to allow models to query
+  language server errors, syntax issues, and type diagnostics across files or the entire workspace.
+- **Subagent Resumption Flexibility:** The `task` tool now supports `task_id` and
+  `session_id` as aliases for `resume`, facilitating smoother workflow chaining across subagents.
+- **Dynamic In-App Release Notes:** Added an interactive "What's New" release notes modal
+  with version badges, feature highlights, and direct synchronization from repository release notes.
+- **Brand & Icon Refresh:** Modernized application mark, wordmark, and desktop/web icon
+  suites with refreshed geometric branding.
 
 ## 1.0.21 — 2026-09-19
 
