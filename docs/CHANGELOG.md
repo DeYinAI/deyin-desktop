@@ -3,7 +3,34 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.22`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.23`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.23 — 2026-09-20
+
+### Highlights
+
+- **Unified Modal Overlay Management in Project Selector:** Resolved double-overlay
+  collision where the main project/folder search dialog remained visible beneath child
+  dialogs (WSL/local folder browser, clone repository, SSH connect, and GitHub browser).
+  Sub-dialogs now cleanly take over the viewport with proper modal hierarchy and backdrop isolation.
+- **Robust Multi-Platform Breadcrumb & Path Navigation:** Overhauled path parsing and
+  traversal in the folder browser dialog to natively handle Windows drive paths (`C:\...`),
+  WSL UNC paths (`\\wsl.localhost\...` and `//wsl.localhost/...`), network shares, and POSIX
+  filesystems. Breadcrumb navigation now correctly resolves without leading slash corruption.
+- **Enhanced Directory Selection & Keyboard Navigation:** Differentiated single-click
+  selection from double-click folder drilling, complete with a dedicated chevron button for
+  intuitive navigation. Added keyboard selection (Enter to select or drill, Esc with proper
+  propagation to close only the active sub-modal) and prevented duplicate action dispatches.
+- **Debounced Remote Repository Search & Request Race Guards:** Added request ID sequencing
+  and stale-response guards across asynchronous directory listings and GitHub/SSH repository
+  queries to eliminate out-of-order race conditions and UI flickering. Debounced repository
+  search inputs to minimize remote API calls.
+- **Refined WSL Path Display & Shortening:** Streamlined recent workspace labels for WSL
+  environments, replacing cluttered raw UNC paths with distro-aware relative paths (e.g.,
+  `~/...` with `WSL · Ubuntu-22.04` environment badge).
+- **Accessible & Consistent Modal UI:** Standardized modal hierarchy, titles, summary subtitles,
+  buttons, and scrolling list boxes to conform with native design standards and eliminate
+  invalid nested interactive elements.
 
 ## 1.0.22 — 2026-09-20
 

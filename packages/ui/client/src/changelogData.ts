@@ -10,6 +10,12 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    "version": "1.0.23",
+    "date": "2026-09-20",
+    "title": "v1.0.23 (2026-09-20)",
+    "content": "### Highlights\n\n- **Unified Modal Overlay Management in Project Selector:** Resolved double-overlay\n  collision where the main project/folder search dialog remained visible beneath child\n  dialogs (WSL/local folder browser, clone repository, SSH connect, and GitHub browser).\n  Sub-dialogs now cleanly take over the viewport with proper modal hierarchy and backdrop isolation.\n- **Robust Multi-Platform Breadcrumb & Path Navigation:** Overhauled path parsing and\n  traversal in the folder browser dialog to natively handle Windows drive paths (`C:\\...`),\n  WSL UNC paths (`\\\\wsl.localhost\\...` and `//wsl.localhost/...`), network shares, and POSIX\n  filesystems. Breadcrumb navigation now correctly resolves without leading slash corruption.\n- **Enhanced Directory Selection & Keyboard Navigation:** Differentiated single-click\n  selection from double-click folder drilling, complete with a dedicated chevron button for\n  intuitive navigation. Added keyboard selection (Enter to select or drill, Esc with proper\n  propagation to close only the active sub-modal) and prevented duplicate action dispatches.\n- **Debounced Remote Repository Search & Request Race Guards:** Added request ID sequencing\n  and stale-response guards across asynchronous directory listings and GitHub/SSH repository\n  queries to eliminate out-of-order race conditions and UI flickering. Debounced repository\n  search inputs to minimize remote API calls.\n- **Refined WSL Path Display & Shortening:** Streamlined recent workspace labels for WSL\n  environments, replacing cluttered raw UNC paths with distro-aware relative paths (e.g.,\n  `~/...` with `WSL · Ubuntu-22.04` environment badge).\n- **Accessible & Consistent Modal UI:** Standardized modal hierarchy, titles, summary subtitles,\n  buttons, and scrolling list boxes to conform with native design standards and eliminate\n  invalid nested interactive elements."
+  },
+  {
     "version": "1.0.22",
     "date": "2026-09-20",
     "title": "v1.0.22 (2026-09-20)",
