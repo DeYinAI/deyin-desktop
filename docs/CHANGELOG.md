@@ -6,6 +6,24 @@ All notable **public** releases are documented here.
 were private beta builds; their release assets have been removed from GitHub.
 See [archive/](./archive/) for pre-v1 internal notes.
 
+## 1.0.21 — 2026-09-19
+
+### Highlights
+
+- **Promo Trial Plan Support:** Added support for the $1/mo Promo trial tier with
+  curated model access (Qwen3.8 27B, Llama 3.2 3B) at 0.1 request credit cost;
+  suppressed annual billing discounts on Promo to enforce trial limits
+- **Purchase Agreement & Terms Confirmation:** Added mandatory Terms of Service
+  and non-refundable policy confirmation dialog for all paid plan selections and
+  billing cycle switches before checkout is initiated
+- **Downgrade & Scheduled Cancellation:** Switching to Promo or Free from an
+  active paid subscription schedules end-of-period cancellation with expiration
+  badges and clear downgrade notifications
+- **Billing Cycle Desync Prevention:** Fixed cycle inheritance so checkout
+  and 3DS confirmation requests strictly match user-agreed billing terms
+- **Durable Checkpoints Revert:** Durable checkpoint revert and edit-and-resend
+  capabilities in chat sessions across Desktop and Web
+
 ## 1.0.20 — 2026-09-04
 
 ### Highlights

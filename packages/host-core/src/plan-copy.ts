@@ -176,7 +176,8 @@ export function getPlanCardPricing(
   isAnnual: boolean,
   annualDiscount: number = ANNUAL_DISCOUNT,
 ): { displayPrice: number; currency: string; billedYearly?: number } {
-  if (!isAnnual || plan.localizedPrice.amount <= 0) {
+  const isPromo = plan.priceMonthly <= 1 || plan.name === "Promo";
+  if (!isAnnual || isPromo || plan.localizedPrice.amount <= 0) {
     return { displayPrice: plan.localizedPrice.amount, currency: plan.localizedPrice.currency };
   }
   const annual = getAnnualPlanPricing(plan, annualDiscount);
@@ -215,7 +216,7 @@ export interface PlanColumn {
  */
 export function buildPlanColumns(plans: PublicPlan[]): PlanColumn[] {
   const byName = new Map(plans.map((p) => [p.name, p]));
-  const grouped: string[][] = [["Free"], ["Lite"], ["Pro", "Pro+"], ["Max", "Max+"]];
+  const grouped: string[][] = [["Promo", "Free"], ["Lite"], ["Pro", "Pro+"], ["Max", "Max+"]];
   const columns: PlanColumn[] = [];
   const claimed = new Set<string>();
 

@@ -32,7 +32,7 @@ export function PurchaseAgreementDialog({
   useEffect(() => {
     setAgreedTerms(false);
     setAgreedNoRefunds(false);
-  }, [planName]);
+  }, [planName, displayPrice, isAnnual]);
 
   const priceLabel =
     displayPrice > 0
