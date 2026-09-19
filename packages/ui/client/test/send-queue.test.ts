@@ -25,6 +25,6 @@ test("queued prompts are scoped per thread", () => {
 });
 
 test("empty queue text clears the slot", () => {
-  let q = setQueuedForThread({}, "t1", "  ");
+  const q = setQueuedForThread({}, "t1", "  ");
   assert.deepEqual(q, {});
 });

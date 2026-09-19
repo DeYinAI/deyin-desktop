@@ -1693,7 +1693,7 @@ export function App() {
     const pref = settings?.theme ?? "dark";
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      let resolved: "light" | "dark" | "warm" = pref === "system" ? (mql.matches ? "dark" : "light") : pref;
+      const resolved: "light" | "dark" | "warm" = pref === "system" ? (mql.matches ? "dark" : "light") : pref;
       if (resolved === "warm") {
         document.documentElement.dataset.theme = "warm";
         setThemeVariant("dark");
