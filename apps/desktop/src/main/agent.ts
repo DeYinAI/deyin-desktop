@@ -166,6 +166,8 @@ interface ActiveRun {
   runId: string;
   /** Set when stop() already emitted `done` so the run finally-path does not double-emit. */
   doneEmitted: boolean;
+  /** Messages queued mid-flight by the user to steer the running agent. */
+  pendingMessages?: AgentMessage[];
 }
 
 export interface AgentHostOptions {
@@ -621,9 +623,20 @@ export class DesktopAgentHost {
   }
 
   async start(options: AgentStartOptions): Promise<void> {
-    if (this.active.has(options.threadId)) {
-      this.send(options.threadId, { type: "error", message: "A run is already in progress for this task." });
-      this.send(options.threadId, { type: "done", reason: "aborted", finalText: "" });
+    const running = this.active.get(options.threadId);
+    if (running) {
+      // Steer the active run mid-flight instead of rejecting or aborting.
+      running.pendingMessages = running.pendingMessages ?? [];
+      const userMsg: AgentMessage = {
+        role: "user",
+        content: options.prompt,
+        ...(options.images?.length ? { images: options.images } : {}),
+      };
+      running.pendingMessages.push(userMsg);
+      const session = this.sessions.get(options.threadId);
+      if (session) {
+        this.store.append(session.sessionId, userMsg);
+      }
       return;
     }
     const abort = new AbortController();
@@ -1042,6 +1055,16 @@ export class DesktopAgentHost {
         router,
         // User-configurable step cap (null = unlimited; see GeneralPage step limit).
         maxSteps: settings.agentMaxSteps,
+        drainPendingMessages: () => {
+          if (active.pendingMessages && active.pendingMessages.length > 0) {
+            const drained = active.pendingMessages.splice(0, active.pendingMessages.length);
+            for (const msg of drained) {
+              session.messages.push(msg);
+            }
+            return drained;
+          }
+          return undefined;
+        },
         contextLength: this.opts.getContextLength(options.providerId, options.model),
         messages: session.messages,
         tools: registry,

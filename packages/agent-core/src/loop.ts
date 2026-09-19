@@ -39,6 +39,7 @@ import {
   AuthRequiredError,
   type AgentMessage,
   type AgentToolCall,
+  type DiagnosticItem,
   type FileChange,
   type MemoryBridge,
   type TodoItem,
@@ -55,6 +56,23 @@ const DEFAULT_MAX_STEPS = 40;
  * budget keeps a model that refuses to call todo_write from wedging.
  */
 const TODO_RECONCILE_NUDGE_BUDGET = 2;
+/**
+ * How many times per run the loop may nudge the model to verify active goal
+ * satisfaction (report_goal_met) before letting a final answer through regardless.
+ */
+const GOAL_RECONCILE_NUDGE_BUDGET = 2;
+
+/** Format compiler or language-server diagnostics into a concise prompt for the agent. */
+export function formatDiagnostics(items: DiagnosticItem[]): string {
+  return items
+    .slice(0, 15)
+    .map((d) => {
+      const loc = d.line !== undefined ? `:${d.line}${d.character !== undefined ? `:${d.character}` : ""}` : "";
+      const src = d.source ? ` [${d.source}]` : "";
+      return `- ${d.path}${loc}: [${d.severity.toUpperCase()}] ${d.message}${src}`;
+    })
+    .join("\n");
+}
 
 /**
  * Step cap semantics: `undefined` keeps the built-in default; `null`, 0,
@@ -174,10 +192,28 @@ export interface AgentRunOptions {
  */
 maxSteps?: number | null;
   /**
-  * Agent mode: nudge the model to reconcile open todos before a final
-  * answer (default true). Off for hosts/tests that script exact steps.
-  */
+   * Agent mode: nudge the model to reconcile open todos before a final
+   * answer (default true). Off for hosts/tests that script exact steps.
+   */
   todoReconcile?: boolean;
+  /**
+   * Goal mode: nudge the model to verify goal satisfaction via report_goal_met
+   * before completing (default true). Off for hosts/tests that script exact steps.
+   */
+  goalReconcile?: boolean;
+  /**
+   * Drain pending user steering messages queued mid-flight.
+   * Invoked at step boundaries so incoming user messages steer the running agent.
+   */
+  drainPendingMessages?: () => AgentMessage[] | undefined;
+  /**
+   * Automated diagnostic loopback: query compiler/LSP diagnostics after file mutations (default true).
+   */
+  diagnosticLoopback?: boolean;
+  /**
+   * Compiler/LSP diagnostics provider (can also be passed via toolContext.getDiagnostics).
+   */
+  getDiagnostics?: (paths?: string[]) => Promise<DiagnosticItem[]>;
   signal?: AbortSignal;
   todos?: TodoItem[];
   /** Optional host-backed persistent shell for the bash tool. */
@@ -311,16 +347,29 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     foldFailures: 0,
   };
 
+  const mutatedPaths: string[] = [];
+  let goalReported = false;
+  let goalReconcileNudges = 0;
+  let todoReconcileNudges = 0;
+
   const ctx: ToolContext = {
     cwd: opts.cwd,
     signal: opts.signal,
     todos,
     onTodosChanged: (t) => emit({ type: "todos", todos: [...t] }),
-    onFileChanged: (change) => emit({ type: "file-change", change }),
     shell: opts.shell,
     messages: opts.messages,
     evidenceLedger: ledger,
     ...opts.toolContext,
+    onFileChanged: (change) => {
+      mutatedPaths.push(change.path);
+      emit({ type: "file-change", change });
+      opts.toolContext?.onFileChanged?.(change);
+    },
+    onGoalReport: (report) => {
+      goalReported = true;
+      opts.toolContext?.onGoalReport?.(report);
+    },
   };
   // Raw (pre-snip) tool results: read_session_context pages them back by the
   // tool_call_id the snip marker names. A host-supplied store wins so a
@@ -346,7 +395,6 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
   }
 
   let finalText = "";
-let todoReconcileNudges = 0;
   /** What the last step produced; drives the cheap `tool` role (see roleForStep). */
   let previousStep: PreviousStep | undefined;
   /** Model used by the previous step, so `model-routed` only fires on a change. */
@@ -561,6 +609,24 @@ let todoReconcileNudges = 0;
   for (let step = 1; step <= maxSteps; step++) {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
+    // Drain pending user steering messages queued mid-flight
+    if (opts.drainPendingMessages) {
+      const pending = opts.drainPendingMessages();
+      if (pending && pending.length > 0) {
+        for (const msg of pending) {
+          append(msg);
+        }
+      }
+    }
+
+    // Nearing or reaching configured finite step cap: inject graceful warning so the agent can wrap up
+    if (Number.isFinite(maxSteps) && step === maxSteps && maxSteps > 1) {
+      append({
+        role: "user",
+        content: `[step limit warning] You are on step ${step} of ${maxSteps} (the configured step limit). Wrap up any remaining work, summarize what was accomplished, and provide your final response now.`,
+      });
+    }
+
     // Resolve this step's model before compaction: the window we compact to
     // must be the window of the model that is about to see the transcript.
     const routed = opts.router?.({
@@ -754,30 +820,55 @@ let todoReconcileNudges = 0;
         }
       }
       // Agent mode: the model may finish its answer while todos are still
-  // open (seen in practice after a compaction resume, where the model
-  // answered a fresh question and silently dropped the tracker). Nudge a
-  // bounded number of times per run to reconcile - mark completed what
-  // is done, cancel what is obsolete - then let it finish.
-  const openTodos = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
-  if (
-    opts.todoReconcile !== false &&
-    openTodos.length > 0 &&
-    todoReconcileNudges < TODO_RECONCILE_NUDGE_BUDGET
-  ) {
-    todoReconcileNudges += 1;
-    emit({
-      type: "evidence-gate",
-      code: "open_todos",
-      message: `${openTodos.length} todo(s) still open at turn end.`,
-    });
-    append({
-      role: "user",
-      content:
-        `[todo reconcile] Your answer looks final, but the todo list still has open items:\n${openTodos.map((t) => `- ${t.id}: ${t.content} (${t.status})`).join("\n")}\nCall todo_write to mark finished items completed (or cancelled if obsolete) and continue any genuinely unfinished work; only then give your final answer. If the list no longer matches reality, rewrite it to match reality.`,
-    });
-    continue;
-  }
-  // Turn end: the natural cache-reset boundary. Compacting here rather than
+      // open (seen in practice after a compaction resume, where the model
+      // answered a fresh question and silently dropped the tracker). Nudge a
+      // bounded number of times per run to reconcile - mark completed what
+      // is done, cancel what is obsolete - then let it finish.
+      const openTodos = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
+      if (
+        opts.todoReconcile !== false &&
+        openTodos.length > 0 &&
+        todoReconcileNudges < TODO_RECONCILE_NUDGE_BUDGET
+      ) {
+        todoReconcileNudges += 1;
+        emit({
+          type: "evidence-gate",
+          code: "open_todos",
+          message: `${openTodos.length} todo(s) still open at turn end.`,
+        });
+        append({
+          role: "user",
+          content:
+            `[todo reconcile] Your answer looks final, but the todo list still has open items:\n${openTodos.map((t) => `- ${t.id}: ${t.content} (${t.status})`).join("\n")}\nCall todo_write to mark finished items completed (or cancelled if obsolete) and continue any genuinely unfinished work; only then give your final answer. If the list no longer matches reality, rewrite it to match reality.`,
+        });
+        continue;
+      }
+
+      // Goal mode: if a goal is active on the thread and has not been reported (via report_goal_met),
+      // the model may be stopping prematurely without verifying the objective. Nudge a bounded number
+      // of times per run so it reports verification or explains blockers.
+      if (
+        opts.goalReconcile !== false &&
+        ctx.goalText &&
+        ctx.goalText.trim().length > 0 &&
+        !goalReported &&
+        goalReconcileNudges < GOAL_RECONCILE_NUDGE_BUDGET
+      ) {
+        goalReconcileNudges += 1;
+        emit({
+          type: "evidence-gate",
+          code: "unverified_goal",
+          message: `Active goal "${ctx.goalText}" has not been reported as met or blocked.`,
+        });
+        append({
+          role: "user",
+          content:
+            `[goal check] Active goal for this thread: "${ctx.goalText.trim()}". Your response appears final, but you have not reported whether the goal was verifiably met. Call report_goal_met with met=true if the goal is verifiably completed, or keep working toward it; call report_goal_met with met=false only to report a blocker or that you cannot verify it.`,
+        });
+        continue;
+      }
+
+      // Turn end: the natural cache-reset boundary. Compacting here rather than
       // mid-loop means the whole turn ran against one stable prefix, and the
       // next turn starts from a transcript that already fits.
       await maybeCompact("pressure", stepWindow);
@@ -795,12 +886,46 @@ let todoReconcileNudges = 0;
       const outcomes = await executeSameStepCalls(toolCalls, opts, ctx, emit, tracker, ledger, guard);
       for (let i = 0; i < toolCalls.length; i++) {
         const outcome = outcomes[i]!;
+        if (toolCalls[i]!.name === "report_goal_met") {
+          goalReported = true;
+        }
         counters.toolCalls += 1;
         counters.callsByTool[outcome.toolName] = (counters.callsByTool[outcome.toolName] ?? 0) + 1;
         if (outcome.denied) counters.deniedCalls += 1;
         else if (!outcome.ok) counters.failedCalls += 1;
         append(toolResult(toolCalls[i]!, outcome.result, deduper, opts, rawResults));
       }
+
+      // Automated compiler/LSP diagnostic loopback: when files change, query diagnostics
+      // and surface errors/warnings so the model self-corrects immediately.
+      if (
+        opts.diagnosticLoopback !== false &&
+        mutatedPaths.length > 0 &&
+        (ctx.getDiagnostics ?? opts.getDiagnostics)
+      ) {
+        const fetchDiagnostics = ctx.getDiagnostics ?? opts.getDiagnostics;
+        if (fetchDiagnostics) {
+          try {
+            const diags = await fetchDiagnostics([...new Set(mutatedPaths)]);
+            const severe = diags?.filter((d) => d.severity === "error" || d.severity === "warning") ?? [];
+            if (severe.length > 0) {
+              const formatted = formatDiagnostics(severe);
+              emit({
+                type: "evidence-gate",
+                code: "compiler_diagnostics",
+                message: `${severe.length} diagnostic error(s)/warning(s) detected after file changes.`,
+              });
+              append({
+                role: "user",
+                content: `[compiler/diagnostic feedback]\nIssues detected in files modified this step:\n${formatted}\nPlease inspect and address these errors.`,
+              });
+            }
+          } catch {
+            // Gracefully ignore diagnostic provider failures
+          }
+        }
+      }
+      mutatedPaths.length = 0;
 
       // The guards run after the whole batch, so a turn that mixed a success
       // with a failure is correctly read as progress.

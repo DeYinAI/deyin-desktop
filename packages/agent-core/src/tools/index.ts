@@ -31,6 +31,7 @@ import { notebookEditTool } from "./notebook-edit.js";
 import { envInfoTool } from "./env-info.js";
 import { diffTextTool } from "./diff.js";
 import { processListTool } from "./process-list.js";
+import { diagnosticsTool } from "./diagnostics.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell } from "./bash.js";
@@ -57,6 +58,7 @@ export { awaitTaskTool } from "./await-task.js";
 export { reportGoalMetTool } from "./report-goal-met.js";
 export { completeStepTool } from "./complete-step.js";
 export { createWaitJobsTool } from "./wait-jobs.js";
+export { diagnosticsTool } from "./diagnostics.js";
 export { enterWorktreeTool, exitWorktreeTool } from "./worktree.js";
 export {
   GIT_TOOLS,
@@ -130,6 +132,7 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   envInfoTool,
   diffTextTool,
   processListTool,
+  diagnosticsTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {
