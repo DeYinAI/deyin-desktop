@@ -466,7 +466,8 @@ export class AgentShell {
   private waitForSentinelPrompt(needle: string, timeoutMs: number): Promise<number> {
     return new Promise((resolve, reject) => {
       let buf = "";
-      let sawBegin = false;
+      // PowerShell has no PS0 equivalent and never emits BEGIN_MARKER; capture immediately.
+      let sawBegin = this.kind === "powershell";
       let sawNeedle = false;
       const onData = (chunk: string) => {
         buf += chunk;

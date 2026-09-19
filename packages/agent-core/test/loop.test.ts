@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { normalizeMaxSteps, runAgent } from "../src/loop.js";
+import { normalizeMaxSteps, runAgent, type RunSummary } from "../src/loop.js";
 import { PermissionEngine } from "../src/permissions.js";
 import { createBuiltinRegistry } from "../src/tools/index.js";
 import type { AgentMessage } from "../src/types.js";
@@ -629,6 +629,50 @@ test("the run summary reports what the run actually cost", async () => {
     assert.equal(summary!.failedCalls, 0);
     assert.equal(summary!.duplicateResults, 1, "the identical second read should have been elided");
     assert.equal(summary!.steps, 3);
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("todo_read is never elided by duplicate result deduper", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-loop-todo-"));
+  const longTodos = Array.from({ length: 15 }, (_, i) => ({
+    id: `step-${i}`,
+    content: `Perform task number ${i} with thorough verification and testing criteria`,
+    status: "pending" as const,
+  }));
+  const server = await startMockOpenAI((i) => {
+    if (i === 0) return toolCallResponse("c1", "todo_read", {});
+    if (i === 1) return toolCallResponse("c2", "todo_read", {});
+    return textResponse("All tasks read.");
+  });
+
+  try {
+    let summary: RunSummary | undefined;
+    const messages = baseMessages();
+    await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      toolContext: {
+        todos: longTodos,
+      },
+      onEvent: (event) => {
+        if (event.type === "run-summary") summary = event.summary;
+      },
+    });
+
+    assert.equal(summary!.duplicateResults, 0, "todo_read must not be elided as a duplicate");
+    const toolMessages = messages.filter((m) => m.role === "tool");
+    assert.equal(toolMessages.length, 2);
+    assert.ok(!toolMessages[1]!.content.includes("duplicate tool result omitted"));
+    assert.ok(toolMessages[1]!.content.includes("Perform task number 0"));
   } finally {
     await server.close();
     rmSync(cwd, { recursive: true, force: true });

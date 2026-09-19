@@ -464,12 +464,7 @@ export class DesktopAgentHost {
     } catch (err) {
       console.warn("[deyin] AgentShell unavailable; falling back to spawn:", err);
       shell.dispose();
-      // Any failure to start persistent shell when epoch is current means
-      // persistent AgentShell cannot be used for this session — latch unavailable so
-      // bash tools can immediately fall back to one-off spawn execution.
-      if (session.shellEpoch === epoch) {
-        session.shellUnavailable = true;
-      }
+      session.shellUnavailable = true;
       return undefined;
     }
 
@@ -910,18 +905,31 @@ export class DesktopAgentHost {
           if (session.shellUnavailable) {
             throw new ShellUnavailableError("AgentShell unavailable");
           }
-          const startEpoch = session.shellEpoch;
-          const shell = await this.ensureShell(options.threadId, session, cwd);
-          if (!shell) {
-            if (session.shellUnavailable || session.shellEpoch === startEpoch) {
+          let shell: ToolShell | undefined;
+          try {
+            shell = await this.ensureShell(options.threadId, session, cwd);
+          } catch (err) {
+            session.shellUnavailable = true;
+            throw new ShellUnavailableError(
+              `AgentShell unavailable: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          if (!shell || session.shellUnavailable) {
+            session.shellUnavailable = true;
+            throw new ShellUnavailableError("AgentShell unavailable");
+          }
+          try {
+            return await shell.run(command, runOpts);
+          } catch (err) {
+            if (
+              err instanceof ShellUnavailableError ||
+              (err instanceof Error && /disposed|not running|exited/i.test(err.message))
+            ) {
               session.shellUnavailable = true;
               throw new ShellUnavailableError("AgentShell unavailable");
             }
-            // Epoch discard (e.g. archive during create) — must NOT be ShellUnavailableError
-            // or bash would fall through to spawn and double-exec the command.
-            throw new Error("Agent shell was disposed before it became ready");
+            throw err;
           }
-          return shell.run(command, runOpts);
         },
       };
 
@@ -1136,13 +1144,29 @@ export class DesktopAgentHost {
             return result;
           },
           sendMessage: async (to, content) => {
-            const key = `${options.threadId}:${to}`;
+            const trimmedTo = to.trim();
+            const validRecipients = new Set([
+              "user",
+              "main",
+              "parent",
+              ...caps.subagents.map((s) => s.name),
+              ...caps.subagents.map((s) => s.name.toLowerCase()),
+            ]);
+            for (const j of [...jobsMgr.getPending(), ...jobsMgr.getCompleted()]) {
+              validRecipients.add(j.id);
+              if (j.label) validRecipients.add(j.label);
+            }
+            if (!validRecipients.has(trimmedTo) && !validRecipients.has(trimmedTo.toLowerCase())) {
+              const available = ["user", ...caps.subagents.map((s) => s.name)];
+              return `ERROR: Unknown recipient or channel "${to}". Available agent recipients: ${available.join(", ")}.`;
+            }
+            const key = `${options.threadId}:${trimmedTo}`;
             const list = this.agentInbox.get(key) ?? [];
             list.push(content);
             // Bounded ring: inboxes are diagnostics-only today.
             if (list.length > 50) list.splice(0, list.length - 50);
             this.agentInbox.set(key, list);
-            return `Message delivered to ${to}.`;
+            return `Message delivered to ${trimmedTo}.`;
           },
           pollBackgroundTask: (taskId, blockUntilMs) => this.pollBackgroundTask(taskId, blockUntilMs),
           registerBackgroundTask: (taskId, promise) => {

@@ -138,11 +138,19 @@ export function createAutomationTools(
  required: ["name", "prompt", "workspacePath"],
  },
  summarize: (args) => `create automation ${str(args, "name") || "(unnamed)"}`,
- execute: async (args) => {
- const input = buildInput(args, settings);
- const mutation = service.create(input);
- return `Created automation "${mutation.automation.name}" (id ${mutation.automation.id}). ${mutation.automation.enabled ? "Scheduled runs are active." : "It is saved disabled — enable it before expecting scheduled runs."}`;
- },
+    execute: async (args) => {
+      const input = buildInput(args, settings);
+      const mutation = service.create(input);
+      let scheduleMsg: string;
+      if (mutation.automation.trigger.kind === "cron") {
+        scheduleMsg = mutation.automation.enabled
+          ? `Scheduled runs are active (${mutation.automation.trigger.expression}).`
+          : `Saved with schedule ${mutation.automation.trigger.expression}, but disabled — enable it before expecting scheduled runs.`;
+      } else {
+        scheduleMsg = `Created as a manual-only (run-on-demand) automation because no cron schedule was specified. Scheduled runs are NOT active. To run it, use automation_run with id ${mutation.automation.id}, or update it with a cron schedule via automation_update.`;
+      }
+      return `Created automation "${mutation.automation.name}" (id ${mutation.automation.id}). ${scheduleMsg}`;
+    },
  };
 
  const listTool: ToolDefinition = {

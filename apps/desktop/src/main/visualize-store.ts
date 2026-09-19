@@ -30,7 +30,7 @@ export class VisualizeStore {
   private safeFilePath(threadId: string, fileName: string): string {
     const dir = this.threadDir(threadId);
     if (fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) {
-      throw new Error("Invalid visualization file name.");
+      throw new Error("Invalid visualization file name: only bare filenames without directory slashes or traversal are allowed in thread storage (e.g. 'chart.html').");
     }
     const base = basename(fileName);
     if (!base || base === "." || base === "..") throw new Error("Invalid visualization file name.");

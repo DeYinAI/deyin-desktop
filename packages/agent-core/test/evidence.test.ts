@@ -142,3 +142,13 @@ test("complete_step rejects duplicate sign-off", async () => {
   );
   assert.match(result, /already signed off/);
 });
+
+test("complete_step provides guidance when called outside delivery mode", async () => {
+  const result = await completeStepTool.execute(
+    { step_id: "s1", verification_command: "npm test", diff_summary: "done" },
+    { cwd: process.cwd(), todos: [], sessionMeta: { threadId: "t1", mode: "plan", approvalMode: "ask-first", model: "m", cwd: process.cwd() } },
+  );
+  assert.match(result, /only available in delivery mode/);
+  assert.match(result, /current mode: "plan"/);
+  assert.match(result, /switch_mode/);
+});

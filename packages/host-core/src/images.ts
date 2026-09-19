@@ -385,6 +385,44 @@ async function errorMessage(res: Response): Promise<string> {
   return text.trim().length > 0 ? `${text.trim().slice(0, 300)} (HTTP ${res.status})` : `HTTP ${res.status}`;
 }
 
+const RETRYABLE_STATUSES = new Set([429, 503, 529]);
+const MAX_IMAGE_RETRIES = 3;
+
+async function fetchWithRetry(
+  requestFn: () => Promise<Response>,
+  signal?: AbortSignal,
+): Promise<Response> {
+  let attempt = 0;
+  while (true) {
+    if (signal?.aborted) throw new Error("Operation aborted");
+    const res = await requestFn();
+    if (!RETRYABLE_STATUSES.has(res.status) || attempt >= MAX_IMAGE_RETRIES) {
+      return res;
+    }
+    attempt++;
+    const retryAfterHeader = res.headers.get("retry-after");
+    const retryAfterSeconds = retryAfterHeader ? parseFloat(retryAfterHeader) : NaN;
+    const delayMs =
+      !Number.isNaN(retryAfterSeconds) && retryAfterSeconds > 0
+        ? Math.min(retryAfterSeconds * 1000, 10000)
+        : Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 500, 8000);
+    await new Promise<void>((resolve, reject) => {
+      let onAbort: (() => void) | undefined;
+      const timer = setTimeout(() => {
+        if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, delayMs);
+      if (signal) {
+        onAbort = () => {
+          clearTimeout(timer);
+          reject(new Error("Operation aborted"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    });
+  }
+}
+
 /**
  * Generate images from a prompt through the OpenAI-compatible images endpoint.
  * `response_format: "b64_json"` is requested first (no second round trip for
@@ -413,9 +451,19 @@ export async function generateImages(opts: GenerateImagesOptions): Promise<Gener
       signal: opts.signal ?? AbortSignal.timeout(180_000),
     });
 
-  let res = await post({ ...payload, response_format: "b64_json" });
-  if (res.status === 400 || res.status === 422) res = await post(payload);
-  if (!res.ok) throw new Error(`Image generation failed: ${await errorMessage(res)}`);
+  let res = await fetchWithRetry(() => post({ ...payload, response_format: "b64_json" }), opts.signal);
+  if (res.status === 400 || res.status === 422) {
+    res = await fetchWithRetry(() => post(payload), opts.signal);
+  }
+  if (!res.ok) {
+    const detail = await errorMessage(res);
+    if (res.status === 529 || /529|overloaded|capacity/i.test(detail)) {
+      throw new Error(
+        `Image generation failed: ${detail}. The image model is currently at capacity; please wait a moment or try an SVG / code mockup instead.`,
+      );
+    }
+    throw new Error(`Image generation failed: ${detail}`);
+  }
 
   // Some gateways answer with the raw image bytes instead of JSON.
   const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
@@ -454,16 +502,27 @@ async function editImages(opts: GenerateImagesOptions): Promise<GeneratedImage[]
     form.append(inputs.length > 1 ? "image[]" : "image", blob, `input-${index}.${extensionFor(image.mediaType)}`);
   });
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
-    body: form,
-    signal: opts.signal ?? AbortSignal.timeout(180_000),
-  });
+  const sendEdit = () =>
+    fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
+      body: form,
+      signal: opts.signal ?? AbortSignal.timeout(180_000),
+    });
+
+  const res = await fetchWithRetry(sendEdit, opts.signal);
   if (res.status === 404 || res.status === 405) {
     throw new Error(`${opts.model} cannot edit images on this provider (no /images/edits endpoint).`);
   }
-  if (!res.ok) throw new Error(`Image edit failed: ${await errorMessage(res)}`);
+  if (!res.ok) {
+    const detail = await errorMessage(res);
+    if (res.status === 529 || /529|overloaded|capacity/i.test(detail)) {
+      throw new Error(
+        `Image edit failed: ${detail}. The image model is currently at capacity; please wait a moment or try an SVG / code mockup instead.`,
+      );
+    }
+    throw new Error(`Image edit failed: ${detail}`);
+  }
   const body = (await res.json().catch(() => null)) as unknown;
   const images = await parseImageResponse(body, opts.signal);
   if (images.length === 0) throw new Error("Image edit returned no image data.");

@@ -4,9 +4,11 @@ import { asString } from "./util.js";
 export const completeStepTool: ToolDefinition = {
   name: "complete_step",
   description:
-    "Sign off a todo step in delivery mode after verification. Requires step_id matching an active todo, " +
-    "verification_command that was actually run (bash), diff_summary of what changed, and optional review_notes. " +
-    "Call only after tests/checks pass and evidence exists in the ledger.",
+    "Sign off a todo step after verification. " +
+    "CRITICAL: This tool is STRICTLY gated to delivery mode and requires an active evidence ledger. " +
+    "Do NOT call complete_step in agent or plan mode; in those modes, update tasks directly with todo_write. " +
+    "To use complete_step, first switch to delivery mode via switch_mode(mode: 'delivery'). " +
+    "Requires step_id matching an active todo, verification_command that was actually run (bash), diff_summary, and optional review_notes.",
   tier: "read",
   parameters: {
     type: "object",
@@ -30,7 +32,12 @@ export const completeStepTool: ToolDefinition = {
 
     const ledger = ctx.evidenceLedger;
     if (!ledger) {
-      return "ERROR: complete_step is only available in delivery mode with evidence tracking enabled.";
+      const mode = ctx.sessionMeta?.mode ?? "current";
+      return (
+        `ERROR: complete_step is only available in delivery mode with evidence tracking enabled (current mode: "${mode}"). ` +
+        `In ${mode} mode, manage task status directly using todo_write. ` +
+        `If you need formal verification gates and sign-offs, switch to delivery mode first via switch_mode(mode: "delivery").`
+      );
     }
 
     const todo = ctx.todos.find((t) => t.id === stepId);

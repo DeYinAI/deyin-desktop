@@ -1027,11 +1027,13 @@ function toolResult(
   opts: AgentRunOptions,
   rawResults: RawResultStore,
 ): AgentMessage {
-  const duplicate = deduper.check(content, call.id);
+  const toolDef = opts.tools.get(call.name);
+  const neverElide = call.name === "todo_read" || toolDef?.neverElide === true;
+  const duplicate = neverElide ? null : deduper.check(content, call.id);
   if (duplicate !== null) {
     return { role: "tool", toolCallId: call.id, toolName: call.name, content: duplicate };
   }
-  const wire = snipToolResult(content, call.name, call.id, opts.tools.get(call.name)?.snipHint);
+  const wire = snipToolResult(content, call.name, call.id, toolDef?.snipHint);
   if (wire !== content) rawResults.record(call.id, call.name, content);
   return { role: "tool", toolCallId: call.id, toolName: call.name, content: wire };
 }
