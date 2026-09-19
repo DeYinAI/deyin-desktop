@@ -79,6 +79,14 @@ export function isPlanDowngrade(params: {
   const { hasSubscription, targetPlan, currentPlanId, currentPlanPriceMonthly, publicPlans } = params;
   if (!hasSubscription || !targetPlan) return false;
   if (targetPlan.priceMonthly === 0) return true;
+  if (targetPlan.priceMonthly <= 1 && (targetPlan.name === "Promo" || targetPlan.name === "Free")) {
+    const currentFromCatalog = publicPlans.find((p) => p.id === currentPlanId);
+    const currentPrice =
+      currentFromCatalog?.priceMonthly ??
+      (currentPlanPriceMonthly != null && currentPlanPriceMonthly > 0 ? currentPlanPriceMonthly : null);
+    if (currentPrice != null && currentPrice > targetPlan.priceMonthly) return true;
+    if (currentPrice == null) return true;
+  }
   const currentFromCatalog = publicPlans.find((p) => p.id === currentPlanId);
   const currentPrice =
     currentFromCatalog?.priceMonthly ??
@@ -94,7 +102,7 @@ export function isBillingCycleChange(params: {
   currentBillingCycle: BillingCycle | null;
 }): boolean {
   const { planPriceMonthly, hasSubscription, selectedCycle, currentBillingCycle } = params;
-  if (!hasSubscription || planPriceMonthly <= 0) return false;
+  if (!hasSubscription || planPriceMonthly <= 1) return false;
   const current = currentBillingCycle ?? "monthly";
   return selectedCycle !== current;
 }
@@ -106,6 +114,8 @@ export type PlanCardCtaKey =
   | "current"
   | "switchToFree"
   | "startFree"
+  | "switchToPromo"
+  | "startPromo"
   | "switchPlan"
   | "subscribe";
 
@@ -147,6 +157,9 @@ export function resolvePlanCardCtaKey(params: {
   if (planPriceMonthly === 0) {
     return { key: hasSubscription ? "switchToFree" : "startFree", disabled: false, isBillingCycleSwitch: false };
   }
+  if (planPriceMonthly <= 1) {
+    return { key: hasSubscription ? "switchToPromo" : "startPromo", disabled: false, isBillingCycleSwitch: false };
+  }
   return { key: hasSubscription ? "switchPlan" : "subscribe", disabled: false, isBillingCycleSwitch: false };
 }
 
@@ -157,7 +170,7 @@ export function scheduledCancellationForPlanCard(params: {
   pendingPlanChange?: Pick<PendingPlanChange, "planName"> | null;
 }): { expiresAt: string } | null {
   if (!params.isCurrent || !params.cancelAtPeriodEnd || !params.nextBillingDate) return null;
-  if (params.pendingPlanChange && params.pendingPlanChange.planName !== "Free") return null;
+  if (params.pendingPlanChange && params.pendingPlanChange.planName !== "Free" && params.pendingPlanChange.planName !== "Promo") return null;
   return { expiresAt: params.nextBillingDate };
 }
 

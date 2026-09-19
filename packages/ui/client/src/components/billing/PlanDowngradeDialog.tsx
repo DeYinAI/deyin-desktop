@@ -21,12 +21,16 @@ export function PlanDowngradeDialog({
   const periodLabel = nextBillingDate
     ? formatBillingDate(nextBillingDate)
     : t("plans.downgrade.planEndsNextCycle");
-  const isFreeTarget = targetPlan.priceMonthly === 0;
+  const isFreeOrPromoTarget =
+    targetPlan.priceMonthly <= 1 ||
+    targetPlan.name === "Free" ||
+    targetPlan.name === "Promo";
+  const isPromo = targetPlan.name === "Promo" || (targetPlan.priceMonthly > 0 && targetPlan.priceMonthly <= 1);
 
   return (
     <div className="plans-view__dialog-overlay" role="dialog" aria-modal="true">
       <div className="plans-view__dialog">
-        {isFreeTarget ? (
+        {isFreeOrPromoTarget ? (
           <>
             <div className="plans-view__dialog-title">
               {nextBillingDate
@@ -34,7 +38,9 @@ export function PlanDowngradeDialog({
                 : t("plans.downgrade.planEndsNextCycle")}
             </div>
             <p className="plans-view__dialog-desc">
-              {t("plans.downgrade.cancelAndSwitchToFree").replace(/<\/?strong>/g, "")}
+              {isPromo
+                ? t("plans.downgrade.cancelAndSwitchToPromo").replace(/<\/?strong>/g, "")
+                : t("plans.downgrade.cancelAndSwitchToFree").replace(/<\/?strong>/g, "")}
             </p>
             <p className="plans-view__dialog-hint">{t("plans.downgrade.keepPlanUntilThen")}</p>
             <div className="plans-view__dialog-actions">

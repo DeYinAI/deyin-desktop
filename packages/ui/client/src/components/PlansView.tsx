@@ -46,6 +46,7 @@ interface PurchasePending {
   displayPrice: number;
   currency: string;
   changeNow?: boolean;
+  isAnnual?: boolean;
 }
 
 interface PlansViewProps {
@@ -63,6 +64,8 @@ const CTA_KEYS: Record<PlanCardCtaKey, string> = {
   current: "plans.cta.current",
   switchToFree: "plans.cta.switchToFree",
   startFree: "plans.cta.startFree",
+  switchToPromo: "plans.cta.switchToPromo",
+  startPromo: "plans.cta.startPromo",
   switchPlan: "plans.cta.switchPlan",
   subscribe: "plans.cta.subscribe",
 };
@@ -229,7 +232,7 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
   }, [handleCheckoutNav, platform, step, checkoutUrl]);
 
   const performPlanSelection = useCallback(
-    async (planId: number, changeNow?: boolean) => {
+    async (planId: number, changeNow?: boolean, cycleOverride?: boolean) => {
       setLoadingPlanId(planId);
       setError(null);
       setNotice(null);
@@ -239,15 +242,17 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       setPendingCrossCurrencyPlanId(null);
 
       const targetPlan = plans?.find((p) => p.id === planId);
+      const isPromo = targetPlan?.name === "Promo" || (targetPlan && targetPlan.priceMonthly <= 1);
+      const resolvedAnnual = isPromo ? false : (cycleOverride !== undefined ? cycleOverride : isAnnual);
       const isScheduledFreeCancel =
-        targetPlan?.priceMonthly === 0 && changeNow === false && hasSubscription;
+        (targetPlan?.priceMonthly === 0 || isPromo) && changeNow === false && hasSubscription;
       const isScheduledPaidChange =
-        changeNow === false && hasSubscription && !!targetPlan && targetPlan.priceMonthly > 0;
+        changeNow === false && hasSubscription && !!targetPlan && targetPlan.priceMonthly > 0 && !isPromo;
 
       try {
         const data = await window.deyin.billing.selectPlan(planId, {
           returnTo: "/user/billing/overview",
-          billingCycle: isAnnual ? "annual" : "monthly",
+          billingCycle: resolvedAnnual ? "annual" : "monthly",
           changeNow,
         });
 
@@ -335,6 +340,20 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
 
       if (pres.billingCycleSwitch) {
         setError(null);
+        if (targetPlan.priceMonthly > 0) {
+          const isPromo = targetPlan.priceMonthly <= 1 || targetPlan.name === "Promo";
+          const effectiveAnnual = isPromo ? false : isAnnual;
+          const pricing = getPlanCardPricing(targetPlan, effectiveAnnual);
+          setPendingPurchase({
+            selectionPlanId: isPromo ? targetPlan.id : pres.selectionPlanId,
+            planName: targetPlan.name,
+            displayPrice: pricing.displayPrice,
+            currency: pricing.currency,
+            changeNow: false,
+            isAnnual: effectiveAnnual,
+          });
+          return;
+        }
         void performPlanSelection(pres.selectionPlanId, false);
         return;
       }
@@ -372,12 +391,16 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       }
 
       if (targetPlan.priceMonthly > 0) {
-        const pricing = getPlanCardPricing(targetPlan, isAnnual);
+        const isPromo = targetPlan.priceMonthly <= 1 || targetPlan.name === "Promo";
+        const effectiveAnnual = isPromo ? false : isAnnual;
+        const pricing = getPlanCardPricing(targetPlan, effectiveAnnual);
         setPendingPurchase({
-          selectionPlanId: pres.selectionPlanId,
+          selectionPlanId: isPromo ? targetPlan.id : pres.selectionPlanId,
           planName: targetPlan.name,
           displayPrice: pricing.displayPrice,
           currency: pricing.currency,
+          changeNow: undefined,
+          isAnnual: effectiveAnnual,
         });
         return;
       }
@@ -406,6 +429,8 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       setPendingCrossCurrencyPlanId(null);
       return;
     }
+    const isPromo = target.priceMonthly <= 1 || target.name === "Promo";
+    const effectiveAnnual = isPromo ? false : isAnnual;
     const pres = buildPlanCardPresentation({
       plan: target,
       currentPlanId,
@@ -413,33 +438,67 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
       currentPlanPriceMonthly,
       publicPlans: plans,
       hasSubscription,
-      isAnnual,
+      isAnnual: effectiveAnnual,
       currentBillingCycle: overview?.subscriptionBillingCycle ?? null,
       isLoading: false,
     });
-    const pricing = getPlanCardPricing(target, isAnnual);
+    const pricing = getPlanCardPricing(target, effectiveAnnual);
     setPendingCrossCurrencyPlanId(null);
     setPendingPurchase({
-      selectionPlanId: pres.selectionPlanId,
+      selectionPlanId: isPromo ? target.id : pres.selectionPlanId,
       planName: target.name,
       displayPrice: pricing.displayPrice,
       currency: pricing.currency,
       changeNow: true,
+      isAnnual: effectiveAnnual,
     });
   };
 
   const confirmCrossCurrencyNextCycle = () => {
-    if (!pendingCrossCurrencyPlanId) return;
-    const planId = pendingCrossCurrencyPlanId;
+    if (!pendingCrossCurrencyPlanId || !plans) return;
+    const target = plans.find((p) => p.id === pendingCrossCurrencyPlanId);
     setPendingCrossCurrencyPlanId(null);
-    void performPlanSelection(planId, false);
+    if (!target) return;
+    const isDowngrade = isPlanDowngrade({
+      hasSubscription,
+      targetPlan: target,
+      currentPlanId,
+      currentPlanPriceMonthly,
+      publicPlans: plans,
+    });
+    if (!isDowngrade && target.priceMonthly > 0) {
+      const isPromo = target.priceMonthly <= 1 || target.name === "Promo";
+      const effectiveAnnual = isPromo ? false : isAnnual;
+      const pres = buildPlanCardPresentation({
+        plan: target,
+        currentPlanId,
+        currentPlanName,
+        currentPlanPriceMonthly,
+        publicPlans: plans,
+        hasSubscription,
+        isAnnual: effectiveAnnual,
+        currentBillingCycle: overview?.subscriptionBillingCycle ?? null,
+        isLoading: false,
+      });
+      const pricing = getPlanCardPricing(target, effectiveAnnual);
+      setPendingPurchase({
+        selectionPlanId: isPromo ? target.id : pres.selectionPlanId,
+        planName: target.name,
+        displayPrice: pricing.displayPrice,
+        currency: pricing.currency,
+        changeNow: false,
+        isAnnual: effectiveAnnual,
+      });
+      return;
+    }
+    void performPlanSelection(target.id, false);
   };
 
   const confirmPurchase = () => {
     if (!pendingPurchase) return;
-    const { selectionPlanId, changeNow } = pendingPurchase;
+    const { selectionPlanId, changeNow, isAnnual: purchaseIsAnnual } = pendingPurchase;
     setPendingPurchase(null);
-    void performPlanSelection(selectionPlanId, changeNow);
+    void performPlanSelection(selectionPlanId, changeNow, purchaseIsAnnual);
   };
 
   const handleBack = () => {
@@ -844,7 +903,7 @@ export function PlansView({ platform, oauthIssuer, userPlan, onBack, onComplete 
           planName={pendingPurchase.planName}
           displayPrice={pendingPurchase.displayPrice}
           currency={pendingPurchase.currency}
-          isAnnual={isAnnual}
+          isAnnual={pendingPurchase.isAnnual ?? isAnnual}
           isLoading={loadingPlanId === pendingPurchase.selectionPlanId}
           onConfirm={confirmPurchase}
           onCancel={() => setPendingPurchase(null)}

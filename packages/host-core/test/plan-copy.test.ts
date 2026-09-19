@@ -107,6 +107,25 @@ test("annual pricing discounts the localized monthly amount at cent precision", 
 
   // Free stays free on the annual toggle.
   assert.equal(getPlanCardPricing(free, true).displayPrice, 0);
+
+  // Promo stays $1 with no annual discount on the annual toggle.
+  const promo = plan({ id: 10, name: "Promo", priceMonthly: 1, localizedPrice: { amount: 100, currency: "usd" } });
+  const promoAnnual = getPlanCardPricing(promo, true);
+  assert.equal(promoAnnual.displayPrice, 100);
+  assert.equal(promoAnnual.billedYearly, undefined);
+});
+
+test("buildPlanColumns pairs Promo in the first column when catalog contains Promo", () => {
+  const catalog = [
+    plan({ id: 10, name: "Promo" }),
+    plan({ id: 2, name: "Lite" }),
+    plan({ id: 3, name: "Pro" }),
+  ];
+  const columns = buildPlanColumns(catalog);
+  assert.deepEqual(
+    columns.map((c) => c.tiers.map((p) => p.name)),
+    [["Promo"], ["Lite"], ["Pro"]],
+  );
 });
 
 test("buildPlanColumns pairs Pro/Pro+ and Max/Max+ and keeps unknown tiers", () => {

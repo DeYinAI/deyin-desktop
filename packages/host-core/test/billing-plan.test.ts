@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   hasActiveSubscription,
+  isBillingCycleChange,
   isCrossCurrencyChange,
   isPlanDowngrade,
+  resolvePlanCardCtaKey,
+  scheduledCancellationForPlanCard,
 } from "../src/billing-plan.js";
 import type { PublicPlan } from "../src/plans.js";
 
@@ -195,5 +198,70 @@ test("isCrossCurrencyChange compares currencies case-insensitively", () => {
       subscriptionCurrency: "usd",
     }),
     true,
+  );
+});
+
+test("isPlanDowngrade detects move to Promo tier ($1/mo)", () => {
+  const promoPlan = plan({ id: 10, name: "Promo", priceMonthly: 1 });
+  assert.equal(
+    isPlanDowngrade({
+      hasSubscription: true,
+      targetPlan: promoPlan,
+      currentPlanId: 2,
+      currentPlanPriceMonthly: 20,
+      publicPlans: [...catalog, promoPlan],
+    }),
+    true,
+  );
+});
+
+test("resolvePlanCardCtaKey produces startPromo and switchToPromo for Promo tier", () => {
+  assert.equal(
+    resolvePlanCardCtaKey({
+      planId: 10,
+      planPriceMonthly: 1,
+      currentPlanId: null,
+      hasSubscription: false,
+      selectedCycle: "monthly",
+      currentBillingCycle: null,
+      isLoading: false,
+    }).key,
+    "startPromo",
+  );
+  assert.equal(
+    resolvePlanCardCtaKey({
+      planId: 10,
+      planPriceMonthly: 1,
+      currentPlanId: 2,
+      hasSubscription: true,
+      selectedCycle: "monthly",
+      currentBillingCycle: "monthly",
+      isLoading: false,
+    }).key,
+    "switchToPromo",
+  );
+});
+
+test("scheduledCancellationForPlanCard preserves expiration badge when pendingPlanChange is Promo", () => {
+  assert.deepEqual(
+    scheduledCancellationForPlanCard({
+      isCurrent: true,
+      cancelAtPeriodEnd: true,
+      nextBillingDate: "2026-10-01",
+      pendingPlanChange: { planName: "Promo" },
+    }),
+    { expiresAt: "2026-10-01" },
+  );
+});
+
+test("isBillingCycleChange does not allow billing cycle switch for Promo tier ($1/mo)", () => {
+  assert.equal(
+    isBillingCycleChange({
+      planPriceMonthly: 1,
+      hasSubscription: true,
+      selectedCycle: "annual",
+      currentBillingCycle: "monthly",
+    }),
+    false,
   );
 });
