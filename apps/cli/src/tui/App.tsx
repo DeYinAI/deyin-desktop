@@ -324,7 +324,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         setStreamReasoning("");
         const controller = new AbortController();
         abortRef.current = controller;
-        let exitCode = 1;
+        let exitCode: number;
         try {
           exitCode = await runRemote({
             url: initial.remote.url,

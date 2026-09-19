@@ -18,7 +18,7 @@ export function looksLikeFilePath(text: string): boolean {
 
 /** Normalize display labels (`~`, `host:/path`) into a path root for resolution. */
 export function normalizeWorkspaceRootForPaths(workspaceRoot: string, homeDir?: string | null): string {
-  let root = workspaceRoot.replace(/[\\/]+$/, "");
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
   if (homeDir) {
     const home = homeDir.replace(/\\/g, "/").replace(/\/+$/, "");
     if (root === "~") return home;
