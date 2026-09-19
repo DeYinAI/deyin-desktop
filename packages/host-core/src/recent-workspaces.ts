@@ -18,9 +18,21 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+$/, "");
 }
 
-/** Display path with `~` when under homeDir. */
+const WSL_UNC_RE = /^(?:\\\\|\/\/)wsl(?:\$|\.localhost)[\\/]([^\\/]+)(?:[\\/](.*))?$/i;
+
+/** Display path with `~` when under homeDir or under a WSL distro home. */
 export function displayLocationPath(loc: WorkspaceLocation, homeDir?: string | null): string {
   if (loc.kind === "remote") return loc.root;
+  const wsl = WSL_UNC_RE.exec(loc.root);
+  if (wsl) {
+    const tail = (wsl[2] ?? "").replace(/\\/g, "/");
+    const posix = `/${tail}`.replace(/\/+$/, "") || "/";
+    const homeMatch = /^\/home\/[^/]+(\/.*)?$/.exec(posix);
+    if (homeMatch) {
+      return `~${homeMatch[1] ?? ""}`;
+    }
+    return posix;
+  }
   return shortenHome(loc.root, homeDir);
 }
 

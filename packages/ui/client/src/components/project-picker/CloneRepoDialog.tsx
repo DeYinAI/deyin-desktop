@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../Icon.js";
 
 export interface CloneRepoDialogProps {
@@ -16,6 +16,18 @@ export function CloneRepoDialog(props: CloneRepoDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!props.open) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        props.onClose();
+      }
+    };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [props.open, props.onClose]);
+
   if (!props.open) return null;
 
   const submit = () => {
@@ -30,13 +42,18 @@ export function CloneRepoDialog(props: CloneRepoDialogProps) {
   };
 
   return (
-    <div className="approval" role="dialog" aria-modal="true">
-      <div className="approval__box">
-        <div className="approval__title">
-          <Icon name="gitBranch" size={15} />
-          Clone repository
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}
+    >
+      <div className="modal">
+        <div className="modal__title">
+          <Icon name="gitBranch" size={16} />
+          <span>Clone repository</span>
         </div>
-        <div className="approval__summary">
+        <div className="modal__summary">
           Clones into your local Deyin folder and opens it as the workspace.
         </div>
         <div className="repo-form">
@@ -73,11 +90,16 @@ export function CloneRepoDialog(props: CloneRepoDialogProps) {
           {props.progressLine && <div className="menu__info">{props.progressLine}</div>}
           {error && <div className="repo-form__error">{error}</div>}
         </div>
-        <div className="approval__actions">
+        <div className="modal__actions">
           <button type="button" className="btn btn--outline" onClick={props.onClose} disabled={submitting}>
             Cancel
           </button>
-          <button type="button" className="btn" onClick={submit} disabled={submitting || !url.trim() || props.busy}>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={submit}
+            disabled={submitting || !url.trim() || props.busy}
+          >
             {submitting || props.busy ? "Cloning…" : "Clone & open"}
           </button>
         </div>

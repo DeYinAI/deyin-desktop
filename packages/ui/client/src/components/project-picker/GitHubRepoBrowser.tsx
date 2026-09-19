@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GitHubRepoEntry } from "@deyin/contract";
 import { Icon } from "../Icon.js";
 
@@ -13,34 +13,70 @@ export interface GitHubRepoBrowserProps {
 }
 
 export function GitHubRepoBrowser(props: GitHubRepoBrowserProps) {
+  const { open, connected, login, onClose, onConnectGitHub, onClone, listRepos } = props;
   const [query, setQuery] = useState("");
   const [repos, setRepos] = useState<GitHubRepoEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cloning, setCloning] = useState<number | null>(null);
+  const reqId = useRef(0);
 
   useEffect(() => {
-    if (!props.open || !props.connected) return;
-    setLoading(true);
-    void props
-      .listRepos(query)
-      .then(setRepos)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
-  }, [props.open, props.connected, query, props]);
+    if (!open) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [open, onClose]);
 
-  if (!props.open) return null;
+  useEffect(() => {
+    if (!open || !connected) return;
+    const id = ++reqId.current;
+    setLoading(true);
+    const timer = setTimeout(() => {
+      void listRepos(query)
+        .then((data) => {
+          if (id === reqId.current) {
+            setRepos(data);
+            setError(null);
+          }
+        })
+        .catch((err) => {
+          if (id === reqId.current) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+        })
+        .finally(() => {
+          if (id === reqId.current) {
+            setLoading(false);
+          }
+        });
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [open, connected, query, listRepos]);
+
+  if (!open) return null;
 
   return (
-    <div className="approval" role="dialog" aria-modal="true">
-      <div className="approval__box folder-browser">
-        <div className="approval__title">
-          <Icon name="gitBranch" size={15} />
-          GitHub
-          {props.login && <span className="hint"> · {props.login}</span>}
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="modal folder-browser">
+        <div className="modal__title">
+          <Icon name="gitBranch" size={16} />
+          <span>GitHub</span>
+          {login && <span className="hint"> · {login}</span>}
         </div>
-        {!props.connected ? (
-          <div className="approval__summary">
+        {!connected ? (
+          <div className="modal__summary">
             Connect your GitHub account to browse and clone repositories.
           </div>
         ) : (
@@ -53,9 +89,12 @@ export function GitHubRepoBrowser(props: GitHubRepoBrowserProps) {
             />
           </div>
         )}
-        {props.connected && (
+        {connected && (
           <div className="folder-browser__list">
             {loading && <div className="menu__info">Loading…</div>}
+            {!loading && !error && repos.length === 0 && (
+              <div className="menu__info">{query ? "No matching repositories" : "No repositories found"}</div>
+            )}
             {!loading &&
               repos.map((repo) => (
                 <button
@@ -65,8 +104,7 @@ export function GitHubRepoBrowser(props: GitHubRepoBrowserProps) {
                   disabled={cloning === repo.id}
                   onClick={() => {
                     setCloning(repo.id);
-                    void props
-                      .onClone(repo)
+                    void onClone(repo)
                       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
                       .finally(() => setCloning(null));
                   }}
@@ -79,12 +117,12 @@ export function GitHubRepoBrowser(props: GitHubRepoBrowserProps) {
           </div>
         )}
         {error && <div className="repo-form__error">{error}</div>}
-        <div className="approval__actions">
-          <button type="button" className="btn btn--outline" onClick={props.onClose}>
+        <div className="modal__actions">
+          <button type="button" className="btn btn--outline" onClick={onClose}>
             Cancel
           </button>
-          {!props.connected && (
-            <button type="button" className="btn" onClick={() => void props.onConnectGitHub()}>
+          {!connected && (
+            <button type="button" className="btn btn--primary" onClick={() => void onConnectGitHub()}>
               Connect GitHub
             </button>
           )}
