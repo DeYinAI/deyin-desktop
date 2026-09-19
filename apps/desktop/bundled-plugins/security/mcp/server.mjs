@@ -118,7 +118,9 @@ function scanFileRegex(path, content) {
 
 function walk(dir, exts, max = 500) {
   const files = [];
-  if (!existsSync(dir)) return files;
+  const skippedExtensions = new Set();
+  let skippedCount = 0;
+  if (!existsSync(dir)) return { files, skippedCount, skippedExtensions: [] };
   const stack = [dir];
   while (stack.length > 0 && files.length < max) {
     const cur = stack.pop();
@@ -131,11 +133,20 @@ function walk(dir, exts, max = 500) {
     for (const e of entries) {
       if (e.name === "node_modules" || e.name === ".git") continue;
       const p = join(cur, e.name);
-      if (e.isDirectory()) stack.push(p);
-      else if (exts.has(extname(e.name))) files.push(p);
+      if (e.isDirectory()) {
+        stack.push(p);
+      } else {
+        const ext = extname(e.name).toLowerCase();
+        if (exts.has(ext)) {
+          files.push(p);
+        } else {
+          skippedCount++;
+          if (ext) skippedExtensions.add(ext);
+        }
+      }
     }
   }
-  return files;
+  return { files, skippedCount, skippedExtensions: [...skippedExtensions].sort() };
 }
 
 function semgrepAvailable() {
@@ -231,7 +242,7 @@ function parseNpmAudit(raw) {
   return findings;
 }
 
-function buildReport({ root, findings, scanned, sources }) {
+function buildReport({ root, findings, scanned, sources, skipped }) {
   const report = {
     version: "1",
     scannedAt: new Date().toISOString(),
@@ -239,6 +250,12 @@ function buildReport({ root, findings, scanned, sources }) {
     scanned,
     sources: [...new Set(sources)],
     findings: sortFindings(dedupeFindings(findings)),
+    ...(skipped ? { skipped } : {}),
+    ...(scanned === 0
+      ? {
+          message: `Scanned 0 code files in ${root}.${skipped?.count ? ` Skipped ${skipped.count} non-code files with extensions: ${skipped.extensions.join(", ") || "(none)"}.` : ""} Supported code extensions for security scanning: ${skipped?.supportedExtensions?.join(", ") ?? ".ts, .tsx, .js, .jsx, .mjs, .py, .go, .rs"}.`,
+        }
+      : {}),
   };
   validateReport(report);
   return report;
@@ -247,7 +264,7 @@ function buildReport({ root, findings, scanned, sources }) {
 function scanRepo(root) {
   const resolved = assertInsideWorkspace(root);
   const exts = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".go", ".rs"]);
-  const files = walk(resolved, exts);
+  const { files, skippedCount, skippedExtensions } = walk(resolved, exts);
   const findings = [];
   const sources = [];
 
@@ -268,7 +285,13 @@ function scanRepo(root) {
   if (auditFindings.length > 0) sources.push("npm-audit");
   findings.push(...auditFindings);
 
-  return buildReport({ root: resolved, findings, scanned: files.length, sources });
+  return buildReport({
+    root: resolved,
+    findings,
+    scanned: files.length,
+    sources,
+    skipped: { count: skippedCount, extensions: skippedExtensions, supportedExtensions: [...exts].sort() },
+  });
 }
 
 function scanDiff(diff) {

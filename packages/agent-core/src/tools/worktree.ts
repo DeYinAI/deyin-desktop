@@ -16,6 +16,11 @@ function runGit(cwd: string, args: string[]): Promise<{ ok: boolean; output: str
   });
 }
 
+async function isGitRepo(cwd: string): Promise<boolean> {
+  const result = await runGit(cwd, ["rev-parse", "--is-inside-work-tree"]);
+  return result.ok && result.output.trim() === "true";
+}
+
 export const enterWorktreeTool: ToolDefinition = {
   name: "enter_worktree",
   description: "Create a git worktree for isolated work. Returns the worktree path.",
@@ -30,10 +35,16 @@ export const enterWorktreeTool: ToolDefinition = {
   },
   summarize: (args) => `worktree ${String(args.branch ?? "")}`,
   async execute(args, ctx): Promise<string> {
+    if (!(await isGitRepo(ctx.cwd))) {
+      return "ERROR: Not a git repository (or any of the parent directories). Cannot create a worktree outside a git repository.";
+    }
     const branch = asString(args.branch, "branch");
     const relPath = asString(args.path, "path");
     const result = await runGit(ctx.cwd, ["worktree", "add", relPath, "-b", branch]);
-    if (!result.ok) return `ERROR creating worktree: ${result.output}`;
+    if (!result.ok) {
+      const cleanErr = result.output.replace(/^fatal:\s*/i, "").trim();
+      return `ERROR creating worktree: ${cleanErr || result.output}`;
+    }
     return `Worktree created at ${relPath} on branch ${branch}.\n${result.output}`;
   },
 };
@@ -52,11 +63,17 @@ export const exitWorktreeTool: ToolDefinition = {
   },
   summarize: (args) => `remove worktree ${String(args.path ?? "")}`,
   async execute(args, ctx): Promise<string> {
+    if (!(await isGitRepo(ctx.cwd))) {
+      return "ERROR: Not a git repository (or any of the parent directories). Cannot remove a worktree outside a git repository.";
+    }
     const relPath = asString(args.path, "path");
     const gitArgs = ["worktree", "remove", relPath];
     if (args.force === true) gitArgs.push("--force");
     const result = await runGit(ctx.cwd, gitArgs);
-    if (!result.ok) return `ERROR removing worktree: ${result.output}`;
+    if (!result.ok) {
+      const cleanErr = result.output.replace(/^fatal:\s*/i, "").trim();
+      return `ERROR removing worktree: ${cleanErr || result.output}`;
+    }
     return `Worktree removed: ${relPath}\n${result.output}`;
   },
 };

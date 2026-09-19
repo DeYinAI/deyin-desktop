@@ -21,8 +21,14 @@ function redact(value: string): string {
 
 async function toolVersion(name: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(name, ["--version"], { timeout: 3000, windowsHide: true });
-    return stdout.split("\n")[0]?.trim() || null;
+    const isWin = process.platform === "win32";
+    const { stdout, stderr } = await execFileAsync(name, ["--version"], {
+      timeout: 3000,
+      windowsHide: true,
+      shell: isWin,
+    });
+    const raw = (stdout || stderr).split("\n")[0]?.trim() || "";
+    return raw || null;
   } catch {
     return null;
   }
@@ -44,7 +50,7 @@ export const envInfoTool: ToolDefinition = {
     const lines: string[] = [];
     lines.push(`host: ${hostname()}`);
     lines.push(`platform: ${process.platform} (${process.arch})`);
-    lines.push(`node: ${process.version}`);
+    lines.push(`host runtime: node ${process.version}`);
     const cwd = process.cwd();
     lines.push(`cwd: ${cwd}`);
     for (const key of SAFE_KEYS) {

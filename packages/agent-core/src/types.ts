@@ -328,6 +328,12 @@ export interface ToolDefinition {
    * the provider — it is host policy, not part of the schema.
    */
   snipHint?: { headChars: number; tailChars: number };
+  /**
+   * Never replace duplicate results of this tool with an omission pointer.
+   * Used for state-bearing inspection tools (e.g. todo_read) where the agent
+   * relies on the active content staying in immediate context across turns.
+   */
+  neverElide?: boolean;
   /** Returns the tool result text (fed back to the model as a role:"tool" message). */
   execute(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }

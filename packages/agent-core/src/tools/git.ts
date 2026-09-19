@@ -30,6 +30,9 @@ export const gitStatusTool: ToolDefinition = {
   parameters: { type: "object", properties: {} },
   summarize: () => "git status",
   async execute(_args, ctx): Promise<string> {
+    if (!(await git.isRepo(ctx.cwd))) {
+      return "ERROR: Not a git repository (or any of the parent directories).";
+    }
     return renderStatus(await git.status(ctx.cwd));
   },
 };
@@ -67,6 +70,9 @@ export const gitDiffTool: ToolDefinition = {
   },
   summarize: (args) => `git diff${args.staged ? " --staged" : ""}${args.path ? ` ${String(args.path)}` : ""}`,
   async execute(args, ctx): Promise<string> {
+    if (!(await git.isRepo(ctx.cwd))) {
+      return "ERROR: Not a git repository (or any of the parent directories).";
+    }
     const gitArgs = ["diff"];
     if (args.staged === true) gitArgs.push("--staged");
     const path = asOptionalString(args.path);
@@ -87,6 +93,9 @@ export const gitBlameTool: ToolDefinition = {
   },
   summarize: (args) => `git blame ${String(args.path ?? "")}`,
   async execute(args, ctx): Promise<string> {
+    if (!(await git.isRepo(ctx.cwd))) {
+      return "ERROR: Not a git repository (or any of the parent directories).";
+    }
     const path = asString(args.path, "path");
     const lines = await git.blame(ctx.cwd, path);
     if (lines.length === 0) return `No blame for ${path}.`;

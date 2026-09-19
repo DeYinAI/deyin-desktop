@@ -25,7 +25,7 @@ export const reportGoalMetTool: ToolDefinition = {
       ctx.onGoalReport({ met, reason });
       return met
         ? `Goal marked as met: ${reason}`
-        : `Goal not yet met: ${reason}. Continue working toward the objective.`;
+        : `Goal recorded as not met: ${reason}`;
     }
     return "No active goal on this thread.";
   },
