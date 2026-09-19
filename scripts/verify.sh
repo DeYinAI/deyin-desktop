@@ -4,6 +4,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "==> Syncing changelog release notes"
+pnpm sync:changelog
+
 echo "==> Building shared packages (needed for app type resolution)"
 pnpm --filter "./packages/**" --filter "!@deyin/native-core" build
 

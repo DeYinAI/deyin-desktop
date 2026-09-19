@@ -80,7 +80,7 @@ bash scripts/ci/check-dell-runner.sh
 ## Version bump checklist
 
 - [ ] `bash scripts/verify.sh` passes
-- [ ] Update [CHANGELOG.md](./CHANGELOG.md)
+- [ ] Update [CHANGELOG.md](./CHANGELOG.md) (and run `pnpm sync:changelog` to sync in-app release notes modal)
 - [ ] Tag `vX.Y.Z` and push
 - [ ] Verify installers on [deyin-releases](https://github.com/DeYinAI/deyin-releases)
 - [ ] Smoke-test one installer per platform

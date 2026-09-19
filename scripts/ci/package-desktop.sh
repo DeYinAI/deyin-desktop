@@ -48,6 +48,9 @@ package_win() {
   echo "==> Verified computer-use sidecar in win-unpacked"
 }
 
+echo "==> Sync changelog release notes"
+pnpm sync:changelog
+
 echo "==> Generate app icons"
 pnpm --filter @deyin/branding make-icons
 
