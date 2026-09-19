@@ -1,10 +1,9 @@
 # Changelog
 
-All notable **public** releases are documented here.
+All notable **public** releases of Deyin are documented here.
 
-**v1.0.0 is the first public open-source release.** Earlier versions (0.x–2.1.x)
-were private beta builds; their release assets have been removed from GitHub.
-See [archive/](./archive/) for pre-v1 internal notes.
+> **Note on Versioning History:**
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.21`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
 
 ## 1.0.21 — 2026-09-19
 
@@ -147,6 +146,58 @@ See [archive/](./archive/) for pre-v1 internal notes.
 - Composer dock with draft persistence and per-thread queue bars
 - New compaction benchmark (cost + fidelity arms) guarding policy actions, prune idempotency, tail scaling, and fold fidelity; results tracked in PERFORMANCE_REPORT.md
 
+## 1.0.10 — 2026-09-01
+
+### Highlights
+
+- **Workspace trust gate:** Inline security trust prompt card in the renderer for untrusted workspaces (replacing native message boxes) with a configurable timeout
+- **Unlimited agent steps:** Support `agentMaxSteps: null` for unbounded agent execution loops; exposed in Settings → General
+- **Split diff view:** Side-by-side split diff mode in the workspace Diff tab alongside unified diff, sharing an LCS engine
+- **Network resilience:** Automatic single-retry with exponential backoff on transient 408/429/5xx chat stream failures
+- **OAuth session recovery:** Automatic session cleanup on `invalid_grant` / `invalid_client` to prevent permanently poisoned auth states
+
+## 1.0.9 — 2026-08-31
+
+### Highlights
+
+- **CI & plugin parity:** Register `create_page` tool in plan tools plugin for catalog parity verification
+- **Release update feed:** Ensure `make_latest` flag is set when publishing update feeds to `deyin-releases`
+
+## 1.0.8 — 2026-08-31
+
+### Highlights
+
+- **Computer-use sidecar:** Fix pipe disposal race condition during fast disconnect/reconnect cycles
+- **Security plugin:** Fix WSL path normalization and UNC path handling in security MCP server
+- **Chat HTML preview:** Added inline HTML preview panel for chat-only web and desktop artifacts, with expandable long code blocks
+
+## 1.0.7 — 2026-08-28
+
+### Highlights
+
+- **Web artifacts:** Added one-page website artifact generation backed by user-scoped Cloudflare R2 bucket storage
+- **macOS packaging:** Fixed macOS packaging dependencies by bundling computer-use-host and desktop dependencies
+
+## 1.0.6 — 2026-08-28
+
+### Highlights
+
+- **Native core fallback:** Made native-core Rust compilation optional during packaging on platforms without pre-installed toolchains
+
+## 1.0.5 — 2026-08-28
+
+### Highlights
+
+- **macOS DMG packaging:** Fixed macOS release artifact generation for ARM64 and x64 DMG installers
+
+## 1.0.4 — 2026-08-28
+
+### Highlights
+
+- **macOS CI pipeline:** Dedicated macOS GitHub-hosted runners for cross-compiling Darwin CLI and desktop binaries
+- **Image generation controls:** Added image model tuning controls (aspect ratio, seed, inference steps, negative prompt) with inline rendering
+- **Settings navigation:** Polished settings navigation hierarchy and profile dropdown dismissal behavior
+
 ## 1.0.3 — 2026-08-26
 
 ### Highlights
@@ -195,3 +246,18 @@ First public open-source release under the PolyForm Noncommercial License 1.0.0.
 - Kernel packages: monorepo source only (not on npm)
 
 See [PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md) and [RELEASE.md](./RELEASE.md) for details.
+
+---
+
+## Archived Pre-v1 Private Beta (v2.0.0 – v2.1.10)
+
+*The following milestones document the pre-public private beta architecture prior to the official v1.0.0 open-source reboot. Release assets for these early builds were superseded by v1.0.0.*
+
+### 2.0.0 — 2026-08-02 (Private Beta)
+
+- **Prefix cache (Phase 1):** Prefix stability tracking with system/tools/log_rewrite attribution, tiered compaction (50% soft warning, 60% snip, 80% prune), DeepSeek reasoning roundtrip and continuation.
+- **Coordinator (Phase 2):** Planner/executor isolated sessions with deterministic routing policy (balanced, conservative, aggressive).
+- **Fleet & scheduler (Phase 3):** Fleet tool with write-path preflight and parallel execution; background jobs with JSONL persistence and `wait` tool.
+- **Delivery mode (Phase 5):** Evidence ledger, readiness gates, and `complete_step` sign-offs.
+- **Observability:** Structured logging to `deyin.log` and privacy-respecting metrics in `agent-metrics.json`.
+
