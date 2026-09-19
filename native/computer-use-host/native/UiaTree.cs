@@ -9,33 +9,55 @@ public sealed class UiaTree
 
   public object[] BuildTree(IntPtr hwnd)
   {
-    _refs.Clear();
     var root = AutomationElement.FromHandle(hwnd);
     if (root is null) return Array.Empty<object>();
     var nodes = new List<object>();
-    Walk(root, nodes, 0, 120);
+    Walk(root, nodes, 0, 500);
     return nodes.ToArray();
   }
 
   private void Walk(AutomationElement el, List<object> nodes, int depth, int budget)
   {
-    if (budget <= 0 || depth > 12) return;
+    if (nodes.Count >= budget || depth > 16) return;
     var rect = el.Current.BoundingRectangle;
     if (rect.Width <= 0 || rect.Height <= 0) return;
-    var refId = $"e{nodes.Count + 1}";
-    _refs[refId] = el;
-    nodes.Add(new
+
+    var role = el.Current.ControlType.ProgrammaticName.Replace("ControlType.", "");
+    var name = (el.Current.Name ?? "").Trim();
+
+    // Filter A11y noise:
+    // 1. Offscreen bounds with negative coords that aren't visible
+    // 2. Stray 1x2 or minuscule text echoes at negative x
+    // 3. Text nodes with purely whitespace/empty names
+    var isMicroNode = rect.Width <= 2 && rect.Height <= 2;
+    var isOffscreenNoise = rect.X < 0 && rect.Y < 0;
+    var isEmptyText = role.Equals("Text", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(name);
+
+    if (!(isMicroNode || isOffscreenNoise || isEmptyText))
     {
-      @ref = refId,
-      role = el.Current.ControlType.ProgrammaticName.Replace("ControlType.", ""),
-      name = el.Current.Name ?? "",
-      bounds = new { x = rect.X, y = rect.Y, width = rect.Width, height = rect.Height },
-    });
-    if (depth >= 12) return;
-    foreach (AutomationElement child in el.FindAll(TreeScope.Children, Condition.TrueCondition))
+      var refId = $"e{nodes.Count + 1}";
+      _refs[refId] = el;
+      nodes.Add(new
+      {
+        @ref = refId,
+        role = role,
+        name = name,
+        bounds = new { x = rect.X, y = rect.Y, width = rect.Width, height = rect.Height },
+      });
+    }
+
+    if (depth >= 16 || nodes.Count >= budget) return;
+    try
     {
-      Walk(child, nodes, depth + 1, budget - 1);
-      if (nodes.Count >= budget) return;
+      foreach (AutomationElement child in el.FindAll(TreeScope.Children, Condition.TrueCondition))
+      {
+        Walk(child, nodes, depth + 1, budget);
+        if (nodes.Count >= budget) return;
+      }
+    }
+    catch
+    {
+      // Element might be disposed/detached
     }
   }
 

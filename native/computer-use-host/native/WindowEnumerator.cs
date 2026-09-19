@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -75,7 +76,13 @@ public sealed class WindowEnumerator
   public IntPtr ResolveHwnd(string windowId)
   {
     if (!long.TryParse(windowId, out var handle)) return IntPtr.Zero;
-    return new IntPtr(handle);
+    var hwnd = new IntPtr(handle);
+    if (!IsWindowVisible(hwnd) && int.TryParse(windowId, out var pid))
+    {
+      var candidate = FindWindowForProcess(pid, string.Empty);
+      if (candidate != IntPtr.Zero) return candidate;
+    }
+    return hwnd;
   }
 
   public string GetTitle(IntPtr hwnd)
@@ -97,18 +104,88 @@ public sealed class WindowEnumerator
       psi.FileName = appId.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? appId : $"{appId}.exe";
     }
     var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to launch {appId}");
-    proc.WaitForInputIdle(5000);
-    var hwnd = proc.MainWindowHandle;
-    if (hwnd == IntPtr.Zero)
+    var processName = string.Empty;
+    try
     {
-      for (var i = 0; i < 20 && hwnd == IntPtr.Zero; i++)
+      processName = proc.ProcessName;
+    }
+    catch { }
+    if (string.IsNullOrWhiteSpace(processName) || processName.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+    {
+      try
       {
-        Thread.Sleep(250);
+        processName = Path.GetFileNameWithoutExtension(psi.FileName);
+      }
+      catch { }
+    }
+
+    try
+    {
+      proc.WaitForInputIdle(5000);
+    }
+    catch
+    {
+      // Some processes do not have a graphical message loop or fail WaitForInputIdle
+    }
+
+    var hwnd = IntPtr.Zero;
+    try
+    {
+      hwnd = proc.MainWindowHandle;
+    }
+    catch { }
+
+    for (var i = 0; i < 20 && hwnd == IntPtr.Zero; i++)
+    {
+      Thread.Sleep(250);
+      try
+      {
         proc.Refresh();
         hwnd = proc.MainWindowHandle;
       }
+      catch { }
+
+      if (hwnd == IntPtr.Zero)
+      {
+        hwnd = FindWindowForProcess(proc.Id, processName);
+      }
     }
-    return (hwnd == IntPtr.Zero ? proc.Id.ToString() : hwnd.ToInt64().ToString(), proc.Id);
+
+    var windowIdStr = hwnd != IntPtr.Zero ? hwnd.ToInt64().ToString() : string.Empty;
+    return (windowIdStr, proc.Id);
+  }
+
+  public IntPtr FindWindowForProcess(int pid, string processName)
+  {
+    IntPtr candidate = IntPtr.Zero;
+    EnumWindows((hWnd, _) =>
+    {
+      if (!IsWindowVisible(hWnd)) return true;
+      var title = GetTitle(hWnd);
+      if (string.IsNullOrWhiteSpace(title)) return true;
+
+      GetWindowThreadProcessId(hWnd, out var windowPid);
+      if (pid > 0 && windowPid == pid)
+      {
+        candidate = hWnd;
+        return false;
+      }
+
+      if (!string.IsNullOrWhiteSpace(processName) && candidate == IntPtr.Zero)
+      {
+        try
+        {
+          var pName = Process.GetProcessById((int)windowPid).ProcessName;
+          if (pName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+          {
+            candidate = hWnd;
+          }
+        }
+        catch { }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return candidate;
   }
 
   private static string GetProcessName(IntPtr hwnd)

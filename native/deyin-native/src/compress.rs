@@ -270,32 +270,43 @@ pub fn compress_tool_output(content: &str, tool_name: &str, mode: Mode, preserve
     })
     .collect();
 
-  // Consecutive-duplicate collapse with omission markers.
-  let mut deduped: Vec<String> = Vec::new();
-  let mut prev = String::new();
-  let mut repeat = 0usize;
-  for line in stripped {
-    if line == prev {
-      repeat += 1;
-      continue;
+    // Consecutive-duplicate collapse with omission markers.
+    // We only omit duplicates if repeated at least twice (3+ identical consecutive lines)
+    // or if neither line looks like JSON/code punctuation, preventing collapsing of single
+    // repeated structural lines like closing braces or array items.
+    let deduped: Vec<String> = Vec::new();
+    let mut prev = String::new();
+    let mut repeat = 0usize;
+    for line in stripped {
+      if line == prev {
+        repeat += 1;
+        continue;
+      }
+      if repeat > 0 {
+        if repeat >= 2 {
+          let s = if repeat == 1 { "" } else { "s" };
+          deduped.push(format!("… ({repeat} duplicate line{s} omitted)"));
+        } else {
+          deduped.push(prev.clone());
+        }
+        repeat = 0;
+      }
+      prev = line.clone();
+      if js_len(&line) > max_line {
+        let cut = js_slice(&line, max_line);
+        deduped.push(format!("{cut}…"));
+      } else {
+        deduped.push(line);
+      }
     }
     if repeat > 0 {
-      let s = if repeat == 1 { "" } else { "s" };
-      deduped.push(format!("… ({repeat} duplicate line{s} omitted)"));
-      repeat = 0;
+      if repeat >= 2 {
+        let s = if repeat == 1 { "" } else { "s" };
+        deduped.push(format!("… ({repeat} duplicate line{s} omitted)"));
+      } else {
+        deduped.push(prev.clone());
+      }
     }
-    prev = line.clone();
-    if js_len(&line) > max_line {
-      let cut = js_slice(&line, max_line);
-      deduped.push(format!("{cut}…"));
-    } else {
-      deduped.push(line);
-    }
-  }
-  if repeat > 0 {
-    let s = if repeat == 1 { "" } else { "s" };
-    deduped.push(format!("… ({repeat} duplicate line{s} omitted)"));
-  }
 
   let noisy = noisy_tool_name(tool_name) || looks_like_log(content);
   let mut kept = deduped;

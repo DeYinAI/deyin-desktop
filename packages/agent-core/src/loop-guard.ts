@@ -109,6 +109,9 @@ export class LoopGuard {
   /** Blocks a call before it executes. Returns a refusal message, or null. */
   precheck(toolName: string, argsKey: string, tier: string): string | null {
     if (tier === "read" || tier === "interaction") return null;
+    // UI automation execution actions (clicks, key presses, scrolls) are state-dependent
+    // on the current window/page state and are not pure idempotent mutations.
+    if (toolName.startsWith("computer_") || toolName.startsWith("browser_")) return null;
     const key = `${toolName}\u0000${argsKey}`;
     const seen = this.repeatSuccess.get(key) ?? 0;
     if (seen < REPEAT_SUCCESS_THRESHOLD - 1) return null;
@@ -122,6 +125,23 @@ export class LoopGuard {
    */
   observe(outcomes: readonly GuardOutcome[]): GuardIntervention | null {
     if (outcomes.length === 0) return null;
+
+    // If an inspection/snapshot tool ran in this step, new UI state was observed.
+    // Invalidate UI-related repeatSuccess history so changed elements/refs don't false-positive.
+    const inspectedUi = outcomes.some(
+      (o) =>
+        o.ok &&
+        (o.toolName === "computer_get_state" ||
+          o.toolName === "browser_snapshot" ||
+          o.toolName === "computer_list_windows")
+    );
+    if (inspectedUi) {
+      for (const key of [...this.repeatSuccess.keys()]) {
+        if (key.startsWith("computer_") || key.startsWith("browser_")) {
+          this.repeatSuccess.delete(key);
+        }
+      }
+    }
 
     // --- Repeat-success bookkeeping (feeds the next step's precheck) --------
     for (const o of outcomes) {
