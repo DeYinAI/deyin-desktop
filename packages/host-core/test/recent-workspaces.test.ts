@@ -30,6 +30,14 @@ test("filterRecentProjects matches name and path", () => {
 
 test("displayLocationPath shortens home", () => {
   assert.equal(displayLocationPath({ kind: "local", root: "/home/me/foo" }, "/home/me"), "~/foo");
+  assert.equal(
+    displayLocationPath({ kind: "local", root: "\\\\wsl.localhost\\Ubuntu-22.04\\home\\anh\\deyin-desktop" }),
+    "~/deyin-desktop",
+  );
+  assert.equal(
+    displayLocationPath({ kind: "local", root: "//wsl.localhost/Ubuntu-22.04/var/log" }),
+    "/var/log",
+  );
 });
 
 test("touchProjectOpened updates timestamp", () => {
