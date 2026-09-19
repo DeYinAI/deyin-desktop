@@ -94,6 +94,16 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
           description:
             "agent_id from an earlier task result: continues that subagent's own transcript instead of starting clean, so it keeps everything it already learned.",
         },
+        task_id: {
+          type: "string",
+          description:
+            "Alias for resume: agent_id / task_id from an earlier task result to continue that subagent's conversation.",
+        },
+        session_id: {
+          type: "string",
+          description:
+            "Alias for resume: session_id from an earlier task result to continue that subagent's conversation.",
+        },
         fork: {
           type: "string",
           description:
@@ -111,8 +121,13 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
         const names = opts.subagents.map((s) => s.name).join(", ");
         return `ERROR: unknown subagent "${name}". Available: ${names}.`;
       }
-      const resumeAgentId = typeof args.resume === "string" && args.resume ? args.resume : undefined;
-      const forkAgentId = typeof args.fork === "string" && args.fork ? args.fork : undefined;
+      const rawResume =
+        (typeof args.resume === "string" && args.resume) ||
+        (typeof args.task_id === "string" && args.task_id) ||
+        (typeof args.session_id === "string" && args.session_id) ||
+        undefined;
+      const resumeAgentId = rawResume?.trim() || undefined;
+      const forkAgentId = typeof args.fork === "string" && args.fork ? args.fork.trim() : undefined;
       if (resumeAgentId && forkAgentId) {
         return 'ERROR: pass either "resume" or "fork", not both.';
       }
@@ -146,7 +161,7 @@ export function createTaskTool(opts: TaskToolOptions): ToolDefinition {
       // Handing the id back is what makes resume/fork reachable: the model has
       // no other way to name a transcript it never saw.
       return result.agentId
-        ? `${body}\n\n(agent_id: ${result.agentId} — pass resume:"${result.agentId}" to continue this subagent, or fork:"${result.agentId}" to branch from it.)`
+        ? `${body}\n\n(agent_id: ${result.agentId} — pass resume:"${result.agentId}" (or task_id:"${result.agentId}") to continue this subagent, or fork:"${result.agentId}" to branch from it.)`
         : body;
     },
   };

@@ -634,3 +634,120 @@ test("the run summary reports what the run actually cost", async () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("drainPendingMessages steers running agent mid-flight", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-steer-"));
+  const queued: AgentMessage[] = [];
+  const server = await startMockOpenAI((i) => {
+    if (i === 0) {
+      // Simulate user typing a steering prompt mid-flight during step 1
+      queued.push({ role: "user", content: "Hold on, please focus on src/index.ts instead!" });
+      return toolCallResponse("call_0", "read", { path: "nonexistent.txt" });
+    }
+    return textResponse("Adjusting direction to src/index.ts as requested.");
+  });
+
+  try {
+    const messages = baseMessages();
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      drainPendingMessages: () => queued.splice(0, queued.length),
+    });
+
+    assert.equal(result.reason, "completed");
+    const steered = messages.find((m) => m.role === "user" && m.content.includes("focus on src/index.ts"));
+    assert.ok(steered, "queued steering message must be drained into transcript");
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("diagnosticLoopback injects compiler feedback automatically after file mutations", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-diag-"));
+  const server = await startMockOpenAI((i) => {
+    if (i === 0) {
+      return toolCallResponse("call_write", "write", { path: "app.ts", contents: "const x: number = 'bad';" });
+    }
+    return textResponse("Fixed the type mismatch.");
+  });
+
+  try {
+    const messages = baseMessages();
+    const events: any[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      getDiagnostics: async (paths) => {
+        if (paths?.some((p) => p.endsWith("app.ts"))) {
+          return [
+            {
+              path: "app.ts",
+              line: 1,
+              character: 7,
+              severity: "error",
+              message: "Type 'string' is not assignable to type 'number'.",
+              source: "typescript",
+            },
+          ];
+        }
+        return [];
+      },
+      onEvent: (e) => events.push(e),
+    });
+
+    assert.equal(result.reason, "completed");
+    const diagEvent = events.find((e) => e.type === "evidence-gate" && e.code === "compiler_diagnostics");
+    assert.ok(diagEvent, "must emit compiler_diagnostics evidence-gate event");
+
+    const feedbackMsg = messages.find((m) => m.role === "user" && m.content.includes("[compiler/diagnostic feedback]"));
+    assert.ok(feedbackMsg, "feedback message must be injected into transcript");
+    assert.ok(feedbackMsg.content.includes("Type 'string' is not assignable to type 'number'"));
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("step limit warning warns model when approaching finite maxSteps", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-steplimit-"));
+  const server = await startMockOpenAI((i) => {
+    if (i < 2) return toolCallResponse(`call_${i}`, "read", { path: "hello.txt" });
+    return textResponse("Final summary within limit.");
+  });
+
+  try {
+    const messages = baseMessages();
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "test-token",
+      model: "test-model",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      maxSteps: 3,
+    });
+
+    assert.equal(result.reason, "completed");
+    const warningMsg = messages.find((m) => m.role === "user" && m.content.includes("[step limit warning]"));
+    assert.ok(warningMsg, "must inject step limit warning on reaching finite maxSteps");
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

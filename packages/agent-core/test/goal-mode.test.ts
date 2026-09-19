@@ -88,3 +88,125 @@ test("report_goal_met with met=true errors when no goal is active", async () => 
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("active goal completion gate nudges unverified goal completion", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-goal-gate-"));
+  // Step 0: model prematurely answers with plain text (no tool call)
+  // Step 1: model receives [goal check] nudge and reports goal met
+  // Step 2: model answers with completion
+  const server = await startMockOpenAI((i) => {
+    if (i === 0) return textResponse("I think I am done without verifying.");
+    if (i === 1) return toolCallResponse("call_g", "report_goal_met", { met: true, reason: "Verified build passes" });
+    return textResponse("All verified and complete.");
+  });
+
+  try {
+    const messages: AgentMessage[] = [
+      { role: "system", content: "goal agent" },
+      { role: "user", content: "verify test suite" },
+    ];
+    const reports: Array<{ met: boolean; reason: string }> = [];
+    const events: any[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "token",
+      model: "test",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      toolContext: {
+        goalText: "verify test suite",
+        onGoalReport: (report) => reports.push(report),
+      },
+      onEvent: (e) => events.push(e),
+    });
+
+    assert.equal(result.reason, "completed");
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0]?.met, true);
+
+    // Verify evidence-gate event was fired with unverified_goal
+    const gateEvent = events.find((e) => e.type === "evidence-gate" && e.code === "unverified_goal");
+    assert.ok(gateEvent, "expected unverified_goal evidence-gate event");
+
+    // Verify nudge prompt was injected into transcript
+    const nudgeMsg = messages.find((m) => m.role === "user" && m.content.includes("[goal check]"));
+    assert.ok(nudgeMsg, "expected [goal check] user message in transcript");
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("active goal completion gate respects budget when model refuses report_goal_met", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-goal-budget-"));
+  // Model repeatedly answers with plain text without calling report_goal_met
+  const server = await startMockOpenAI(() => textResponse("Still not calling report_goal_met."));
+
+  try {
+    const messages: AgentMessage[] = [
+      { role: "system", content: "goal agent" },
+      { role: "user", content: "verify test suite" },
+    ];
+    const events: any[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "token",
+      model: "test",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      toolContext: {
+        goalText: "verify test suite",
+      },
+      onEvent: (e) => events.push(e),
+    });
+
+    // Should finish completed rather than wedging in an infinite loop
+    assert.equal(result.reason, "completed");
+    const gateEvents = events.filter((e) => e.type === "evidence-gate" && e.code === "unverified_goal");
+    assert.equal(gateEvents.length, 2); // Budget is 2 nudges
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("goalReconcile: false disables active goal completion gate", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "deyin-goal-disabled-"));
+  const server = await startMockOpenAI(() => textResponse("Immediate text answer."));
+
+  try {
+    const messages: AgentMessage[] = [
+      { role: "system", content: "goal agent" },
+      { role: "user", content: "verify test suite" },
+    ];
+    const events: any[] = [];
+    const result = await runAgent({
+      apiBaseUrl: server.url,
+      getToken: async () => "token",
+      model: "test",
+      messages,
+      tools: createBuiltinRegistry(),
+      permissions: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      cwd,
+      goalReconcile: false,
+      toolContext: {
+        goalText: "verify test suite",
+      },
+      onEvent: (e) => events.push(e),
+    });
+
+    assert.equal(result.reason, "completed");
+    const gateEvents = events.filter((e) => e.type === "evidence-gate" && e.code === "unverified_goal");
+    assert.equal(gateEvents.length, 0);
+  } finally {
+    await server.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

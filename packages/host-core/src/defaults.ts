@@ -25,8 +25,8 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   imageModelParams: {},
   videoModelParams: {},
   subagentMaxSteps: 20,
- /** Step cap for main agent runs; null = unlimited (loop ends when the model stops). */
- agentMaxSteps: 40,
+  /** Step cap for main agent runs; null = unlimited (loop ends when the model stops). */
+  agentMaxSteps: null,
   subagentConcurrency: 6,
   approvalMode: "full-access",
   thinking: true,
@@ -82,15 +82,15 @@ export function migrateSettings(raw: unknown): DeyinSettings {
  // as null (loop's normalizeMaxSteps semantics); fractional caps floor to whole
  // steps; anything non-numeric falls back to the default so a garbage value from
  // disk can never disable the guardrail.
- if (merged.agentMaxSteps !== null) {
- const v = merged.agentMaxSteps;
- merged.agentMaxSteps =
- typeof v === "number" && Number.isFinite(v)
- ? v <= 0
- ? null
- : Math.max(1, Math.min(10_000, Math.floor(v)))
- : (DEFAULT_SETTINGS.agentMaxSteps as number);
- }
+  if (merged.agentMaxSteps !== null) {
+    const v = merged.agentMaxSteps;
+    merged.agentMaxSteps =
+      typeof v === "number" && Number.isFinite(v)
+        ? v <= 0
+          ? null
+          : Math.max(1, Math.min(10_000, Math.floor(v)))
+        : DEFAULT_SETTINGS.agentMaxSteps;
+  }
   merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
   merged.roleModels = pickRoleRecord(merged.roleModels);
   merged.subagentModels = pickStringRecord(merged.subagentModels);

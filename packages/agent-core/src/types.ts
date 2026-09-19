@@ -160,6 +160,18 @@ export interface ToolContext {
   imageGen?: ImageGenBridge;
   /** Collect background job results (task is_background / fleet). */
   waitForJobs?: (jobIds: string[], blockUntilMs: number) => Promise<BackgroundJobResult[]>;
+  /** Compiler/LSP diagnostics provider: fetches diagnostics for files or the workspace. */
+  getDiagnostics?: (paths?: string[]) => Promise<DiagnosticItem[]>;
+}
+
+/** One compiler or language-server diagnostic item. */
+export interface DiagnosticItem {
+  path: string;
+  line?: number;
+  character?: number;
+  severity: "error" | "warning" | "information" | "hint";
+  message: string;
+  source?: string;
 }
 
 /** One image the host generated and stored for the current thread. */

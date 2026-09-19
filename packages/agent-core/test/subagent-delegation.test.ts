@@ -96,6 +96,25 @@ test("the task tool forwards per-call overrides and hands the agent_id back", as
   assert.match(out, /resume:"agent-1"/);
 });
 
+test("the task tool accepts task_id and session_id aliases for resume", async () => {
+  let seen: TaskCallOverrides | undefined;
+  const tool = createTaskTool({
+    subagents: [DEF],
+    runSubagent: async (_def, _prompt, overrides) => {
+      seen = overrides;
+      return { ok: true, report: "continued", agentId: "agent-2" };
+    },
+  });
+
+  // Test task_id alias
+  await tool.execute({ subagent: "explorer", prompt: "step 2", task_id: "agent-1" }, CTX);
+  assert.equal(seen?.resumeAgentId, "agent-1");
+
+  // Test session_id alias
+  await tool.execute({ subagent: "explorer", prompt: "step 3", session_id: "agent-1" }, CTX);
+  assert.equal(seen?.resumeAgentId, "agent-1");
+});
+
 test("the task tool refuses resume and fork together", async () => {
   const tool = createTaskTool({
     subagents: [DEF],
