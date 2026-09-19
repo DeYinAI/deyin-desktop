@@ -464,8 +464,10 @@ export class DesktopAgentHost {
     } catch (err) {
       console.warn("[deyin] AgentShell unavailable; falling back to spawn:", err);
       shell.dispose();
-      // Permanent host/PTY failure — latch so we stop retrying every bash call.
-      if (err instanceof ShellUnavailableError || (err as { name?: string })?.name === "ShellUnavailableError") {
+      // Any failure to start persistent shell when epoch is current means
+      // persistent AgentShell cannot be used for this session — latch unavailable so
+      // bash tools can immediately fall back to one-off spawn execution.
+      if (session.shellEpoch === epoch) {
         session.shellUnavailable = true;
       }
       return undefined;
@@ -512,8 +514,8 @@ export class DesktopAgentHost {
    */
   resetSession(threadId: string): void {
     this.stop(threadId);
-    this.sessions.delete(threadId);
     this.disposeShell(threadId);
+    this.sessions.delete(threadId);
   }
 
   private recordFileCheckpoint(
@@ -908,9 +910,11 @@ export class DesktopAgentHost {
           if (session.shellUnavailable) {
             throw new ShellUnavailableError("AgentShell unavailable");
           }
+          const startEpoch = session.shellEpoch;
           const shell = await this.ensureShell(options.threadId, session, cwd);
           if (!shell) {
-            if (session.shellUnavailable) {
+            if (session.shellUnavailable || session.shellEpoch === startEpoch) {
+              session.shellUnavailable = true;
               throw new ShellUnavailableError("AgentShell unavailable");
             }
             // Epoch discard (e.g. archive during create) — must NOT be ShellUnavailableError

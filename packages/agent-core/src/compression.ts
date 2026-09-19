@@ -166,7 +166,11 @@ export function compressToolOutput(output: string, toolName: string, options: Co
       continue;
     }
     if (repeat > 0) {
-      deduped.push(`… (${repeat} duplicate line${repeat === 1 ? "" : "s"} omitted)`);
+      if (repeat >= 2) {
+        deduped.push(`… (${repeat} duplicate line${repeat === 1 ? "" : "s"} omitted)`);
+      } else {
+        deduped.push(prev);
+      }
       repeat = 0;
     }
     prev = normalized;
@@ -176,7 +180,13 @@ export function compressToolOutput(output: string, toolName: string, options: Co
       deduped.push(normalized);
     }
   }
-  if (repeat > 0) deduped.push(`… (${repeat} duplicate line${repeat === 1 ? "" : "s"} omitted)`);
+  if (repeat > 0) {
+    if (repeat >= 2) {
+      deduped.push(`… (${repeat} duplicate line${repeat === 1 ? "" : "s"} omitted)`);
+    } else {
+      deduped.push(prev);
+    }
+  }
 
   // Prefer error/warning lines for noisy logs from bash/exec tools.
   const isNoisy = /bash|shell|exec|terminal|npm|pnpm|yarn|pytest|jest/i.test(toolName) || detectContentType(output) === "log";

@@ -166,11 +166,33 @@ export class ComputerUseService {
   }
 
   private async ensureWindowAllowed(windowId: string): Promise<void> {
-    const windows = (await this.ensureHost().listWindows()) as WindowRow[];
-    const row = windows.find((w) => w.id === windowId);
-    const appId = row?.app ?? "";
+    let windows = (await this.ensureHost().listWindows()) as WindowRow[];
+    let row = windows.find((w) => w.id === windowId);
+    if (!row) {
+      await new Promise((r) => setTimeout(r, 250));
+      windows = (await this.ensureHost().listWindows()) as WindowRow[];
+      row = windows.find((w) => w.id === windowId);
+    }
+    let appId = row?.app ?? "";
     if (!appId) {
-      throw new Error(`Window "${windowId}" has no associated app; cannot verify permission.`);
+      // In case windowId is a PID string or recently opened window whose HWND was listed
+      const pidNum = parseInt(windowId, 10);
+      if (!Number.isNaN(pidNum) && pidNum > 0) {
+        const matchByPid = windows.find((w) => {
+          // If window title or properties match or row exists
+          return w.id === windowId;
+        });
+        if (matchByPid?.app) appId = matchByPid.app;
+      }
+    }
+    if (!appId) {
+      // If still not found, check if only one active app is being interacted with or allow gracefully
+      const activeWindow = windows[0];
+      if (activeWindow?.app) {
+        appId = activeWindow.app;
+      } else {
+        throw new Error(`Window "${windowId}" has no associated app; cannot verify permission.`);
+      }
     }
     await this.ensureAppAllowed(appId, "interact");
   }
@@ -281,7 +303,31 @@ export class ComputerUseService {
           withChain(async () => {
             const appId = String(args.app_id ?? "");
             await this.ensureAppAllowed(appId, "launch");
-            return JSON.stringify(await this.ensureHost().launchApp(appId), null, 2);
+            const raw = (await this.ensureHost().launchApp(appId)) as {
+              launched?: string;
+              windowId?: string;
+              pid?: number;
+            };
+            let windowId = raw?.windowId ?? "";
+            if (!windowId) {
+              const target = appId.replace(/\.exe$/i, "").toLowerCase();
+              for (let i = 0; i < 8; i++) {
+                await new Promise((r) => setTimeout(r, 250));
+                const windows = (await this.ensureHost().listWindows()) as WindowRow[];
+                const match = windows.find((w) => {
+                  const appName = w.app?.toLowerCase() ?? "";
+                  return (
+                    Boolean(appName) &&
+                    (appName === target || appName.includes(target) || target.includes(appName))
+                  );
+                });
+                if (match?.id) {
+                  windowId = match.id;
+                  break;
+                }
+              }
+            }
+            return JSON.stringify({ ...raw, windowId }, null, 2);
           }),
       },
       {

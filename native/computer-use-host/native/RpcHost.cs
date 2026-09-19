@@ -65,8 +65,7 @@ public sealed class RpcHost
     var windowId = parameters["windowId"]?.GetValue<string>() ?? "";
     var screenshot = parameters["screenshot"]?.GetValue<bool>() ?? true;
     var tree = parameters["tree"]?.GetValue<bool>() ?? true;
-    var hwnd = _windows.ResolveHwnd(windowId);
-    if (hwnd == IntPtr.Zero) throw new InvalidOperationException($"Window not found: {windowId}");
+    var hwnd = GetHwndFromParameters(parameters);
 
     string? screenshotPath = null;
     object[] treeNodes = Array.Empty<object>();
@@ -96,9 +95,21 @@ public sealed class RpcHost
     return JsonSerializer.SerializeToNode(new { launched = appId, windowId, pid })!;
   }
 
+  private IntPtr GetHwndFromParameters(JsonObject parameters)
+  {
+    var windowId = parameters["windowId"]?.GetValue<string>() ?? "";
+    var hwnd = _windows.ResolveHwnd(windowId);
+    if (hwnd == IntPtr.Zero && int.TryParse(windowId, out var pid))
+    {
+      hwnd = _windows.FindWindowForProcess(pid, string.Empty);
+    }
+    if (hwnd == IntPtr.Zero) throw new InvalidOperationException($"Window not found: {windowId}");
+    return hwnd;
+  }
+
   private JsonNode Click(JsonObject parameters) => RunOp(() =>
   {
-    var hwnd = _windows.ResolveHwnd(parameters["windowId"]?.GetValue<string>() ?? "");
+    var hwnd = GetHwndFromParameters(parameters);
     var point = _uia.ResolveRef(hwnd, parameters["ref"]?.GetValue<string>() ?? "");
     _input.Click(hwnd, point);
     return new { ok = true };
@@ -106,7 +117,7 @@ public sealed class RpcHost
 
   private JsonNode TypeText(JsonObject parameters) => RunOp(() =>
   {
-    var hwnd = _windows.ResolveHwnd(parameters["windowId"]?.GetValue<string>() ?? "");
+    var hwnd = GetHwndFromParameters(parameters);
     var text = parameters["text"]?.GetValue<string>() ?? "";
     var refId = parameters["ref"]?.GetValue<string>();
     if (!string.IsNullOrWhiteSpace(refId))
@@ -120,7 +131,7 @@ public sealed class RpcHost
 
   private JsonNode PressKey(JsonObject parameters) => RunOp(() =>
   {
-    var hwnd = _windows.ResolveHwnd(parameters["windowId"]?.GetValue<string>() ?? "");
+    var hwnd = GetHwndFromParameters(parameters);
     var key = parameters["key"]?.GetValue<string>() ?? "";
     _input.PressKey(hwnd, key);
     return new { ok = true };
@@ -128,7 +139,7 @@ public sealed class RpcHost
 
   private JsonNode Scroll(JsonObject parameters) => RunOp(() =>
   {
-    var hwnd = _windows.ResolveHwnd(parameters["windowId"]?.GetValue<string>() ?? "");
+    var hwnd = GetHwndFromParameters(parameters);
     var deltaY = parameters["deltaY"]?.GetValue<int>() ?? 600;
     _input.Scroll(hwnd, deltaY);
     return new { ok = true };
@@ -136,7 +147,7 @@ public sealed class RpcHost
 
   private JsonNode Drag(JsonObject parameters) => RunOp(() =>
   {
-    var hwnd = _windows.ResolveHwnd(parameters["windowId"]?.GetValue<string>() ?? "");
+    var hwnd = GetHwndFromParameters(parameters);
     var from = _uia.ResolveRef(hwnd, parameters["fromRef"]?.GetValue<string>() ?? "");
     var to = _uia.ResolveRef(hwnd, parameters["toRef"]?.GetValue<string>() ?? "");
     _input.Drag(hwnd, from, to);
@@ -145,7 +156,7 @@ public sealed class RpcHost
 
   private JsonNode SetValue(JsonObject parameters) => RunOp(() =>
   {
-    var hwnd = _windows.ResolveHwnd(parameters["windowId"]?.GetValue<string>() ?? "");
+    var hwnd = GetHwndFromParameters(parameters);
     var refId = parameters["ref"]?.GetValue<string>() ?? "";
     var value = parameters["value"]?.GetValue<string>() ?? "";
     _uia.SetValue(hwnd, refId, value);

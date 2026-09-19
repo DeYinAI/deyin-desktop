@@ -365,7 +365,10 @@ export class AgentShell {
     await sleep(SPAWN_BANNER_MS);
     if (this.disposed || this.term !== term) {
       if (this.term === term) this.killTerm({ suppressExit: false });
-      throw new Error("AgentShell disposed during spawn");
+      if (this.disposed) {
+        throw new Error("AgentShell disposed during spawn");
+      }
+      throw new ShellUnavailableError("AgentShell process exited during startup.");
     }
 
     this.writeMarkerSetup(term);
@@ -389,7 +392,10 @@ export class AgentShell {
     }
     if (this.disposed || this.term !== term) {
       if (this.term === term) this.killTerm({ suppressExit: false });
-      throw new Error("AgentShell disposed during spawn");
+      if (this.disposed) {
+        throw new Error("AgentShell disposed during spawn");
+      }
+      throw new ShellUnavailableError("AgentShell process exited during startup.");
     }
     this.ready = true;
 
