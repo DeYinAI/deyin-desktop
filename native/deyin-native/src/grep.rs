@@ -74,8 +74,6 @@ fn match_glob(rel: &str, glob: &str) -> bool {
 }
 
 fn glob_match_impl(path: &str, glob: &str) -> bool {
-  let mut gi = 0usize;
-  let mut pi = 0usize;
   let g = glob.as_bytes();
   let p = path.as_bytes();
   fn rec(g: &[u8], p: &[u8], gi: usize, mut pi: usize) -> bool {
@@ -131,7 +129,7 @@ fn glob_match_impl(path: &str, glob: &str) -> bool {
     }
     rec(g, p, gi + 1, pi + 1)
   }
-  rec(g, p, gi, pi)
+  rec(g, p, 0, 0)
 }
 
 #[derive(Clone)]

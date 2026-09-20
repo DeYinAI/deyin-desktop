@@ -5,6 +5,7 @@ export interface ProjectToolchainInfo {
   primaryLanguage: string;
   packageManager?: string;
   isMonorepo: boolean;
+  virtualEnv?: string;
   commands: {
     test?: string;
     build?: string;
@@ -44,7 +45,16 @@ export async function detectProjectToolchain(cwd: string): Promise<ProjectToolch
   let pm: string | undefined;
   let lang = "generic";
   let isMonorepo = false;
+  let virtualEnv: string | undefined;
   let availableScripts: Record<string, string> | undefined;
+
+  for (const vName of [".venv", "venv", "env", ".env"]) {
+    if (fileSet.has(vName)) {
+      virtualEnv = vName;
+      detectedFiles.push(vName);
+      break;
+    }
+  }
 
   // 1. Rust detection
   if (fileSet.has("Cargo.toml")) {
@@ -217,6 +227,15 @@ export async function detectProjectToolchain(cwd: string): Promise<ProjectToolch
     commands.test = "make test";
   }
 
+  // 9. Fallback if Python virtual environment exists
+  else if (virtualEnv) {
+    lang = "python";
+    pm = "pip";
+    commands.test = "pytest";
+    commands.typecheck = "mypy .";
+    commands.lint = "ruff check";
+  }
+
   if (detectedFiles.length === 0) {
     return null;
   }
@@ -225,6 +244,7 @@ export async function detectProjectToolchain(cwd: string): Promise<ProjectToolch
     primaryLanguage: lang,
     packageManager: pm,
     isMonorepo,
+    virtualEnv,
     commands,
     availableScripts,
     detectedFiles,
@@ -242,6 +262,9 @@ export function formatProjectToolchainPrompt(info: ProjectToolchainInfo | null):
   lines.push(`- Language: ${info.primaryLanguage}${monorepoSuffix}`);
   if (info.packageManager) {
     lines.push(`- Package Manager: ${info.packageManager} (detected via ${info.detectedFiles.join(", ")})`);
+  }
+  if (info.virtualEnv) {
+    lines.push(`- Python Virtual Environment: \`${info.virtualEnv}\` (binaries automatically active in PATH)`);
   }
 
   if (info.commands.test) lines.push(`- Test Command: \`${info.commands.test}\``);

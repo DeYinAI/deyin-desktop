@@ -33,8 +33,9 @@ export function extractCompilerErrors(output: string): string {
     // Keep error/warning lines or file location lines
     if (
       /error|warning|fail|syntaxerror|typeerror|undefined|cannot find|unresolved/i.test(trimmed) ||
+      /error\[E\d+\]/i.test(trimmed) ||
       /\.(ts|tsx|js|jsx|py|rs|go|java|c|cpp|h|hpp):\d+/i.test(trimmed) ||
-      /-->\s+src\//.test(trimmed)
+      /-->\s+.*:\d+/.test(trimmed)
     ) {
       relevant.push(line);
       if (relevant.length >= MAX_ERROR_LINES) {
@@ -119,7 +120,7 @@ export const checkCompilerErrorsTool: ToolDefinition = {
       } else if (toolchain?.primaryLanguage === "typescript") {
         cmd = "npx tsc --noEmit";
       } else if (toolchain?.primaryLanguage === "python") {
-        cmd = "mypy .";
+        cmd = targetPath ? `mypy ${targetPath}` : "mypy .";
       } else if (toolchain?.primaryLanguage === "java") {
         cmd = "mvn compile -DskipTests";
       }

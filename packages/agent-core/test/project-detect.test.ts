@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -93,6 +93,27 @@ test("detects Python project with uv.lock", async () => {
     assert.equal(info.commands.test, "uv run pytest");
     assert.equal(info.commands.typecheck, "uv run mypy .");
     assert.equal(info.commands.lint, "uv run ruff check");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("detects Python project with .venv directory and augments prompt", async () => {
+  const dir = tempDir();
+  try {
+    writeFileSync(join(dir, "requirements.txt"), "flask\n");
+    const venvDir = join(dir, ".venv");
+    mkdirSync(join(venvDir, "bin"), { recursive: true });
+    writeFileSync(join(venvDir, "bin", "python"), "#!/bin/sh\n");
+
+    const info = await detectProjectToolchain(dir);
+    assert.ok(info);
+    assert.equal(info.primaryLanguage, "python");
+    assert.equal(info.virtualEnv, ".venv");
+
+    const prompt = formatProjectToolchainPrompt(info);
+    assert.ok(prompt?.includes(".venv"));
+    assert.ok(prompt?.includes("automatically active in PATH"));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -119,7 +119,7 @@ export const testRunnerTool: ToolDefinition = {
           cmd = `${baseCmd} ${filter}`;
         } else if (toolchain?.primaryLanguage === "javascript" || toolchain?.primaryLanguage === "typescript") {
           const pm = toolchain.packageManager ?? "npm";
-          if (pm === "npm") {
+          if (pm === "npm" && !baseCmd.includes(" --")) {
             cmd = `${baseCmd} -- ${filter}`;
           } else {
             cmd = `${baseCmd} ${filter}`;

@@ -17,6 +17,7 @@ import {
   repoMapTool,
   resolveAgent,
   resolveAgents,
+  resolvePathInWorkspace,
   runHooks,
   runAgent,
   type AgentEvent,
@@ -31,7 +32,7 @@ import {
   type TodoItem,
   type ToolRegistry,
 } from "@deyin/agent-core";
-import { CheckpointStore, createImageBridge, ImageStore, listModels, type ModelInfo } from "@deyin/host-core";
+import { CheckpointStore, checkpointFileOpsFromRoot, createImageBridge, ImageStore, listModels, revertCheckpoint, type ModelInfo } from "@deyin/host-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
 import { loginWithDevice } from "@deyin/oauth-client/node";
 import { randomUUID } from "node:crypto";
@@ -56,6 +57,7 @@ const SPINNER = ["\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u
 
 const SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "/help", description: "Show available commands" },
+  { name: "/undo", description: "Revert the last turn and file modifications" },
   { name: "/model", description: "Switch model" },
   { name: "/agent", description: "Switch agent (build/plan/custom)" },
   { name: "/editor", description: "Compose prompt in external $EDITOR (Ctrl+O)" },
@@ -788,6 +790,92 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         case "/help":
           notice(SLASH_COMMANDS.map((c) => `${c.name.padEnd(11)} ${c.description}`).join("\n"));
           break;
+        case "/undo": {
+          if (running) {
+            notice("Wait for the current run to finish (or press esc to cancel it first).", "warn");
+            break;
+          }
+          if (messagesRef.current.length <= 1) {
+            notice("Nothing to undo in this session.", "warn");
+            break;
+          }
+          void (async () => {
+            let revertedCount = 0;
+            const currentSessionId = sessionIdRef.current;
+            if (currentSessionId) {
+              try {
+                const store = new CheckpointStore(ctx.storage);
+                const entries = store.list(currentSessionId);
+                const activeEntries = entries.filter((e) => e.revertedAt === undefined);
+                if (activeEntries.length > 0) {
+                  const latestCheckpointId = activeEntries[activeEntries.length - 1]?.checkpointId;
+                  if (latestCheckpointId) {
+                    const ops = checkpointFileOpsFromRoot(ctx.cwd, async (p) => resolvePathInWorkspace(ctx.cwd, p));
+                    const res = await revertCheckpoint(store, ctx.storage, ops, currentSessionId, latestCheckpointId);
+                    if (res.ok) {
+                      revertedCount = res.revertedPaths.length;
+                    }
+                  }
+                }
+              } catch (err) {
+                notice(`Checkpoint revert warning: ${err instanceof Error ? err.message : String(err)}`, "warn");
+              }
+            }
+
+            let lastUserIdx = -1;
+            for (let i = messagesRef.current.length - 1; i >= 0; i--) {
+              if (messagesRef.current[i]?.role === "user") {
+                lastUserIdx = i;
+                break;
+              }
+            }
+
+            if (lastUserIdx >= 0) {
+              messagesRef.current = messagesRef.current.slice(0, lastUserIdx);
+              if (currentSessionId && messagesRef.current.length > 0) {
+                const meta = ctx.sessions.create({
+                  cwd: ctx.cwd,
+                  model: `${ctx.config.providerId}::${model}`,
+                  agent: agentName,
+                });
+                sessionIdRef.current = meta.id;
+                for (const msg of messagesRef.current) {
+                  ctx.sessions.append(meta.id, msg);
+                }
+              }
+
+              // Reconcile todos from remaining messages
+              let remainingTodos: TodoItem[] = [];
+              for (let i = messagesRef.current.length - 1; i >= 0; i--) {
+                const msg = messagesRef.current[i];
+                if (msg?.role === "assistant" && Array.isArray(msg.toolCalls)) {
+                  for (const tc of msg.toolCalls) {
+                    if (tc.name === "todo_write" || tc.name === "todo") {
+                      try {
+                        const parsed = JSON.parse(tc.arguments);
+                        if (Array.isArray(parsed.todos)) {
+                          remainingTodos = parsed.todos;
+                          break;
+                        }
+                      } catch {
+                        // ignore parse errors
+                      }
+                    }
+                  }
+                  if (remainingTodos.length > 0) break;
+                }
+              }
+              setTodos(remainingTodos);
+
+              setItems(messagesToItems(messagesRef.current));
+              const revertMsg = revertedCount > 0 ? ` (reverted ${revertedCount} file change(s))` : "";
+              notice(`Undid last turn${revertMsg}. Conversation rewound.`);
+            } else {
+              notice("No previous user turn found to undo.", "warn");
+            }
+          })();
+          break;
+        }
         case "/editor":
           handleOpenEditor();
           break;
