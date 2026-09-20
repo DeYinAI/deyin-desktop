@@ -148,7 +148,47 @@ interface ShellInvocation {
   env?: Record<string, string>;
 }
 
+export interface VirtualEnvInfo {
+  rootDir: string;
+  binDir: string;
+}
+
+/**
+ * Discovers a local Python virtual environment (.venv, venv, env) in the workspace
+ * and returns its root directory and executable bin/Scripts directory.
+ */
+export function resolveVirtualEnv(cwd: string): VirtualEnvInfo | null {
+  if (!cwd) return null;
+  const candidates = [".venv", "venv", "env", ".env"];
+  const isWin = platform() === "win32";
+  const binSubdir = isWin ? "Scripts" : "bin";
+  const pythonExe = isWin ? "python.exe" : "python";
+
+  for (const name of candidates) {
+    const venvRoot = join(cwd, name);
+    const binDir = join(venvRoot, binSubdir);
+    const exe = join(binDir, pythonExe);
+    const pyvenv = join(venvRoot, "pyvenv.cfg");
+    if (existsSync(exe) || (existsSync(pyvenv) && existsSync(binDir))) {
+      return { rootDir: venvRoot, binDir };
+    }
+  }
+  return null;
+}
+
 function shellFor(command: string, cwd: string): ShellInvocation {
+  const venv = resolveVirtualEnv(cwd);
+  const pathSep = platform() === "win32" ? ";" : ":";
+  const extraEnv: Record<string, string> = {};
+  if (venv) {
+    extraEnv.VIRTUAL_ENV = venv.rootDir;
+    const existingPath = process.env.PATH ?? process.env.Path ?? "";
+    extraEnv.PATH = `${venv.binDir}${pathSep}${existingPath}`;
+    if (platform() === "win32" && process.env.Path !== undefined) {
+      extraEnv.Path = extraEnv.PATH;
+    }
+  }
+
   if (platform() === "win32") {
     // A project inside WSL2 (a \\wsl$ path) runs in its distro, matching the
     // integrated terminal; a native Windows path runs in PowerShell.
@@ -159,19 +199,23 @@ function shellFor(command: string, cwd: string): ShellInvocation {
         file: "wsl.exe",
         args: ["-d", wsl.distro, "bash", "-c", script],
         // Share the agent marker into the distro so dotfiles can detect it.
-        env: { WSLENV: process.env.WSLENV ? `${process.env.WSLENV}:DEYIN_AGENT` : "DEYIN_AGENT" },
+        env: {
+          WSLENV: process.env.WSLENV ? `${process.env.WSLENV}:DEYIN_AGENT` : "DEYIN_AGENT",
+          ...extraEnv,
+        },
       };
     }
     return {
       file: windowsPowerShell(),
       args: ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
       spawnCwd: cwd,
+      env: extraEnv,
     };
   }
   // Always POSIX sh/bash for tool commands: the user's login shell may be fish/nushell
   // whose syntax differs from what models emit.
   const bash = existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
-  return { file: bash, args: ["-c", command], spawnCwd: cwd };
+  return { file: bash, args: ["-c", command], spawnCwd: cwd, env: extraEnv };
 }
 
 export interface ShellExecutionResult {
@@ -192,7 +236,16 @@ export async function executeShellCommand(
   const timeoutS = Math.min(options?.timeoutS ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
   if (options?.shell) {
     try {
-      const result = await options.shell.run(command, {
+      let cmdToRun = command;
+      const venv = resolveVirtualEnv(cwd);
+      if (venv && !command.includes("VIRTUAL_ENV") && !command.includes("activate")) {
+        if (platform() === "win32") {
+          cmdToRun = `$env:VIRTUAL_ENV="${venv.rootDir}"; $env:PATH="${venv.binDir};$env:PATH"; ${command}`;
+        } else {
+          cmdToRun = `export VIRTUAL_ENV="${venv.rootDir}" PATH="${venv.binDir}:$PATH"; ${command}`;
+        }
+      }
+      const result = await options.shell.run(cmdToRun, {
         cwd,
         timeoutS,
         signal: options.signal,

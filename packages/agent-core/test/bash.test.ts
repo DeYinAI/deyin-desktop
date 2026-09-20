@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { bashTool, executeShellCommand, parseWslPath } from "../src/tools/bash.js";
+import { bashTool, executeShellCommand, parseWslPath, resolveVirtualEnv } from "../src/tools/bash.js";
 import { resolvePath, resolvePathInWorkspace } from "../src/tools/util.js";
 import type { ToolContext } from "../src/types.js";
 
@@ -176,5 +179,23 @@ test("executeShellCommand runs one-shot command and returns output with exit cod
   });
   assert.equal(streamRes.exitCode, 0);
   assert.ok(chunks.join("").includes("stream-chunk"));
+});
+
+test("resolveVirtualEnv discovers local Python venv directories and bin paths", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deyin-venv-"));
+  try {
+    const venvDir = join(dir, ".venv");
+    const binSubdir = process.platform === "win32" ? "Scripts" : "bin";
+    const pyExe = process.platform === "win32" ? "python.exe" : "python";
+    mkdirSync(join(venvDir, binSubdir), { recursive: true });
+    writeFileSync(join(venvDir, binSubdir, pyExe), "#!/bin/sh\n");
+
+    const venv = resolveVirtualEnv(dir);
+    assert.ok(venv);
+    assert.equal(venv.rootDir, venvDir);
+    assert.equal(venv.binDir, join(venvDir, binSubdir));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 

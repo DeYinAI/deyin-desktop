@@ -5,8 +5,8 @@ import type { AgentDefinition } from "./agents.js";
 import { skillsPromptSection, type SkillDefinition } from "./capabilities/skills.js";
 import type { SystemPromptSections } from "./context-usage.js";
 import { effectiveShell } from "./tools/bash.js";
-export { detectProjectToolchain, formatProjectToolchainPrompt, type ProjectToolchainInfo } from "./project-detect.js";
 import { formatProjectToolchainPrompt, type ProjectToolchainInfo } from "./project-detect.js";
+export { detectProjectToolchain, formatProjectToolchainPrompt, type ProjectToolchainInfo } from "./project-detect.js";
 
 const MAX_CONTEXT_FILE_CHARS = 20_000;
 const MAX_PARENT_LEVELS = 5;

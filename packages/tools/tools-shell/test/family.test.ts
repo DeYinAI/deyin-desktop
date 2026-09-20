@@ -15,6 +15,6 @@ test("@deyin/plugin-tools-shell registers its family into the catalog", async ()
   ]);
   assert.deepEqual(
     [...kernel.get(Tools).names()].sort(),
-    ["bash","env_info","process_list"].sort(),
+    ["bash","env_info","process_list","test_runner"].sort(),
   );
 });

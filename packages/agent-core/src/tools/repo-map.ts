@@ -50,6 +50,8 @@ export function extractSymbolsFromSource(content: string, filename: string): Sym
   let currentParent: string | undefined;
   let parentBraceDepth = 0;
   let braceDepth = 0;
+  let rubyNesting = 0;
+  let rubyParentDepth = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
@@ -62,15 +64,15 @@ export function extractSymbolsFromSource(content: string, filename: string): Sym
 
     const lineNum = i + 1;
 
-    // Track block depth for TypeScript/JS/C/Java/Go/Rust
-    if (ext !== ".py") {
+    // Track block depth for brace-delimited languages
+    if (![".py", ".pyw", ".rb"].includes(ext)) {
       const opens = (rawLine.match(/\{/g) || []).length;
       const closes = (rawLine.match(/\}/g) || []).length;
       braceDepth += opens - closes;
       if (currentParent && braceDepth <= parentBraceDepth) {
         currentParent = undefined;
       }
-    } else {
+    } else if (ext === ".py" || ext === ".pyw") {
       // In python, unindenting clears parent class
       if (currentParent && !rawLine.startsWith(" ") && !rawLine.startsWith("\t")) {
         currentParent = undefined;
@@ -141,7 +143,7 @@ export function extractSymbolsFromSource(content: string, filename: string): Sym
         continue;
       }
 
-      const pyFunc = rawLine.match(/^(\s*)(?:async\s+)?def\s+([A-Za-z0-9_]+)\s*\(([^)]*)\):/);
+      const pyFunc = rawLine.match(/^(\s*)(?:async\s+)?def\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)(?:\s*->\s*[^:]+)?:/);
       if (pyFunc && pyFunc[1] !== undefined && pyFunc[2]) {
         const isMethod = pyFunc[1].length > 0 && Boolean(currentParent);
         symbols.push({
@@ -207,6 +209,164 @@ export function extractSymbolsFromSource(content: string, filename: string): Sym
       if (rsFn && rsFn[1]) {
         symbols.push({
           name: rsFn[1],
+          kind: currentParent ? "method" : "function",
+          line: lineNum,
+          signature: trimmed.replace(/\{.*$/, "").trim(),
+          parent: currentParent,
+        });
+        continue;
+      }
+    }
+
+    // Java / Kotlin / Scala
+    if ([".java", ".kt", ".scala"].includes(ext)) {
+      const typeDecl = trimmed.match(
+        /^(?:(?:public|protected|private|internal|abstract|final|sealed|open|data|static)\s+)*(class|interface|enum|record|object|trait)\s+([A-Za-z0-9_$]+)/,
+      );
+      if (typeDecl && typeDecl[1] && typeDecl[2]) {
+        const rawKind = typeDecl[1];
+        const kind: SymbolEntry["kind"] = rawKind === "interface" ? "interface" : rawKind === "enum" ? "enum" : rawKind === "trait" ? "trait" : "class";
+        symbols.push({ name: typeDecl[2], kind, line: lineNum, signature: trimmed.replace(/\{.*$/, "").trim() });
+        currentParent = typeDecl[2];
+        parentBraceDepth = braceDepth - 1;
+        continue;
+      }
+
+      // Kotlin fun
+      const ktFun = trimmed.match(/^(?:(?:public|protected|private|internal|override|suspend|inline)\s+)*fun\s+(?:<[^>]+>\s+)?(?:[A-Za-z0-9_]+\.)?([A-Za-z0-9_]+)\s*\(([^)]*)\)/);
+      if (ktFun && ktFun[1]) {
+        symbols.push({
+          name: ktFun[1],
+          kind: currentParent ? "method" : "function",
+          line: lineNum,
+          signature: trimmed.replace(/\{.*$/, "").trim(),
+          parent: currentParent,
+        });
+        continue;
+      }
+
+      // Java method
+      if (currentParent) {
+        const javaMethod = trimmed.match(/^(?:(?:public|protected|private|static|final|abstract|synchronized|native|default)\s+)+[A-Za-z0-9_$<>, ?\[\]]+\s+([A-Za-z0-9_$]+)\s*\(([^)]*)\)/);
+        if (javaMethod && javaMethod[1] && !["if", "for", "while", "switch", "catch"].includes(javaMethod[1])) {
+          symbols.push({
+            name: javaMethod[1],
+            kind: "method",
+            line: lineNum,
+            signature: trimmed.replace(/\{.*$/, "").trim(),
+            parent: currentParent,
+          });
+          continue;
+        }
+      }
+    }
+
+    // C / C++
+    if ([".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh"].includes(ext)) {
+      const typeDecl = trimmed.match(/^(?:typedef\s+)?(struct|class|enum(?:\s+class)?)\s+([A-Za-z0-9_]+)/);
+      if (typeDecl && typeDecl[1] && typeDecl[2]) {
+        const rawKind = typeDecl[1];
+        const kind: SymbolEntry["kind"] = rawKind.startsWith("enum") ? "enum" : rawKind === "struct" ? "struct" : "class";
+        symbols.push({ name: typeDecl[2], kind, line: lineNum, signature: trimmed.replace(/\{.*$/, "").trim() });
+        currentParent = typeDecl[2];
+        parentBraceDepth = braceDepth - 1;
+        continue;
+      }
+
+      const cppFunc = trimmed.match(/^(?:(?:inline|static|virtual|explicit|constexpr|extern\s+"C")\s+)*[A-Za-z0-9_:*&<>]+\s+(?:[A-Za-z0-9_]+::)?([A-Za-z0-9_]+)\s*\(([^)]*)\)/);
+      if (cppFunc && cppFunc[1] && !["if", "for", "while", "switch", "catch", "return", "sizeof"].includes(cppFunc[1])) {
+        symbols.push({
+          name: cppFunc[1],
+          kind: currentParent || trimmed.includes("::") ? "method" : "function",
+          line: lineNum,
+          signature: trimmed.replace(/\{.*$/, "").trim(),
+          parent: currentParent,
+        });
+        continue;
+      }
+    }
+
+    // C#
+    if (ext === ".cs") {
+      const csType = trimmed.match(/^(?:(?:public|protected|private|internal|static|abstract|sealed|partial|readonly)\s+)*(class|interface|struct|record|enum)\s+([A-Za-z0-9_]+)/);
+      if (csType && csType[1] && csType[2]) {
+        const rawKind = csType[1];
+        const kind: SymbolEntry["kind"] = rawKind === "interface" ? "interface" : rawKind === "struct" ? "struct" : rawKind === "enum" ? "enum" : "class";
+        symbols.push({ name: csType[2], kind, line: lineNum, signature: trimmed.replace(/\{.*$/, "").trim() });
+        currentParent = csType[2];
+        parentBraceDepth = braceDepth - 1;
+        continue;
+      }
+
+      if (currentParent) {
+        const csMethod = trimmed.match(/^(?:(?:public|protected|private|internal|static|async|virtual|override|abstract|sealed)\s+)+[A-Za-z0-9_?<>\[\],\s]+\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/);
+        if (csMethod && csMethod[1] && !["if", "for", "while", "switch", "catch"].includes(csMethod[1])) {
+          symbols.push({
+            name: csMethod[1],
+            kind: "method",
+            line: lineNum,
+            signature: trimmed.replace(/\{.*$/, "").trim(),
+            parent: currentParent,
+          });
+          continue;
+        }
+      }
+    }
+
+    // Ruby
+    if (ext === ".rb") {
+      const rbModuleClass = trimmed.match(/^(class|module)\s+([A-Za-z0-9_:]+)/);
+      if (rbModuleClass && rbModuleClass[1] && rbModuleClass[2]) {
+        rubyNesting++;
+        symbols.push({ name: rbModuleClass[2], kind: "class", line: lineNum, signature: trimmed });
+        currentParent = rbModuleClass[2];
+        rubyParentDepth = rubyNesting;
+        continue;
+      }
+
+      const rbDef = rawLine.match(/^(\s*)def\s+(?:self\.)?([A-Za-z0-9_!?=]+)(?:\(([^)]*)\))?/);
+      if (rbDef && rbDef[2]) {
+        rubyNesting++;
+        const isMethod = Boolean(currentParent);
+        symbols.push({
+          name: rbDef[2],
+          kind: isMethod ? "method" : "function",
+          line: lineNum,
+          signature: trimmed,
+          parent: isMethod ? currentParent : undefined,
+        });
+        continue;
+      }
+
+      if (/^(?:if|unless|while|until|for|case)\b/.test(trimmed) || /\bdo(?:\s*\|[^|]*\|)?$/.test(trimmed)) {
+        rubyNesting++;
+      }
+
+      if (trimmed === "end") {
+        rubyNesting = Math.max(0, rubyNesting - 1);
+        if (rubyNesting < rubyParentDepth) {
+          currentParent = undefined;
+          rubyParentDepth = 0;
+        }
+      }
+    }
+
+    // PHP
+    if (ext === ".php") {
+      const phpType = trimmed.match(/^(?:(?:abstract|final|readonly)\s+)*(class|interface|trait|enum)\s+([A-Za-z0-9_]+)/);
+      if (phpType && phpType[1] && phpType[2]) {
+        const rawKind = phpType[1];
+        const kind: SymbolEntry["kind"] = rawKind === "interface" ? "interface" : rawKind === "trait" ? "trait" : rawKind === "enum" ? "enum" : "class";
+        symbols.push({ name: phpType[2], kind, line: lineNum, signature: trimmed.replace(/\{.*$/, "").trim() });
+        currentParent = phpType[2];
+        parentBraceDepth = braceDepth - 1;
+        continue;
+      }
+
+      const phpFunc = trimmed.match(/^(?:(?:public|protected|private|static|abstract|final)\s+)*function\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/);
+      if (phpFunc && phpFunc[1]) {
+        symbols.push({
+          name: phpFunc[1],
           kind: currentParent ? "method" : "function",
           line: lineNum,
           signature: trimmed.replace(/\{.*$/, "").trim(),

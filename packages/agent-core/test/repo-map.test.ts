@@ -106,6 +106,71 @@ impl Runner for Config {
   assert.ok(symbols.some((s) => s.name === "run" && s.kind === "method" && s.parent === "Config"));
 });
 
+test("extractSymbolsFromSource extracts Java and Kotlin types and methods", () => {
+  const javaCode = `
+public class PaymentGateway {
+    public void processPayment(double amount) {
+    }
+}
+`;
+  const jSymbols = extractSymbolsFromSource(javaCode, "PaymentGateway.java");
+  assert.ok(jSymbols.some((s) => s.name === "PaymentGateway" && s.kind === "class"));
+  assert.ok(jSymbols.some((s) => s.name === "processPayment" && s.kind === "method" && s.parent === "PaymentGateway"));
+
+  const ktCode = `
+class UserService {
+    fun fetchUser(id: String): User {
+    }
+}
+`;
+  const ktSymbols = extractSymbolsFromSource(ktCode, "UserService.kt");
+  assert.ok(ktSymbols.some((s) => s.name === "UserService" && s.kind === "class"));
+  assert.ok(ktSymbols.some((s) => s.name === "fetchUser" && s.kind === "method" && s.parent === "UserService"));
+});
+
+test("extractSymbolsFromSource extracts C++ and C# classes and methods", () => {
+  const cppCode = `
+class SocketManager {
+    void connectToServer(const char* host);
+};
+`;
+  const cppSymbols = extractSymbolsFromSource(cppCode, "socket.cpp");
+  assert.ok(cppSymbols.some((s) => s.name === "SocketManager" && s.kind === "class"));
+  assert.ok(cppSymbols.some((s) => s.name === "connectToServer" && s.kind === "method"));
+
+  const csCode = `
+public class OrderService {
+    public async Task<Order> CreateOrder(OrderRequest req) {
+    }
+}
+`;
+  const csSymbols = extractSymbolsFromSource(csCode, "OrderService.cs");
+  assert.ok(csSymbols.some((s) => s.name === "OrderService" && s.kind === "class"));
+  assert.ok(csSymbols.some((s) => s.name === "CreateOrder" && s.kind === "method" && s.parent === "OrderService"));
+});
+
+test("extractSymbolsFromSource extracts Ruby and PHP symbols", () => {
+  const rbCode = `
+class OrderProcessor
+  def execute_order(order_id)
+  end
+end
+`;
+  const rbSymbols = extractSymbolsFromSource(rbCode, "processor.rb");
+  assert.ok(rbSymbols.some((s) => s.name === "OrderProcessor" && s.kind === "class"));
+  assert.ok(rbSymbols.some((s) => s.name === "execute_order" && s.kind === "method" && s.parent === "OrderProcessor"));
+
+  const phpCode = `
+class CacheClient {
+    public function getCachedItem(string $key) {
+    }
+}
+`;
+  const phpSymbols = extractSymbolsFromSource(phpCode, "cache.php");
+  assert.ok(phpSymbols.some((s) => s.name === "CacheClient" && s.kind === "class"));
+  assert.ok(phpSymbols.some((s) => s.name === "getCachedItem" && s.kind === "method" && s.parent === "CacheClient"));
+});
+
 test("extractSymbolsFromSource skips constructors, super, and binary files", () => {
   const tsCode = `
 class MyClass {

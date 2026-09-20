@@ -38,7 +38,7 @@ import { checkCompilerErrorsTool } from "./compiler-check.js";
 import { testRunnerTool } from "./test-runner.js";
 
 export { ToolRegistry } from "./registry.js";
-export { bashTool, effectiveShell, executeShellCommand, type ShellExecutionResult } from "./bash.js";
+export { bashTool, effectiveShell, executeShellCommand, resolveVirtualEnv, type ShellExecutionResult, type VirtualEnvInfo } from "./bash.js";
 export { readTool } from "./read.js";
 export { writeTool } from "./write.js";
 export { editTool, applyEdit, countOccurrences } from "./edit.js";

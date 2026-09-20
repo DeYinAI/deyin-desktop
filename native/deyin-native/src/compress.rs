@@ -63,7 +63,6 @@ fn strip_ansi(line: &str) -> String {
 /// Mirror TIMESTAMP_RE: ^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?\s*
 fn strip_timestamp(line: &mut String) {
   let b = line.as_bytes();
-  let mut i = 0usize;
   // date part
   if b.len() < 19 {
     return;
@@ -92,7 +91,7 @@ fn strip_timestamp(line: &mut String) {
       return;
     }
   }
-  i = 19;
+  let mut i = 19usize;
   // optional fractional .ddd+
   if i < b.len() && b[i] == b'.' {
     let mut j = i + 1;

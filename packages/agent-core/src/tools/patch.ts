@@ -269,7 +269,10 @@ export const applyPatchTool: ToolDefinition = {
     const summaries: string[] = [];
 
     for (const filePatch of parsed) {
-      const targetRel = explicitPath ?? filePatch.newPath ?? filePatch.oldPath;
+      const targetRel =
+        parsed.length === 1 && explicitPath
+          ? explicitPath
+          : (filePatch.newPath ?? filePatch.oldPath ?? explicitPath);
       if (!targetRel) {
         return "ERROR: Target file path could not be determined from patch header. Provide the 'path' argument.";
       }
@@ -279,12 +282,13 @@ export const applyPatchTool: ToolDefinition = {
 
       try {
         const { next, appliedHunks, additions, deletions } = applyHunksToFile(before, filePatch.hunks, fuzz);
+        const operation = before === "" ? "write" : next === "" ? "delete" : "edit";
         const mutationRes = await commitFileMutation(
           {
             path: fullPath,
             before,
             after: next,
-            operation: "edit",
+            operation,
           },
           ctx,
         );
