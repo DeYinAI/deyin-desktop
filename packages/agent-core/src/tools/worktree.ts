@@ -21,7 +21,7 @@ export const enterWorktreeTool: ToolDefinition = {
     }
     const branch = asString(args.branch, "branch");
     const relPath = asString(args.path, "path");
-    const result = await runGit(ctx.cwd, ["worktree", "add", relPath, "-b", branch]);
+    const result = await runGit(ctx.cwd, ["worktree", "add", relPath, "-b", branch], { signal: ctx.signal });
     const rawOut = (result.stdout || result.stderr).trim();
     if (!result.ok) {
       const cleanErr = rawOut.replace(/^fatal:\s*/i, "").trim();
@@ -51,7 +51,7 @@ export const exitWorktreeTool: ToolDefinition = {
     const relPath = asString(args.path, "path");
     const gitArgs = ["worktree", "remove", relPath];
     if (args.force === true) gitArgs.push("--force");
-    const result = await runGit(ctx.cwd, gitArgs);
+    const result = await runGit(ctx.cwd, gitArgs, { signal: ctx.signal });
     const rawOut = (result.stdout || result.stderr).trim();
     if (!result.ok) {
       const cleanErr = rawOut.replace(/^fatal:\s*/i, "").trim();

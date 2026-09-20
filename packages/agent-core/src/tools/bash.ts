@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
@@ -345,27 +345,81 @@ async function runCommandDetailed(
 function runBackgroundCommand(
   command: string,
   cwd: string,
+  timeoutS: number,
 ): Promise<{ output: string; exitCode: number | null }> {
   const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
   return new Promise((resolve) => {
-    const child = spawn(file, args, {
-      cwd: spawnCwd,
-      env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv },
-      windowsHide: true,
-      detached: posix,
-    });
+    let resolved = false;
+    let timedOut = false;
+    let timer: NodeJS.Timeout | null = null;
+    let child;
+    try {
+      child = spawn(file, args, {
+        cwd: spawnCwd,
+        env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv },
+        windowsHide: true,
+        detached: posix,
+      });
+    } catch (err) {
+      resolve({ output: `spawn error: ${err instanceof Error ? err.message : String(err)}`, exitCode: null });
+      return;
+    }
+
+    const killTree = (): void => {
+      if (!child || !child.pid) return;
+      if (posix) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+          return;
+        } catch {}
+      } else {
+        try {
+          execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: "ignore" });
+          return;
+        } catch {}
+      }
+      try { child.kill("SIGKILL"); } catch {}
+    };
+
+    if (timeoutS > 0) {
+      timer = setTimeout(() => {
+        timedOut = true;
+        killTree();
+      }, timeoutS * 1000);
+    }
+
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
-    child.on("error", (err) => resolve({ output: `spawn error: ${err.message}`, exitCode: null }));
-    child.on("close", (code) => {
+
+    const finalize = (code: number | null, err?: Error): void => {
+      if (resolved) return;
+      resolved = true;
+      if (timer) clearTimeout(timer);
+
+      try {
+        const remOut = child.stdout.read();
+        if (remOut) stdout += typeof remOut === "string" ? remOut : remOut.toString("utf8");
+      } catch {}
+      try {
+        const remErr = child.stderr.read();
+        if (remErr) stderr += typeof remErr === "string" ? remErr : remErr.toString("utf8");
+      } catch {}
+
+      if (err) {
+        resolve({ output: `spawn error: ${err.message}`, exitCode: null });
+        return;
+      }
       let out = truncate(stdout);
       if (stderr.trim().length > 0) out += `${out ? "\n" : ""}[stderr]\n${truncate(stderr, 10_000)}`;
-      resolve({ output: out || "(no output)", exitCode: code });
-    });
-    child.unref();
+      if (timedOut) out += `${out ? "\n" : ""}(command timed out after ${timeoutS}s and was killed)`;
+      resolve({ output: out || "(no output)", exitCode: timedOut ? 124 : code });
+    };
+
+    child.on("error", (err) => finalize(null, err));
+    child.on("close", (code) => finalize(code));
   });
 }
 
@@ -397,18 +451,17 @@ export const bashTool: ToolDefinition = {
   async execute(args, ctx: ToolContext): Promise<string> {
     const command = asString(args.command, "command");
     const cwd = asOptionalString(args.cwd) ? resolvePath(ctx.cwd, String(args.cwd)) : ctx.cwd;
+    const timeoutS = Math.min(asOptionalNumber(args.timeout_seconds) ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
     const blockUntilMs = asOptionalNumber(args.block_until_ms);
     if (blockUntilMs === 0) {
       if (!ctx.registerBackgroundTask) {
         return "ERROR: background bash tasks are not supported in this environment.";
       }
       const taskId = randomUUID();
-      const promise = runBackgroundCommand(command, cwd);
+      const promise = runBackgroundCommand(command, cwd, timeoutS);
       ctx.registerBackgroundTask(taskId, promise);
       return `Background task started.\ntask_id: ${taskId}\nUse the await tool to poll for completion.`;
     }
-
-    const timeoutS = Math.min(asOptionalNumber(args.timeout_seconds) ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
 
     const result = await executeShellCommand(command, cwd, {
       timeoutS,

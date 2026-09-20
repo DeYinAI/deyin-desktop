@@ -165,6 +165,11 @@ async function agentShellExecutable(shellId: string | undefined, cwd: string): P
       const preferred = preferWslShellForCwd(env.shells, cwd) ?? `wsl:${wslDistro}`;
       info = await resolveShellInfo(preferred);
     }
+  } else if (!shellId && !wslUncDistro(cwd)) {
+    // If no explicit shell was configured and the workspace is on the Windows host (not WSL),
+    // default to PowerShell rather than unexpectedly running commands in WSL.
+    const pwsh = findPwsh();
+    info = await resolveShellInfo(pwsh ? "pwsh" : "powershell");
   }
 
   if (info.kind === "wsl") {
@@ -397,7 +402,7 @@ export class AgentShell {
       if (this.kind === "powershell") {
         term.write(`Write-Output '${sentinel}'\r`);
       } else {
-        term.write(`echo ${sentinel}\n`);
+        term.write(`printf '\\033]6969;b\\007'; echo ${sentinel}\n`);
       }
       await synced;
       shellLog("debug", `spawn sync ok in ${Date.now() - syncStarted}ms`);
@@ -597,7 +602,16 @@ export class AgentShell {
         raw += chunk;
         if (!capturing) {
           const beginAt = raw.indexOf(BEGIN_MARKER);
-          if (beginAt < 0) return;
+          if (beginAt < 0) {
+            const endMatch = END_MARKER_RE.exec(raw);
+            if (endMatch) {
+              capturing = true;
+              emitClean(raw.slice(0, endMatch.index));
+              finish(Number(endMatch[1]));
+              return;
+            }
+            return;
+          }
           capturing = true;
           raw = raw.slice(beginAt + BEGIN_MARKER.length);
           if (!raw) return;
@@ -701,7 +715,7 @@ export class AgentShell {
       if (this.kind === "powershell") {
         this.term.write(`Write-Host -NoNewline ("\`e]6969;b\`a"); ${command}\r`);
       } else {
-        this.term.write(`${command}\n`);
+        this.term.write(`printf '\\033]6969;b\\007'; ${command}\n`);
       }
     });
   }

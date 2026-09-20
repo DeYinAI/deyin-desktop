@@ -1476,12 +1476,23 @@ export function App() {
   // Main asks us to surface the Browser tab when agent browser tools need a target.
   useEffect(() => {
     if (!window.deyin.browserControl) return;
-    const off = window.deyin.browserControl.onEnsure(() => {
+    const offEnsure = window.deyin.browserControl.onEnsure(() => {
       openPanelTab("browser");
       setBrowserUrl((cur) => cur || "about:blank");
     });
-    return off;
-  }, []);
+    const offTab = window.deyin.browserControl.onTabCommand?.((cmd) => {
+      openPanelTab("browser");
+      if (cmd.action === "open" && cmd.url) {
+        setBrowserUrl(cmd.url);
+      } else if (cmd.action === "close") {
+        setBrowserUrl("");
+      }
+    });
+    return () => {
+      offEnsure();
+      offTab?.();
+    };
+  }, [openPanelTab]);
 
   // Per-workspace persistent browser profile partition.
   useEffect(() => {

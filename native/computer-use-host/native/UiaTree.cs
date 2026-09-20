@@ -5,18 +5,20 @@ namespace Deyin.ComputerUseHost;
 
 public sealed class UiaTree
 {
-  private readonly Dictionary<string, AutomationElement> _refs = new();
+  private readonly Dictionary<IntPtr, Dictionary<string, AutomationElement>> _windowRefs = new();
 
   public object[] BuildTree(IntPtr hwnd)
   {
     var root = AutomationElement.FromHandle(hwnd);
     if (root is null) return Array.Empty<object>();
     var nodes = new List<object>();
-    Walk(root, nodes, 0, 500);
+    var refs = new Dictionary<string, AutomationElement>(StringComparer.OrdinalIgnoreCase);
+    _windowRefs[hwnd] = refs;
+    Walk(root, nodes, refs, 0, 500);
     return nodes.ToArray();
   }
 
-  private void Walk(AutomationElement el, List<object> nodes, int depth, int budget)
+  private void Walk(AutomationElement el, List<object> nodes, Dictionary<string, AutomationElement> refs, int depth, int budget)
   {
     if (nodes.Count >= budget || depth > 16) return;
     var rect = el.Current.BoundingRectangle;
@@ -36,7 +38,7 @@ public sealed class UiaTree
     if (!(isMicroNode || isOffscreenNoise || isEmptyText))
     {
       var refId = $"e{nodes.Count + 1}";
-      _refs[refId] = el;
+      refs[refId] = el;
       nodes.Add(new
       {
         @ref = refId,
@@ -51,7 +53,7 @@ public sealed class UiaTree
     {
       foreach (AutomationElement child in el.FindAll(TreeScope.Children, Condition.TrueCondition))
       {
-        Walk(child, nodes, depth + 1, budget);
+        Walk(child, nodes, refs, depth + 1, budget);
         if (nodes.Count >= budget) return;
       }
     }
@@ -63,20 +65,42 @@ public sealed class UiaTree
 
   public (int X, int Y) ResolveRef(IntPtr hwnd, string refId)
   {
-    if (_refs.TryGetValue(refId, out var el))
+    if (_windowRefs.TryGetValue(hwnd, out var refs) && refs.TryGetValue(refId, out var el))
     {
       var rect = el.Current.BoundingRectangle;
       return ((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2));
     }
-    throw new InvalidOperationException($"Unknown ref {refId}. Call get_window_state first.");
+    // If not found in cache for this hwnd, attempt rebuilding tree once for this hwnd
+    BuildTree(hwnd);
+    if (_windowRefs.TryGetValue(hwnd, out refs) && refs.TryGetValue(refId, out el))
+    {
+      var rect = el.Current.BoundingRectangle;
+      return ((int)(rect.X + rect.Width / 2), (int)(rect.Y + rect.Height / 2));
+    }
+    throw new InvalidOperationException($"Unknown ref {refId} for window {hwnd}. Call get_window_state first.");
+  }
+
+  public void FocusRef(IntPtr hwnd, string refId)
+  {
+    if (_windowRefs.TryGetValue(hwnd, out var refs) && refs.TryGetValue(refId, out var el))
+    {
+      try
+      {
+        el.SetFocus();
+      }
+      catch { }
+    }
   }
 
   public void SetValue(IntPtr hwnd, string refId, string value)
   {
-    if (!_refs.TryGetValue(refId, out var el))
+    if (!_windowRefs.TryGetValue(hwnd, out var refs) || !refs.TryGetValue(refId, out var el))
     {
       BuildTree(hwnd);
-      if (!_refs.TryGetValue(refId, out el)) throw new InvalidOperationException($"Unknown ref {refId}.");
+      if (!_windowRefs.TryGetValue(hwnd, out refs) || !refs.TryGetValue(refId, out el))
+      {
+        throw new InvalidOperationException($"Unknown ref {refId} for window {hwnd}.");
+      }
     }
     if (el.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern) && pattern is ValuePattern valuePattern)
     {

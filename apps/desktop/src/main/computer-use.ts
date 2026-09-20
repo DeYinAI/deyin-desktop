@@ -186,13 +186,7 @@ export class ComputerUseService {
       }
     }
     if (!appId) {
-      // If still not found, check if only one active app is being interacted with or allow gracefully
-      const activeWindow = windows[0];
-      if (activeWindow?.app) {
-        appId = activeWindow.app;
-      } else {
-        throw new Error(`Window "${windowId}" has no associated app; cannot verify permission.`);
-      }
+      throw new Error(`Window "${windowId}" was not found or has been closed; cannot verify permission.`);
     }
     await this.ensureAppAllowed(appId, "interact");
   }

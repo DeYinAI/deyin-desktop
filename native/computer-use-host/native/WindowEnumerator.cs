@@ -13,6 +13,9 @@ public sealed class WindowEnumerator
   private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
   [DllImport("user32.dll")]
+  private static extern bool IsWindow(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
   private static extern bool IsWindowVisible(IntPtr hWnd);
 
   [DllImport("user32.dll", CharSet = CharSet.Unicode)]
@@ -75,12 +78,11 @@ public sealed class WindowEnumerator
 
   public IntPtr ResolveHwnd(string windowId)
   {
-    if (!long.TryParse(windowId, out var handle)) return IntPtr.Zero;
+    if (!long.TryParse(windowId, out var handle) || handle == 0) return IntPtr.Zero;
     var hwnd = new IntPtr(handle);
-    if (!IsWindowVisible(hwnd) && int.TryParse(windowId, out var pid))
+    if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
     {
-      var candidate = FindWindowForProcess(pid, string.Empty);
-      if (candidate != IntPtr.Zero) return candidate;
+      return IntPtr.Zero;
     }
     return hwnd;
   }
@@ -103,6 +105,15 @@ public sealed class WindowEnumerator
     {
       psi.FileName = appId.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? appId : $"{appId}.exe";
     }
+
+    var expectedName = Path.GetFileNameWithoutExtension(psi.FileName);
+    var runningWindow = FindWindowForProcessName(expectedName);
+    if (runningWindow != IntPtr.Zero)
+    {
+      GetWindowThreadProcessId(runningWindow, out var runningPid);
+      return (runningWindow.ToInt64().ToString(), (int)runningPid);
+    }
+
     var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to launch {appId}");
     var processName = string.Empty;
     try
@@ -114,18 +125,31 @@ public sealed class WindowEnumerator
     {
       try
       {
-        processName = Path.GetFileNameWithoutExtension(psi.FileName);
+        processName = expectedName;
       }
       catch { }
     }
 
-    try
+    if (!string.IsNullOrWhiteSpace(processName))
     {
-      proc.WaitForInputIdle(5000);
+      var existing = FindWindowForProcessName(processName);
+      if (existing != IntPtr.Zero)
+      {
+        GetWindowThreadProcessId(existing, out var existingPid);
+        return (existing.ToInt64().ToString(), (int)existingPid);
+      }
     }
-    catch
+
+    if (!proc.HasExited)
     {
-      // Some processes do not have a graphical message loop or fail WaitForInputIdle
+      try
+      {
+        proc.WaitForInputIdle(2000);
+      }
+      catch
+      {
+        // Some processes do not have a graphical message loop or fail WaitForInputIdle
+      }
     }
 
     var hwnd = IntPtr.Zero;
@@ -137,11 +161,14 @@ public sealed class WindowEnumerator
 
     for (var i = 0; i < 20 && hwnd == IntPtr.Zero; i++)
     {
-      Thread.Sleep(250);
+      Thread.Sleep(100);
       try
       {
-        proc.Refresh();
-        hwnd = proc.MainWindowHandle;
+        if (!proc.HasExited)
+        {
+          proc.Refresh();
+          hwnd = proc.MainWindowHandle;
+        }
       }
       catch { }
 
@@ -149,10 +176,35 @@ public sealed class WindowEnumerator
       {
         hwnd = FindWindowForProcess(proc.Id, processName);
       }
+      if (hwnd == IntPtr.Zero && !string.IsNullOrWhiteSpace(processName))
+      {
+        hwnd = FindWindowForProcessName(processName);
+      }
     }
 
     var windowIdStr = hwnd != IntPtr.Zero ? hwnd.ToInt64().ToString() : string.Empty;
     return (windowIdStr, proc.Id);
+  }
+
+  public IntPtr FindWindowForProcessName(string processName)
+  {
+    if (string.IsNullOrWhiteSpace(processName)) return IntPtr.Zero;
+    var found = IntPtr.Zero;
+    EnumWindows((hWnd, _) =>
+    {
+      if (!IsWindow(hWnd) || !IsWindowVisible(hWnd)) return true;
+      var title = GetTitle(hWnd);
+      if (string.IsNullOrWhiteSpace(title)) return true;
+
+      var pName = GetProcessName(hWnd);
+      if (string.Equals(pName, processName, StringComparison.OrdinalIgnoreCase))
+      {
+        found = hWnd;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
   }
 
   public IntPtr FindWindowForProcess(int pid, string processName)
@@ -160,7 +212,7 @@ public sealed class WindowEnumerator
     IntPtr candidate = IntPtr.Zero;
     EnumWindows((hWnd, _) =>
     {
-      if (!IsWindowVisible(hWnd)) return true;
+      if (!IsWindow(hWnd) || !IsWindowVisible(hWnd)) return true;
       var title = GetTitle(hWnd);
       if (string.IsNullOrWhiteSpace(title)) return true;
 
