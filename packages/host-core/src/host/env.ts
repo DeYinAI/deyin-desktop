@@ -140,6 +140,16 @@ export async function resolveShellInfo(shellId?: string): Promise<ShellInfo> {
   if (pick) return pick;
 
   const windows = platform() === "win32";
+  if (shellId?.startsWith("wsl:")) {
+    const distro = shellId.slice("wsl:".length);
+    return {
+      id: shellId,
+      label: `${distro || "Default"} (WSL)`,
+      path: "wsl.exe",
+      args: distro ? ["-d", distro] : [],
+      kind: "wsl",
+    };
+  }
   // Not a known id: treat it as a literal executable path.
   if (shellId) {
     return { id: shellId, label: shellId, path: shellId, kind: windows ? "windows" : "posix" };

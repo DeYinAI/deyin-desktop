@@ -1,25 +1,6 @@
-import { spawn } from "node:child_process";
+import { git, runGit } from "@deyin/host-core";
 import type { ToolDefinition } from "../types.js";
 import { asString } from "./util.js";
-
-function runGit(cwd: string, args: string[]): Promise<{ ok: boolean; output: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("git", args, { cwd, env: process.env, windowsHide: true });
-    let output = "";
-    child.stdout.on("data", (d: Buffer) => {
-      output += d.toString();
-    });
-    child.stderr.on("data", (d: Buffer) => {
-      output += d.toString();
-    });
-    child.on("close", (code) => resolve({ ok: code === 0, output: output.trim() }));
-  });
-}
-
-async function isGitRepo(cwd: string): Promise<boolean> {
-  const result = await runGit(cwd, ["rev-parse", "--is-inside-work-tree"]);
-  return result.ok && result.output.trim() === "true";
-}
 
 export const enterWorktreeTool: ToolDefinition = {
   name: "enter_worktree",
@@ -35,17 +16,18 @@ export const enterWorktreeTool: ToolDefinition = {
   },
   summarize: (args) => `worktree ${String(args.branch ?? "")}`,
   async execute(args, ctx): Promise<string> {
-    if (!(await isGitRepo(ctx.cwd))) {
+    if (!(await git.isRepo(ctx.cwd))) {
       return "ERROR: Not a git repository (or any of the parent directories). Cannot create a worktree outside a git repository.";
     }
     const branch = asString(args.branch, "branch");
     const relPath = asString(args.path, "path");
     const result = await runGit(ctx.cwd, ["worktree", "add", relPath, "-b", branch]);
+    const rawOut = (result.stdout || result.stderr).trim();
     if (!result.ok) {
-      const cleanErr = result.output.replace(/^fatal:\s*/i, "").trim();
-      return `ERROR creating worktree: ${cleanErr || result.output}`;
+      const cleanErr = rawOut.replace(/^fatal:\s*/i, "").trim();
+      return `ERROR creating worktree: ${cleanErr || rawOut}`;
     }
-    return `Worktree created at ${relPath} on branch ${branch}.\n${result.output}`;
+    return `Worktree created at ${relPath} on branch ${branch}.${rawOut ? `\n${rawOut}` : ""}`;
   },
 };
 
@@ -63,17 +45,18 @@ export const exitWorktreeTool: ToolDefinition = {
   },
   summarize: (args) => `remove worktree ${String(args.path ?? "")}`,
   async execute(args, ctx): Promise<string> {
-    if (!(await isGitRepo(ctx.cwd))) {
+    if (!(await git.isRepo(ctx.cwd))) {
       return "ERROR: Not a git repository (or any of the parent directories). Cannot remove a worktree outside a git repository.";
     }
     const relPath = asString(args.path, "path");
     const gitArgs = ["worktree", "remove", relPath];
     if (args.force === true) gitArgs.push("--force");
     const result = await runGit(ctx.cwd, gitArgs);
+    const rawOut = (result.stdout || result.stderr).trim();
     if (!result.ok) {
-      const cleanErr = result.output.replace(/^fatal:\s*/i, "").trim();
-      return `ERROR removing worktree: ${cleanErr || result.output}`;
+      const cleanErr = rawOut.replace(/^fatal:\s*/i, "").trim();
+      return `ERROR removing worktree: ${cleanErr || rawOut}`;
     }
-    return `Worktree removed: ${relPath}\n${result.output}`;
+    return `Worktree removed: ${relPath}${rawOut ? `\n${rawOut}` : ""}`;
   },
 };

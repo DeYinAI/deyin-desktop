@@ -86,7 +86,7 @@ export class TerminalManager {
  spawnCwd = wsl.spawnCwd;
  // Start inside the workspace directly (zcode/Cursor-style --cd) so the
  // first prompt is already in the project - no racy post-spawn cd write.
- launchArgs = [...launchArgs, ...wslLaunchArgs(wslUncDistro(rawCwd) ?? "", toWslPath(rawCwd))];
+ launchArgs = [...launchArgs, ...wslLaunchArgs(wslUncDistro(rawCwd) ?? "", toWslPath(rawCwd), !launchArgs.includes("-d"))];
  }
 
  const term = pty.spawn(shellInfo.path, launchArgs, {
