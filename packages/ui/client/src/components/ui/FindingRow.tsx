@@ -22,7 +22,7 @@ export function FindingRow(props: {
   children?: ReactNode;
 }) {
   const clickable = Boolean(props.onClick);
-  const hasMeta = Boolean(props.meta?.length) || Boolean(props.tags);
+  const hasMeta = Boolean(props.meta && props.meta.length > 0);
   return (
     <div
       className={`ui-finding-row${clickable ? " ui-finding-row--clickable" : ""}${props.className ? ` ${props.className}` : ""}`}
@@ -53,7 +53,14 @@ export function FindingRow(props: {
           <div className="ui-finding-row__body">{props.body ?? props.children}</div>
         )}
       </div>
-      {props.actions && <div className="ui-finding-row__actions">{props.actions}</div>}
+      {props.actions && (
+        <div
+          className="ui-finding-row__actions"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {props.actions}
+        </div>
+      )}
     </div>
   );
 }
