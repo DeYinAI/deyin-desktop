@@ -7,13 +7,27 @@
  * must be launched from a Windows working directory.
  */
 
-/** `\\wsl$\<distro>\...` (legacy) and `\\wsl.localhost\<distro>\...` (Win 11). */
-const WSL_UNC_RE = /^\\\\wsl(?:\$|\.localhost)\\([^\\]+)(?:\\(.*))?$/i;
+/** `\\wsl$\<distro>\...` (legacy) and `\\wsl.localhost\<distro>\...` (Win 11), accepting both backslashes and forward slashes. */
+export const WSL_UNC_RE = /^(?:\\\\|\/\/)wsl(?:\$|\.localhost)[\\/]([^\\/]+)(?:[\\/](.*))?$/i;
 const WIN_DRIVE_RE = /^([A-Za-z]):[\\/](.*)$/;
+const MNT_DRIVE_RE = /^\/mnt\/([a-zA-Z])(?:\/(.*))?$/;
 
 /** Distro name when `p` is a WSL UNC path, else null. */
 export function wslUncDistro(p: string): string | null {
   return WSL_UNC_RE.exec(p)?.[1] ?? null;
+}
+
+function normalizePosix(p: string): string {
+  const parts: string[] = [];
+  for (const seg of p.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (parts.length > 0) parts.pop();
+      continue;
+    }
+    parts.push(seg);
+  }
+  return "/" + parts.join("/");
 }
 
 /**
@@ -22,10 +36,18 @@ export function wslUncDistro(p: string): string | null {
  */
 export function mapPosixOntoWslUnc(wslUncRoot: string, posixPath: string): string | null {
   if (!posixPath.startsWith("/") || !wslUncDistro(wslUncRoot)) return null;
-  const linuxRoot = toWslPath(wslUncRoot).replace(/\/+$/, "") || "/";
-  const posix = posixPath.replace(/\/+$/, "") || "/";
-  if (posix !== linuxRoot && !posix.startsWith(`${linuxRoot}/`)) return null;
-  const rel = posix === linuxRoot ? "" : posix.slice(linuxRoot.length + 1);
+  const rawLinuxRoot = toWslPath(wslUncRoot).replace(/\/+$/, "");
+  const linuxRoot = normalizePosix(rawLinuxRoot || "/");
+  const posix = normalizePosix(posixPath);
+  const isUnder =
+    linuxRoot === "/"
+      ? posix.startsWith("/")
+      : posix === linuxRoot || posix.startsWith(`${linuxRoot}/`);
+  if (!isUnder) return null;
+  const rel =
+    linuxRoot === "/"
+      ? (posix === "/" ? "" : posix.slice(1))
+      : (posix === linuxRoot ? "" : posix.slice(linuxRoot.length + 1));
   const rootTrimmed = wslUncRoot.replace(/[\\/]+$/, "");
   if (!rel) return rootTrimmed;
   const sep = rootTrimmed.includes("\\") ? "\\" : "/";
@@ -35,14 +57,17 @@ export function mapPosixOntoWslUnc(wslUncRoot: string, posixPath: string): strin
 /** Convert a host path to the form bash sees inside a WSL2 distro. */
 export function toWslPath(p: string): string {
   if (!p) return p;
-  // Already POSIX (host is Linux, or the caller pre-translated).
-  if (p.startsWith("/")) return p;
 
+  // Check WSL UNC first so forward-slash UNC paths (e.g. //wsl.localhost/...) are
+  // converted to distro-local paths instead of mistakenly treated as POSIX.
   const unc = WSL_UNC_RE.exec(p);
   if (unc) {
     const rest = unc[2] ?? "";
     return `/${rest.replace(/\\/g, "/")}`.replace(/\/+$/, "") || "/";
   }
+
+  // Already POSIX (host is Linux, or the caller pre-translated).
+  if (p.startsWith("/")) return p;
 
   const [, letter, remainder] = WIN_DRIVE_RE.exec(p) ?? [];
   if (letter !== undefined) {
@@ -51,6 +76,22 @@ export function toWslPath(p: string): string {
   }
 
   return p.replace(/\\/g, "/");
+}
+
+/** Convert a WSL/Linux path (/mnt/c/... or /home/...) to a Windows host path. */
+export function fromWslPath(p: string, defaultDistro?: string): string {
+  if (!p) return p;
+  const mnt = MNT_DRIVE_RE.exec(p);
+  if (mnt) {
+    const drive = mnt[1]!.toUpperCase();
+    const tail = (mnt[2] ?? "").replace(/\//g, "\\");
+    return `${drive}:\\${tail}`;
+  }
+  if (p.startsWith("/") && defaultDistro) {
+    const tail = p.replace(/^\/+/, "").replace(/\//g, "\\");
+    return `\\\\wsl.localhost\\${defaultDistro}\\${tail}`;
+  }
+  return p;
 }
 
 /**
@@ -94,10 +135,10 @@ export function wslTerminalSpawn(rawCwd: string): WslTerminalSpawn {
  * Appended to the shell descriptor's own args. An empty/root path keeps the
  * distro default (--cd ~) instead of landing in C:\Windows\System32.
  */
-export function wslLaunchArgs(distro: string, linuxPath: string | null): string[] {
-const distroArgs = distro ? ["-d", distro] : [];
-if (!linuxPath || linuxPath === "/") return [...distroArgs, "--cd", "~"];
-return [...distroArgs, "--cd", linuxPath];
+export function wslLaunchArgs(distro: string, linuxPath: string | null, includeDistro = true): string[] {
+  const distroArgs = includeDistro && distro ? ["-d", distro] : [];
+  if (!linuxPath || linuxPath === "/") return [...distroArgs, "--cd", "~"];
+  return [...distroArgs, "--cd", linuxPath];
 }
 
 /**

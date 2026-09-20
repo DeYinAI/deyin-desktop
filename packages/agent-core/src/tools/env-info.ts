@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { hostname } from "node:os";
 import { promisify } from "node:util";
 import type { ToolDefinition } from "../types.js";
+import { parseWslPath } from "./bash.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -46,13 +47,18 @@ export const envInfoTool: ToolDefinition = {
   tier: "read",
   parameters: { type: "object", properties: {} },
   summarize: () => "environment summary",
-  async execute(): Promise<string> {
+  async execute(_args, ctx): Promise<string> {
     const lines: string[] = [];
     lines.push(`host: ${hostname()}`);
     lines.push(`platform: ${process.platform} (${process.arch})`);
     lines.push(`host runtime: node ${process.version}`);
-    const cwd = process.cwd();
+    const cwd = ctx?.cwd ?? process.cwd();
     lines.push(`cwd: ${cwd}`);
+    const wsl = parseWslPath(cwd);
+    if (wsl) {
+      lines.push(`wsl distro: ${wsl.distro}`);
+      lines.push(`distro path: ${wsl.linuxPath}`);
+    }
     for (const key of SAFE_KEYS) {
       const value = process.env[key];
       if (value !== undefined) lines.push(`${key}=${key === "PATH" ? value : redact(value)}`);

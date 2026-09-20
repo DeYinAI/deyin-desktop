@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bashTool, parseWslPath } from "../src/tools/bash.js";
-import { resolvePath } from "../src/tools/util.js";
+import { resolvePath, resolvePathInWorkspace } from "../src/tools/util.js";
 import type { ToolContext } from "../src/types.js";
 
 const ctx = (): ToolContext => ({ cwd: process.cwd(), todos: [] });
@@ -33,9 +33,45 @@ test("parseWslPath routes WSL2 project dirs to their distro (any platform)", () 
   assert.deepEqual(parseWslPath("\\\\wsl$\\Debian"), { distro: "Debian", linuxPath: "/" });
   // Forward-slash variant is tolerated.
   assert.deepEqual(parseWslPath("//wsl$/Ubuntu/home/x"), { distro: "Ubuntu", linuxPath: "/home/x" });
+  assert.deepEqual(parseWslPath("//wsl.localhost/Ubuntu-22.04/home/user/proj"), {
+    distro: "Ubuntu-22.04",
+    linuxPath: "/home/user/proj",
+  });
   // Native Windows and POSIX paths are not WSL.
   assert.equal(parseWslPath("C:\\Users\\User\\proj"), null);
   assert.equal(parseWslPath("/home/user/proj"), null);
+});
+
+test("resolvePath and resolvePathInWorkspace handle WSL UNC workspaces", () => {
+  const unc = "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj";
+  // Relative subpath
+  assert.equal(resolvePath(unc, "src/index.ts"), `${unc}\\src\\index.ts`);
+  assert.equal(resolvePathInWorkspace(unc, "src/index.ts"), `${unc}\\src\\index.ts`);
+
+  // Distro-local POSIX path matching workspace root
+  assert.equal(resolvePath(unc, "/home/user/proj/src/index.ts"), `${unc}\\src\\index.ts`);
+  assert.equal(resolvePathInWorkspace(unc, "/home/user/proj/src/index.ts"), `${unc}\\src\\index.ts`);
+
+  // Forward-slash UNC workspace root
+  const fwdUnc = "//wsl.localhost/Ubuntu-22.04/home/user/proj";
+  assert.equal(resolvePath(fwdUnc, "/home/user/proj/src/index.ts"), `${fwdUnc}/src/index.ts`);
+  assert.equal(resolvePathInWorkspace(fwdUnc, "/home/user/proj/src/index.ts"), `${fwdUnc}/src/index.ts`);
+
+  // Escaping path rejected by resolvePathInWorkspace
+  assert.throws(
+    () => resolvePathInWorkspace(unc, "/etc/passwd"),
+    /Path escapes workspace/,
+  );
+  assert.throws(
+    () => resolvePathInWorkspace(unc, "/home/otheruser/secrets"),
+    /Path escapes workspace/,
+  );
+});
+
+test("resolvePath and resolvePathInWorkspace handle cross-boundary /mnt/ Windows paths", () => {
+  const winRoot = "C:\\Users\\User\\proj";
+  assert.equal(resolvePath(winRoot, "/mnt/c/Users/User/proj/src/index.ts"), `${winRoot}\\src\\index.ts`);
+  assert.equal(resolvePathInWorkspace(winRoot, "/mnt/c/Users/User/proj/src/index.ts"), `${winRoot}\\src\\index.ts`);
 });
 
 test("meta resolves the working directory the same way execute does", () => {

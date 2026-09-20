@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
-import { findPwsh, resolveShellInfo } from "./env.js";
+import { detectEnv, findPwsh, resolveShellInfo } from "./env.js";
 import type { TerminalEvents } from "./pty.js";
-import { toWslPath, windowsSpawnCwd, wslLaunchArgs } from "./wsl-path.js";
+import { preferWslShellForCwd, toWslPath, windowsSpawnCwd, wslLaunchArgs, wslUncDistro } from "./wsl-path.js";
 
 interface IPty {
   /** Session-leader pid of the spawned shell; also its process-group id. */
@@ -154,22 +154,37 @@ function posixBash(): AgentShellTarget {
 async function agentShellExecutable(shellId: string | undefined, cwd: string): Promise<AgentShellTarget> {
   if (platform() !== "win32") return posixBash();
 
-  const info = await resolveShellInfo(shellId);
+  let info = await resolveShellInfo(shellId);
+  // On Windows, if the workspace cwd is a WSL path (e.g. \\wsl.localhost\<distro>\... or //wsl.localhost/...)
+  // and the configured shell is not already a WSL shell, switch to the WSL shell for that distro so
+  // agent commands run inside the distro's Linux environment with bash rather than Windows PowerShell.
+  if (info.kind !== "wsl") {
+    const wslDistro = wslUncDistro(cwd);
+    if (wslDistro) {
+      const env = await detectEnv();
+      const preferred = preferWslShellForCwd(env.shells, cwd) ?? `wsl:${wslDistro}`;
+      info = await resolveShellInfo(preferred);
+    }
+  }
+
   if (info.kind === "wsl") {
+    const distro = info.id.startsWith("wsl:") ? info.id.slice("wsl:".length) : (wslUncDistro(cwd) ?? "");
+    const baseArgs = info.args ?? (distro ? ["-d", distro] : []);
+    const launchArgs = wslLaunchArgs(distro, toWslPath(cwd), !baseArgs.includes("-d"));
     return {
       file: info.path,
       // `wsl.exe -d <distro>` starts the distro's login shell, which may be zsh
- // or fish; force bash so the PS0/PS1 markers below apply. --cd starts the
- // shell inside the workspace, so even a slow sentinel sync cannot leave
- // early commands running in the wrong directory.
- args: [
- ...(info.args ?? []),
- ...wslLaunchArgs(info.id.slice("wsl:".length), toWslPath(cwd)),
- "--",
- "bash",
- "--norc",
- "--noprofile",
- ],
+      // or fish; force bash so the PS0/PS1 markers below apply. --cd starts the
+      // shell inside the workspace, so even a slow sentinel sync cannot leave
+      // early commands running in the wrong directory.
+      args: [
+        ...baseArgs,
+        ...launchArgs,
+        "--",
+        "bash",
+        "--norc",
+        "--noprofile",
+      ],
       kind: "bash",
       mapPath: toWslPath,
       spawnCwd: windowsSpawnCwd,

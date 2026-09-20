@@ -62,5 +62,5 @@ export {
   isRevertableStopThought,
 } from "./checkpoint-events.js";
 export type { RevertResult, FileCheckpointEntry } from "./types.js";
-export { mapPosixOntoWslUnc } from "./host/wsl-path.js";
+export { fromWslPath, mapPosixOntoWslUnc, toWslPath, wslUncDistro, WSL_UNC_RE } from "./host/wsl-path.js";
 export type { ContextRef, ContextSearchHit, ResolvedContextFile } from "./types.js";

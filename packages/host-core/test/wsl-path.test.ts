@@ -1,20 +1,31 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { preferWslShellForCwd, toWslPath, mapPosixOntoWslUnc, windowsSpawnCwd, wslLaunchArgs, wslTerminalSpawn, wslUncDistro } from "../src/host/wsl-path.js";
+import { fromWslPath, mapPosixOntoWslUnc, preferWslShellForCwd, toWslPath, windowsSpawnCwd, wslLaunchArgs, wslTerminalSpawn, wslUncDistro } from "../src/host/wsl-path.js";
 
 test("toWslPath converts WSL UNC paths to distro-local paths", () => {
  assert.equal(toWslPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj"), "/home/user/proj");
  assert.equal(toWslPath("\\\\wsl$\\Ubuntu-22.04\\home\\user\\proj"), "/home/user/proj");
+ // Forward-slash forms from web/folder pickers.
+ assert.equal(toWslPath("//wsl.localhost/Ubuntu-22.04/home/user/proj"), "/home/user/proj");
+ assert.equal(toWslPath("//wsl$/Ubuntu-22.04/home/user/proj"), "/home/user/proj");
  // Case-insensitive host, trailing separator.
  assert.equal(toWslPath("\\\\WSL.LOCALHOST\\Debian\\srv\\app\\"), "/srv/app");
  // Distro root.
  assert.equal(toWslPath("\\\\wsl.localhost\\Ubuntu-22.04"), "/");
+ assert.equal(toWslPath("//wsl.localhost/Ubuntu-22.04"), "/");
 });
 
 test("toWslPath maps Windows drives onto /mnt", () => {
  assert.equal(toWslPath("C:\\Users\\User\\proj"), "/mnt/c/Users/User/proj");
  assert.equal(toWslPath("D:/data"), "/mnt/d/data");
  assert.equal(toWslPath("C:\\"), "/mnt/c");
+});
+
+test("fromWslPath maps /mnt drives and Linux paths onto Windows hosts", () => {
+  assert.equal(fromWslPath("/mnt/c/Users/User/proj"), "C:\\Users\\User\\proj");
+  assert.equal(fromWslPath("/mnt/d/data/file.txt"), "D:\\data\\file.txt");
+  assert.equal(fromWslPath("/home/user/proj", "Ubuntu-22.04"), "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj");
+  assert.equal(fromWslPath("C:\\Users\\User\\proj"), "C:\\Users\\User\\proj");
 });
 
 test("toWslPath leaves POSIX paths untouched", () => {
@@ -30,10 +41,26 @@ test("mapPosixOntoWslUnc maps distro-local paths onto UNC roots", () => {
     `${unc}\\oracle_cloud_account.txt`,
   );
   assert.equal(mapPosixOntoWslUnc(unc, "/etc/passwd"), null);
+  assert.equal(mapPosixOntoWslUnc(unc, "/home/anh/project/../etc/passwd"), null);
+
+  // Forward slash UNC root
+  const fwdUnc = "//wsl.localhost/Ubuntu-22.04/home/anh/project";
+  assert.equal(mapPosixOntoWslUnc(fwdUnc, "/home/anh/project"), fwdUnc);
+  assert.equal(
+    mapPosixOntoWslUnc(fwdUnc, "/home/anh/project/src/index.ts"),
+    `${fwdUnc}/src/index.ts`,
+  );
+
+  // Distro root UNC
+  const rootUnc = "\\\\wsl.localhost\\Ubuntu-22.04";
+  assert.equal(mapPosixOntoWslUnc(rootUnc, "/home/anh"), `${rootUnc}\\home\\anh`);
+  assert.equal(mapPosixOntoWslUnc(rootUnc, "/"), rootUnc);
 });
 
 test("wslUncDistro identifies the distro only for UNC paths", () => {
  assert.equal(wslUncDistro("\\\\wsl.localhost\\Ubuntu-22.04\\home"), "Ubuntu-22.04");
+ assert.equal(wslUncDistro("//wsl.localhost/Ubuntu-22.04/home"), "Ubuntu-22.04");
+ assert.equal(wslUncDistro("//wsl$/Debian/var"), "Debian");
  assert.equal(wslUncDistro("C:\\Users\\User"), null);
  assert.equal(wslUncDistro("/home/user"), null);
 });
@@ -69,6 +96,8 @@ test("wslLaunchArgs starts the shell inside the project directory", () => {
  // Root/empty keeps the distro default home instead of System32.
  assert.deepEqual(wslLaunchArgs("Ubuntu-22.04", "/"), ["-d", "Ubuntu-22.04", "--cd", "~"]);
  assert.deepEqual(wslLaunchArgs("Ubuntu-22.04", null), ["-d", "Ubuntu-22.04", "--cd", "~"]);
+ // includeDistro = false omits the -d flag when already present in base args
+ assert.deepEqual(wslLaunchArgs("Ubuntu-22.04", "/home/user/proj", false), ["--cd", "/home/user/proj"]);
 });
 
 test("preferWslShellForCwd picks the distro shell for a UNC workspace", () => {
@@ -78,6 +107,10 @@ test("preferWslShellForCwd picks the distro shell for a UNC workspace", () => {
  ];
  assert.equal(
   preferWslShellForCwd(shells, "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\proj"),
+  "wsl:Ubuntu-22.04",
+ );
+ assert.equal(
+  preferWslShellForCwd(shells, "//wsl.localhost/Ubuntu-22.04/home/user/proj"),
   "wsl:Ubuntu-22.04",
  );
  // Legacy wsl$ form matches too.
