@@ -131,6 +131,9 @@ export function FilesTab(props: FilesTabProps) {
   const dirty = content !== savedContent;
   dirtyRef.current = dirty;
   selectedPathRef.current = selectedPath;
+  const draftModeRef = useRef(false);
+  draftModeRef.current = draftMode;
+  const lastHandledSeqRef = useRef<number | null>(null);
   const selectedName = selectedPath ? selectedPath.split(/[\\/]/).pop() ?? selectedPath : null;
   const variant = props.codeDisplay.variant ?? "dark";
   const codeTheme = themeByName(
@@ -243,6 +246,7 @@ export function FilesTab(props: FilesTabProps) {
       }
       treeGenRef.current += 1;
       expandGenRef.current.clear();
+      lastHandledSeqRef.current = null;
     }
     void refreshTreeRef.current();
   }, [props.workspaceRoot, clearEditor, enterDraftMode]);
@@ -332,10 +336,11 @@ export function FilesTab(props: FilesTabProps) {
 
   const openFile = useCallback(
     async (path: string) => {
-      if (path === selectedPath && !draftMode) return;
+      if (path === selectedPathRef.current && !draftModeRef.current) return;
       if (dirtyRef.current) {
+        const currentName = selectedPathRef.current?.split(/[\\/]/).pop() ?? "current file";
         void confirm({
-          message: `Discard unsaved changes to ${path.split(/[\\/]/).pop() ?? path}?`,
+          message: `Discard unsaved changes to ${currentName}?`,
           confirmLabel: "Discard",
           cancelLabel: "Keep changes",
           destructive: true,
@@ -346,12 +351,13 @@ export function FilesTab(props: FilesTabProps) {
       }
       await openFileInternal(path);
     },
-    [selectedPath, draftMode, openFileInternal],
+    [confirm, openFileInternal],
   );
 
   useEffect(() => {
     const req = props.openRequest;
-    if (!req?.path) return;
+    if (!req?.path || req.seq === lastHandledSeqRef.current) return;
+    lastHandledSeqRef.current = req.seq;
     void openFile(req.path);
   }, [props.openRequest, openFile]);
 

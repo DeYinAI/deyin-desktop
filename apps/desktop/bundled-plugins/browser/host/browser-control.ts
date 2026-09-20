@@ -299,7 +299,20 @@ export class BrowserControlService {
     return this.withBrowserTool(async () => {
       const wc = await this.target();
       const target = normalizeUrl(url);
-      await wc.loadURL(target);
+      try {
+        await wc.loadURL(target);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("ERR_CONNECTION_REFUSED") || msg.includes("-102")) {
+          const isLocal = /^(https?:\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?/i.test(target);
+          if (isLocal) {
+            throw new Error(
+              `Connection refused at ${target} — ensure the local dev server is running and accepting connections on this port before navigating. (Underlying error: ${msg})`,
+            );
+          }
+        }
+        throw err;
+      }
       return `Loaded ${wc.getURL()} — "${wc.getTitle()}"`;
     });
   }

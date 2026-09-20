@@ -66,6 +66,23 @@ export async function runLocalAutomation(
         if (event.type === "text-delta") onEvent({ type: "text-delta", delta: event.delta });
         else if (event.type === "tool-start") {
           onEvent({ type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
+        } else if (event.type === "tool-end") {
+          onEvent({
+            type: "tool-end",
+            callId: event.call.id,
+            name: event.call.name,
+            summary: "",
+            result: event.result.length > 8_000 ? `${event.result.slice(0, 8_000)}\n… (truncated)` : event.result,
+            ok: event.ok,
+            denied: event.denied,
+          });
+        } else if (event.type === "file-change") {
+          onEvent({
+            type: "file-change",
+            path: event.change.path,
+            before: event.change.before,
+            after: event.change.after,
+          });
         }
       },
     });
@@ -108,6 +125,9 @@ export async function runLocalAutomation(
         // The skill tool resolves names against ctx.skills; the system prompt
         // alone is not enough for it to find anything mid-run.
         skills: env.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
+        onFileChanged: (change) => {
+          emit({ type: "file-change", path: change.path, before: change.before, after: change.after });
+        },
       },
       onMessage: (message) => store.append(meta.id, message),
       beforeTool: async (call, args, summary) => {

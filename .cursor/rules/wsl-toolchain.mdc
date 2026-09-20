@@ -1,0 +1,31 @@
+---
+description: Operational rules for WSL2 environment, toolchain execution, browser automation, and security scanning
+alwaysApply: true
+---
+
+# WSL2 Environment & Deyin Toolchain Rules
+
+## 1. Shell & Toolchain Initialization
+- When executing raw bash commands in this WSL2 workspace, always prepend the NVM toolchain:
+  `export PATH="$HOME/.nvm/versions/node/v24.12.0/bin:$PATH"`
+  This avoids Ubuntu's system Node (v12.22.9) executing Windows npm/pnpm shims (`/mnt/c/.../npm/pnpm`) which fail on optional chaining (`SyntaxError: Unexpected token '.'`).
+- The shell is WSL bash (`/bin/bash`). Do not emit PowerShell syntax (`$env:...`, `;`) for POSIX execution contexts.
+- `rg`, `make`, and `yarn` are not installed in this environment. Prefer Cursor/Deyin built-in `glob` and `grep` tools over `find` or shell `grep`.
+
+## 2. Dev Server & Browser Automation
+- Before calling `browser_navigate` to a local URL (e.g. `http://127.0.0.1:5173/`), verify or probe whether the dev server is active:
+  `(echo > /dev/tcp/127.0.0.1/5173) 2>/dev/null && echo OPEN || echo CLOSED`
+- If the server is not running, start it (e.g., `pnpm --filter @deyin/web dev --port 5173 --strictPort` as a background task) and confirm port availability before navigating. Navigating to an unlistening port triggers `ERR_CONNECTION_REFUSED` and wastes a round trip.
+- For in-app Deyin UI content, always use the browser tool (`browser_snapshot`, `browser_click`), not `computer-use`. The Deyin desktop window UIA accessibility tree is composed of nested anonymous panes; the browser tool provides direct DOM references.
+
+## 3. Automation Verification & Disk Ground Truth
+- Never trust self-reported summaries or completion text claiming that files were created or modified.
+- Always verify file mutations directly on disk using `read`, `ls`, or `glob` before reporting success.
+
+## 4. Multi-Tool Efficiency
+- Batch independent discovery probes in a single turn (e.g., `env_info` + `automation_list` + window queries) rather than executing them sequentially across multiple turns.
+- Quote defensively in bash commands: use `&&` chains and avoid trailing pipe pipelines to bounded tools.
+
+## 5. Security Scan Noise Reduction
+- When reviewing `security_scan_repo` or `security_scan_diff` results, focus specifically on `src/` source code. Build artifacts (`dist/`, `out/`, `build/`) and test fixtures are excluded or non-actionable.
+- Be aware that template literals and DOM selector string concatenations (e.g. `selector: " + sel`) are not SQL injection vulnerabilities.
