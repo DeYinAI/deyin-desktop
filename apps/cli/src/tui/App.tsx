@@ -7,6 +7,7 @@ import {
   connectMcpDefinitions,
   createBuiltinRegistry,
   createRoleRouter,
+  detectProjectToolchain,
   estimateTokens,
   executeShellCommand,
   getSessionJobsManager,
@@ -26,6 +27,7 @@ import {
   type PermissionDecision,
   type PermissionRequest,
   type InteractionRequest,
+  type ProjectToolchainInfo,
   type TodoItem,
   type ToolRegistry,
 } from "@deyin/agent-core";
@@ -134,6 +136,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const goalTextRef = useRef<string | undefined>(undefined);
   const historyRef = useRef<string[]>([]);
   const contextFilesRef = useRef<ContextFile[]>([]);
+  const projectToolchainRef = useRef<ProjectToolchainInfo | null>(null);
   const capsRef = useRef<CapabilitySnapshot | null>(null);
   const mcpRef = useRef<McpConnection[]>([]);
   const shellRef = useRef<Awaited<ReturnType<typeof createCliShell>>>(undefined);
@@ -196,7 +199,12 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      contextFilesRef.current = await loadContextFiles(ctx.cwd);
+      const [ctxFiles, toolchain] = await Promise.all([
+        loadContextFiles(ctx.cwd),
+        detectProjectToolchain(ctx.cwd).catch(() => null),
+      ]);
+      contextFilesRef.current = ctxFiles;
+      projectToolchainRef.current = toolchain;
       capsRef.current = await loadCliCapabilities({
         cwd: ctx.cwd,
         dataDir: ctx.dataDir,
@@ -388,6 +396,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
             agent,
             contextFiles: contextFilesRef.current,
             skills: capsRef.current?.skills,
+            projectToolchain: projectToolchainRef.current,
           }),
         };
         messagesRef.current = [system];
@@ -677,6 +686,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
               agent,
               contextFiles: contextFilesRef.current,
               skills: capsRef.current?.skills,
+              projectToolchain: projectToolchainRef.current,
             }),
           };
         }
@@ -932,6 +942,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
               agent,
               contextFiles: contextFilesRef.current,
               skills: capsRef.current?.skills,
+              projectToolchain: projectToolchainRef.current,
             }),
           };
           messagesRef.current = [system, userMsg];

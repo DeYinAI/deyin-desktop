@@ -118,3 +118,28 @@ test("import depth is capped", async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("loads .cursorrules, .windsurfrules, and .cursor/rules/*.mdc", async () => {
+  const dir = tempDir();
+  try {
+    writeFileSync(join(dir, ".cursorrules"), "cursor rules content\n");
+    writeFileSync(join(dir, ".windsurfrules"), "windsurf rules content\n");
+
+    const cursorRulesDir = join(dir, ".cursor", "rules");
+    mkdirSync(cursorRulesDir, { recursive: true });
+    writeFileSync(join(cursorRulesDir, "my-rule.mdc"), "---\ndescription: test\n---\nrule body\n");
+
+    const githubDir = join(dir, ".github");
+    mkdirSync(githubDir, { recursive: true });
+    writeFileSync(join(githubDir, "copilot-instructions.md"), "copilot instructions\n");
+
+    const files = await loadContextFiles(dir);
+    const paths = files.map((f) => f.path.replace(/\\/g, "/"));
+    assert.ok(paths.some((p) => p.endsWith(".cursorrules")));
+    assert.ok(paths.some((p) => p.endsWith(".windsurfrules")));
+    assert.ok(paths.some((p) => p.endsWith("my-rule.mdc")));
+    assert.ok(paths.some((p) => p.endsWith("copilot-instructions.md")));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -10,6 +10,7 @@ export * from "./stream.js";
 export * from "./transports.js";
 export * from "./permissions.js";
 export * from "./agents.js";
+export * from "./project-detect.js";
 export * from "./prompt.js";
 export * from "./compaction.js";
 export * from "./compression.js";

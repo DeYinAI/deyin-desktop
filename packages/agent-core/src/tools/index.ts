@@ -33,6 +33,9 @@ import { diffTextTool } from "./diff.js";
 import { processListTool } from "./process-list.js";
 import { diagnosticsTool } from "./diagnostics.js";
 import { repoMapTool } from "./repo-map.js";
+import { applyPatchTool } from "./patch.js";
+import { checkCompilerErrorsTool } from "./compiler-check.js";
+import { testRunnerTool } from "./test-runner.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell, executeShellCommand, type ShellExecutionResult } from "./bash.js";
@@ -82,6 +85,9 @@ export { envInfoTool } from "./env-info.js";
 export { diffTextTool, lcsDiff } from "./diff.js";
 export { processListTool, redactArgs } from "./process-list.js";
 export { repoMapTool, extractSymbolsFromSource, formatRepoMap } from "./repo-map.js";
+export { applyPatchTool, parseUnifiedDiff, applyHunksToFile, type FilePatch, type PatchHunk } from "./patch.js";
+export { checkCompilerErrorsTool, extractCompilerErrors } from "./compiler-check.js";
+export { testRunnerTool, formatTestOutput } from "./test-runner.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export { commitFileMutation, applyFileMutationDirect } from "./file-mutation.js";
 export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
@@ -136,6 +142,9 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   processListTool,
   diagnosticsTool,
   repoMapTool,
+  applyPatchTool,
+  checkCompilerErrorsTool,
+  testRunnerTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

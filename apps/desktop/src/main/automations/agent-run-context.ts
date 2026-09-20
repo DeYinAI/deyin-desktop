@@ -7,6 +7,7 @@ import {
   connectMcpDefinitions,
   createBuiltinRegistry,
   createCodebaseSearchTool,
+  detectProjectToolchain,
   loadContextFiles,
   runHooks,
   type LoadedHook,
@@ -140,7 +141,10 @@ export async function buildAutomationSystemPrompt(
 ): Promise<string> {
   const caps = await deps.capabilities.enabledForRun();
   const agent = BUILD_AGENT;
-  const contextFiles = await loadContextFiles(cwd).catch(() => []);
+  const [contextFiles, projectToolchain] = await Promise.all([
+    loadContextFiles(cwd).catch(() => []),
+    detectProjectToolchain(cwd).catch(() => null),
+  ]);
   let system = buildSystemPrompt({
     cwd,
     agent: {
@@ -151,6 +155,7 @@ export async function buildAutomationSystemPrompt(
     },
     contextFiles,
     skills: caps.skills.length > 0 ? caps.skills : undefined,
+    projectToolchain,
   });
   const startHooks = await runHooks(caps.hooks, "sessionStart", "sessionStart", { cwd });
   if (startHooks.additionalContext && startHooks.additionalContext.length > 0) {

@@ -9,6 +9,7 @@ import {
   connectMcpDefinitions,
   createBuiltinRegistry,
   createRoleRouter,
+  detectProjectToolchain,
   estimateTokens,
   getSessionJobsManager,
   loadContextFiles,
@@ -173,9 +174,10 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     const meta = ctx.sessions.create({ cwd: ctx.cwd, model: `${selected.providerId}::${selected.model}`, agent: agent.name });
     sessionId = meta.id;
     const contextFiles = await loadContextFiles(ctx.cwd);
+    const projectToolchain = await detectProjectToolchain(ctx.cwd);
     const system: AgentMessage = {
       role: "system",
-      content: buildSystemPrompt({ cwd: ctx.cwd, agent, contextFiles, skills: caps.skills }),
+      content: buildSystemPrompt({ cwd: ctx.cwd, agent, contextFiles, skills: caps.skills, projectToolchain }),
     };
     messages = [system];
   }

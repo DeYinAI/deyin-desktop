@@ -1,9 +1,9 @@
 /** Shell tool family plugin: bash over the persistent AgentShell PTY. */
 import type { PluginDefinition } from "@deyin/extension-api";
 import { Tools } from "@deyin/tools";
-import { bashTool, envInfoTool, processListTool } from "@deyin/agent-core";
+import { bashTool, envInfoTool, processListTool, testRunnerTool } from "@deyin/agent-core";
 
-export const SHELL_TOOLS = [bashTool, envInfoTool, processListTool];
+export const SHELL_TOOLS = [bashTool, envInfoTool, processListTool, testRunnerTool];
 
 export const toolsShellPlugin: PluginDefinition = {
   name: "@deyin/plugin-tools-shell",

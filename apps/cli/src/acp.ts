@@ -5,7 +5,7 @@ import { runHeadless } from "./headless.js";
 import type { CliContext } from "./context.js";
 import { VERSION } from "./version.js";
 import type { AgentImage } from "@deyin/agent-core";
-import { BUILD_AGENT, buildSystemPrompt, loadContextFiles, resolveAgent, type AgentMessage } from "@deyin/agent-core";
+import { BUILD_AGENT, buildSystemPrompt, detectProjectToolchain, loadContextFiles, resolveAgent, type AgentMessage } from "@deyin/agent-core";
 import { loadCliCapabilities } from "./capabilities.js";
 
 type RpcRequest = { jsonrpc?: string; id?: string | number | null; method?: string; params?: unknown };
@@ -33,7 +33,10 @@ async function createAcpSession(ctx: CliContext, cwd: string): Promise<{ id: str
   const context = cwd === ctx.cwd ? ctx : createContext({ cwd });
   const agent = resolveAgent(context.config, context.config.agent) ?? BUILD_AGENT;
   const caps = await loadCliCapabilities({ cwd, dataDir: context.dataDir, trustedWorkspace: false });
-  const contextFiles = await loadContextFiles(cwd);
+  const [contextFiles, projectToolchain] = await Promise.all([
+    loadContextFiles(cwd),
+    detectProjectToolchain(cwd).catch(() => null),
+  ]);
   const meta = context.sessions.create({
     cwd,
     model: `${context.config.providerId}::${context.config.model}`,
@@ -41,7 +44,7 @@ async function createAcpSession(ctx: CliContext, cwd: string): Promise<{ id: str
   });
   context.sessions.append(meta.id, {
     role: "system",
-    content: buildSystemPrompt({ cwd, agent, contextFiles, skills: caps.skills }),
+    content: buildSystemPrompt({ cwd, agent, contextFiles, skills: caps.skills, projectToolchain }),
   });
   return { id: meta.id, context };
 }
