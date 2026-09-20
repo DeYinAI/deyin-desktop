@@ -3,7 +3,32 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.26`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.27`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.27 — 2026-09-20
+
+### Highlights
+
+- **Files Tab Tree Navigation & Selection Fix:** Resolved a React effect loop in `FilesTab` where opening a file
+  link from chat left a stale open request in props that re-triggered on subsequent component re-renders. Tree clicks
+  and file selection are now sequence-deduplicated via `lastHandledSeqRef` and no longer clobbered.
+- **Automated WSL2 NVM & Toolchain Bootstrap:** Embedded an automatic NVM Node version detection and PATH prepend
+  in PTY bash sessions (`AgentShell`) and background commands (`shellFor`). Eliminates the failure mode where Ubuntu's
+  outdated system Node (v12.22.9) executes Windows npm/pnpm shims (`/mnt/c/.../npm/pnpm`) and crashes with
+  `SyntaxError: Unexpected token '.'`.
+- **Cross-Platform Virtual Environment Compatibility:** Fixed Python virtual environment shell command injection in
+  `packages/agent-core` to check for active bash/WSL targets, generating standard POSIX `export` statements rather
+  than Windows PowerShell `$env:...` syntax in Linux/WSL environments.
+- **Security Scanner Optimization & Noise Reduction:** Filtered out build, bundle, and cache directories (`dist/`,
+  `out/`, `build/`, `.next/`, `.turbo/`, `coverage/`, `.cache/`, `.output/`) in `security_scan_repo`, preventing
+  scanners from exhausting file budgets on generated bundles. Constrained `sql-concat` regex rules with word
+  boundaries and whitespace to prevent false-positive alerts on DOM selector concatenations (`selector: " + selectorFor(el)`).
+- **Actionable Browser Diagnostics on Refused Connections:** Added proactive interception for `ERR_CONNECTION_REFUSED`
+  errors (`-102`) in `browser_navigate` for localhost and loopback targets, providing clear guidance to ensure the dev
+  server is running before attempting browser navigation.
+- **Unattended Automation Verification & Event Forwarding:** Reinforced the automation system prompt to mandate
+  on-disk verification before claiming file operations succeeded, eliminating phantom file creation reports. Added
+  `file-change` and `tool-end` event forwarding for automation subagents.
 
 ## 1.0.26 — 2026-09-20
 
