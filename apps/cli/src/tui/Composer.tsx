@@ -9,6 +9,7 @@ export function Composer(props: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
+  onOpenEditor?: () => void;
   active: boolean;
   history: string[];
   placeholder: string;
@@ -47,6 +48,10 @@ export function Composer(props: {
       }
       if (key.ctrl && input === "u") {
         props.onChange("");
+        return;
+      }
+      if (key.ctrl && (input === "o" || input === "\x0f")) {
+        props.onOpenEditor?.();
         return;
       }
       if (key.ctrl || key.meta || key.escape || key.tab) return;

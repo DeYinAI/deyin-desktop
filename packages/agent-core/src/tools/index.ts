@@ -32,9 +32,10 @@ import { envInfoTool } from "./env-info.js";
 import { diffTextTool } from "./diff.js";
 import { processListTool } from "./process-list.js";
 import { diagnosticsTool } from "./diagnostics.js";
+import { repoMapTool } from "./repo-map.js";
 
 export { ToolRegistry } from "./registry.js";
-export { bashTool, effectiveShell } from "./bash.js";
+export { bashTool, effectiveShell, executeShellCommand, type ShellExecutionResult } from "./bash.js";
 export { readTool } from "./read.js";
 export { writeTool } from "./write.js";
 export { editTool, applyEdit, countOccurrences } from "./edit.js";
@@ -80,6 +81,7 @@ export { fileTreeTool } from "./tree.js";
 export { envInfoTool } from "./env-info.js";
 export { diffTextTool, lcsDiff } from "./diff.js";
 export { processListTool, redactArgs } from "./process-list.js";
+export { repoMapTool, extractSymbolsFromSource, formatRepoMap } from "./repo-map.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export { commitFileMutation, applyFileMutationDirect } from "./file-mutation.js";
 export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
@@ -133,6 +135,7 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   diffTextTool,
   processListTool,
   diagnosticsTool,
+  repoMapTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {
@@ -140,3 +143,6 @@ export function createBuiltinRegistry(): ToolRegistry {
   for (const tool of BUILTIN_TOOLS) registry.register(tool);
   return registry;
 }
+
+export { resolvePath, resolvePathInWorkspace } from "./util.js";
+

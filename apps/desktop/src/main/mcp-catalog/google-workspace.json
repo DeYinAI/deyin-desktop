@@ -1,0 +1,12 @@
+{
+  "id": "google-workspace",
+  "name": "Google Workspace",
+  "description": "Google Drive documents, Sheets specifications, and Gmail threads.",
+  "category": "devtools",
+  "vendor": "Google",
+  "transport": "http",
+  "auth": "oauth",
+  "url": "https://workspacemcp.googleapis.com/mcp/v1",
+  "docsUrl": "https://developers.google.com/workspace/guides/configure-mcp-servers",
+  "featured": false
+}

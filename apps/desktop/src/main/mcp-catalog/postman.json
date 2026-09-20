@@ -1,0 +1,22 @@
+{
+  "id": "postman",
+  "name": "Postman",
+  "description": "API collections, workspaces, environment specs, and mocking.",
+  "category": "devtools",
+  "vendor": "Postman",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.postman.com/mcp",
+  "headers": {
+    "Authorization": "Bearer ${env:POSTMAN_API_KEY}"
+  },
+  "secrets": [
+    {
+      "envKey": "POSTMAN_API_KEY",
+      "label": "Postman API key (or sign in with OAuth)",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://learning.postman.com/docs/reference/postman-api/postman-mcp-server/",
+  "featured": true
+}

@@ -5,9 +5,9 @@
  */
 import type { PluginDefinition } from "@deyin/extension-api";
 import { Tools } from "@deyin/tools";
-import { deleteTool, diagnosticsTool, diffTextTool, editTool, fileTreeTool, globTool, grepTool, lsTool, notebookEditTool, readTool, writeTool } from "@deyin/agent-core";
+import { deleteTool, diagnosticsTool, diffTextTool, editTool, fileTreeTool, globTool, grepTool, lsTool, notebookEditTool, readTool, repoMapTool, writeTool } from "@deyin/agent-core";
 
-export const FS_TOOLS = [readTool, writeTool, editTool, deleteTool, grepTool, globTool, lsTool, fileTreeTool, notebookEditTool, diffTextTool, diagnosticsTool];
+export const FS_TOOLS = [readTool, writeTool, editTool, deleteTool, grepTool, globTool, lsTool, fileTreeTool, notebookEditTool, diffTextTool, diagnosticsTool, repoMapTool];
 
 export const toolsFsPlugin: PluginDefinition = {
   name: "@deyin/plugin-tools-fs",

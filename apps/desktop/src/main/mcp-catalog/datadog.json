@@ -1,0 +1,28 @@
+{
+  "id": "datadog",
+  "name": "Datadog",
+  "description": "APM traces, metrics, infrastructure health, and monitors.",
+  "category": "monitoring",
+  "vendor": "Datadog",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.datadoghq.com/v1/mcp",
+  "headers": {
+    "DD_API_KEY": "${env:DATADOG_API_KEY}",
+    "DD_APPLICATION_KEY": "${env:DATADOG_APP_KEY}"
+  },
+  "secrets": [
+    {
+      "envKey": "DATADOG_API_KEY",
+      "label": "Datadog API key",
+      "required": false
+    },
+    {
+      "envKey": "DATADOG_APP_KEY",
+      "label": "Datadog application key",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://docs.datadoghq.com/mcp_server/",
+  "featured": true
+}

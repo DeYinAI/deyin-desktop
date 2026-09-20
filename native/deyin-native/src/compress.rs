@@ -274,7 +274,7 @@ pub fn compress_tool_output(content: &str, tool_name: &str, mode: Mode, preserve
     // We only omit duplicates if repeated at least twice (3+ identical consecutive lines)
     // or if neither line looks like JSON/code punctuation, preventing collapsing of single
     // repeated structural lines like closing braces or array items.
-    let deduped: Vec<String> = Vec::new();
+    let mut deduped: Vec<String> = Vec::new();
     let mut prev = String::new();
     let mut repeat = 0usize;
     for line in stripped {

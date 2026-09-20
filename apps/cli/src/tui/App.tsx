@@ -8,10 +8,12 @@ import {
   createBuiltinRegistry,
   createRoleRouter,
   estimateTokens,
+  executeShellCommand,
   getSessionJobsManager,
   loadContextFiles,
   applyGoalCommandText,
   matchCommand,
+  repoMapTool,
   resolveAgent,
   resolveAgents,
   runHooks,
@@ -41,6 +43,7 @@ import { runRemote } from "../remote.js";
 import { registerCliSubagentTool } from "../subagents.js";
 import { updateNotice } from "../version.js";
 import { Composer } from "./Composer.js";
+import { openInEditor } from "./editor.js";
 import { PermissionPrompt } from "./PermissionPrompt.js";
 import { QuestionPrompt } from "./QuestionPrompt.js";
 import { Picker, type PickerItem } from "./Picker.js";
@@ -53,6 +56,8 @@ const SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "/help", description: "Show available commands" },
   { name: "/model", description: "Switch model" },
   { name: "/agent", description: "Switch agent (build/plan/custom)" },
+  { name: "/editor", description: "Compose prompt in external $EDITOR (Ctrl+O)" },
+  { name: "/map", description: "Generate symbol repo-map (/map [query])" },
   { name: "/new", description: "Start a fresh session" },
   { name: "/sessions", description: "Browse and resume sessions" },
   { name: "/compact", description: "Summarize the conversation to free context" },
@@ -745,6 +750,27 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
     }
   }, [ctx, notice]);
 
+  const handleOpenEditor = useCallback((): void => {
+    if (running) {
+      notice("Wait for the current run to finish.", "warn");
+      return;
+    }
+    try {
+      const edited = openInEditor(input);
+      if (edited !== null && edited.trim().length > 0) {
+        setInput(edited.trimEnd());
+        notice("Prompt loaded from external editor.");
+      } else if (edited !== null) {
+        setInput("");
+        notice("Prompt cleared in external editor.");
+      } else {
+        notice("Editor closed without changes.");
+      }
+    } catch (err) {
+      notice(`Failed to launch editor: ${err instanceof Error ? err.message : String(err)}`, "error");
+    }
+  }, [input, notice, running]);
+
   const handleSlash = useCallback(
     (text: string): void => {
       const command = text.split(/\s+/)[0] ?? "";
@@ -752,6 +778,21 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         case "/help":
           notice(SLASH_COMMANDS.map((c) => `${c.name.padEnd(11)} ${c.description}`).join("\n"));
           break;
+        case "/editor":
+          handleOpenEditor();
+          break;
+        case "/map": {
+          const query = text.slice("/map".length).trim();
+          void (async () => {
+            try {
+              const result = await repoMapTool.execute({ query: query || undefined }, { cwd: ctx.cwd, todos: [] });
+              notice(result);
+            } catch (err) {
+              notice(`Could not generate repo map: ${err instanceof Error ? err.message : String(err)}`, "error");
+            }
+          })();
+          break;
+        }
         case "/exit":
         case "/quit":
           abortRef.current?.abort();
@@ -842,7 +883,78 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           notice(`Unknown command ${command}. Try /help.`, "warn");
       }
     },
-    [ctx.usage, doCompact, doLogin, exit, initial, notice, openPicker, pushItem],
+    [ctx.usage, doCompact, doLogin, exit, handleOpenEditor, initial, notice, openPicker, pushItem],
+  );
+
+  const runEscapeCommand = useCallback(
+    async (cmd: string): Promise<void> => {
+      if (running) {
+        notice("A run is already in progress (esc to cancel it first).", "warn");
+        return;
+      }
+      historyRef.current.push(`!${cmd}`);
+      pushItem({ kind: "user", id: nextId(), text: `! ${cmd}` });
+      setRunning(true);
+      setActiveTool({ name: "shell", summary: cmd });
+      const controller = new AbortController();
+      abortRef.current = controller;
+      try {
+        if (!shellRef.current) {
+          shellRef.current = await createCliShell(ctx.cwd);
+        }
+        const res = await executeShellCommand(cmd, ctx.cwd, {
+          shell: shellRef.current,
+          signal: controller.signal,
+        });
+        const status = res.exitCode === 0 ? "done" : "error";
+        pushItem({
+          kind: "tool",
+          id: nextId(),
+          name: "shell",
+          summary: cmd,
+          status,
+          preview: toolPreview(res.output, 20),
+        });
+
+        const userMsg: AgentMessage = {
+          role: "user",
+          content: `! ${cmd}\n\n\`\`\`\n${res.output || "(no output)"}\n\`\`\``,
+        };
+        if (!sessionIdRef.current) {
+          const agent = agentDef();
+          const meta = ctx.sessions.create({ cwd: ctx.cwd, model: `${ctx.config.providerId}::${model}`, agent: agent.name });
+          sessionIdRef.current = meta.id;
+          newSessionRef.current = false;
+          const system: AgentMessage = {
+            role: "system",
+            content: buildSystemPrompt({
+              cwd: ctx.cwd,
+              agent,
+              contextFiles: contextFilesRef.current,
+              skills: capsRef.current?.skills,
+            }),
+          };
+          messagesRef.current = [system, userMsg];
+          ctx.sessions.append(meta.id, system);
+          ctx.sessions.append(meta.id, userMsg);
+        } else {
+          messagesRef.current.push(userMsg);
+          ctx.sessions.append(sessionIdRef.current, userMsg);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) {
+          notice(`Shell command error: ${err instanceof Error ? err.message : String(err)}`, "error");
+        }
+      } finally {
+        if (controller.signal.aborted) {
+          notice("Command cancelled.");
+        }
+        setRunning(false);
+        setActiveTool(null);
+        abortRef.current = null;
+      }
+    },
+    [agentDef, ctx, model, notice, pushItem, running],
   );
 
   const handleSubmit = useCallback(
@@ -850,6 +962,15 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       const text = raw.trim();
       setInput("");
       if (!text) return;
+      if (text.startsWith("!")) {
+        const cmd = text.slice(1).trim();
+        if (!cmd) {
+          notice("Usage: !<command> — e.g. !git status", "warn");
+          return;
+        }
+        void runEscapeCommand(cmd);
+        return;
+      }
       if (text.startsWith("/")) {
         const invocation = matchCommand(text);
         if (invocation) {
@@ -882,7 +1003,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
       historyRef.current.push(text);
       void startRun(text);
     },
-    [handleSlash, notice, running, startRun],
+    [handleSlash, notice, runEscapeCommand, running, startRun],
   );
 
   // Global keys: esc cancels, double ctrl+c quits.
@@ -964,9 +1085,10 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         value={input}
         onChange={setInput}
         onSubmit={handleSubmit}
+        onOpenEditor={handleOpenEditor}
         active={!permission && !picker && !question}
         history={historyRef.current}
-        placeholder={running ? "running\u2026 esc to cancel" : 'Ask anything \u00b7 "/" for commands'}
+        placeholder={running ? "running\u2026 esc to cancel" : 'Ask anything \u00b7 "/" for commands \u00b7 "!" for shell \u00b7 Ctrl+O for editor'}
       />
 
       {updateLine ? <Text color="yellow">{updateLine}</Text> : null}

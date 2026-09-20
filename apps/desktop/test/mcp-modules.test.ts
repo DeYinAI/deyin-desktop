@@ -111,10 +111,33 @@ test("McpCatalogService rejects missing required secrets", () => {
 test("loadBundledCatalog returns all per-entry JSON files without oauthFallback", async () => {
   const { loadBundledCatalog } = await import("../src/main/mcp-catalog-loader.js");
   const entries = loadBundledCatalog();
-  assert.ok(entries.length >= 26);
+  assert.ok(entries.length >= 31);
   assert.ok(entries.some((e) => e.id === "stripe"));
   assert.ok(entries.some((e) => e.id === "playwright"));
+  assert.ok(entries.some((e) => e.id === "gitlab"));
+  assert.ok(entries.some((e) => e.id === "datadog"));
+  assert.ok(entries.some((e) => e.id === "postman"));
+  assert.ok(entries.some((e) => e.id === "google-workspace"));
+  assert.ok(entries.some((e) => e.id === "exa"));
   for (const entry of entries) {
     assert.equal("oauthFallback" in entry, false, `${entry.id} should not have oauthFallback`);
+    assert.ok(entry.id && entry.name && entry.description && entry.category && entry.transport && entry.auth);
+    assert.ok(["none", "token", "oauth", "token-or-oauth"].includes(entry.auth));
+    assert.ok(["stdio", "sse", "http"].includes(entry.transport));
+    if (entry.transport === "http" || entry.transport === "sse") {
+      assert.ok(entry.url && entry.url.startsWith("http"));
+    }
+    if (entry.headers) {
+      const secretKeys = new Set((entry.secrets ?? []).map((s) => s.envKey));
+      for (const [key, val] of Object.entries(entry.headers)) {
+        const matches = val.match(/\$\{env:([A-Za-z_][A-Za-z0-9_]*)\}/g);
+        if (matches) {
+          for (const match of matches) {
+            const envKey = match.slice(6, -1);
+            assert.ok(secretKeys.has(envKey), `${entry.id} header ${key} references undeclared secret ${envKey}`);
+          }
+        }
+      }
+    }
   }
 });

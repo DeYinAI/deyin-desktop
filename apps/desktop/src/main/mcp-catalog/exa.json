@@ -1,0 +1,22 @@
+{
+  "id": "exa",
+  "name": "Exa Search",
+  "description": "Neural web search and code documentation retrieval.",
+  "category": "devtools",
+  "vendor": "Exa",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://mcp.exa.ai/mcp",
+  "headers": {
+    "x-api-key": "${env:EXA_API_KEY}"
+  },
+  "secrets": [
+    {
+      "envKey": "EXA_API_KEY",
+      "label": "Exa API key (or sign in with OAuth)",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://exa.ai/docs/reference/exa-mcp",
+  "featured": true
+}
