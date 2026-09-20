@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { platform } from "node:os";
+import { dirname, join } from "node:path";
 import type {
   GitBlameLine,
   GitBranch,
@@ -36,32 +37,57 @@ export interface GitInvocation {
   cwd: string;
 }
 
+/** Locate git binary on Windows if not present in default PATH. */
+export function findGit(): string {
+  if (platform() !== "win32") return "git";
+  const candidates = [
+    process.env.ProgramFiles && join(process.env.ProgramFiles, "Git", "cmd", "git.exe"),
+    process.env["ProgramFiles(x86)"] && join(process.env["ProgramFiles(x86)"], "Git", "cmd", "git.exe"),
+    process.env.LOCALAPPDATA && join(process.env.LOCALAPPDATA, "Programs", "Git", "cmd", "git.exe"),
+    process.env.ProgramW6432 && join(process.env.ProgramW6432, "Git", "cmd", "git.exe"),
+  ];
+  for (const p of candidates) {
+    if (p && existsSync(p)) return p;
+  }
+  return "git";
+}
+
 /**
  * Build the argv + spawn cwd for a git command. A WSL2 UNC root runs as
  * `wsl.exe -d <distro> git -C <posix-path> …` launched from a real Windows dir
  * (CreateProcess rejects UNC/POSIX cwds); everything else runs `git -C <root>`.
  */
 export function gitInvocation(root: string, args: string[]): GitInvocation {
-  const distro = wslUncDistro(root);
+  const cleanRoot = root ? root.replace(/[\\/]+$/, "") || root : root;
+  const distro = wslUncDistro(cleanRoot);
   if (distro) {
     // wsl.exe is a Windows process launched from a safe Windows dir; git runs in
     // the distro at the POSIX form of the root.
-    return { cmd: "wsl.exe", argv: ["-d", distro, "git", "-C", toWslPath(root), ...args], cwd: windowsSpawnCwd(root) };
+    return { cmd: "wsl.exe", argv: ["-d", distro, "git", "-C", toWslPath(cleanRoot), ...args], cwd: windowsSpawnCwd(cleanRoot) };
   }
   // Native root (POSIX on Linux/mac, or a Windows drive path): git runs there directly.
-  return { cmd: "git", argv: ["-C", root, ...args], cwd: root };
+  return { cmd: findGit(), argv: ["-C", cleanRoot, ...args], cwd: cleanRoot };
 }
 
 /** Run a git command. Never rejects: spawn failures resolve to `{ ok: false, code: null }`. */
 export function runGit(root: string, args: string[], opts: { signal?: AbortSignal; stdin?: string } = {}): Promise<GitResult> {
-  const { cmd, argv, cwd } = gitInvocation(root, args);
+  const cleanRoot = root ? root.replace(/[\\/]+$/, "") || root : root;
+  const { cmd, argv, cwd } = gitInvocation(cleanRoot, args);
   return new Promise((resolve) => {
     let child;
     try {
       child = spawn(cmd, argv, {
         cwd,
-        // No locks on read ops, never page, never block on a credential prompt.
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" },
+        // No locks on read ops, never page, never block on a credential prompt, and allow safe directory.
+        env: {
+          ...process.env,
+          GIT_OPTIONAL_LOCKS: "0",
+          GIT_PAGER: "cat",
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "safe.directory",
+          GIT_CONFIG_VALUE_0: "*",
+        },
         windowsHide: true,
         signal: opts.signal,
       });
@@ -195,8 +221,26 @@ export function parseBranches(raw: string): GitBranch[] {
 /* Service operations --------------------------------------------------------- */
 
 async function isRepo(root: string): Promise<boolean> {
-  const r = await runGit(root, ["rev-parse", "--is-inside-work-tree"]);
-  return r.ok && r.stdout.trim() === "true";
+  if (!root) return false;
+  const cleanRoot = root.replace(/[\\/]+$/, "") || root;
+  const r = await runGit(cleanRoot, ["rev-parse", "--is-inside-work-tree"]);
+  if (r.ok && r.stdout.trim() === "true") return true;
+
+  // Fallback: check if .git directory or file (submodule/worktree) exists directly or in parent directories
+  try {
+    let cur = cleanRoot;
+    while (cur) {
+      if (existsSync(join(cur, ".git"))) {
+        return true;
+      }
+      const parent = dirname(cur);
+      if (!parent || parent === cur) break;
+      cur = parent;
+    }
+  } catch {
+    // ignore
+  }
+  return false;
 }
 
 async function status(root: string): Promise<GitStatus> {

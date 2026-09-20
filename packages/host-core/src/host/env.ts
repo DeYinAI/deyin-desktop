@@ -118,8 +118,14 @@ export async function detectEnv(): Promise<EnvInfo> {
     wsl2,
     wslDistros,
     shells,
-    // Prefer the WSL2 distro shell on Windows; otherwise the first (user) shell.
-    defaultShell: shells[0]?.id ?? "bash",
+    // On Windows default to PowerShell (preferring pwsh 7). Workspaces inside WSL2
+    // are dynamically assigned their distro shell via preferWslShellForCwd.
+    defaultShell:
+      os === "win32"
+        ? shells.some((s) => s.id === "pwsh")
+          ? "pwsh"
+          : "powershell"
+        : (shells[0]?.id ?? "bash"),
     hostname: hostname(),
   };
   // Remember when an empty Windows detection happened so it can be re-probed.

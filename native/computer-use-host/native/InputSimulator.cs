@@ -8,6 +8,18 @@ public sealed class InputSimulator
   private static extern bool SetForegroundWindow(IntPtr hWnd);
 
   [DllImport("user32.dll")]
+  private static extern IntPtr SetFocus(IntPtr hWnd);
+
+  [DllImport("user32.dll")]
+  private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+
+  [DllImport("kernel32.dll")]
+  private static extern uint GetCurrentThreadId();
+
+  [DllImport("user32.dll")]
+  private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+  [DllImport("user32.dll")]
   private static extern bool SetCursorPos(int x, int y);
 
   [DllImport("user32.dll")]
@@ -37,7 +49,9 @@ public sealed class InputSimulator
   {
     Focus(hwnd);
     SetCursorPos(point.X, point.Y);
+    Thread.Sleep(20);
     mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+    Thread.Sleep(30);
     mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, UIntPtr.Zero);
   }
 
@@ -139,18 +153,45 @@ public sealed class InputSimulator
 
   private static void Focus(IntPtr hwnd)
   {
-    SetForegroundWindow(hwnd);
-    Thread.Sleep(40);
+    if (hwnd == IntPtr.Zero) return;
+    try
+    {
+      var targetThread = GetWindowThreadProcessId(hwnd, IntPtr.Zero);
+      var currentThread = GetCurrentThreadId();
+      if (targetThread != currentThread && targetThread != 0)
+      {
+        AttachThreadInput(currentThread, targetThread, true);
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+        AttachThreadInput(currentThread, targetThread, false);
+      }
+      else
+      {
+        SetForegroundWindow(hwnd);
+        SetFocus(hwnd);
+      }
+    }
+    catch
+    {
+      SetForegroundWindow(hwnd);
+    }
+    Thread.Sleep(50);
   }
 
   private static void SendKey(char ch)
   {
-    var inputs = new[]
+    var down = new[]
     {
       new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wVk = 0, wScan = ch, dwFlags = 0x0004 } } },
+    };
+    SendInput(1, down, Marshal.SizeOf<INPUT>());
+    Thread.Sleep(5);
+    var up = new[]
+    {
       new INPUT { type = INPUT_KEYBOARD, U = new InputUnion { ki = new KEYBDINPUT { wVk = 0, wScan = ch, dwFlags = 0x0006 } } },
     };
-    SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
+    SendInput(1, up, Marshal.SizeOf<INPUT>());
+    Thread.Sleep(5);
   }
 
   private static void SendVirtualKey(ushort vk)

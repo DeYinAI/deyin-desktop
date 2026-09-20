@@ -385,8 +385,8 @@ async function errorMessage(res: Response): Promise<string> {
   return text.trim().length > 0 ? `${text.trim().slice(0, 300)} (HTTP ${res.status})` : `HTTP ${res.status}`;
 }
 
-const RETRYABLE_STATUSES = new Set([429, 503, 529]);
-const MAX_IMAGE_RETRIES = 3;
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504, 529]);
+const MAX_IMAGE_RETRIES = 4;
 
 async function fetchWithRetry(
   requestFn: () => Promise<Response>,
@@ -395,7 +395,29 @@ async function fetchWithRetry(
   let attempt = 0;
   while (true) {
     if (signal?.aborted) throw new Error("Operation aborted");
-    const res = await requestFn();
+    let res: Response;
+    try {
+      res = await requestFn();
+    } catch (err) {
+      if (signal?.aborted || attempt >= MAX_IMAGE_RETRIES) throw err;
+      attempt++;
+      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 800, 10000);
+      await new Promise<void>((resolve, reject) => {
+        let onAbort: (() => void) | undefined;
+        const timer = setTimeout(() => {
+          if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+          resolve();
+        }, delayMs);
+        if (signal) {
+          onAbort = () => {
+            clearTimeout(timer);
+            reject(new Error("Operation aborted"));
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
+      });
+      continue;
+    }
     if (!RETRYABLE_STATUSES.has(res.status) || attempt >= MAX_IMAGE_RETRIES) {
       return res;
     }
@@ -405,7 +427,7 @@ async function fetchWithRetry(
     const delayMs =
       !Number.isNaN(retryAfterSeconds) && retryAfterSeconds > 0
         ? Math.min(retryAfterSeconds * 1000, 10000)
-        : Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 500, 8000);
+        : Math.min(1000 * Math.pow(2, attempt - 1) + Math.random() * 800, 10000);
     await new Promise<void>((resolve, reject) => {
       let onAbort: (() => void) | undefined;
       const timer = setTimeout(() => {
@@ -548,17 +570,19 @@ async function generateImagesViaChat(opts: GenerateImagesOptions): Promise<Gener
   for (const image of opts.inputImages ?? []) {
     content.push({ type: "image_url", image_url: { url: `data:${image.mediaType};base64,${image.base64}` } });
   }
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
-    body: JSON.stringify({
-      model: opts.model,
-      messages: [{ role: "user", content }],
-      modalities: ["text", "image"],
-      ...(opts.extra ?? {}),
-    }),
-    signal: opts.signal ?? AbortSignal.timeout(180_000),
-  });
+  const postChat = () =>
+    fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${opts.token}`, "user-agent": deyinUserAgent() },
+      body: JSON.stringify({
+        model: opts.model,
+        messages: [{ role: "user", content }],
+        modalities: ["text", "image"],
+        ...(opts.extra ?? {}),
+      }),
+      signal: opts.signal ?? AbortSignal.timeout(180_000),
+    });
+  const res = await fetchWithRetry(postChat, opts.signal);
   if (!res.ok) throw new Error(`Image generation failed: ${await errorMessage(res)}`);
   const body = (await res.json().catch(() => null)) as
     | { choices?: { message?: { content?: unknown } }[] }

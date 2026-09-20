@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrowserWindow, app, session, webContents, type WebContents } from "electron";
@@ -142,15 +142,25 @@ export class BrowserControlService {
     (wc as WebContents & { on(event: "-run-dialog", listener: (info: RunDialogInfo, callback: (success: boolean, userInput: string) => void) => void): void }).on(
       "-run-dialog",
       (info: RunDialogInfo, callback: (success: boolean, userInput: string) => void) => {
-      const queue = this.dialogQueues.get(wc.id) ?? [];
-      queue.push({
-        dialogType: info.dialogType,
-        message: info.messageText,
-        defaultText: info.defaultPromptText ?? "",
-        respond: (accept, promptText) => callback(accept, promptText ?? ""),
-      });
-      this.dialogQueues.set(wc.id, queue);
-    });
+        const queue = this.dialogQueues.get(wc.id) ?? [];
+        let answered = false;
+        queue.push({
+          dialogType: info.dialogType,
+          message: info.messageText,
+          defaultText: info.defaultPromptText ?? "",
+          respond: (accept, promptText) => {
+            if (answered) return;
+            answered = true;
+            try {
+              callback(accept, promptText ?? "");
+            } catch {
+              // ignore duplicate invocation error
+            }
+          },
+        });
+        this.dialogQueues.set(wc.id, queue);
+      },
+    );
   }
 
   private attachWindowOpenHandler(wc: WebContents): void {
@@ -218,7 +228,15 @@ export class BrowserControlService {
     this.ensureBrowserPanel();
     const before = this.tabRegistry.size;
     this.broadcastTabCommand({ action: "open", url: normalizeUrl(url) });
-    await this.waitFor(() => this.tabRegistry.size > before || this.tabRegistry.size >= MAX_TABS, "open tab");
+    try {
+      await this.waitFor(() => this.tabRegistry.size > before || this.tabRegistry.size >= MAX_TABS, "open tab");
+    } catch (err) {
+      if (this.activeTabId && this.tabRegistry.has(this.activeTabId)) {
+        await this.navigate(url);
+        return;
+      }
+      throw err;
+    }
   }
 
   private async switchTabInRenderer(tabId: number): Promise<void> {
@@ -307,6 +325,24 @@ export class BrowserControlService {
       } catch (err) {
         return `ERROR: could not type: ${err instanceof Error ? err.message : String(err)}`;
       }
+      try {
+        await wc.executeJavaScript(
+          `(() => {
+            const el = document.activeElement;
+            if (el) {
+              try {
+                el.dispatchEvent(new InputEvent("input", { inputType: "insertText", data: ${JSON.stringify(text)}, bubbles: true, cancelable: true }));
+              } catch {
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+          })()`,
+          true,
+        );
+      } catch {
+        // Ignore synthetic event dispatch failure
+      }
       return `Typed ${JSON.stringify(text.length > 60 ? `${text.slice(0, 60)}…` : text)}${selector ? ` into ${selector}` : ""}`;
     });
   }
@@ -336,16 +372,50 @@ export class BrowserControlService {
   async scroll(deltaY: number): Promise<string> {
     return this.withBrowserTool(async () => {
       const wc = await this.target();
-      await wc.executeJavaScript(`window.scrollBy({ top: ${Number(deltaY) || 600}, behavior: "instant" }); "ok"`, true);
-      return `Scrolled by ${deltaY}px (now at ${(await wc.executeJavaScript("window.scrollY", true)) as number}px)`;
+      const amount = Number(deltaY) || 600;
+      let scrolledViaCdp = false;
+      try {
+        if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+        await wc.debugger.sendCommand("Input.dispatchMouseEvent", {
+          type: "mouseWheel",
+          x: 200,
+          y: 200,
+          deltaX: 0,
+          deltaY: amount,
+        });
+        scrolledViaCdp = true;
+      } catch {
+        // Fall back to DOM scroll
+      }
+      if (!scrolledViaCdp) {
+        await wc.executeJavaScript(
+          `(() => {
+            const target = document.scrollingElement || document.documentElement || document.body || window;
+            if (target.scrollBy) {
+              target.scrollBy({ top: ${amount}, behavior: "instant" });
+            } else {
+              window.scrollBy({ top: ${amount}, behavior: "instant" });
+            }
+          })()`,
+          true,
+        );
+      }
+      const currentY = (await wc.executeJavaScript("window.scrollY || document.documentElement.scrollTop || 0", true)) as number;
+      return `Scrolled by ${deltaY}px (now at ${currentY}px)`;
     });
   }
 
   async screenshot(threadId?: string): Promise<string> {
     return this.withBrowserTool(async () => {
       const wc = await this.target();
+      try {
+        await wc.executeJavaScript("new Promise((r) => requestAnimationFrame(() => setTimeout(r, 16)))", true);
+      } catch {
+        // ignore
+      }
       const image = await wc.capturePage();
-      const file = join(this.shotDir, `shot-${Date.now()}.png`);
+      const uniqueSuffix = randomUUID().slice(0, 8);
+      const file = join(this.shotDir, `shot-${Date.now()}-${uniqueSuffix}.png`);
       writeFileSync(file, image.toPNG());
       // Also land the shot in the thread image store: the inline-image
       // directive renders it directly in chat, sparing the agent a doomed
@@ -820,11 +890,23 @@ function dragScript(from: string, to: string): string {
   return `(() => {
     const a = document.querySelector(${JSON.stringify(from)});
     const b = document.querySelector(${JSON.stringify(to)});
-    if (!a || !b) return "ERROR: element not found";
-    const down = new MouseEvent("mousedown", { bubbles: true });
-    const up = new MouseEvent("mouseup", { bubbles: true });
-    a.dispatchEvent(down);
-    b.dispatchEvent(up);
+    if (!a) return "ERROR: source element not found: " + ${JSON.stringify(from)};
+    if (!b) return "ERROR: target element not found: " + ${JSON.stringify(to)};
+    const rectA = a.getBoundingClientRect();
+    const rectB = b.getBoundingClientRect();
+    const startX = rectA.left + rectA.width / 2;
+    const startY = rectA.top + rectA.height / 2;
+    const endX = rectB.left + rectB.width / 2;
+    const endY = rectB.top + rectB.height / 2;
+
+    const dt = new DataTransfer();
+    a.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, clientX: startX, clientY: startY }));
+    a.dispatchEvent(new DragEvent("dragstart", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: startX, clientY: startY }));
+    b.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: endX, clientY: endY }));
+    b.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: endX, clientY: endY }));
+    b.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: endX, clientY: endY }));
+    a.dispatchEvent(new DragEvent("dragend", { bubbles: true, cancelable: true, dataTransfer: dt, clientX: endX, clientY: endY }));
+    b.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, clientX: endX, clientY: endY }));
     return "Dragged " + ${JSON.stringify(from)} + " to " + ${JSON.stringify(to)};
   })()`;
 }

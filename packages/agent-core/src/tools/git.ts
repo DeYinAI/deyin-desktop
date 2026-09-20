@@ -1,4 +1,4 @@
-import { git, runGit, type GitStatus } from "@deyin/host-core";
+import { git, runGit, parseStatus, parseLog, parseBlame, type GitStatus } from "@deyin/host-core";
 import type { ToolDefinition } from "../types.js";
 import { asOptionalString, asString, truncate } from "./util.js";
 
@@ -33,7 +33,11 @@ export const gitStatusTool: ToolDefinition = {
     if (!(await git.isRepo(ctx.cwd))) {
       return "ERROR: Not a git repository (or any of the parent directories).";
     }
-    return renderStatus(await git.status(ctx.cwd));
+    const r = await runGit(ctx.cwd, ["status", "--porcelain=v2", "--branch", "-z"], { signal: ctx.signal });
+    if (!r.ok) {
+      return `ERROR: ${r.stderr.trim() || `git status failed with code ${r.code}`}`;
+    }
+    return renderStatus(parseStatus(r.stdout));
   },
 };
 
@@ -50,8 +54,18 @@ export const gitLogTool: ToolDefinition = {
   },
   summarize: (args) => `git log${args.path ? ` ${String(args.path)}` : ""}`,
   async execute(args, ctx): Promise<string> {
+    if (!(await git.isRepo(ctx.cwd))) {
+      return "ERROR: Not a git repository (or any of the parent directories).";
+    }
     const limit = typeof args.limit === "number" ? args.limit : 20;
-    const commits = await git.log(ctx.cwd, { limit, path: asOptionalString(args.path) });
+    const p = asOptionalString(args.path);
+    const gitArgs = ["log", `--format=%H%x1f%h%x1f%s%x1f%an%x1f%aI%x1f%D`, `--max-count=${limit}`];
+    if (p) gitArgs.push("--", p);
+    const r = await runGit(ctx.cwd, gitArgs, { signal: ctx.signal });
+    if (!r.ok) {
+      return `ERROR: ${r.stderr.trim() || `git log failed with code ${r.code}`}`;
+    }
+    const commits = parseLog(r.stdout);
     if (commits.length === 0) return "No commits.";
     return commits.map((c) => `${c.shortHash} ${c.date.slice(0, 10)} ${c.author}: ${c.subject}`).join("\n");
   },
@@ -78,6 +92,9 @@ export const gitDiffTool: ToolDefinition = {
     const path = asOptionalString(args.path);
     if (path) gitArgs.push("--", path);
     const r = await runGit(ctx.cwd, gitArgs, { signal: ctx.signal });
+    if (!r.ok) {
+      return `ERROR: ${r.stderr.trim() || `git diff failed with code ${r.code}`}`;
+    }
     return truncate(r.stdout.trim() || "(no changes)");
   },
 };
@@ -97,7 +114,11 @@ export const gitBlameTool: ToolDefinition = {
       return "ERROR: Not a git repository (or any of the parent directories).";
     }
     const path = asString(args.path, "path");
-    const lines = await git.blame(ctx.cwd, path);
+    const r = await runGit(ctx.cwd, ["blame", "--line-porcelain", path], { signal: ctx.signal });
+    if (!r.ok) {
+      return `ERROR: ${r.stderr.trim() || `git blame failed with code ${r.code}`}`;
+    }
+    const lines = parseBlame(r.stdout);
     if (lines.length === 0) return `No blame for ${path}.`;
     return truncate(lines.map((l) => `${l.hash.slice(0, 8)} ${l.author.padEnd(16).slice(0, 16)} ${l.line}: ${l.content}`).join("\n"));
   },

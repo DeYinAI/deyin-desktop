@@ -63,6 +63,37 @@ test("keeps parallel tool calls separated by index", () => {
   );
 });
 
+test("prevents tool name mangling when gateway repeats function name in every delta", () => {
+  const events = feed([
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, id: "c0", function: { name: "bash", arguments: '{"com' } }] } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "bash", arguments: 'mand":' } }] } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "bash", arguments: ' "ls"}' } }] } }] }),
+    data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    "data: [DONE]",
+  ]);
+  const done = events.at(-1);
+  if (done?.type !== "done") throw new Error("expected done");
+  assert.equal(done.toolCalls.length, 1);
+  assert.equal(done.toolCalls[0]!.name, "bash");
+  assert.equal(done.toolCalls[0]!.arguments, '{"command": "ls"}');
+});
+
+test("allocates distinct calls when parallel tool calls omit index but provide ids", () => {
+  const events = feed([
+    data({ choices: [{ delta: { tool_calls: [{ id: "c0", function: { name: "bash", arguments: '{"command":"echo 1"}' } }] } }] }),
+    data({ choices: [{ delta: { tool_calls: [{ id: "c1", function: { name: "bash", arguments: '{"command":"echo 2"}' } }] } }] }),
+    data({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    "data: [DONE]",
+  ]);
+  const done = events.at(-1);
+  if (done?.type !== "done") throw new Error("expected done");
+  assert.equal(done.toolCalls.length, 2);
+  assert.equal(done.toolCalls[0]!.id, "c0");
+  assert.equal(done.toolCalls[0]!.name, "bash");
+  assert.equal(done.toolCalls[1]!.id, "c1");
+  assert.equal(done.toolCalls[1]!.name, "bash");
+});
+
 test("captures reasoning deltas separately from content", () => {
   const events = feed([
     data({ choices: [{ delta: { reasoning_content: "hmm " } }] }),

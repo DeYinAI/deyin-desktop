@@ -1123,7 +1123,7 @@ export class DesktopAgentHost {
             ? {
                 write: async ({ threadId, file, html }) => {
                   const written = this.opts.pages!.writePage(threadId, file, html);
-                  const content = this.opts.pages!.readPage(threadId, written.title);
+                  const content = this.opts.pages!.readPage(threadId, file) ?? html;
                   return { fileName: written.title, filePath: written.file, html: content };
                 },
               }

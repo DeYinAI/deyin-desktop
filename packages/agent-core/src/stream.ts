@@ -426,15 +426,31 @@ export class StreamAccumulator {
   private collectToolCallFragments(fragments: WireDelta["tool_calls"]): void {
     for (const frag of fragments ?? []) {
       // Most providers set index; when absent, a fragment with an id starts a new call.
-      const index = frag.index ?? (frag.id ? this.nextImplicitIndex++ : Math.max(0, this.nextImplicitIndex - 1));
+      let index = frag.index ?? (frag.id ? this.nextImplicitIndex++ : Math.max(0, this.nextImplicitIndex - 1));
       let call = this.calls.get(index);
+      if (call && call.id && frag.id && call.id !== frag.id) {
+        do {
+          index = this.nextImplicitIndex++;
+        } while (this.calls.has(index));
+        call = undefined;
+      }
       if (!call) {
         call = { id: "", name: "", arguments: "" };
         this.calls.set(index, call);
         if (frag.index !== undefined) this.nextImplicitIndex = Math.max(this.nextImplicitIndex, index + 1);
       }
       if (frag.id) call.id = frag.id;
-      if (frag.function?.name) call.name += frag.function.name;
+      if (frag.function?.name) {
+        if (!call.name) {
+          call.name = frag.function.name;
+        } else if (call.name === frag.function.name) {
+          // Ignore repeated full name across delta chunks.
+        } else if (frag.function.name.startsWith(call.name)) {
+          call.name = frag.function.name;
+        } else if (!call.name.endsWith(frag.function.name)) {
+          call.name += frag.function.name;
+        }
+      }
       if (frag.function?.arguments) call.arguments += frag.function.arguments;
     }
   }

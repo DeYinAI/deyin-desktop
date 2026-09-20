@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -44,18 +44,25 @@ export class PageStore {
 
   private safeFilePath(threadId: string, fileName: string): string {
     const dir = this.threadDir(threadId);
-    if (fileName.includes("..") || fileName.includes("/") || fileName.includes("\\")) {
+    if (fileName.includes("..")) {
+      throw new Error("Invalid page file name: traversal not allowed.");
+    }
+    const normalized = fileName.replace(/\\/g, "/").replace(/^\/+/, "").trim();
+    if (!normalized || normalized.split("/").some((seg) => !seg || seg === "." || seg === "..")) {
       throw new Error("Invalid page file name.");
     }
-    const base = basename(fileName);
-    if (!base || base === "." || base === "..") throw new Error("Invalid page file name.");
-    const safe = base.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const file = safe.endsWith(".html") ? safe : `${safe}.html`;
-    const resolved = resolve(dir, file);
+    const segments = normalized.split("/").map((seg) => seg.replace(/[^a-zA-Z0-9._-]/g, "_"));
+    const lastIdx = segments.length - 1;
+    if (!segments[lastIdx]!.endsWith(".html")) {
+      segments[lastIdx] = `${segments[lastIdx]}.html`;
+    }
+    const relativeFile = segments.join(sep);
+    const resolved = resolve(dir, relativeFile);
     const root = resolve(dir);
     if (resolved !== root && !resolved.startsWith(root + sep)) {
       throw new Error("Page path escapes thread directory.");
     }
+    mkdirSync(dirname(resolved), { recursive: true });
     return resolved;
   }
 

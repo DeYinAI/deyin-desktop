@@ -165,6 +165,29 @@ test("block_until_ms=0 registers a background task and returns task_id", { skip:
   assert.ok(output.output.includes("bg-ok"));
 });
 
+test("block_until_ms=0 honors timeout_seconds and kills background process", { skip: !isPosix }, async () => {
+  const tasks = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
+  const toolCtx: ToolContext = {
+    ...ctx(),
+    registerBackgroundTask: (taskId, promise) => {
+      tasks.set(taskId, promise);
+    },
+  };
+  const result = await bashTool.execute({ command: "sleep 30", block_until_ms: 0, timeout_seconds: 1 }, toolCtx);
+  const taskId = result.match(/task_id: ([^\n]+)/)?.[1];
+  assert.ok(taskId);
+  const promise = tasks.get(taskId!);
+  assert.ok(promise);
+  const output = await Promise.race([
+    promise!,
+    sleep(5_000).then(() => {
+      throw new Error("background timeout failed to trigger within 5s");
+    }),
+  ]);
+  assert.ok(output.output.includes("timed out"), `expected timeout note, got: ${output.output}`);
+  assert.equal(output.exitCode, 124);
+});
+
 test("executeShellCommand runs one-shot command and returns output with exit code", async () => {
   const res = await executeShellCommand("echo 'deyin-shell-test'", process.cwd());
   assert.equal(res.exitCode, 0);

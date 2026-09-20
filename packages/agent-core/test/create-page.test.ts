@@ -39,6 +39,28 @@ test("create_page writes artifact and fires onPageCreated", async () => {
     assert.equal(page.title, "My Landing");
     assert.equal(page.fileName, "landing.html");
     assert.match(page.preview ?? "", /Welcome/);
+
+    // Test nested paths
+    const nestedRes = await createPageTool.execute(
+      {
+        title: "Sub Page",
+        html: "<main>Nested</main>",
+        file: "docs/pages/sub.html",
+      },
+      {
+        cwd: "/",
+        todos: [],
+        pageArtifact: {
+          write: async ({ threadId, file, html }) => {
+            const written = store.writePage(threadId, file, html);
+            const content = store.readPage(threadId, file);
+            return { fileName: written.title, filePath: written.file, html: content };
+          },
+        },
+        sessionMeta: { threadId: "t-99", mode: "agent", approvalMode: "ask-first", model: "test", cwd: "/" },
+      },
+    );
+    assert.match(nestedRes, /Preview panel/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

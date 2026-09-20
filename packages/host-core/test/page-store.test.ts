@@ -35,3 +35,16 @@ test("PageStore rejects path traversal", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("PageStore supports safe nested paths in thread directory", () => {
+  const root = mkdtempSync(join(tmpdir(), "deyin-page-nested-"));
+  try {
+    const store = new PageStore(root);
+    const { title } = store.writePage("thread-1", "docs/nested/page.html", "<main>Docs</main>");
+    assert.equal(title, "page.html");
+    const html = store.readPage("thread-1", "docs/nested/page.html");
+    assert.match(html!, /<main>Docs<\/main>/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

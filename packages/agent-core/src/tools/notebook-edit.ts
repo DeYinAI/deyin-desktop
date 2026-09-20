@@ -16,8 +16,18 @@ interface NotebookJson {
   nbformat_minor?: number;
 }
 
+function splitToNotebookLines(source: string): string[] {
+  if (!source) return [];
+  const lines = source.split("\n");
+  return lines.map((line, i) => (i < lines.length - 1 ? `${line}\n` : line));
+}
+
 function setCellSource(cell: NotebookCell, source: string): void {
-  cell.source = source;
+  if (Array.isArray(cell.source)) {
+    cell.source = splitToNotebookLines(source);
+  } else {
+    cell.source = source;
+  }
 }
 
 export const notebookEditTool: ToolDefinition = {
@@ -60,10 +70,11 @@ export const notebookEditTool: ToolDefinition = {
     if (!Array.isArray(notebook.cells)) notebook.cells = [];
 
     if (isNew) {
+      const preferArray = notebook.cells.some((c) => Array.isArray(c.source));
       const cell: NotebookCell = {
         cell_type: cellType,
-        source: newString,
-        metadata: cellType === "code" ? {} : {},
+        source: preferArray ? splitToNotebookLines(newString) : newString,
+        metadata: {},
       };
       notebook.cells.splice(cellIdx, 0, cell);
     } else if (cellIdx >= notebook.cells.length) {

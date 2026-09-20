@@ -99,11 +99,7 @@ public sealed class RpcHost
   {
     var windowId = parameters["windowId"]?.GetValue<string>() ?? "";
     var hwnd = _windows.ResolveHwnd(windowId);
-    if (hwnd == IntPtr.Zero && int.TryParse(windowId, out var pid))
-    {
-      hwnd = _windows.FindWindowForProcess(pid, string.Empty);
-    }
-    if (hwnd == IntPtr.Zero) throw new InvalidOperationException($"Window not found: {windowId}");
+    if (hwnd == IntPtr.Zero) throw new InvalidOperationException($"Window not found or closed: {windowId}");
     return hwnd;
   }
 
@@ -124,6 +120,7 @@ public sealed class RpcHost
     {
       var point = _uia.ResolveRef(hwnd, refId!);
       _input.Click(hwnd, point);
+      _uia.FocusRef(hwnd, refId!);
     }
     _input.TypeText(hwnd, text);
     return new { ok = true };

@@ -97,6 +97,11 @@ test("gitInvocation runs native roots in place", () => {
   assert.equal(inv.cwd, "/home/me/p");
 });
 
+test("gitInvocation sanitizes trailing slashes", () => {
+  const inv = gitInvocation("/home/me/p/", ["status"]);
+  assert.deepEqual(inv.argv, ["-C", "/home/me/p", "status"]);
+});
+
 test("parseLog splits commits and parents", () => {
   const raw =
     ["abc123def", "abc123d", "Fix the bug", "Ada", "ada@x.io", "2026-01-02T03:04:05+00:00", "p1 p2"].join("\x1f") +
