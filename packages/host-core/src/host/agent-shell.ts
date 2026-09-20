@@ -448,9 +448,17 @@ export class AgentShell {
       return;
     }
     // bash/sh: PS0 fires just before command execution; PS1 after with exit code.
-    term.write(
+    const bashBootstrap = [
+      'if [ -d "$HOME/.nvm/versions/node" ]; then',
+      '  _deyin_node="$(command ls -d "$HOME"/.nvm/versions/node/* 2>/dev/null | tail -n 1)/bin";',
+      '  [ -d "$_deyin_node" ] && export PATH="$_deyin_node:$PATH";',
+      '  unset _deyin_node;',
+      'fi;',
+      '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH";',
+      '[ -d "$HOME/bin" ] && export PATH="$HOME/bin:$PATH";',
       "PS0=$'\\033]6969;b\\007'; PS1=$'\\033]6969;e;${?}\\007deyin$ '; set +H; export PS0 PS1\n",
-    );
+    ].join(" ");
+    term.write(bashBootstrap);
   }
 
   private waitForPrompt(timeoutMs: number): Promise<number> {

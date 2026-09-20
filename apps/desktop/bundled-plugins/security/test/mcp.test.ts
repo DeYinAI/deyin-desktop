@@ -146,3 +146,56 @@ test("security_scan_repo maps WSL POSIX path onto the workspace", async () => {
  rmSync(workspaceDir, { recursive: true, force: true });
  }
 });
+
+test("security_scan_repo ignores build directories (dist, out)", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "deyin-sec-ignore-"));
+  try {
+    mkdirSync(join(workspace, "dist"), { recursive: true });
+    mkdirSync(join(workspace, "src"), { recursive: true });
+    writeFileSync(join(workspace, "dist", "bundle.js"), 'const api_key = "dist-secret-key-12345";\n', "utf8");
+    writeFileSync(join(workspace, "src", "index.js"), 'console.log("clean");\n', "utf8");
+
+    const result = (await rpc({ DEYIN_WORKSPACE: workspace }, "tools/call", {
+      name: "security_scan_repo",
+      arguments: { root: workspace },
+    }, 5)) as { content: { text: string }[] };
+    const report = JSON.parse(result.content[0]!.text) as {
+      findings: { location?: { file?: string } }[];
+    };
+    // Finding in dist/ must not be reported because dist is ignored
+    assert.ok(!report.findings.some((f) => f.location?.file?.includes("dist")));
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("security scanner distinguishes SQL concatenation from DOM selector strings", async () => {
+  const workspace = mkdtempSync(join(tmpdir(), "deyin-sec-sql-"));
+  try {
+    // DOM selector pattern that previously caused false positive sql-concat
+    const domCode = 'parts.push("- [" + ref + "] selector: " + selectorFor(el));\n';
+    const domDiff = `+${domCode}`;
+    const domResult = (await rpc({ DEYIN_WORKSPACE: workspace }, "tools/call", {
+      name: "security_scan_diff",
+      arguments: { diff: domDiff },
+    }, 6)) as { content: { text: string }[] };
+    const domReport = JSON.parse(domResult.content[0]!.text) as {
+      findings: { ruleId: string }[];
+    };
+    assert.ok(!domReport.findings.some((f) => f.ruleId === "sql-concat"), "DOM selector should not trigger sql-concat");
+
+    // Real SQL concatenation should trigger sql-concat
+    const sqlCode = 'const q = "SELECT * FROM users WHERE id = " + userId;\n';
+    const sqlDiff = `+${sqlCode}`;
+    const sqlResult = (await rpc({ DEYIN_WORKSPACE: workspace }, "tools/call", {
+      name: "security_scan_diff",
+      arguments: { diff: sqlDiff },
+    }, 7)) as { content: { text: string }[] };
+    const sqlReport = JSON.parse(sqlResult.content[0]!.text) as {
+      findings: { ruleId: string }[];
+    };
+    assert.ok(sqlReport.findings.some((f) => f.ruleId === "sql-concat"), "Real SQL concatenation must trigger sql-concat");
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});

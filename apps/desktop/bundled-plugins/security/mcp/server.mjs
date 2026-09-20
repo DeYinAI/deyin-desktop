@@ -17,8 +17,21 @@ const SENSITIVE_PATTERNS = [
   { id: "hardcoded-secret", re: /(api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}['"]/gi, severity: "high" },
   { id: "eval-usage", re: /\beval\s*\(/g, severity: "medium" },
   { id: "innerhtml", re: /\.innerHTML\s*=/g, severity: "medium" },
-  { id: "sql-concat", re: /(SELECT|INSERT|UPDATE|DELETE)[\s\S]{0,80}\+\s*/gi, severity: "high" },
+  { id: "sql-concat", re: /\b(SELECT|INSERT|UPDATE|DELETE)\b\s+[\s\S]{0,80}\+\s*/gi, severity: "high" },
 ];
+
+const IGNORED_DIR_NAMES = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "out",
+  "build",
+  ".next",
+  ".turbo",
+  "coverage",
+  ".cache",
+  ".output",
+]);
 
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 
@@ -131,7 +144,7 @@ function walk(dir, exts, max = 500) {
       continue;
     }
     for (const e of entries) {
-      if (e.name === "node_modules" || e.name === ".git") continue;
+      if (IGNORED_DIR_NAMES.has(e.name)) continue;
       const p = join(cur, e.name);
       if (e.isDirectory()) {
         stack.push(p);

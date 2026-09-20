@@ -49,12 +49,33 @@ function findOnPath(exe: string): string | null {
 let cachedPowerShell: string | undefined;
 
 /**
+ * Shell bootstrap that ensures Node from NVM and user binaries are in PATH
+ * for non-login bash invocations (WSL and POSIX), avoiding stale system Node shims.
+ */
+const BASH_NVM_BOOTSTRAP =
+  'if [ -d "$HOME/.nvm/versions/node" ]; then ' +
+  '_deyin_node="$(command ls -d "$HOME"/.nvm/versions/node/* 2>/dev/null | tail -n 1)/bin"; ' +
+  '[ -d "$_deyin_node" ] && export PATH="$_deyin_node:$PATH"; ' +
+  'unset _deyin_node; ' +
+  'fi; ' +
+  '[ -d "$HOME/.local/bin" ] && export PATH="$HOME/.local/bin:$PATH"; ' +
+  '[ -d "$HOME/bin" ] && export PATH="$HOME/bin:$PATH";';
+
+/**
  * The Windows shell for agent commands: PowerShell 7 (`pwsh.exe`) when it is on
  * PATH — it supports `&&`/`||` and modern piping — otherwise Windows PowerShell
  * (`powershell.exe`, always present). Resolved once and cached.
  */
 function windowsPowerShell(): string {
-  if (cachedPowerShell === undefined) cachedPowerShell = findOnPath("pwsh.exe") ?? "powershell.exe";
+  if (cachedPowerShell === undefined) {
+    const pwsh = findOnPath("pwsh.exe");
+    if (pwsh) {
+      cachedPowerShell = pwsh;
+    } else {
+      const powershell = findOnPath("powershell.exe");
+      cachedPowerShell = powershell ?? (platform() === "win32" ? "powershell.exe" : "bash");
+    }
+  }
   return cachedPowerShell;
 }
 
@@ -194,7 +215,7 @@ function shellFor(command: string, cwd: string): ShellInvocation {
     // integrated terminal; a native Windows path runs in PowerShell.
     const wsl = parseWslPath(cwd);
     if (wsl) {
-      const script = `cd ${shQuote(wsl.linuxPath)} && ${command}`;
+      const script = `${BASH_NVM_BOOTSTRAP} cd ${shQuote(wsl.linuxPath)} && ${command}`;
       return {
         file: "wsl.exe",
         args: ["-d", wsl.distro, "bash", "-c", script],
@@ -215,7 +236,8 @@ function shellFor(command: string, cwd: string): ShellInvocation {
   // Always POSIX sh/bash for tool commands: the user's login shell may be fish/nushell
   // whose syntax differs from what models emit.
   const bash = existsSync("/bin/bash") ? "/bin/bash" : "/bin/sh";
-  return { file: bash, args: ["-c", command], spawnCwd: cwd, env: extraEnv };
+  const script = `${BASH_NVM_BOOTSTRAP} ${command}`;
+  return { file: bash, args: ["-c", script], spawnCwd: cwd, env: extraEnv };
 }
 
 export interface ShellExecutionResult {
@@ -239,7 +261,8 @@ export async function executeShellCommand(
       let cmdToRun = command;
       const venv = resolveVirtualEnv(cwd);
       if (venv && !command.includes("VIRTUAL_ENV") && !command.includes("activate")) {
-        if (platform() === "win32") {
+        const isPwsh = platform() === "win32" && !parseWslPath(cwd);
+        if (isPwsh) {
           cmdToRun = `$env:VIRTUAL_ENV="${venv.rootDir}"; $env:PATH="${venv.binDir};$env:PATH"; ${command}`;
         } else {
           cmdToRun = `export VIRTUAL_ENV="${venv.rootDir}" PATH="${venv.binDir}:$PATH"; ${command}`;

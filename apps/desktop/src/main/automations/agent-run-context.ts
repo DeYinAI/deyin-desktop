@@ -151,7 +151,9 @@ export async function buildAutomationSystemPrompt(
       ...agent,
       prompt:
         agent.prompt +
-        " You are running as an unattended automation in Deyin. Complete the task without asking the user questions.",
+        " You are running as an unattended automation in Deyin. Complete the task without asking the user questions." +
+        " Always verify file creations and modifications on disk using read or ls before concluding." +
+        " Never report in your final text that a file was created or modified unless the corresponding tool call succeeded and disk verification was completed.",
     },
     contextFiles,
     skills: caps.skills.length > 0 ? caps.skills : undefined,
