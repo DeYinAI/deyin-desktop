@@ -3,7 +3,41 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.25`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.26`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.26 — 2026-09-20
+
+### Highlights
+
+- **Git Tools & Subagent Error Reporting:** Added Windows Git auto-discovery (`C:\Program Files\Git\cmd\git.exe`,
+  `LOCALAPPDATA`, etc.), stripped trailing slashes to prevent `CreateProcess` argument escaping bugs, configured
+  `safe.directory=*` to allow cross-boundary repository access, added parent-directory `.git` discovery fallback
+  in `isRepo()`, and enhanced error diagnostics across all Git tools (`git_status`, `git_log`, `git_diff`, `git_blame`,
+  `enter_worktree`, `exit_worktree`) replacing misleading `"No commits."` with clear error messages.
+- **Unified Shell Execution & Background Process Termination:** Aligned Windows shell execution so both foreground
+  `AgentShell` and background commands consistently target PowerShell (preferring PowerShell 7 `pwsh`) for native
+  Windows workspaces, dynamically routing to WSL2 bash only for `\\wsl$` UNC paths. Emitted explicit start markers
+  (`\033]6969;b\007`) in bash PTY sessions to eliminate dropped stdout in non-interactive environments. Enforced
+  background command timeouts with tree-wide process killing (`taskkill /PID /T /F` on Windows, `SIGKILL` on POSIX)
+  and drained stdio buffers on exit.
+- **Hardened Computer-Use Window Routing & Automation:** Eliminated unsafe HWND-to-PID and top-window fallbacks
+  that previously risked misdirected interactions on background windows (e.g., Notepad). Scoped UI Automation
+  element references strictly per window handle to prevent cross-window coordinate clicks, added UIPI thread input
+  attachment for reliable keyboard focus on WinUI3/XAML controls, introduced click down/up delays, and enabled
+  instant window discovery for already running apps in `launch_app`.
+- **Reliable Browser Automation & IPC Synchronization:** Guarded dialog callbacks against duplicate invocations,
+  generated unique UUID-based screenshot paths with pre-capture paint synchronization via `requestAnimationFrame`,
+  wired renderer IPC to `onTabCommand` with direct navigation fallback, implemented full HTML5 drag-and-drop event
+  sequences with `DataTransfer`, and dispatched synthetic `InputEvent` and `change` events on `browser_type`.
+- **Parallel Stream Tool-Call Demultiplexing:** Prevented tool name mangling (`bashbashbash`) caused by gateway
+  function name repetition across streamed deltas, and allocated distinct call indices for parallel tool calls
+  omitting explicit indices.
+- **Resilient Image Generation:** Added automatic retry with exponential backoff, jitter, and network error recovery
+  for HTTP 529 (overloaded) and 502/503/504 responses in chat-based image generation.
+- **Expanded Subagent Toolsets:** Equipped `ci-investigator`, `bugbot`, `security-review`, `explorer`, and `reviewer`
+  with read-tier tools (`codebase_search`, `git_blame`, `ls`, `web_fetch`, `websearch`, `todo_write`, `todo_read`).
+- **Jupyter Notebook Formatting & Artifact Nesting:** Preserved standard newline-delimited array lines in `.ipynb`
+  files during `notebook_edit`, and added safe nested path support for one-page website creation in `create_page`.
 
 ## 1.0.25 — 2026-09-20
 
