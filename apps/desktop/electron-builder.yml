@@ -77,9 +77,9 @@ linux:
     entry:
       MimeType: x-scheme-handler/deyin;
 nsis:
-  oneClick: false
+  oneClick: true
   perMachine: false
-  allowToChangeInstallationDirectory: true
+  allowToChangeInstallationDirectory: false
 # electron-updater reads this at runtime from the embedded app-update.yml, so
 # it must point at a PUBLIC repo: the client fetches releases anonymously.
 # Installers and update manifests are published to DeYinAI/deyin-releases (see
