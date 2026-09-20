@@ -10,6 +10,12 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    "version": "1.0.27",
+    "date": "2026-09-20",
+    "title": "v1.0.27 (2026-09-20)",
+    "content": "### Highlights\n\n- **Files Tab Tree Navigation & Selection Fix:** Resolved a React effect loop in `FilesTab` where opening a file\n  link from chat left a stale open request in props that re-triggered on subsequent component re-renders. Tree clicks\n  and file selection are now sequence-deduplicated via `lastHandledSeqRef` and no longer clobbered.\n- **Automated WSL2 NVM & Toolchain Bootstrap:** Embedded an automatic NVM Node version detection and PATH prepend\n  in PTY bash sessions (`AgentShell`) and background commands (`shellFor`). Eliminates the failure mode where Ubuntu's\n  outdated system Node (v12.22.9) executes Windows npm/pnpm shims (`/mnt/c/.../npm/pnpm`) and crashes with\n  `SyntaxError: Unexpected token '.'`.\n- **Cross-Platform Virtual Environment Compatibility:** Fixed Python virtual environment shell command injection in\n  `packages/agent-core` to check for active bash/WSL targets, generating standard POSIX `export` statements rather\n  than Windows PowerShell `$env:...` syntax in Linux/WSL environments.\n- **Security Scanner Optimization & Noise Reduction:** Filtered out build, bundle, and cache directories (`dist/`,\n  `out/`, `build/`, `.next/`, `.turbo/`, `coverage/`, `.cache/`, `.output/`) in `security_scan_repo`, preventing\n  scanners from exhausting file budgets on generated bundles. Constrained `sql-concat` regex rules with word\n  boundaries and whitespace to prevent false-positive alerts on DOM selector concatenations (`selector: \" + selectorFor(el)`).\n- **Actionable Browser Diagnostics on Refused Connections:** Added proactive interception for `ERR_CONNECTION_REFUSED`\n  errors (`-102`) in `browser_navigate` for localhost and loopback targets, providing clear guidance to ensure the dev\n  server is running before attempting browser navigation.\n- **Unattended Automation Verification & Event Forwarding:** Reinforced the automation system prompt to mandate\n  on-disk verification before claiming file operations succeeded, eliminating phantom file creation reports. Added\n  `file-change` and `tool-end` event forwarding for automation subagents."
+  },
+  {
     "version": "1.0.26",
     "date": "2026-09-20",
     "title": "v1.0.26 (2026-09-20)",
