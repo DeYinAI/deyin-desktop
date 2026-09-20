@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bashTool, parseWslPath } from "../src/tools/bash.js";
+import { bashTool, executeShellCommand, parseWslPath } from "../src/tools/bash.js";
 import { resolvePath, resolvePathInWorkspace } from "../src/tools/util.js";
 import type { ToolContext } from "../src/types.js";
 
@@ -161,3 +161,20 @@ test("block_until_ms=0 registers a background task and returns task_id", { skip:
   ]);
   assert.ok(output.output.includes("bg-ok"));
 });
+
+test("executeShellCommand runs one-shot command and returns output with exit code", async () => {
+  const res = await executeShellCommand("echo 'deyin-shell-test'", process.cwd());
+  assert.equal(res.exitCode, 0);
+  assert.ok(res.output.includes("deyin-shell-test"));
+
+  const failRes = await executeShellCommand("exit 42", process.cwd());
+  assert.equal(failRes.exitCode, 42);
+
+  const chunks: string[] = [];
+  const streamRes = await executeShellCommand("echo 'stream-chunk'", process.cwd(), {
+    onData: (delta) => chunks.push(delta),
+  });
+  assert.equal(streamRes.exitCode, 0);
+  assert.ok(chunks.join("").includes("stream-chunk"));
+});
+

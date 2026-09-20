@@ -21,6 +21,7 @@ import { VERSION } from "./version.js";
 import { serveCli } from "./server.js";
 import { runAcp } from "./acp.js";
 import { runRemote } from "./remote.js";
+import { benchCommand } from "./commands/bench.js";
 
 // One User-Agent identity for every outbound CLI request (providers, GitHub, search).
 initUserAgent("cli", VERSION);
@@ -203,6 +204,7 @@ const SUBCOMMAND_NAMES = new Set([
   "upgrade",
   "serve",
   "acp",
+  "bench",
   "subagent",
   "memory",
   "capabilities",
@@ -905,6 +907,7 @@ const main = defineCommand({
         process.exitCode = await runAcp(ctx);
       },
     }),
+    bench: benchCommand,
   },
   async run({ args, rawArgs }) {
     // citty invokes the parent run() after a subcommand too; mirror its dispatch

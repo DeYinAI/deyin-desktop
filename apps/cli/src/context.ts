@@ -63,9 +63,9 @@ function flushOnExit(storage: FileStorage): void {
   });
 }
 
-export function createContext(opts: { cwd?: string; overrides?: Partial<DeyinCliConfigFile> } = {}): CliContext {
+export function createContext(opts: { cwd?: string; dataDir?: string; overrides?: Partial<DeyinCliConfigFile> } = {}): CliContext {
   const cwd = resolve(opts.cwd ?? process.cwd());
-  const dataDir = defaultDataDir();
+  const dataDir = opts.dataDir ? resolve(opts.dataDir) : defaultDataDir();
   const config = loadCliConfig({ cwd, globalDir: dataDir, overrides: opts.overrides });
   const storage = new FileStorage(dataDir);
   flushOnExit(storage);

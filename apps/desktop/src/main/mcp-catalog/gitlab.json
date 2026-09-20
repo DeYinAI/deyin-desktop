@@ -1,0 +1,22 @@
+{
+  "id": "gitlab",
+  "name": "GitLab",
+  "description": "Repositories, merge requests, CI/CD pipelines, and issues.",
+  "category": "devtools",
+  "vendor": "GitLab",
+  "transport": "http",
+  "auth": "token-or-oauth",
+  "url": "https://gitlab.com/api/v4/mcp",
+  "headers": {
+    "Authorization": "Bearer ${env:GITLAB_PERSONAL_ACCESS_TOKEN}"
+  },
+  "secrets": [
+    {
+      "envKey": "GITLAB_PERSONAL_ACCESS_TOKEN",
+      "label": "GitLab personal access token (or sign in with OAuth)",
+      "required": false
+    }
+  ],
+  "docsUrl": "https://docs.gitlab.com/user/model_context_protocol/mcp_server/",
+  "featured": true
+}

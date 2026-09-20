@@ -19,6 +19,7 @@ import {
   type AgentEvent,
   type AgentImage,
   type AgentMessage,
+  type AgentRunResult,
   type McpConnection,
 } from "@deyin/agent-core";
 import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
@@ -54,6 +55,8 @@ export interface HeadlessOptions {
   stdout?: NodeJS.WritableStream;
   stderr?: NodeJS.WritableStream;
   getToken?: () => Promise<string | null>;
+  /** Callback with the agent run result upon completion. */
+  onResult?: (result: AgentRunResult) => void;
 }
 
 export const EXIT_OK = 0;
@@ -419,6 +422,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       }),
       imageOutput: selectedModel?.imageOutput === true,
     });
+
+    opts.onResult?.(result);
 
     await Promise.all(checkpointWrites);
 

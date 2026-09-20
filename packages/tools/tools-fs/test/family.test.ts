@@ -15,6 +15,6 @@ test("@deyin/plugin-tools-fs registers its family into the catalog", async () =>
   ]);
   assert.deepEqual(
     [...kernel.get(Tools).names()].sort(),
-    ["read","write","edit","delete","grep","glob","ls","file_tree","diff_text","notebook_edit","diagnostics"].sort(),
+    ["read","write","edit","delete","grep","glob","ls","file_tree","diff_text","notebook_edit","diagnostics","repo_map"].sort(),
   );
 });

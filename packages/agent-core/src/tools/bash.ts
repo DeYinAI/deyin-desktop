@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
 import { join } from "node:path";
-import type { ToolContext, ToolDefinition } from "../types.js";
+import type { ToolContext, ToolDefinition, ToolShell } from "../types.js";
 import { asOptionalNumber, asOptionalString, asString, resolvePath, truncate } from "./util.js";
 
 const DEFAULT_TIMEOUT_S = 120;
@@ -174,7 +174,48 @@ function shellFor(command: string, cwd: string): ShellInvocation {
   return { file: bash, args: ["-c", command], spawnCwd: cwd };
 }
 
-async function runCommand(command: string, cwd: string, timeoutS: number, signal?: AbortSignal): Promise<string> {
+export interface ShellExecutionResult {
+  output: string;
+  exitCode: number | null;
+}
+
+export async function executeShellCommand(
+  command: string,
+  cwd: string,
+  options?: {
+    timeoutS?: number;
+    signal?: AbortSignal;
+    shell?: ToolShell;
+    onData?: (delta: string) => void;
+  },
+): Promise<ShellExecutionResult> {
+  const timeoutS = Math.min(options?.timeoutS ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
+  if (options?.shell) {
+    try {
+      const result = await options.shell.run(command, {
+        cwd,
+        timeoutS,
+        signal: options.signal,
+        onData: options.onData,
+      });
+      return { output: truncate(result.output), exitCode: result.exitCode };
+    } catch (err) {
+      if (!isShellUnavailable(err)) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { output: `ERROR: shell command failed: ${msg}`, exitCode: 1 };
+      }
+    }
+  }
+  return runCommandDetailed(command, cwd, timeoutS, options?.signal, options?.onData);
+}
+
+async function runCommandDetailed(
+  command: string,
+  cwd: string,
+  timeoutS: number,
+  signal?: AbortSignal,
+  onData?: (delta: string) => void,
+): Promise<ShellExecutionResult> {
   const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
   return new Promise((resolvePromise) => {
@@ -217,10 +258,21 @@ async function runCommand(command: string, cwd: string, timeoutS: number, signal
     if (signal?.aborted) onAbort();
     else signal?.addEventListener("abort", onAbort, { once: true });
 
-    child.stdout.on("data", (d: Buffer) => (stdout += d.toString("utf8")));
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString("utf8")));
+    child.stdout.on("data", (d: Buffer) => {
+      const text = d.toString("utf8");
+      stdout += text;
+      onData?.(text);
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      const text = d.toString("utf8");
+      stderr += text;
+      onData?.(text);
+    });
 
+    let resolved = false;
     const finalize = (exitCode: number | null, err?: Error) => {
+      if (resolved) return;
+      resolved = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       let out = truncate(stdout);
@@ -229,7 +281,7 @@ async function runCommand(command: string, cwd: string, timeoutS: number, signal
       else if (cancelled) out += "\n(command cancelled by the user)";
       else if (err) out += `\n(spawn error: ${err.message})`;
       else if (exitCode !== null && exitCode !== 0) out += `\n(exit code ${exitCode})`;
-      resolvePromise(out || "(no output)");
+      resolvePromise({ output: out || "(no output)", exitCode: exitCode ?? (err || timedOut || cancelled ? 1 : 0) });
     };
 
     child.on("error", (err) => finalize(null, err));
@@ -305,30 +357,13 @@ export const bashTool: ToolDefinition = {
 
     const timeoutS = Math.min(asOptionalNumber(args.timeout_seconds) ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
 
-    if (ctx.shell) {
-      try {
-        const result = await ctx.shell.run(command, {
-          cwd,
-          timeoutS,
-          signal: ctx.signal,
-          onData: ctx.onOutput,
-        });
-        return truncate(result.output);
-      } catch (err) {
-        // Only fall through to one-shot spawn when the PTY itself cannot be
-        // created (no node-pty, no bash on POSIX). A mid-run failure (timeout,
-        // cancel, write to a dead PTY) must NOT re-exec the command — that
-        // would double side effects. Surface it as an error result instead.
-        if (isShellUnavailable(err)) {
-          // Fall through to spawn below.
-        } else {
-          const msg = err instanceof Error ? err.message : String(err);
-          return `ERROR: shell command failed: ${msg}`;
-        }
-      }
-    }
-
-    return runCommand(command, cwd, timeoutS, ctx.signal);
+    const result = await executeShellCommand(command, cwd, {
+      timeoutS,
+      signal: ctx.signal,
+      shell: ctx.shell,
+      onData: ctx.onOutput,
+    });
+    return result.output;
   },
 };
 
