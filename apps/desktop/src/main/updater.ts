@@ -6,6 +6,7 @@ import type { UpdatesState } from "@deyin/contract";
 export interface UpdateController {
   getState(): UpdatesState;
   check(opts?: { userInitiated?: boolean }): Promise<UpdatesState>;
+  checkThrottled(minIntervalMs?: number): Promise<UpdatesState>;
   download(): Promise<UpdatesState>;
   install(): void;
 }
@@ -37,6 +38,7 @@ export function createUpdateController(opts: {
     return {
       getState: () => state,
       check: async () => state,
+      checkThrottled: async () => state,
       download: async () => state,
       install: () => undefined,
     };
@@ -82,14 +84,30 @@ export function createUpdateController(opts: {
     userInitiatedCheck = false;
   });
 
+  let lastCheckTime = 0;
+  let inFlightCheck: Promise<UpdatesState> | null = null;
+
   const check = async (opts?: { userInitiated?: boolean }): Promise<UpdatesState> => {
+    if (inFlightCheck) return inFlightCheck;
     userInitiatedCheck = opts?.userInitiated ?? false;
-    try {
-      await autoUpdater.checkForUpdates();
-    } catch {
-      /* surfaced via the error event */
-    }
-    return state;
+    lastCheckTime = Date.now();
+    inFlightCheck = (async () => {
+      try {
+        await autoUpdater.checkForUpdates();
+      } catch {
+        /* surfaced via the error event */
+      } finally {
+        inFlightCheck = null;
+      }
+      return state;
+    })();
+    return inFlightCheck;
+  };
+
+  const checkThrottled = async (minIntervalMs = 15 * 60 * 1000): Promise<UpdatesState> => {
+    if (inFlightCheck) return inFlightCheck;
+    if (Date.now() - lastCheckTime < minIntervalMs) return state;
+    return check({ userInitiated: false });
   };
 
   const download = async (): Promise<UpdatesState> => {
@@ -106,9 +124,14 @@ export function createUpdateController(opts: {
   return {
     getState: () => state,
     check,
+    checkThrottled,
     download,
     install: () => {
-      if (state.status === "downloaded") autoUpdater.quitAndInstall();
+      if (state.status === "downloaded") {
+        // isSilent: true (runs installer with /S in background, no windows)
+        // isForceRunAfter: true (automatically relaunches Deyin after update)
+        autoUpdater.quitAndInstall(true, true);
+      }
     },
   };
 }

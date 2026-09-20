@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { BrowserWindow, app, dialog, ipcMain, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { BrowserWindow, app, dialog, ipcMain, powerMonitor, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import {
   AccountCache,
   AgentsStore,
@@ -199,8 +199,22 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   // download stays gated by settings.autoUpdate / explicit Download click.
   // Deferred past first paint so the network round-trip never blocks startup.
   setTimeout(() => void updates.check(), 10_000);
-  // Re-check every 24h for long-running sessions.
-  setInterval(() => void updates.check(), 24 * 60 * 60 * 1000);
+
+  // Smart event-driven update checks (like Cursor / VS Code):
+  // 1. Periodic background poll: every 30 minutes (down from 24h).
+  setInterval(() => void updates.checkThrottled(25 * 60 * 1000), 30 * 60 * 1000);
+
+  // 2. Window focus: whenever the user returns to Deyin from another app,
+  // check if at least 15 minutes have passed since the last check.
+  app.on("browser-window-focus", () => {
+    void updates.checkThrottled(15 * 60 * 1000);
+  });
+
+  // 3. System wake / power resume: when laptop lid is opened or machine wakes,
+  // wait 5s for network interfaces to re-establish, then check.
+  powerMonitor.on("resume", () => {
+    setTimeout(() => void updates.checkThrottled(5 * 60 * 1000), 5_000);
+  });
 
   /* Capabilities, plugins, browser control, indexing, agent runtime. */
   const pluginsDir = join(app.getPath("userData"), "plugins");
