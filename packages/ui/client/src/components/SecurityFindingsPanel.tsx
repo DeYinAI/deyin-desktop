@@ -16,6 +16,8 @@ interface SecurityFindingsPanelProps {
   threadId: string | null;
   workspaceRoot: string | null;
   onOpenFile?: (path: string) => void;
+  onFixFinding?: (finding: SecurityFinding) => void;
+  onFixAllFindings?: (findings: SecurityFinding[]) => void;
 }
 
 function sortFindings(findings: SecurityFinding[]): SecurityFinding[] {
@@ -102,12 +104,24 @@ export function SecurityFindingsPanel(props: SecurityFindingsPanelProps) {
         </span>
         <span className="security-tab__count">{findings.length}</span>
         <span className="security-tab__toolbar-spacer" />
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => void refresh()} disabled={busy}>
-          Refresh
-        </button>
-        <button type="button" className="btn btn--ghost btn--sm" onClick={() => void clear()} disabled={busy || findings.length === 0}>
-          Clear
-        </button>
+        <div className="security-tab__actions">
+          {props.onFixAllFindings && (
+            <button
+              type="button"
+              className="btn btn--primary btn--small"
+              onClick={() => props.onFixAllFindings?.(findings)}
+              disabled={busy || findings.length === 0}
+            >
+              Fix all
+            </button>
+          )}
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => void refresh()} disabled={busy}>
+            Refresh
+          </button>
+          <button type="button" className="btn btn--ghost btn--small" onClick={() => void clear()} disabled={busy || findings.length === 0}>
+            Clear
+          </button>
+        </div>
       </div>
 
       {error && <div className="security-tab__error">{error}</div>}
@@ -134,6 +148,17 @@ export function SecurityFindingsPanel(props: SecurityFindingsPanelProps) {
                     f.location?.file && f.location.file !== "<diff>"
                       ? [`${f.location.file}${f.location.line ? `:${f.location.line}` : ""}`]
                       : undefined
+                  }
+                  actions={
+                    props.onFixFinding ? (
+                      <button
+                        type="button"
+                        className="btn btn--outline btn--small"
+                        onClick={() => props.onFixFinding?.(f)}
+                      >
+                        Fix
+                      </button>
+                    ) : undefined
                   }
                   onClick={f.location?.file && f.location.file !== "<diff>" ? () => openFinding(f) : undefined}
                 >

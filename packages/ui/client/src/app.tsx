@@ -96,6 +96,7 @@ import {
   type Thread,
   type ThreadEvent,
 } from "./threads.js";
+import { formatFindingFixPrompt, formatAllFindingsFixPrompt } from "./securityFixPrompt.js";
 import type { SettingsPage } from "./components/SettingsView.js";
 import type {
  AgentTodoItem,
@@ -2571,6 +2572,23 @@ const continueFromStepLimit = useCallback(() => {
     setSettingsPage("workspace");
     setView("settings");
   }, []);
+  const fixSecurityFinding = useCallback(
+    (finding: import("@deyin/contract").SecurityFinding) => {
+      const prompt = formatFindingFixPrompt(finding);
+      const newThread = ensureThread();
+      void startAgentRun(newThread, prompt, "agent");
+    },
+    [ensureThread, startAgentRun],
+  );
+  const fixAllSecurityFindings = useCallback(
+    (findings: import("@deyin/contract").SecurityFinding[]) => {
+      if (!findings.length) return;
+      const prompt = formatAllFindingsFixPrompt(findings);
+      const newThread = ensureThread();
+      void startAgentRun(newThread, prompt, "agent");
+    },
+    [ensureThread, startAgentRun],
+  );
   const terminalAttachSessions = useMemo(
     () =>
       agentTerminals
@@ -3168,6 +3186,8 @@ const continueFromStepLimit = useCallback(() => {
                 selectedSubagentId={activeSubagentId}
                 onSelectSubagent={setActiveSubagentId}
                 onOpenFile={openWorkspaceFile}
+                onFixSecurityFinding={fixSecurityFinding}
+                onFixAllSecurityFindings={fixAllSecurityFindings}
                 filesOpenRequest={filesOpenRequest}
                 terminalEnv={env}
                 terminalDefaultShell={settings?.defaultShell ?? null}

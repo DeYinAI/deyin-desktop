@@ -48,6 +48,10 @@ interface WorkspacePanelProps {
   onRejectChange?: (changeId: string) => void;
   /** Reveal a file in the Files tab (security findings jump-to-file). */
   onOpenFile?: (path: string) => void;
+  /** Fix a single security finding in a new chat session. */
+  onFixSecurityFinding?: (finding: import("@deyin/contract").SecurityFinding) => void;
+  /** Fix all security findings in a new chat session. */
+  onFixAllSecurityFindings?: (findings: import("@deyin/contract").SecurityFinding[]) => void;
   /** Files tab open request (path + seq so repeat clicks re-open). */
   filesOpenRequest?: { path: string; seq: number } | null;
   planMarkdown: string;
@@ -200,6 +204,8 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           threadId={props.threadId ?? null}
           workspaceRoot={props.workspaceRoot}
           onOpenFile={props.onOpenFile ? (path: string) => props.onOpenFile?.(path) : undefined}
+          onFixFinding={props.onFixSecurityFinding}
+          onFixAllFindings={props.onFixAllSecurityFindings}
         />
       </div>
       <div className="wspanel__pane" hidden={props.activeTab !== "agent"}>
