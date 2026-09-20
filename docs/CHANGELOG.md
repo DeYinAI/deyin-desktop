@@ -3,7 +3,37 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.24`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.25`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.25 — 2026-09-20
+
+### Highlights
+
+- **Project Toolchain & Automated Command Discovery:** Added automatic workspace manifest introspection
+  across Node.js/TypeScript (`package.json`, `tsconfig.json`), Rust (`Cargo.toml`), Go (`go.mod`), Python
+  (`pyproject.toml`, `uv.lock`, `poetry.lock`, `Pipfile`, `requirements.txt`), Java/Kotlin (`pom.xml`,
+  `build.gradle`), Ruby (`Gemfile`), PHP (`composer.json`), and C/C++ (`CMakeLists.txt`, `Makefile`).
+  Automatically identifies primary language, package manager, and exact commands for test, build, typecheck,
+  lint, and dev to provide agents with project-native context.
+- **Python Virtual Environment Auto-Activation:** Automatically discovers local `.venv`, `venv`, `env`,
+  and `.env` directories in workspaces, prepending virtual environment binaries to `PATH` and setting `VIRTUAL_ENV`
+  for all shell executions and agent tool calls.
+- **Unified Diff Patching Tool (`apply_patch`):** Added a native unified diff engine supporting multi-file
+  patches, fuzzy context matching, and whitespace tolerance, with automatic mutation classification (`write`, `edit`,
+  `delete`) recorded to durable checkpoint history.
+- **Fast Compiler & Linter Verification Tool (`check_compiler_errors`):** Direct language server diagnostics
+  querying with fallback to detected typecheck commands (`tsc --noEmit`, `cargo check`, `go vet`, `mypy`). Filters
+  terminal noise to isolate compiler errors, warnings, and source locations.
+- **Structured Test Runner Tool (`test_runner`):** Intelligent test execution engine that introspects project
+  test commands, supports test filtering/targeting, and isolates failure traces and assertion diffs.
+- **Universal Rule & Instruction Interoperability:** Automatically ingests `.cursorrules`, `.windsurfrules`,
+  `.cursor/rules/*.mdc`, `.deyin/rules/*.md`, and `.github/copilot-instructions.md`.
+- **Multi-Language AST Repo Map Grammars:** Extended `repo_map` symbol extraction to Java, Kotlin, Scala,
+  C/C++, C#, Ruby, and PHP, including Python return type annotations and Ruby block depth tracking.
+- **CLI TUI `/undo` Command:** Added interactive `/undo` slash command in the CLI TUI to rewind turns,
+  revert file mutations via checkpoints, and reconcile active todo lists.
+- **Silent One-Click Updates & Event-Driven Discovery:** Configured NSIS one-click installation with background
+  silent installs and automatic restart. Implemented event-driven update polling on window focus and system wake.
 
 ## 1.0.24 — 2026-09-20
 
