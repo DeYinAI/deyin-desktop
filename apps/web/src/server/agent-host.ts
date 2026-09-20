@@ -18,6 +18,7 @@ import {
   agentForMode,
   buildSystemPromptParts,
   createRoleRouter,
+  detectProjectToolchain,
   createTaskTool,
   effectiveSubagentReadonly,
   getSubagentStateStore,
@@ -393,11 +394,16 @@ export class WebAgentHost {
     }
     const skillSummaries = runCaps.skills;
     const buildPrompt = async (mode: ChatMode): Promise<string> => {
+      const [contextFiles, projectToolchain] = await Promise.all([
+        loadContextFilesCached(this.root).catch(() => []),
+        detectProjectToolchain(this.root).catch(() => null),
+      ]);
       const parts = buildSystemPromptParts({
         cwd: this.root,
         agent: agentForMode(mode),
         skills: skillSummaries,
-        contextFiles: await loadContextFilesCached(this.root).catch(() => []),
+        contextFiles,
+        projectToolchain,
       });
       let systemPrompt = parts.content;
       const repo = this.repoInfo();

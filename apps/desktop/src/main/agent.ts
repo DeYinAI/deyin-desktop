@@ -22,6 +22,7 @@ import {
   SessionStore,
   appendHookContext,
   buildSystemPromptParts,
+  detectProjectToolchain,
   McpConnectionPool,
   createCodebaseSearchTool,
   createTaskTool,
@@ -1576,7 +1577,10 @@ export class DesktopAgentHost {
     hookState?: { startHookContext?: string[] },
   ) {
     const agent = agentForMode(mode);
-    const contextFiles = await loadContextFilesCached(cwd).catch(() => []);
+    const [contextFiles, projectToolchain] = await Promise.all([
+      loadContextFilesCached(cwd).catch(() => []),
+      detectProjectToolchain(cwd).catch(() => null),
+    ]);
     let parts = buildSystemPromptParts({
       cwd,
       agent: {
@@ -1587,6 +1591,7 @@ export class DesktopAgentHost {
       },
       contextFiles,
       skills,
+      projectToolchain,
     });
 
     // sessionStart hooks contribute extra context (counted under Rules). Run

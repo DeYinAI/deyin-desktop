@@ -5,6 +5,8 @@ import type { AgentDefinition } from "./agents.js";
 import { skillsPromptSection, type SkillDefinition } from "./capabilities/skills.js";
 import type { SystemPromptSections } from "./context-usage.js";
 import { effectiveShell } from "./tools/bash.js";
+export { detectProjectToolchain, formatProjectToolchainPrompt, type ProjectToolchainInfo } from "./project-detect.js";
+import { formatProjectToolchainPrompt, type ProjectToolchainInfo } from "./project-detect.js";
 
 const MAX_CONTEXT_FILE_CHARS = 20_000;
 const MAX_PARENT_LEVELS = 5;
@@ -13,6 +15,8 @@ const MAX_IMPORT_DEPTH = 5;
 
 /** Instruction files recognized in a directory, normal first then .local variants (local wins). */
 const INSTRUCTION_ORDER = [
+  ".cursorrules",
+  ".windsurfrules",
   "AGENTS.md",
   "CLAUDE.md",
   "DEYIN.md",
@@ -77,17 +81,26 @@ export async function loadContextFilesDetailed(
     files.push(...(await instructionFilesIn(d)));
   }
 
-  // 3) Project rules.
-  try {
-    const rulesDir = join(cwd, ".deyin", "rules");
-    const entries = await readdir(rulesDir, { withFileTypes: true });
-    for (const entry of entries.filter((e) => e.isFile() && e.name.endsWith(".md")).sort((a, b) => a.name.localeCompare(b.name))) {
-      const path = join(rulesDir, entry.name);
-      const content = await readOptional(path);
-      if (content) files.push({ path, content });
+  // 2b) Copilot workspace instructions (.github/copilot-instructions.md)
+  const copilotFile = join(cwd, ".github", "copilot-instructions.md");
+  const copilotContent = await readOptional(copilotFile);
+  if (copilotContent) files.push({ path: copilotFile, content: copilotContent });
+
+  // 3) Project rules (.cursor/rules and .deyin/rules, supporting both .md and .mdc)
+  const ruleDirs = [join(cwd, ".cursor", "rules"), join(cwd, ".deyin", "rules")];
+  for (const rulesDir of ruleDirs) {
+    try {
+      const entries = await readdir(rulesDir, { withFileTypes: true });
+      for (const entry of entries
+        .filter((e) => e.isFile() && (e.name.endsWith(".md") || e.name.endsWith(".mdc")))
+        .sort((a, b) => a.name.localeCompare(b.name))) {
+        const path = join(rulesDir, entry.name);
+        const content = await readOptional(path);
+        if (content) files.push({ path, content });
+      }
+    } catch {
+      // no rules dir
     }
-  } catch {
-    // no rules dir
   }
 
   // 4) Expand @imports per file.
@@ -226,6 +239,8 @@ export interface SystemPromptOptions {
   contextFiles?: ContextFile[];
   /** Discovered skills, advertised so the model can self-select them. */
   skills?: SkillDefinition[];
+  /** Discovered project toolchain, commands, and scripts. */
+  projectToolchain?: ProjectToolchainInfo | null;
 }
 
 export interface SystemPromptBuildResult extends SystemPromptSections {
@@ -252,6 +267,11 @@ export function buildSystemPromptParts(opts: SystemPromptOptions): SystemPromptB
       `- Date: ${new Date().toDateString()}`,
     ].join("\n"),
   );
+
+  if (opts.projectToolchain) {
+    const toolchainSection = formatProjectToolchainPrompt(opts.projectToolchain);
+    if (toolchainSection) systemParts.push(toolchainSection);
+  }
 
   systemParts.push(
     [
