@@ -3,7 +3,37 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.23`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.24`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.24 — 2026-09-20
+
+### Highlights
+
+- **CLI Shell Command Escape (`!command`):** Execute terminal commands directly from
+  the CLI composer without exiting or breaking conversational flow. Shell output is seamlessly
+  integrated into prompt context as markdown blocks while preventing orphan tool turns that disrupt
+  LLM provider schemas.
+- **External `$EDITOR` Integration (`/editor` and `Ctrl+O`):** Compose or refine complex multiline
+  prompts using preferred terminal or GUI editors (`$VISUAL` or `$EDITOR` with fallback to `nano` or
+  `notepad`). Handles executable paths with whitespace, cleanly suspends and resumes TTY raw mode, and
+  safeguards against corrupted terminal states.
+- **AST-Based Structural Symbol Repo Map (`repo_map`):** Introduced a high-efficiency repository
+  mapping tool supporting TypeScript, JavaScript, Python, Go, and Rust. Extracts classes, interfaces,
+  functions, methods, types, and structs into hierarchical outlines and signature summaries with exact
+  line numbers, drastically reducing context window usage during codebase exploration.
+- **Reproducible Evaluation & Benchmark Harness (`deyin bench`):** Added a dedicated headless
+  benchmark command for evaluating coding agents across reproducible task suites. Features path-traversal
+  guards, timeout and step bounds, isolated workspace directories, flexible setup scripts, and rigorous
+  multi-criteria verification (file existence, regex matching, shell exit codes) with detailed tabular and JSON reports.
+- **Expanded Enterprise MCP Catalog & OAuth 2.0:** Integrated official MCP catalogs for **GitLab**,
+  **Datadog**, **Postman**, **Google Workspace**, and **Exa**, offering turnkey tool and resource
+  connectivity with secure PKCE OAuth 2.0 and API token authentication.
+- **Official Multi-Tone SVG Brand Marks:** Added authentic brand marks sourced from official brand
+  assets and LobeIcon for GitLab (tri-tone tanuki), Postman (spacesuit astronaut), Google Workspace
+  (4-color "G"), Exa (4-facet geometric hourglass), and Datadog ("Bits" mascot).
+- **Hardened Shell & Process Lifecycle Management:** Enhanced `executeShellCommand` with process group
+  SIGKILL cascade to eliminate orphaned background processes upon timeout or user cancellation, and resolved
+  mutability and lifecycle warnings in native Rust compression modules.
 
 ## 1.0.23 — 2026-09-20
 
