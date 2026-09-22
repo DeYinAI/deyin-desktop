@@ -1,0 +1,65 @@
+{
+  "id": "plan-review-implement",
+  "name": "Tri-Bot: Plan, Review & Implement",
+  "description": "Multi-agent engineering pipeline: 1) Architecture & Plan with Claude (Opus 5.0), 2) Adversarial Review with Codex (GPT 5.6 Luna), 3) Implementation with ZCode (GLM 5.3 Flash High) in an isolated Git worktree.",
+  "createdAt": 1758547200000,
+  "updatedAt": 1758547200000,
+  "schedule": {
+    "enabled": false,
+    "cronExpression": "0 * * * *",
+    "intervalMinutes": 60
+  },
+  "stages": [
+    {
+      "id": "plan",
+      "name": "1. Plan & Architecture",
+      "agentId": "claude",
+      "modelOverride": "opus-5.0",
+      "systemPrompt": "You are a Principal Software Architect. Research the codebase and design a comprehensive, battle-tested plan and specification.",
+      "userPromptTemplate": "Analyze the codebase and formulate an architectural plan for the following objective:\n\n{{inputs.goal}}\n\nProvide technical specifications, identified edge cases, file changes required, and acceptance criteria.",
+      "worktree": {
+        "isolate": false
+      },
+      "watchdog": {
+        "timeoutMs": 900000,
+        "stallThresholdMs": 120000,
+        "onStallAction": "alert-user"
+      },
+      "outputArtifactPatterns": ["**/*.md"]
+    },
+    {
+      "id": "review-plan",
+      "name": "2. Adversarial Review",
+      "agentId": "codex",
+      "modelOverride": "gpt-5.6-luna",
+      "systemPrompt": "You are a Senior Staff Security and Reliability Engineer. Review proposed plans critically, looking for oversights, concurrency bugs, missing tests, and performance regressions.",
+      "userPromptTemplate": "Perform a rigorous adversarial review on the architectural plan produced by Claude:\n\n=== ARCHITECTURAL PLAN ===\n{{stage.plan.output}}\n==========================\n\nIdentify potential flaws, missing validations, race conditions, or architecture gaps. Output a refined, approved implementation specification with clear instructions for the coding agent.",
+      "worktree": {
+        "isolate": false
+      },
+      "watchdog": {
+        "timeoutMs": 900000,
+        "stallThresholdMs": 120000,
+        "onStallAction": "alert-user"
+      }
+    },
+    {
+      "id": "implement",
+      "name": "3. Implementation",
+      "agentId": "zcode",
+      "modelOverride": "glm-5.3-flash-high",
+      "systemPrompt": "You are a High-Performance Full-Stack Software Engineer. Implement features cleanly, following existing codebase conventions and ensuring zero regressions.",
+      "userPromptTemplate": "Implement the complete solution in this isolated git worktree according to the reviewed specification:\n\n=== REVIEWED SPECIFICATION ===\n{{stage.review-plan.output}}\n==============================\n\nMake all necessary code changes, add tests, ensure the workspace compiles, and verify all assertions pass.",
+      "worktree": {
+        "isolate": true,
+        "branchNamePattern": "bot/implement-{{run.id}}"
+      },
+      "watchdog": {
+        "timeoutMs": 1200000,
+        "stallThresholdMs": 180000,
+        "onStallAction": "alert-user"
+      },
+      "outputArtifactPatterns": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json"]
+    }
+  ]
+}

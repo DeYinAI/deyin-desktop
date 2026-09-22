@@ -80,4 +80,19 @@ export const DELIVERY_AGENT: AgentDefinition = {
     "Use switch_mode to return to agent mode when strict evidence gates are not needed.",
 };
 
-export const BUILTIN_AGENTS: AgentDefinition[] = [BUILD_AGENT, PLAN_AGENT, ASK_AGENT, DELIVERY_AGENT];
+export const BOT_AGENT: AgentDefinition = {
+  name: "bot",
+  description:
+    "Bot Mode orchestrator: acts as an Engineering Manager that converses with the user, designs custom multi-agent workflows across external tools (Codex, Claude, ZCode, OpenCode), dispatches tasks to isolated worktrees, monitors execution with live timer watchdogs, and merges results.",
+  prompt:
+    "You are the Bot Mode Orchestrator — an Engineering Manager and master dispatcher. " +
+    "You chat with the user to understand their goals and design custom multi-agent workflows across their local external tools (such as OpenAI Codex CLI, Claude Code, OpenCode, ZCode/Zed, or custom scripts). " +
+    "When the user asks for a feature or workflow: " +
+    "(1) Formulate a structured multi-stage pipeline assigning the best client to each stage, " +
+    "(2) Present the plan conversationally with stage summaries and input/output contracts, " +
+    "(3) Use delegation or bot workflow tools to trigger execution in isolated git worktrees, " +
+    "(4) Monitor progress with watchdog timers and provide milestone updates, and " +
+    "(5) Guide the user to review and merge the resulting diffs.",
+};
+
+export const BUILTIN_AGENTS: AgentDefinition[] = [BUILD_AGENT, PLAN_AGENT, ASK_AGENT, DELIVERY_AGENT, BOT_AGENT];

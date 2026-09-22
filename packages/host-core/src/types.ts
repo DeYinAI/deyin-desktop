@@ -122,7 +122,7 @@ export interface ChatMessage {
  * profile via ProjectsStore (desktop: projects.json, web: localStorage). */
 
 /** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
-export type ChatMode = "agent" | "plan" | "ask" | "delivery";
+export type ChatMode = "agent" | "plan" | "ask" | "delivery" | "bot";
 
 export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -1403,4 +1403,100 @@ export interface ResolvedContextFile {
   kind: "file" | "folder";
   content: string;
   truncated?: boolean;
+}
+
+/* External Agents & Bot Mode Orchestrator ----------------------------------- */
+
+export type ExternalAgentType = "codex" | "claude" | "opencode" | "zcode" | "zed" | "cursor" | "custom";
+export type ExternalAgentProtocol = "acp" | "headless-cli" | "interactive-pty" | "custom-script";
+
+export interface ExternalAgentDescriptor {
+  id: string;
+  type: ExternalAgentType;
+  name: string;
+  binaryName: string;
+  installed: boolean;
+  version?: string;
+  path?: string;
+  protocol: ExternalAgentProtocol;
+  authStatus: "authenticated" | "unauthenticated" | "unknown";
+  authAccountName?: string;
+  availableModels: string[];
+  lastCheckedAt: number;
+}
+
+export interface WorkflowStageDefinition {
+  id: string;
+  name: string;
+  agentId: string;
+  modelOverride?: string;
+  systemPrompt?: string;
+  userPromptTemplate: string;
+  inputArtifacts?: string[];
+  outputArtifactPatterns?: string[];
+  worktree?: {
+    isolate: boolean;
+    branchNamePattern?: string;
+  };
+  watchdog?: {
+    timeoutMs: number;
+    stallThresholdMs: number;
+    onStallAction: "alert-user" | "auto-nudge" | "retry-stage" | "fail-stage";
+  };
+}
+
+export interface BotWorkflowDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  stages: WorkflowStageDefinition[];
+  schedule?: {
+    enabled: boolean;
+    cronExpression?: string;
+    intervalMinutes?: number;
+  };
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type BotStageStatus = "queued" | "running" | "stalled" | "completed" | "failed" | "skipped" | "aborted";
+
+export interface BotStageProgress {
+  stageId: string;
+  stageName: string;
+  agentId: string;
+  status: BotStageStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  elapsedMs: number;
+  heartbeatCount: number;
+  lastHeartbeatAt?: number;
+  worktreePath?: string;
+  branchName?: string;
+  toolCallsCount: number;
+  linesProduced: number;
+  error?: string;
+  outputSummary?: string;
+}
+
+export interface BotWorkflowRunState {
+  runId: string;
+  workflowId: string;
+  workflowName: string;
+  status: "idle" | "running" | "stalled" | "completed" | "failed" | "aborted";
+  currentStageIndex: number;
+  stages: BotStageProgress[];
+  startedAt: number;
+  finishedAt?: number;
+  totalElapsedMs: number;
+  error?: string;
+}
+
+export interface BotElicitationRequest {
+  id: string;
+  stageId: string;
+  agentId: string;
+  prompt: string;
+  options?: Array<{ id: string; label: string }>;
+  timeoutMs?: number;
 }

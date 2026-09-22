@@ -20,6 +20,7 @@ import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
 import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
 import { SubagentPanel, type SubagentEvent } from "./SubagentPanel.js";
+import { BotFlowPanel } from "./BotFlowPanel.js";
 import type { AttachableTerminal } from "./TerminalPanel.js";
 // xterm is large and only needed when the terminal tab opens; keep it out of the
 // initial chunk via a lazy boundary.
@@ -217,6 +218,9 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           codeDisplay={props.codeDisplay}
           threadId={props.threadId ?? null}
         />
+      </div>
+      <div className="wspanel__pane" hidden={props.activeTab !== "botflow"}>
+        <BotFlowPanel workspaceRoot={props.workspaceRoot} />
       </div>
     </section>
   );

@@ -405,6 +405,27 @@ agent: {
     authState: () => ipcRenderer.invoke(CH.githubAuthState),
     listRepos: (query?: string) => ipcRenderer.invoke(CH.githubListRepos, query),
   },
+  externalAgents: {
+    list: (forceRefresh) => ipcRenderer.invoke(CH.externalAgentsList, forceRefresh),
+    test: (agentId) => ipcRenderer.invoke(CH.externalAgentsTest, agentId),
+    run: (options) => ipcRenderer.invoke(CH.externalAgentsRun, options),
+    abort: (runId) => ipcRenderer.invoke(CH.externalAgentsAbort, runId),
+    nudge: (runId, message) => ipcRenderer.invoke(CH.externalAgentsNudge, runId, message),
+    logs: (runId, maxLines) => ipcRenderer.invoke(CH.externalAgentsLogs, runId, maxLines),
+  },
+  botWorkflows: {
+    list: () => ipcRenderer.invoke(CH.botWorkflowsList),
+    save: (workflow) => ipcRenderer.invoke(CH.botWorkflowsSave, workflow),
+    delete: (id) => ipcRenderer.invoke(CH.botWorkflowsDelete, id),
+    run: (workflowId, cwd) => ipcRenderer.invoke(CH.botWorkflowsRun, workflowId, cwd),
+    abort: (runId) => ipcRenderer.invoke(CH.botWorkflowsAbort, runId),
+    merge: (workspaceRoot, branchName) => ipcRenderer.invoke(CH.botWorkflowsMerge, workspaceRoot, branchName),
+    onEvent: (cb) => {
+      const listener = (_e: unknown, payload: any) => cb(payload);
+      ipcRenderer.on(CH.botWorkflowsEvent, listener);
+      return () => ipcRenderer.removeListener(CH.botWorkflowsEvent, listener);
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld("deyin", api);

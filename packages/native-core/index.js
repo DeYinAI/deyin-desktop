@@ -38,4 +38,18 @@ module.exports = {
     ? (root, pattern, glob, maxResults, ignoreCase) =>
         native.grep(root, pattern, glob ?? null, maxResults ?? null, ignoreCase ?? null)
     : null,
+  frameAcpChunk: native ? (buffer, chunk) => native.frameAcpChunk(buffer, chunk) : null,
+  isJsonRpc: native ? (line) => native.isJsonRpc(line) : null,
+  frameNdjsonChunk: native ? (buffer, chunk) => native.frameNdjsonChunk(buffer, chunk) : null,
+  ringBufferAppend: native ? (bufferId, line, capacity) => native.ringBufferAppend(bufferId, line, capacity ?? null) : null,
+  ringBufferGetLines: native ? (bufferId, maxLines) => native.ringBufferGetLines(bufferId, maxLines ?? null) : null,
+  ringBufferClear: native ? (bufferId) => native.ringBufferClear(bufferId) : null,
+  ringBufferRemove: native ? (bufferId) => native.ringBufferRemove(bufferId) : null,
+  watchdogRegister: native
+    ? (id, pid, timeoutMs, stallThresholdMs, nowMs) =>
+        native.watchdogRegister(id, pid, timeoutMs, stallThresholdMs, nowMs ?? null)
+    : null,
+  watchdogHeartbeat: native ? (id, nowMs) => native.watchdogHeartbeat(id, nowMs ?? null) : null,
+  watchdogCheck: native ? (id, nowMs) => native.watchdogCheck(id, nowMs ?? null) : null,
+  watchdogUnregister: native ? (id) => native.watchdogUnregister(id) : null,
 };

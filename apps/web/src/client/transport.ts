@@ -60,6 +60,8 @@ import type {
   UsageDay,
   UsageEvent,
   UserProfile,
+  BotWorkflowDefinition,
+  ExternalAgentDescriptor,
 } from "@deyin/contract";
 import type {
   ClientMessage,
@@ -1325,6 +1327,51 @@ export function createBrowserTransport(): DeyinApi {
         else if (level === "warn") console.warn("[deyin]", message);
         else console.info("[deyin]", message);
       },
+    },
+    externalAgents: {
+      list: async (): Promise<ExternalAgentDescriptor[]> => {
+        return readLocal<ExternalAgentDescriptor[]>("deyin.externalAgents", [
+          { id: "codex", type: "codex", binaryName: "codex", name: "OpenAI Codex CLI", installed: false, protocol: "headless-cli", authStatus: "unknown", availableModels: ["gpt-5.3-codex"], lastCheckedAt: Date.now() },
+          { id: "claude", type: "claude", binaryName: "claude", name: "Claude Code", installed: false, protocol: "headless-cli", authStatus: "unknown", availableModels: ["claude-4.6-sonnet-high-thinking"], lastCheckedAt: Date.now() },
+          { id: "opencode", type: "opencode", binaryName: "opencode", name: "OpenCode", installed: false, protocol: "acp", authStatus: "unknown", availableModels: ["claude-4.5-sonnet-thinking"], lastCheckedAt: Date.now() },
+          { id: "zcode", type: "zcode", binaryName: "zcode", name: "ZCode / Zed", installed: false, protocol: "acp", authStatus: "unknown", availableModels: ["gpt-5.3-codex-high"], lastCheckedAt: Date.now() },
+          { id: "cursor", type: "cursor", binaryName: "cursor", name: "Cursor CLI", installed: false, protocol: "headless-cli", authStatus: "unknown", availableModels: ["composer-2.5-fast"], lastCheckedAt: Date.now() },
+        ]);
+      },
+      test: async (agentId: string) => ({ ok: false, message: `Tool testing not available in web mode for ${agentId}.` }),
+      run: async (options: any) => ({ ok: false, error: "External agent execution requires Deyin Desktop app.", outputText: "", runId: options?.runId }),
+      abort: async () => false,
+      nudge: async () => false,
+      logs: async () => [],
+    },
+    botWorkflows: {
+      list: async (): Promise<BotWorkflowDefinition[]> => {
+        return readLocal<BotWorkflowDefinition[]>("deyin.botWorkflows", []);
+      },
+      save: async (workflow: BotWorkflowDefinition): Promise<BotWorkflowDefinition> => {
+        const list = readLocal<BotWorkflowDefinition[]>("deyin.botWorkflows", []);
+        const toSave: BotWorkflowDefinition = {
+          ...workflow,
+          id: workflow.id && workflow.id.trim() ? workflow.id : `wf-${Math.random().toString(36).slice(2, 10)}`,
+          updatedAt: Date.now(),
+          createdAt: workflow.createdAt || Date.now(),
+        };
+        const idx = list.findIndex((w) => w.id === toSave.id);
+        if (idx >= 0) list[idx] = toSave;
+        else list.push(toSave);
+        writeLocal("deyin.botWorkflows", list);
+        return toSave;
+      },
+      delete: async (id: string): Promise<boolean> => {
+        const list = readLocal<BotWorkflowDefinition[]>("deyin.botWorkflows", []);
+        const filtered = list.filter((w) => w.id !== id);
+        writeLocal("deyin.botWorkflows", filtered);
+        return filtered.length < list.length;
+      },
+      run: async () => ({ ok: false, runId: undefined }),
+      abort: async () => false,
+      merge: async () => ({ ok: false, message: "Worktree merge requires Deyin Desktop local git access." }),
+      onEvent: () => () => {},
     },
     beta: {
       submitFeedback: async () => ({ ok: false }),

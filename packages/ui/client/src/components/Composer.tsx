@@ -121,12 +121,12 @@ const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "han
   "read-only": { label: "Read only", icon: "eye" },
 };
 
-const MODE_ORDER: ChatMode[] = ["agent", "delivery", "plan", "ask"];
+const MODE_ORDER: ChatMode[] = ["agent", "delivery", "plan", "ask", "bot"];
 const MODE_META: Record<
   ChatMode,
   {
-    labelKey: "mode.agent" | "mode.delivery" | "mode.plan" | "mode.ask";
-    descKey: "mode.agentDesc" | "mode.deliveryDesc" | "mode.planDesc" | "mode.askDesc";
+    labelKey: "mode.agent" | "mode.delivery" | "mode.plan" | "mode.ask" | "mode.bot";
+    descKey: "mode.agentDesc" | "mode.deliveryDesc" | "mode.planDesc" | "mode.askDesc" | "mode.botDesc";
     icon: IconName;
   }
 > = {
@@ -134,6 +134,7 @@ const MODE_META: Record<
   delivery: { labelKey: "mode.delivery", descKey: "mode.deliveryDesc", icon: "shield" },
   plan: { labelKey: "mode.plan", descKey: "mode.planDesc", icon: "route" },
   ask: { labelKey: "mode.ask", descKey: "mode.askDesc", icon: "message" },
+  bot: { labelKey: "mode.bot", descKey: "mode.botDesc", icon: "bot" },
 };
 
 interface SlashItem {

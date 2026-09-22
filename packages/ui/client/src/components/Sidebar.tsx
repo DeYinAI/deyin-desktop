@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n.js";
 import { Icon, type IconName } from "./Icon.js";
 import { ProfileMenu } from "./ProfileMenu.js";
 import { UpdateBanner } from "./UpdateBanner.js";
 import { formatThreadAge, type Project, type Thread } from "../threads.js";
-import type { DeyinSettings, UserProfile } from "@deyin/contract";
+import type { BotWorkflowDefinition, DeyinSettings, ExternalAgentDescriptor, UserProfile } from "@deyin/contract";
 
 interface SidebarProps {
   platform: "desktop" | "web";
   /** Which top-level view is showing, so its nav row reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations";
+  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "bot" | "workflows";
   projects: Project[];
   activeProjectId: string | null;
   activeThreadId: string | null;
@@ -25,8 +25,11 @@ interface SidebarProps {
   onForward: () => void;
   onCollapse: () => void;
   onNewTask: () => void;
+  onNewMission?: () => void;
   onNewProject: () => void;
   onSelectProject: (projectId: string) => void;
+  /** Select target repository specifically for bot delegations in Bot Mode. */
+  onSelectTargetRepository?: (projectId: string) => void;
   onSelectThread: (projectId: string, threadId: string) => void;
   onOpenSearch: () => void;
   onThreadContext: (threadId: string, x: number, y: number) => void;
@@ -40,8 +43,16 @@ interface SidebarProps {
   onOpenSettings: () => void;
   /** Open the Automations view (scheduled agent runs). */
   onOpenAutomations: () => void;
+  /** Open the Bot Workflows / Pipelines editor surface. */
+  onOpenWorkflows?: (workflowId?: string | null) => void;
   /** Open the appearance/customisation surface. */
   onOpenCustomize: () => void;
+  /** Active chat mode (e.g. 'agent' | 'bot'). */
+  currentMode?: import("@deyin/contract").ChatMode;
+  /** Switch between Workspace and Bot Mode. */
+  onSwitchMode?: (mode: import("@deyin/contract").ChatMode) => void;
+  /** Select top-level view between Workspace and Bot Mode. */
+  onSelectView?: (view: "workspace" | "bot") => void;
   /** Pending approvals / MCP auth / questions per thread (sidebar badge). */
   pendingByThread?: Record<string, number>;
 }
@@ -109,11 +120,56 @@ function saveExpandedLists(expanded: Set<string>): void {
 
 export function Sidebar(props: SidebarProps) {
   const t = useT();
+  const isBotView =
+    props.activeView === "bot" ||
+    props.activeView === "workflows" ||
+    (props.activeView !== "workspace" && props.currentMode === "bot");
+
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects);
   const [expandedLists, setExpandedLists] = useState(loadExpandedLists);
   const now = useNow(30_000);
+
+  const [agents, setAgents] = useState<ExternalAgentDescriptor[]>([]);
+  const [scanningAgents, setScanningAgents] = useState(false);
+  const [workflows, setWorkflows] = useState<BotWorkflowDefinition[]>([]);
+
+  const loadAgents = useCallback(async (refresh = false) => {
+    if (window.deyin?.externalAgents) {
+      setScanningAgents(true);
+      try {
+        const list = await window.deyin.externalAgents.list(refresh);
+        setAgents(list);
+      } finally {
+        setScanningAgents(false);
+      }
+    }
+  }, []);
+
+  const loadWorkflows = useCallback(async () => {
+    if (window.deyin?.botWorkflows) {
+      try {
+        const list = await window.deyin.botWorkflows.list();
+        setWorkflows(list);
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isBotView) {
+      void loadAgents();
+      void loadWorkflows();
+    }
+  }, [isBotView, loadAgents, loadWorkflows]);
+
+  const botMissions = useMemo(() => {
+    return props.projects.flatMap((p) =>
+      p.threads
+        .filter((t) => t.mode === "bot" && !t.archived)
+        .map((t) => ({ projectId: p.id, thread: t }))
+    );
+  }, [props.projects]);
 
   const toggleProjectExpanded = (projectId: string) => {
     setCollapsedProjects((prev) => {
@@ -268,7 +324,7 @@ export function Sidebar(props: SidebarProps) {
       <nav className="sidebar__nav">
         <button className="nav-item nav-item--warm" onClick={props.onNewTask}>
           <Icon name="sparkles" size={14} />
-          <span>{t("nav.newTask")}</span>
+          <span>{isBotView ? "New Mission" : t("nav.newTask")}</span>
           <span className="kbd">Ctrl+N</span>
         </button>
         <button className="nav-item" onClick={props.onOpenSearch}>
@@ -285,104 +341,282 @@ export function Sidebar(props: SidebarProps) {
           <span>{t("nav.automations")}</span>
         </button>
         )}
+        {isBotView && props.onOpenWorkflows && (
+          <button
+            className={`nav-item nav-item--feature${props.activeView === "workflows" ? " nav-item--active" : ""}`}
+            onClick={() => props.onOpenWorkflows?.(null)}
+            title="Multi-bot workflows & pipelines — create and edit stage flows"
+          >
+            <Icon name="bolt" size={14} />
+            <span>Workflows</span>
+          </button>
+        )}
         <button className="nav-item nav-item--feature" onClick={props.onOpenCustomize}>
           <Icon name="customize" size={14} />
           <span>{t("nav.customize")}</span>
         </button>
+
+        {(props.onSelectView || props.onSwitchMode) && (
+          <div className="sidebar__mode-switcher">
+            <div className="sidebar__mode-tabs" role="tablist" aria-label="Operating Mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={!isBotView}
+                className={`sidebar__mode-tab${!isBotView ? " sidebar__mode-tab--active" : ""}`}
+                onClick={() => {
+                  props.onSelectView?.("workspace");
+                  props.onSwitchMode?.("agent");
+                }}
+                title="Workspace: Code, terminal, and agent tools"
+              >
+                <Icon name="layout" size={13} />
+                <span>Workspace</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={isBotView}
+                className={`sidebar__mode-tab${isBotView ? " sidebar__mode-tab--active" : ""}`}
+                onClick={() => {
+                  props.onSelectView?.("bot");
+                  props.onSwitchMode?.("bot");
+                }}
+                title="Bot Mode: Multi-agent orchestrator & external delegation"
+              >
+                <Icon name="bot" size={13} />
+                <span>Bot Mode</span>
+              </button>
+            </div>
+          </div>
+        )}
       </nav>
 
       <div className="sidebar__scroll">
-        {pinned.length > 0 && (
+        {isBotView ? (
           <>
-            <div className="sidebar__section">{t("nav.pinned")}</div>
-            <div className="sidebar__pinned">
-              {pinned.map((entry) => renderThread(entry.projectId, entry.thread, false))}
-            </div>
-          </>
-        )}
-
-        {filterOpen && (
-          <input
-            className="input sidebar__filter"
-            placeholder="Search projects…"
-            value={filter}
-            autoFocus
-            onChange={(e) => setFilter(e.target.value)}
-          />
-        )}
-
-        {visibleProjects.map((project) => {
-          const active = project.id === props.activeProjectId;
-          const expanded = isProjectExpanded(project.id);
-          const folderIcon: IconName =
-            project.root === null ? "home" : expanded ? "folderOpen" : "folder";
-          // Search shows everything; otherwise cap the list with a "Show N more" expander.
-          const filtering = filter.trim().length > 0;
-          const threads = projectThreads(project.threads);
-          const showAll = filtering || expandedLists.has(project.id);
-          const visibleThreads = showAll ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT);
-          const hiddenCount = threads.length - visibleThreads.length;
-          return (
-            <div className="project" key={project.id}>
-              <div
-                className={`project__row ${active ? "project__row--active" : ""}`}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  props.onProjectContext(project.id, e.clientX, e.clientY);
-                }}
-              >
-                <button
-                  type="button"
-                  className="project__toggle"
-                  aria-expanded={expanded}
-                  aria-label={expanded ? "Collapse project" : "Expand project"}
-                  title={expanded ? "Collapse" : "Expand"}
-                  onClick={() => toggleProjectExpanded(project.id)}
-                >
-                  {/* Chevron only expands/collapses threads; selection is on project__select. */}
-                  <Icon name={expanded ? "chevronDown" : "chevronRight"} size={11} />
-                </button>
-                <button
-                  type="button"
-                  className="project__select"
-                  onClick={() => {
-                    props.onSelectProject(project.id);
-                    expandProject(project.id);
+            {/* Target Repository Pill / Switcher */}
+            <div className="sidebar__bot-context">
+              <div className="sidebar__section">TARGET REPOSITORY</div>
+              <div className="sidebar__target-project">
+                <Icon name="folder" size={13} />
+                <select
+                  className="sidebar__target-select"
+                  value={props.activeProjectId ?? ""}
+                  onChange={(e) => {
+                    (props.onSelectTargetRepository ?? props.onSelectProject)(e.target.value);
                   }}
-                  title={project.root ?? project.name}
+                  title="Target repository for bot delegations"
                 >
-                  <Icon name={folderIcon} size={14} />
-                  <span className="project__name">{project.name}</span>
-                </button>
+                  {props.projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                  {props.projects.length === 0 && (
+                    <option value="">No repository connected</option>
+                  )}
+                </select>
               </div>
-              {expanded &&
-                visibleThreads.map((thread) => renderThread(project.id, thread, true))}
-              {expanded && !filtering && threads.length > THREAD_PREVIEW_LIMIT && (
-                <button type="button" className="sidebar__more" onClick={() => toggleProjectList(project.id)}>
-                  <Icon name={showAll ? "chevronDown" : "chevronRight"} size={11} />
-                  <span>
-                    {showAll
-                      ? t("nav.showLessThreads")
-                      : t("nav.showMoreThreads").replace("{count}", String(hiddenCount))}
-                  </span>
+            </div>
+
+            {/* Bot Missions List */}
+            <div className="sidebar__section">
+              <span>BOT MISSIONS</span>
+              {botMissions.length > 0 && <span className="sidebar__section-count">{botMissions.length}</span>}
+            </div>
+
+            {botMissions.length > 0 ? (
+              <div className="sidebar__bot-missions">
+                {botMissions.map(({ projectId, thread }) => renderThread(projectId, thread, false))}
+              </div>
+            ) : (
+              <div className="sidebar__empty">
+                No bot missions yet. Click "New Mission" to start orchestrating.
+              </div>
+            )}
+
+            {/* Saved Pipelines */}
+            <div
+              className="sidebar__section"
+              style={{
+                marginTop: "14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>SAVED PIPELINES</span>
+              {props.onOpenWorkflows && (
+                <button
+                  type="button"
+                  className="icon-btn icon-btn--xs"
+                  onClick={() => props.onOpenWorkflows?.(null)}
+                  title="Create new workflow"
+                >
+                  <Icon name="plus" size={12} />
                 </button>
               )}
             </div>
-          );
-        })}
-        {props.projects.length === 0 &&
-          (props.platform === "desktop" ? (
-            <button className="sidebar__newproject" onClick={props.onNewProject}>
-              <Icon name="plus" size={13} />
-              <span>{t("nav.newProject")}</span>
-            </button>
-          ) : (
-            <div className="sidebar__empty">No projects yet. Start a new task to create one.</div>
-          ))}
-        {props.projects.length > 0 && visibleProjects.length === 0 && (
-          <div className="sidebar__empty">No matches for “{filter}”.</div>
+
+            {workflows.length > 0 ? (
+              <div className="sidebar__bot-pipelines">
+                {workflows.map((wf) => (
+                  <button
+                    key={wf.id}
+                    type="button"
+                    className="sidebar__pipeline-item"
+                    onClick={() => props.onOpenWorkflows?.(wf.id)}
+                    title={`Edit pipeline: ${wf.name}`}
+                  >
+                    <Icon name="bolt" size={12} />
+                    <span className="sidebar__pipeline-name">{wf.name}</span>
+                    <span className="sidebar__pipeline-stages">{wf.stages.length}s</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="sidebar__empty">
+                No saved pipelines yet.
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {pinned.length > 0 && (
+              <>
+                <div className="sidebar__section">{t("nav.pinned")}</div>
+                <div className="sidebar__pinned">
+                  {pinned.map((entry) => renderThread(entry.projectId, entry.thread, false))}
+                </div>
+              </>
+            )}
+
+            {filterOpen && (
+              <input
+                className="input sidebar__filter"
+                placeholder="Search projects…"
+                value={filter}
+                autoFocus
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            )}
+
+            {visibleProjects.map((project) => {
+              const active = project.id === props.activeProjectId;
+              const expanded = isProjectExpanded(project.id);
+              const folderIcon: IconName =
+                project.root === null ? "home" : expanded ? "folderOpen" : "folder";
+              // Search shows everything; otherwise cap the list with a "Show N more" expander.
+              const filtering = filter.trim().length > 0;
+              const threads = projectThreads(project.threads);
+              const showAll = filtering || expandedLists.has(project.id);
+              const visibleThreads = showAll ? threads : threads.slice(0, THREAD_PREVIEW_LIMIT);
+              const hiddenCount = threads.length - visibleThreads.length;
+              return (
+                <div className="project" key={project.id}>
+                  <div
+                    className={`project__row ${active ? "project__row--active" : ""}`}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      props.onProjectContext(project.id, e.clientX, e.clientY);
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="project__toggle"
+                      aria-expanded={expanded}
+                      aria-label={expanded ? "Collapse project" : "Expand project"}
+                      title={expanded ? "Collapse" : "Expand"}
+                      onClick={() => toggleProjectExpanded(project.id)}
+                    >
+                      {/* Chevron only expands/collapses threads; selection is on project__select. */}
+                      <Icon name={expanded ? "chevronDown" : "chevronRight"} size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      className="project__select"
+                      onClick={() => {
+                        props.onSelectProject(project.id);
+                        expandProject(project.id);
+                      }}
+                      title={project.root ?? project.name}
+                    >
+                      <Icon name={folderIcon} size={14} />
+                      <span className="project__name">{project.name}</span>
+                    </button>
+                  </div>
+                  {expanded &&
+                    visibleThreads.map((thread) => renderThread(project.id, thread, true))}
+                  {expanded && !filtering && threads.length > THREAD_PREVIEW_LIMIT && (
+                    <button type="button" className="sidebar__more" onClick={() => toggleProjectList(project.id)}>
+                      <Icon name={showAll ? "chevronDown" : "chevronRight"} size={11} />
+                      <span>
+                        {showAll
+                          ? t("nav.showLessThreads")
+                          : t("nav.showMoreThreads").replace("{count}", String(hiddenCount))}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+            {props.projects.length === 0 &&
+              (props.platform === "desktop" ? (
+                <button className="sidebar__newproject" onClick={props.onNewProject}>
+                  <Icon name="plus" size={13} />
+                  <span>{t("nav.newProject")}</span>
+                </button>
+              ) : (
+                <div className="sidebar__empty">No projects yet. Start a new task to create one.</div>
+              ))}
+            {props.projects.length > 0 && visibleProjects.length === 0 && (
+              <div className="sidebar__empty">No matches for “{filter}”.</div>
+            )}
+          </>
         )}
       </div>
+
+      {/* External Agents Card (Above Profile) */}
+      {isBotView && (
+        <div className="sidebar__agents-card">
+          <div className="sidebar__agents-card-header">
+            <div className="sidebar__agents-card-title">
+              <Icon name="cpu" size={12} />
+              <span>DETECTED AGENTS</span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn icon-btn--xs"
+              onClick={() => void loadAgents(true)}
+              disabled={scanningAgents}
+              title="Re-scan installed agents on system"
+            >
+              <Icon name="refresh" size={11} className={scanningAgents ? "spin" : ""} />
+            </button>
+          </div>
+          <div className="sidebar__agents-list">
+            {agents.map((agent) => (
+              <div key={agent.id} className="sidebar__agent-row" title={`${agent.name} (${agent.protocol})`}>
+                <span
+                  className={`sidebar__agent-dot sidebar__agent-dot--${
+                    agent.installed
+                      ? agent.authStatus === "authenticated" || agent.authStatus === "ok"
+                        ? "ready"
+                        : "auth"
+                      : "missing"
+                  }`}
+                />
+                <span className="sidebar__agent-name">{agent.name}</span>
+                <span className="sidebar__agent-proto">{agent.protocol === "acp" ? "ACP" : "CLI"}</span>
+              </div>
+            ))}
+            {agents.length === 0 && (
+              <div className="sidebar__agent-empty">Scanning system tools...</div>
+            )}
+          </div>
+        </div>
+      )}
 
       {props.platform === "desktop" ? (
         <div className="sidebar__update">

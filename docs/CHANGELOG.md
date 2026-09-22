@@ -3,7 +3,37 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.27`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.28`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.28 — 2026-09-22
+
+### Highlights
+
+- **Bot Mode Multi-Agent Orchestrator & External Tool Delegation:** Introduced a dedicated top-level **Bot Mode**
+  transforming Deyin Desktop into an autonomous Engineering Manager and Mission Control. Users can delegate multi-stage
+  coding pipelines to installed external AI tools (Claude Code CLI, OpenAI Codex CLI, ZCode / Zed ACP, OpenCode, and Cursor CLI)
+  leveraging their existing local subscriptions without hardcoded defaults.
+- **Full-Window Split Interface & Live Telemetry HUD:** Designed a dedicated Bot Mode window featuring conversational
+  Mission Control on the left (with interactive progress cards, diff review/merge actions, and quick delegation chips)
+  and a collapsible live Telemetry HUD (`BotFlowPanel`) on the right showing stage metrics, worktree paths, heartbeat
+  frequencies, and real-time streaming terminal logs.
+- **Native Rust High-Performance Stream Hot Path:** Implemented zero-copy framing and circular buffer primitives in
+  `deyin-native` via N-API, providing sub-millisecond ACP (JSON-RPC 2.0) and NDJSON chunk parsing, plus thread-safe
+  ring buffers with FIFO eviction, atomic read locks, and instant buffer cleanup on run completion.
+- **Sequential Pipeline Engine & Artifact Bus:** Added `BotWorkflowEngine` supporting multi-stage bot workflows with
+  template interpolation (`{{inputs.goal}}`, `{{stage.<id>.output}}`, `{{stage.<id>.diff}}`, `{{artifacts}}`), ephemeral
+  Git worktree isolation, automated branch creation, and safe merge back to the base branch.
+- **High-Resolution Watchdog Supervisor & Stall Debouncing:** Added automated stall detection with configurable timeouts,
+  heartbeat monitoring, live terminal line tracking, and automatic stage recovery upon receiving active stdout events.
+- **Dedicated Bot Workflows Designer (`BotWorkflowsView`):** Built a full-window master-detail interface for authoring,
+  editing, and scheduling multi-stage workflows with cron/interval timers, model overrides, watchdog action policies,
+  and visual flow node summaries.
+- **Autonomous Workflow Skill (`build-bot-workflow`):** Shipped a built-in skill enabling AI agents to construct,
+  edit, and validate complex multi-agent pipelines directly via configuration code (`.deyin/workflows/*.json`) without
+  fragile UI computer use or browser automation.
+- **Contextual Navigation & Target Repository Preservation:** Relocated Bot Mode and Workspace switching to the left
+  NavRail and sidebar, cleanly scoping workflow views to Bot Mode and preventing target repository changes from flipping
+  the view back to Workspace mode.
 
 ## 1.0.27 — 2026-09-20
 

@@ -139,6 +139,79 @@ Non-local targets (wsl) need distro and use the Openference provider.
 `,
   },
   {
+    name: "build-bot-workflow",
+    description:
+      "Design, build, edit, and validate multi-agent orchestration bot workflows for Deyin Desktop directly via code and configuration files (.deyin/workflows/*.json). Use whenever the user asks to create, build, generate, configure, or modify an external bot or multi-agent workflow pipeline (e.g. chaining Claude, Codex, ZCode, OpenCode, or Cursor with specific models). Operates purely through direct file manipulation and code generation—never uses computer-use or browser automation.",
+    content: `
+# Build Bot Workflow
+
+Create multi-agent orchestration pipelines for Deyin Desktop by writing JSON definition files directly into \`.deyin/workflows/<slug>.json\`.
+
+**RULE**: Never use computer use or browser automation. Workflows are file-first: writing the JSON file automatically registers it in the Deyin UI, Telemetry HUD, and execution engine.
+
+## 1. File Location
+All workflows live in \`<workspaceRoot>/.deyin/workflows/<workflow-slug>.json\`. Ensure the directory exists with \`mkdir -p .deyin/workflows\`.
+
+## 2. Schema Specification
+Workflow files must conform to the BotWorkflowDefinition schema:
+\`\`\`json
+{
+  "id": "kebab-case-unique-id",
+  "name": "Human-Readable Title",
+  "description": "Short explanation of the pipeline's purpose and agent handoffs.",
+  "createdAt": 1758547200000,
+  "updatedAt": 1758547200000,
+  "schedule": {
+    "enabled": false,
+    "cronExpression": "0 * * * *",
+    "intervalMinutes": 60
+  },
+  "stages": [
+    {
+      "id": "stage-id",
+      "name": "Stage Name",
+      "agentId": "claude",
+      "modelOverride": "opus-5.0",
+      "systemPrompt": "Role instructions for this stage.",
+      "userPromptTemplate": "Task prompt. Can reference {{inputs.goal}} and prior stage {{stage.<id>.output}}.",
+      "worktree": {
+        "isolate": true,
+        "branchNamePattern": "bot/{{stage.id}}-{{run.id}}"
+      },
+      "watchdog": {
+        "timeoutMs": 900000,
+        "stallThresholdMs": 120000,
+        "onStallAction": "alert-user"
+      },
+      "outputArtifactPatterns": ["**/*.md", "src/**/*.ts"]
+    }
+  ]
+}
+\`\`\`
+
+## 3. Supported External Agents & Models
+- **claude** (Claude Code CLI): \`opus-5.0\`, \`claude-4.6-sonnet\`, \`claude-4.5-opus\`, \`claude-3-7-sonnet\`. Ideal for architecture, planning, refactoring.
+- **codex** (OpenAI Codex CLI): \`gpt-5.6-luna\`, \`gpt-5.3-codex\`, \`o3-mini\`, \`gpt-4o\`. Ideal for reviewing specs, adversarial critique, test writing.
+- **zcode** (ZCode / Zed ACP): \`glm-5.3-flash-high\`, \`glm-5.3\`, \`glm-5-turbo\`. Ideal for high-speed implementation and multi-file code editing.
+- **opencode** (OpenCode ACP): \`anthropic/claude-sonnet-4-20250514\`, \`openai/gpt-4o\`, \`local/llama3\`. Ideal for validation, test runners, local models.
+- **cursor** (Cursor CLI): \`composer-2.5-fast\`, \`auto\`. Ideal for fast workspace linting and fixes.
+
+## 4. Context Passing Syntax
+- \`{{inputs.<name>}}\` - Input parameters provided at run time (e.g. \`{{inputs.goal}}\`).
+- \`{{stage.<id>.output}}\` - Text output from an upstream stage.
+- \`{{stage.<id>.diff}}\` - Git diff produced by an upstream stage in its isolated worktree.
+- \`{{stage.<id>.branch}}\` - Git branch of an upstream stage.
+- \`{{artifacts}}\` - All captured file artifacts from previous stages.
+- \`{{workspace.root}}\` - Absolute path of workspace.
+
+## 5. Verification
+After writing the file:
+1. Confirm the JSON is valid with \`read\`.
+2. Present a clear summary of the stages and data handoffs to the user.
+3. Inform the user that the pipeline is ready to execute immediately in Deyin Desktop under **Bot Mode > Workflows** or via 1-click Execute in the Telemetry HUD.
+`,
+  },
+  {
     name: "create-rule",
     description:
       "Create project rules in .deyin/rules that steer every agent session. Use when the user wants coding standards, conventions, or persistent instructions applied automatically.",

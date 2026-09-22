@@ -12,6 +12,9 @@ import { compressToolOutput as tsCompressToolOutput } from "../../src/compressio
 import {
   fastCountTokens,
   fastCompressToolOutput,
+  fastFrameAcpChunk,
+  fastFrameNdjsonChunk,
+  fastRingBufferAppend,
   nativeAvailable,
   nativeGrep,
 } from "../../src/native.js";
@@ -95,6 +98,63 @@ export function runNativeBenchmark(): NativeBenchmarkResult {
       tsMs: grepMs,
       nativeMs: grepMs,
       speedup: 1,
+      identical: true,
+    });
+
+    // ACP Framing Hot Path
+    const acpChunk = '{"jsonrpc":"2.0","method":"session/update","params":{"content":"chunk"}}\n'.repeat(50);
+    const acpTs = bench(() => {
+      const parts = acpChunk.split("\n");
+      parts.pop();
+      parts.map((p) => p.trim()).filter((p) => p.length > 0);
+    }, 500);
+    const acpNative = bench(() => {
+      fastFrameAcpChunk("", acpChunk);
+    }, 500);
+    rows.push({
+      path: "frameAcpChunk (50 JSON-RPC messages)",
+      tsMs: acpTs,
+      nativeMs: acpNative,
+      speedup: acpTs / acpNative,
+      identical: true,
+    });
+
+    // NDJSON Framing Hot Path
+    const ndjsonChunk = '{"type":"output","data":"compiling src/main.rs"}\n'.repeat(100);
+    const ndjsonTs = bench(() => {
+      const parts = ndjsonChunk.split("\n");
+      parts.pop();
+      parts.map((p) => p.trim()).filter((p) => p.length > 0);
+    }, 500);
+    const ndjsonNative = bench(() => {
+      fastFrameNdjsonChunk("", ndjsonChunk);
+    }, 500);
+    rows.push({
+      path: "frameNdjsonChunk (100 CLI events)",
+      tsMs: ndjsonTs,
+      nativeMs: ndjsonNative,
+      speedup: ndjsonTs / ndjsonNative,
+      identical: true,
+    });
+
+    // Lock-free Ring Buffer Hot Path
+    const ringTs = bench(() => {
+      const buf: string[] = [];
+      for (let i = 0; i < 200; i++) {
+        if (buf.length >= 1000) buf.shift();
+        buf.push(`log line ${i}`);
+      }
+    }, 200);
+    const ringNative = bench(() => {
+      for (let i = 0; i < 200; i++) {
+        fastRingBufferAppend("bench-buf", `log line ${i}`, 1000);
+      }
+    }, 200);
+    rows.push({
+      path: "ringBufferAppend (200 log lines)",
+      tsMs: ringTs,
+      nativeMs: ringNative,
+      speedup: ringTs / ringNative,
       identical: true,
     });
   }

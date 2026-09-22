@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { Icon } from "./Icon.js";
+import type { ChatMode } from "@deyin/contract";
+import { Icon, type IconName } from "./Icon.js";
 import { CoBrandLogos } from "./CoBrandLogos.js";
 import { ThreadMenu, type ThreadAction } from "./ThreadMenu.js";
 
@@ -7,6 +8,8 @@ interface TopBarProps {
   platform: "desktop" | "web";
   /** Hosted chat-only web: hide workspace folder chip and agent panel toggles. */
   chatOnly?: boolean;
+  mode?: ChatMode;
+  onModeChange?: (mode: ChatMode) => void;
   threadId: string | null;
   threadTitle: string;
   threadPinned: boolean;

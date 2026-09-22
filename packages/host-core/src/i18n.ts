@@ -64,6 +64,8 @@ const en = {
   "mode.planDesc": "Researches read-only, then proposes a plan.",
   "mode.ask": "Ask",
   "mode.askDesc": "Answers questions; never changes anything.",
+  "mode.bot": "Bot Mode",
+  "mode.botDesc": "Orchestrates external tools (Codex, Claude, ZCode, OpenCode) across pipelines.",
   "mode.switchHint": "Shift+Tab to cycle modes",
 
   // Chat timeline cards
@@ -519,6 +521,8 @@ const zh: Partial<Record<MessageKey, string>> = {
   "mode.planDesc": "只读调研后提出方案。",
   "mode.ask": "问答",
   "mode.askDesc": "只回答问题，不做任何更改。",
+  "mode.bot": "Bot模式",
+  "mode.botDesc": "编排外部工具（Codex、Claude、ZCode、OpenCode）多阶段流水线。",
   "mode.switchHint": "Shift+Tab 切换模式",
   "chat.thinking": "思考中…",
   "chat.thought": "思考",
@@ -908,6 +912,8 @@ const de: Partial<Record<MessageKey, string>> = {
   "mode.planDesc": "Recherchiert nur lesend und schlägt einen Plan vor.",
   "mode.ask": "Fragen",
   "mode.askDesc": "Beantwortet Fragen; ändert nie etwas.",
+  "mode.bot": "Bot-Modus",
+  "mode.botDesc": "Orchestrieren Sie externe Tools (Codex, Claude, ZCode, OpenCode) über Pipelines.",
   "mode.switchHint": "Shift+Tab wechselt den Modus",
   "chat.thinking": "Denkt nach…",
   "chat.thought": "Gedanken",

@@ -18,6 +18,7 @@ export const PANEL_TABS: PanelTabDef[] = [
   { id: "browser", label: "Browser", icon: "globe" },
   { id: "security", label: "Security", icon: "shield" },
   { id: "agent", label: "Agent", icon: "sparkles" },
+  { id: "botflow", label: "Bot Flow", icon: "bot" },
 ];
 
 export function panelTabDef(id: PanelTab): PanelTabDef {
