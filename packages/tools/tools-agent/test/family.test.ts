@@ -15,6 +15,22 @@ test("@deyin/plugin-tools-agent registers its family into the catalog", async ()
   ]);
   assert.deepEqual(
     [...kernel.get(Tools).names()].sort(),
-    ["remember","forget","memory","skill","read_session_context","send_message","await","wait","enter_worktree","exit_worktree","ask_question"].sort(),
+    [
+      "remember",
+      "forget",
+      "memory",
+      "skill",
+      "read_session_context",
+      "send_message",
+      "await",
+      "wait",
+      "enter_worktree",
+      "exit_worktree",
+      "ask_question",
+      "list_external_bots",
+      "delegate_external_bot",
+      "inspect_bot_run",
+      "merge_bot_diff",
+    ].sort(),
   );
 });

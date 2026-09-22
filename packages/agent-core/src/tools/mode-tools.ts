@@ -17,6 +17,8 @@ export function modeReminder(change: ModeChangeRequest): string {
         return "You are in ask mode. Answer questions and explore the codebase. You MUST NOT modify the workspace or run commands.";
       case "delivery":
         return "You are in delivery mode. Before editing, call todo_write with acceptanceCriteria per step. After each change, verify with bash and call complete_step. Do not declare completion until every step is signed off.";
+      case "bot":
+        return "You are in Bot Mode (Orchestration Agent). Act as an Engineering Manager. Converse with the user to design, coordinate, and execute multi-agent pipelines across external tools (Codex, Claude, ZCode, OpenCode).";
       case "agent":
         return "You are in agent mode. Implement the user's request end to end using all available tools.";
     }

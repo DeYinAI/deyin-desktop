@@ -42,6 +42,7 @@ import type {
   AgentImageInput,
   AgentStartOptions,
   Automation,
+  BotWorkflowDefinition,
   Bootstrap,
   CapabilityKind,
   DeyinSettings,
@@ -61,8 +62,10 @@ import type {
 } from "@deyin/contract";
 import type { DeyinConfig } from "@deyin/contract";
 import { DesktopAgentHost } from "./agent.js";
-import { AutomationsStore } from "@deyin/host-core";
+import { AutomationsStore, BotWorkflowsStore, BotWorkflowEngine } from "@deyin/host-core";
 import { AutomationService } from "./automations/service.js";
+import { ExternalAgentService } from "./external-agents/service.js";
+import { BotWorkflowScheduler } from "./external-agents/scheduler.js";
 import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
 import { testWslDistro } from "./automations/wsl-executor.js";
 import type { AuthManager } from "./auth.js";
@@ -414,6 +417,19 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     console.warn("[deyin] automation seed skipped:", err);
   }
 
+  const workspaceService = new WorkspaceService(automations.sshHosts);
+  const github = new GitHubService();
+  const externalAgents = new ExternalAgentService();
+  const botWorkflowsStore = new BotWorkflowsStore(storage, opts.getWorkspaceRoot());
+  const botWorkflowEngine = new BotWorkflowEngine();
+  const botWorkflowScheduler = new BotWorkflowScheduler(
+    botWorkflowsStore,
+    botWorkflowEngine,
+    externalAgents,
+    opts.getWorkspaceRoot,
+    (event) => broadcast(CH.botWorkflowsEvent, event),
+  );
+
   const agentHost = new DesktopAgentHost({
     config,
     auth,
@@ -446,10 +462,9 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
         ...list.filter((m) => m.kind !== "image" && m.imageOutput).map((m) => ({ id: m.id, route: "chat" as const })),
       ];
     },
+    externalAgents,
+    botWorkflowEngine,
   });
-
-  const workspaceService = new WorkspaceService(automations.sshHosts);
-  const github = new GitHubService();
   let desktopRepoManager: RepoManager | null = null;
   const emitRepoProgress = (e: RepoProgressEvent): void => broadcast(CH.repoProgress, e);
 
@@ -1112,6 +1127,68 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     workspaceService.listRemoteDirectory(hostId, remotePath),
   );
 
+  /* External Agents & Bots ------------------------------------------------ */
+  ipcMain.handle(CH.externalAgentsList, (_e, forceRefresh?: boolean) => externalAgents.listAgents(forceRefresh));
+  ipcMain.handle(CH.externalAgentsTest, (_e, agentId: string) => externalAgents.testAgent(agentId));
+  ipcMain.handle(CH.externalAgentsRun, (_e, options: any) => {
+    if (!options || typeof options !== "object") throw new Error("Invalid options");
+    const agentId = String(options.agentId || "").trim();
+    if (!agentId) throw new Error("Missing agentId");
+    const prompt = String(options.prompt || "");
+    const effectiveCwd = options.cwd || opts.getWorkspaceRoot() || process.cwd();
+    const timeoutMs = typeof options.timeoutMs === "number" ? Math.max(1000, Math.min(3_600_000, options.timeoutMs)) : undefined;
+    const stallThresholdMs = typeof options.stallThresholdMs === "number" ? Math.max(5000, Math.min(600_000, options.stallThresholdMs)) : undefined;
+    return externalAgents.runAgent({
+      ...options,
+      agentId,
+      prompt,
+      cwd: effectiveCwd,
+      timeoutMs,
+      stallThresholdMs,
+    });
+  });
+  ipcMain.handle(CH.externalAgentsAbort, (_e, runId: string) => externalAgents.abortRun(runId));
+  ipcMain.handle(CH.externalAgentsNudge, (_e, runId: string, message?: string) => externalAgents.nudgeRun(runId, message));
+  ipcMain.handle(CH.externalAgentsLogs, (_e, runId: string, maxLines?: number) => externalAgents.getRecentLogs(runId, maxLines));
+
+  /* Bot Workflows --------------------------------------------------------- */
+  ipcMain.handle(CH.botWorkflowsList, () => botWorkflowsStore.list());
+  ipcMain.handle(CH.botWorkflowsSave, (_e, workflow: BotWorkflowDefinition) => {
+    const res = botWorkflowsStore.save(workflow);
+    botWorkflowScheduler.refresh();
+    return res;
+  });
+  ipcMain.handle(CH.botWorkflowsDelete, (_e, id: string) => {
+    const res = botWorkflowsStore.delete(id);
+    botWorkflowScheduler.refresh();
+    return res;
+  });
+  ipcMain.handle(CH.botWorkflowsRun, async (_e, workflowId: string, cwd: string) => {
+    const wf = botWorkflowsStore.get(workflowId);
+    if (!wf) throw new Error(`Workflow '${workflowId}' not found.`);
+    const effectiveCwd = cwd || opts.getWorkspaceRoot() || process.cwd();
+    const runId = randomUUID();
+    // Launch execution asynchronously with pre-assigned runId
+    void botWorkflowEngine.execute({
+      workflow: wf,
+      workspaceRoot: effectiveCwd,
+      runId,
+      runner: (runnerOpts) =>
+        externalAgents.runAgent({
+          ...runnerOpts,
+          runId: runnerOpts.runId ?? `${runId}-${runnerOpts.stageId ?? randomUUID()}`,
+          logBufferId: runId,
+        }),
+      onEvent: (event) => broadcast(CH.botWorkflowsEvent, event),
+    });
+    return { ok: true, runId };
+  });
+  ipcMain.handle(CH.botWorkflowsAbort, (_e, runId: string) => botWorkflowEngine.abort(runId));
+  ipcMain.handle(CH.botWorkflowsMerge, async (_e, workspaceRoot: string, branchName: string) => {
+    const effectiveRoot = workspaceRoot || opts.getWorkspaceRoot() || process.cwd();
+    return botWorkflowEngine.mergeWorktree(effectiveRoot, branchName);
+  });
+
   ipcMain.handle(CH.repoConnect, async (_e, req: RepoConnectRequest) => {
     const { slugifyRepo } = await import("@deyin/host-core");
     const slug = slugifyRepo(req.url);
@@ -1163,6 +1240,7 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
       // Abort in-flight agent runs first so MCP children observe the signal.
       agentHost.stopAll();
       automations.dispose();
+      botWorkflowScheduler.dispose();
       // Also hangs up the pooled MCP servers, which now outlive a single run.
       await agentHost.dispose();
       telemetry.stop();

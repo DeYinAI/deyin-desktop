@@ -96,6 +96,8 @@ import type { McpAuthBridge, McpOAuthTarget } from "./mcp-auth-bridge.js";
 import type { SecurityFindingsStore } from "./security-findings-store.js";
 import { wrapSecurityMcpTools } from "./security-mcp-hook.js";
 import { createMcpAuthenticateTool, isMcpUnauthorized, resolveMcpModuleId } from "./mcp-auth-bridge.js";
+import type { ExternalAgentService } from "./external-agents/service.js";
+import type { BotWorkflowEngine } from "@deyin/host-core";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Files bigger than this ship to the renderer without diff content. */
@@ -208,6 +210,10 @@ export interface AgentHostOptions {
    * models ("endpoint") and chat models that draw ("chat").
    */
   getImageModels?: (providerId: string) => ImageModelChoice[];
+  /** External bot adapter service for multi-agent delegation tools. */
+  externalAgents?: ExternalAgentService;
+  /** Bot workflow engine for worktree isolation and 1-click merge tools. */
+  botWorkflowEngine?: BotWorkflowEngine;
 }
 
 /**
@@ -1118,6 +1124,15 @@ export class DesktopAgentHost {
             });
           },
           resolveInteraction: (request) => this.resolveInteraction(options.threadId, request),
+          listExternalAgents: this.opts.externalAgents
+            ? (forceRefresh) => this.opts.externalAgents!.listAgents(forceRefresh)
+            : undefined,
+          runExternalAgent: this.opts.externalAgents
+            ? (opts) => this.opts.externalAgents!.runAgent(opts)
+            : undefined,
+          mergeBotBranch: this.opts.botWorkflowEngine
+            ? (mergeCwd, branchName) => this.opts.botWorkflowEngine!.mergeWorktree(mergeCwd, branchName)
+            : undefined,
           onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
           pageArtifact: this.opts.pages
             ? {

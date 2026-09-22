@@ -8,8 +8,12 @@ import {
   createMemoryTool,
   createRememberTool,
   createWaitJobsTool,
+  delegateExternalBotTool,
   enterWorktreeTool,
   exitWorktreeTool,
+  inspectBotRunTool,
+  listExternalBotsTool,
+  mergeBotDiffTool,
   readSessionContextTool,
   sendMessageTool,
   skillTool,
@@ -27,6 +31,10 @@ export const AGENT_STATE_TOOLS = [
   enterWorktreeTool,
   exitWorktreeTool,
   askQuestionTool,
+  listExternalBotsTool,
+  delegateExternalBotTool,
+  inspectBotRunTool,
+  mergeBotDiffTool,
 ];
 
 export const toolsAgentPlugin: PluginDefinition = {

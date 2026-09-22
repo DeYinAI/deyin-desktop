@@ -114,6 +114,15 @@ export type {
   McpCatalogInstallInput,
   McpCatalogSecret,
   McpModuleManifest,
+  ExternalAgentType,
+  ExternalAgentProtocol,
+  ExternalAgentDescriptor,
+  WorkflowStageDefinition,
+  BotWorkflowDefinition,
+  BotStageStatus,
+  BotStageProgress,
+  BotWorkflowRunState,
+  BotElicitationRequest,
 } from "@deyin/host-core/shared";
 
 /** Desktop-only: lifecycle state of the in-app updater (main -> renderer). */

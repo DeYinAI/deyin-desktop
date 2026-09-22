@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalMode, ChatMode } from "@deyin/host-core";
-import { ASK_AGENT, BUILD_AGENT, DELIVERY_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
+import { ASK_AGENT, BOT_AGENT, BUILD_AGENT, DELIVERY_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
 import { runHooks, type LoadedHook } from "./capabilities/hooks.js";
 import { runAgent, type AgentEvent } from "./loop.js";
 import { PermissionEngine, type PermissionResolver, type PermissionRule } from "./permissions.js";
@@ -73,6 +73,8 @@ export function agentForMode(mode: ChatMode): AgentDefinition {
       return ASK_AGENT;
     case "delivery":
       return DELIVERY_AGENT;
+    case "bot":
+      return BOT_AGENT;
     default:
       return BUILD_AGENT;
   }

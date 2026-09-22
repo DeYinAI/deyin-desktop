@@ -54,6 +54,8 @@ import { applyGoalToProjects } from "./threadGoal.js";
 import { estimateContextFromThreadEvents } from "./contextEstimate.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
+import { BotModeView } from "./components/BotModeView.js";
+import { BotWorkflowsView } from "./components/BotWorkflowsView.js";
 import { PlansView } from "./components/PlansView.js";
 import { SettingsView } from "./components/SettingsView.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
@@ -152,7 +154,7 @@ function clampFraction(value: number): number {
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 const CONTINUE_PROMPT = "Continue the task from where you stopped. Check the todo list and workspace state first, then finish the remaining work.";
 
-type View = "workspace" | "settings" | "upgrade" | "automations";
+type View = "workspace" | "settings" | "upgrade" | "automations" | "bot" | "workflows";
 
 interface PendingApproval {
   requestId: string;
@@ -191,6 +193,7 @@ export function App() {
   const [env, setEnv] = useState<EnvInfo | null>(null);
 
   const [view, setView] = useState<View>("workspace");
+  const [selectedWorkflowForEdit, setSelectedWorkflowForEdit] = useState<string | null>(null);
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("general");
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -1500,7 +1503,7 @@ export function App() {
     void window.deyin.browserControl.getPartition().then(setBrowserPartition);
   }, [boot, workspaceRoot]);
 
-  const newTask = useCallback(() => {
+  const newTask = useCallback((modeOverride?: ChatMode, viewOverride?: View) => {
     void (async () => {
       // No workspace yet on desktop: the folder picked here becomes the project.
       let createdProject: Project | null = null;
@@ -1512,7 +1515,8 @@ export function App() {
           setWorkspaceRoot(root);
         }
       }
-      const thread: Thread = { ...emptyThread(), mode: composerMode };
+      const effectiveMode = modeOverride ?? composerMode;
+      const thread: Thread = { ...emptyThread(), mode: effectiveMode };
       const createdId = createdProject?.id ?? null;
       setProjects((cur) => {
         if (cur.length === 0) {
@@ -1527,9 +1531,14 @@ export function App() {
         return cur.map((p) => (p.id === target ? { ...p, threads: [thread, ...p.threads] } : p));
       });
       setActiveThreadId(thread.id);
-      setView("workspace");
+      setView(viewOverride ?? (effectiveMode === "bot" ? "bot" : "workspace"));
+      if (modeOverride) setComposerMode(modeOverride);
     })();
-  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode]);
+  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, chatOnlyHosted]);
+
+  const newBotMission = useCallback(() => {
+    newTask("bot", "bot");
+  }, [newTask]);
 
   const applyGoalToThread = useCallback(
     (thread: Thread, goal: string | null) => {
@@ -1620,9 +1629,36 @@ export function App() {
       if (owner && owner !== activeProjectId) void selectProject(owner);
       setActiveThreadId(threadId);
       updateThread(threadId, { unread: false });
-      setView("workspace");
+      const targetThread = projects.flatMap((p) => p.threads).find((t) => t.id === threadId);
+      if (targetThread?.mode === "bot") {
+        setView("bot");
+      } else if (view !== "workspace") {
+        setView("workspace");
+      }
     },
-    [projects, activeProjectId, selectProject, updateThread],
+    [projects, activeProjectId, selectProject, updateThread, view],
+  );
+
+  const handleSelectView = useCallback(
+    (nextView: "workspace" | "bot") => {
+      setView(nextView);
+      if (nextView === "bot") {
+        setComposerMode("bot");
+        if (activeThreadId) {
+          const curThread = projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId);
+          if (curThread && curThread.mode !== "bot") {
+            const actProj = projects.find((p) => p.id === activeProjectId);
+            const botThread = (actProj?.threads ?? []).find((t) => t.mode === "bot" && !t.archived);
+            if (botThread) {
+              setActiveThreadId(botThread.id);
+            }
+          }
+        }
+      } else {
+        setComposerMode("agent");
+      }
+    },
+    [activeThreadId, projects, activeProjectId],
   );
 
   const threadHistory = useThreadHistory(activeThreadId, allThreadIds, selectThread);
@@ -1632,6 +1668,9 @@ export function App() {
     (mode: ChatMode) => {
       setComposerMode(mode);
       if (activeThreadId) updateThread(activeThreadId, { mode });
+      if (mode === "bot") {
+        setView("bot");
+      }
     },
     [activeThreadId, updateThread],
   );
@@ -1693,6 +1732,10 @@ export function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
         newTask();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        selectMode(composerMode === "bot" ? "agent" : "bot");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2531,9 +2574,25 @@ const continueFromStepLimit = useCallback(() => {
   const sidebarSelectProject = useCallback(
     (projectId: string) => {
       void selectProject(projectId);
-      setView("workspace");
+      if (view !== "bot" && view !== "workflows") {
+        setView("workspace");
+      }
     },
-    [selectProject],
+    [selectProject, view],
+  );
+  const handleSelectTargetRepository = useCallback(
+    async (projectId: string) => {
+      await selectProject(projectId);
+      setView("bot");
+      setComposerMode("bot");
+      const targetProj = projects.find((p) => p.id === projectId);
+      const isAlreadyInTarget = targetProj?.threads.some((t) => t.id === activeThreadId && t.mode === "bot");
+      if (!isAlreadyInTarget) {
+        const latestBotMission = (targetProj?.threads ?? []).find((t) => t.mode === "bot" && !t.archived);
+        setActiveThreadId(latestBotMission?.id ?? null);
+      }
+    },
+    [selectProject, projects, activeThreadId],
   );
   const sidebarSelectThread = useCallback((pid: string, tid: string) => selectThread(tid, pid), [selectThread]);
   const sidebarOpenSearch = useCallback(() => setSearchOpen(true), []);
@@ -2565,6 +2624,11 @@ const continueFromStepLimit = useCallback(() => {
     window.deyin.telemetry?.record("settings-opened");
   }, []);
   const sidebarOpenAutomations = useCallback(() => setView("automations"), []);
+  const sidebarOpenWorkflows = useCallback((workflowId?: string | null) => {
+    setSelectedWorkflowForEdit(workflowId ?? null);
+    setView("workflows");
+    setComposerMode("bot");
+  }, []);
   const sidebarOpenCustomize = useCallback(() => {
     setSettingsPage("appearance");
     setView("settings");
@@ -2698,12 +2762,270 @@ const continueFromStepLimit = useCallback(() => {
     );
   }
 
+  const composerNode = (
+    <div className="chat-column__composer">
+      <PromptDockSlot />
+      {!chatOnlyHosted && activeThread?.goal?.status === "active" && (
+        <div className="goal-card">
+          <Icon name="flag" size={14} />
+          <span>{activeThread.goal.text}</span>
+        </div>
+      )}
+      {!chatOnlyHosted && (
+        <>
+          <ReviewBanner
+            changes={pendingReview.filter((c) => c.status === "pending")}
+            onApprove={approveReview}
+            onReject={rejectReview}
+            onApproveAll={approveAllReview}
+            onRejectAll={rejectAllReview}
+            securityFindings={
+              settings?.reviewMode === "on" ? highSeverityFindings(securityReport) : undefined
+            }
+            onOpenSecurity={() => {
+              openPanelTab("security");
+            }}
+          />
+          {activeMcpAuthRequests[0] && activeThreadId && (
+            <McpAuthCard
+              key={activeMcpAuthRequests[0].requestId}
+              moduleId={activeMcpAuthRequests[0].moduleId}
+              serverName={activeMcpAuthRequests[0].serverName}
+              message={activeMcpAuthRequests[0].message}
+              onSkip={() =>
+                setMcpAuthByThread((cur) => ({
+                  ...cur,
+                  [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                    (r) => r.requestId !== activeMcpAuthRequests[0]!.requestId,
+                  ),
+                }))
+              }
+            />
+          )}
+          {activeApprovals[0] && activeThreadId && (
+            <ApprovalDialog
+              key={activeApprovals[0].requestId}
+              toolName={activeApprovals[0].toolName}
+              summary={activeApprovals[0].summary}
+              pendingCount={activeApprovals.length}
+              onDecision={(decision) => {
+                const answered = activeApprovals[0]!;
+                window.deyin.agent?.approve(answered.requestId, decision);
+                const covered =
+                  decision === "allow-always"
+                    ? activeApprovals.filter((a) => a !== answered && a.toolName === answered.toolName)
+                    : [];
+                for (const a of covered) window.deyin.agent?.approve(a.requestId, "allow");
+                setApprovalsByThread((cur) => ({
+                  ...cur,
+                  [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                    (a) => a.requestId !== answered.requestId && !covered.includes(a),
+                  ),
+                }));
+              }}
+            />
+          )}
+          {planApproval && planApproval.threadId === activeThreadId && (
+            <PlanApprovalDialog
+              title={planApproval.title}
+              overview={planApproval.overview}
+              onApprove={buildFromPlan}
+              onRevise={() => {
+                setPlanApprovalForThread(activeThreadId, null);
+                setComposerFocus((n) => n + 1);
+              }}
+              onDismiss={() => setPlanApprovalForThread(activeThreadId, null)}
+              onEdit={
+                planApproval.filePath
+                  ? () => void window.deyin.shell.showItem(planApproval.filePath!)
+                  : undefined
+              }
+            />
+          )}
+          {activeQuestion && activeThreadId && (
+            <AskQuestionDialog
+              title={activeQuestion.title}
+              questions={activeQuestion.questions}
+              onSubmit={(answers) => {
+                window.deyin.agent?.answerQuestion(activeQuestion.requestId, answers);
+                setQuestionByThread((cur) => ({
+                  ...cur,
+                  [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                    (q) => q.requestId !== activeQuestion.requestId,
+                  ),
+                }));
+              }}
+              onCancel={() => {
+                window.deyin.agent?.answerQuestion(activeQuestion.requestId, {
+                  __cancelled: "AskQuestion was cancelled before answers were returned.",
+                });
+                setQuestionByThread((cur) => ({
+                  ...cur,
+                  [activeThreadId]: (cur[activeThreadId] ?? []).filter(
+                    (q) => q.requestId !== activeQuestion.requestId,
+                  ),
+                }));
+              }}
+            />
+          )}
+        </>
+      )}
+      <ComposerDock
+        ref={composerRef}
+        threadId={activeThreadId}
+        keeper={draftKeeper}
+        chatOnly={chatOnlyHosted}
+        steerActive={activeThreadStreaming}
+        queued={activeQueuedPrompt}
+        onSend={send}
+        onSendNow={sendNow}
+        onStartMultitasking={startMultitasking}
+        onClearQueue={clearQueue}
+        plainChat={chatOnlyHosted}
+        focusSignal={composerFocus}
+        models={models}
+        selectedModel={selectedModel}
+        approvalMode={settings?.approvalMode ?? "full-access"}
+        mode={
+          chatOnlyHosted
+            ? undefined
+            : (settings?.agentMode ?? "agent") === "agent"
+              ? composerMode
+              : undefined
+        }
+        deliveryModeEnabled={false}
+        thinking={settings?.thinking ?? true}
+        thinkingDefault={settings?.thinking ?? true}
+        modelEfforts={settings?.modelEfforts}
+        streaming={activeThreadStreaming}
+        runStatus={chatOnlyHosted ? null : agentRunState?.running ? agentRunState.status ?? null : null}
+        hasEvents={(activeThread?.events.length ?? 0) > 0}
+        providers={providers}
+        selectedProviderId={selectedProviderId}
+        onStop={showGlobalStop ? stopRun : undefined}
+        onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
+        onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
+        onManageModels={() => {
+          setSettingsPage("models");
+          setView("settings");
+        }}
+        onOpenUsage={
+          chatOnlyHosted
+            ? undefined
+            : () => {
+                setSettingsPage("data");
+                setView("settings");
+              }
+        }
+        onSelectApproval={
+          chatOnlyHosted ? () => {} : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
+        }
+        onSelectMode={chatOnlyHosted ? undefined : selectMode}
+        onToggleThinking={(on) => patchSettings({ thinking: on })}
+        onSetModelEffort={(providerId, modelId, mode: ModelReasoningMode | undefined) => {
+          const key = modelEffortKey(providerId, modelId);
+          const next = { ...(settings?.modelEfforts ?? {}) };
+          if (mode) next[key] = mode;
+          else delete next[key];
+          patchSettings({ modelEfforts: next });
+        }}
+        imageModelSettings={
+          selectedModelKind === "image"
+            ? {
+                providerId: selectedProviderId,
+                modelId: selectedModel,
+                saved: savedImageParams,
+                onChange: (providerId, modelId, params: ImageModelParams) => {
+                  const key = imageModelParamsKey(providerId, modelId);
+                  const next = { ...(settings?.imageModelParams ?? {}) };
+                  if (Object.keys(params).length === 0) delete next[key];
+                  else next[key] = params;
+                  patchSettings({ imageModelParams: next });
+                },
+              }
+            : undefined
+        }
+        videoModelSettings={
+          selectedModelKind === "video"
+            ? {
+                providerId: selectedProviderId,
+                modelId: selectedModel,
+                saved: savedVideoParams,
+                onChange: (providerId, modelId, params: VideoModelParams) => {
+                  const key = videoModelParamsKey(providerId, modelId);
+                  const next = { ...(settings?.videoModelParams ?? {}) };
+                  if (Object.keys(params).length === 0) delete next[key];
+                  else next[key] = params;
+                  patchSettings({ videoModelParams: next });
+                },
+              }
+            : undefined
+        }
+        contextSnapshot={activeContextSnapshot}
+        contextLength={selectedContextLength}
+        threadKey={activeThreadId}
+        compactionNotice={chatOnlyHosted ? null : activeCompactionNotice}
+        threadsForPicker={activeProject?.threads}
+        activeThreadId={activeThreadId}
+        workspaceRoot={workspaceRoot}
+        goalText={
+          chatOnlyHosted
+            ? null
+            : activeThread?.goal?.status === "active"
+              ? activeThread.goal.text
+              : null
+        }
+        onSetGoal={
+          chatOnlyHosted
+            ? undefined
+            : (text) => {
+                const thread =
+                  activeThread ??
+                  ({
+                    ...emptyThread(),
+                    mode: composerMode,
+                    model: selectedModel,
+                    providerId: selectedProviderId,
+                  } satisfies Thread);
+                applyGoalToThreadRef.current(thread, text);
+              }
+        }
+      >
+        <WorkspaceBar
+          platform={boot?.platform === "web" ? "web" : "desktop"}
+          projects={projects}
+          activeProjectId={activeProjectId}
+          projectName={projectName}
+          workspaceRoot={workspaceRoot}
+          homeDir={boot?.homeDir ?? null}
+          onSelectProject={(projectId) => void selectProject(projectId)}
+          onPickFolder={(startIn) => void addProjectFolder(startIn)}
+          wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
+          onOpenSshHosts={
+            boot?.platform === "desktop"
+              ? () => {
+                  setSettingsPage("sshHosts");
+                  setView("settings");
+                }
+              : undefined
+          }
+          onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+          onOpenSourceControl={() => {
+            openPanelTab("git");
+          }}
+        />
+      </ComposerDock>
+    </div>
+  );
+
   return (
     <AppProviders language={language}>
     <div className="app">
       <TopBar
         platform={boot?.platform ?? "desktop"}
         chatOnly={chatOnlyHosted}
+        mode={composerMode}
+        onModeChange={selectMode}
         threadId={activeThreadId}
         threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
         threadPinned={activeThread?.pinned ?? false}
@@ -2738,10 +3060,14 @@ const continueFromStepLimit = useCallback(() => {
           <NavRail
             activeView={view}
             platform={boot?.platform ?? "desktop"}
+            currentMode={composerMode}
+            onSwitchMode={selectMode}
+            onSelectView={handleSelectView}
             onExpand={() => setSidebarOpen(true)}
             onNewTask={newTask}
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAutomations={() => setView("automations")}
+            onOpenWorkflows={() => sidebarOpenWorkflows(null)}
             onOpenCustomize={() => {
               setSettingsPage("appearance");
               setView("settings");
@@ -2757,6 +3083,9 @@ const continueFromStepLimit = useCallback(() => {
         <MemoSidebar
           platform={boot?.platform ?? "desktop"}
           activeView={view}
+          currentMode={composerMode}
+          onSwitchMode={selectMode}
+          onSelectView={handleSelectView}
           projects={projects}
           activeProjectId={activeProjectId}
           activeThreadId={activeThreadId}
@@ -2773,6 +3102,7 @@ const continueFromStepLimit = useCallback(() => {
           onNewTask={newTask}
           onNewProject={sidebarNewProject}
           onSelectProject={sidebarSelectProject}
+          onSelectTargetRepository={handleSelectTargetRepository}
           onSelectThread={sidebarSelectThread}
           onOpenSearch={sidebarOpenSearch}
           onThreadContext={sidebarThreadContext}
@@ -2785,6 +3115,7 @@ const continueFromStepLimit = useCallback(() => {
           onOpenPlans={sidebarOpenPlans}
           onOpenSettings={sidebarOpenSettings}
           onOpenAutomations={sidebarOpenAutomations}
+          onOpenWorkflows={sidebarOpenWorkflows}
           onOpenCustomize={sidebarOpenCustomize}
           pendingByThread={pendingByThread}
         />
@@ -2799,11 +3130,61 @@ const continueFromStepLimit = useCallback(() => {
               selectedModel={selectedModel}
               selectedProviderId={selectedProviderId}
               env={env}
-              onBack={() => setView("workspace")}
+              onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
               onOpenSshSettings={() => {
                 setSettingsPage("sshHosts");
                 setView("settings");
               }}
+            />
+          ) : view === "workflows" ? (
+            <BotWorkflowsView
+              workspaceRoot={workspaceRoot}
+              initialWorkflowId={selectedWorkflowForEdit}
+              onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
+              onRunWorkflow={(_wfId) => {
+                setView("bot");
+                setComposerMode("bot");
+              }}
+            />
+          ) : view === "bot" ? (
+            <BotModeView
+              workspaceRoot={workspaceRoot}
+              projectName={projectName}
+              activeThread={activeThread}
+              activeThreadId={activeThreadId}
+              chatEvents={chatEvents}
+              chatStreamText={chatStreamText}
+              chatStreamReasoning={chatOnlyHosted ? null : (agentRunState?.streamReasoning ?? null)}
+              greetingName={greetingName}
+              agentRunState={agentRunState}
+              activeThreadStreaming={activeThreadStreaming}
+              chatCodeDisplay={chatCodeDisplay}
+              onOpenFile={chatOnlyHosted ? noop : openFileDiff}
+              onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
+              homeDir={boot?.homeDir ?? null}
+              onUndo={chatOnlyHosted ? noop : undoFileChange}
+              onRevertRun={chatOnlyHosted ? undefined : revertRunChanges}
+              onEditMessage={chatOnlyHosted ? undefined : editMessageAtEvent}
+              onForkAtEvent={forkAtEvent}
+              onMessageFeedback={messageFeedback}
+              onOpenAgentTerminal={
+                chatOnlyHosted
+                  ? undefined
+                  : hasAgentTerminal
+                    ? openAgentTerminal
+                    : undefined
+              }
+              threadTitles={threadTitles}
+              onNewMission={newBotMission}
+              onSwitchToWorkspace={() => {
+                selectMode("agent");
+                setView("workspace");
+              }}
+              onQuickPrompt={(prompt) => {
+                send(prompt);
+              }}
+              onOpenWorkflows={sidebarOpenWorkflows}
+              composerNode={composerNode}
             />
           ) : (<>
           <div className="app__columns" ref={attachColumns}>
@@ -2876,259 +3257,7 @@ const continueFromStepLimit = useCallback(() => {
                 </div>
               )}
 
-              <div className="chat-column__composer">
-                <PromptDockSlot />
-                {!chatOnlyHosted && activeThread?.goal?.status === "active" && (
-                  <div className="goal-card">
-                    <Icon name="flag" size={14} />
-                    <span>{activeThread.goal.text}</span>
-                  </div>
-                )}
-                {!chatOnlyHosted && (
-                  <>
-                <ReviewBanner
-                  changes={pendingReview.filter((c) => c.status === "pending")}
-                  onApprove={approveReview}
-                  onReject={rejectReview}
-                  onApproveAll={approveAllReview}
-                  onRejectAll={rejectAllReview}
-                  securityFindings={
-                    settings?.reviewMode === "on" ? highSeverityFindings(securityReport) : undefined
-                  }
-                  onOpenSecurity={() => {
-                    openPanelTab("security");
-                  }}
-                />
-                {activeMcpAuthRequests[0] && activeThreadId && (
-                  <McpAuthCard
-                    key={activeMcpAuthRequests[0].requestId}
-                    moduleId={activeMcpAuthRequests[0].moduleId}
-                    serverName={activeMcpAuthRequests[0].serverName}
-                    message={activeMcpAuthRequests[0].message}
-                    onSkip={() =>
-                      setMcpAuthByThread((cur) => ({
-                        ...cur,
-                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
-                          (r) => r.requestId !== activeMcpAuthRequests[0]!.requestId,
-                        ),
-                      }))
-                    }
-                  />
-                )}
-                {activeApprovals[0] && activeThreadId && (
-                  <ApprovalDialog
-                    key={activeApprovals[0].requestId}
-                    toolName={activeApprovals[0].toolName}
-                    summary={activeApprovals[0].summary}
-                    pendingCount={activeApprovals.length}
-                    onDecision={(decision) => {
-                      const answered = activeApprovals[0]!;
-                      window.deyin.agent?.approve(answered.requestId, decision);
-                      const covered =
-                        decision === "allow-always"
-                          ? activeApprovals.filter((a) => a !== answered && a.toolName === answered.toolName)
-                          : [];
-                      for (const a of covered) window.deyin.agent?.approve(a.requestId, "allow");
-                      setApprovalsByThread((cur) => ({
-                        ...cur,
-                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
-                          (a) => a.requestId !== answered.requestId && !covered.includes(a),
-                        ),
-                      }));
-                    }}
-                  />
-                )}
-                {planApproval && planApproval.threadId === activeThreadId && (
-                  <PlanApprovalDialog
-                    title={planApproval.title}
-                    overview={planApproval.overview}
-                    onApprove={buildFromPlan}
-                    onRevise={() => {
-                      setPlanApprovalForThread(activeThreadId, null);
-                      setComposerFocus((n) => n + 1);
-                    }}
-                    onDismiss={() => setPlanApprovalForThread(activeThreadId, null)}
-                    onEdit={
-                      planApproval.filePath
-                        ? () => void window.deyin.shell.showItem(planApproval.filePath!)
-                        : undefined
-                    }
-                  />
-                )}
-                {activeQuestion && activeThreadId && (
-                  <AskQuestionDialog
-                    title={activeQuestion.title}
-                    questions={activeQuestion.questions}
-                    onSubmit={(answers) => {
-                      window.deyin.agent?.answerQuestion(activeQuestion.requestId, answers);
-                      setQuestionByThread((cur) => ({
-                        ...cur,
-                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
-                          (q) => q.requestId !== activeQuestion.requestId,
-                        ),
-                      }));
-                    }}
-                    onCancel={() => {
-                      window.deyin.agent?.answerQuestion(activeQuestion.requestId, {
-                        __cancelled: "AskQuestion was cancelled before answers were returned.",
-                      });
-                      setQuestionByThread((cur) => ({
-                        ...cur,
-                        [activeThreadId]: (cur[activeThreadId] ?? []).filter(
-                          (q) => q.requestId !== activeQuestion.requestId,
-                        ),
-                      }));
-                    }}
-                  />
-                )}
-                  </>
-                )}
-                <ComposerDock
-                  ref={composerRef}
-                  threadId={activeThreadId}
-                  keeper={draftKeeper}
-                  chatOnly={chatOnlyHosted}
-                  steerActive={activeThreadStreaming}
-                  queued={activeQueuedPrompt}
-                  onSend={send}
-                  onSendNow={sendNow}
-                  onStartMultitasking={startMultitasking}
-                  onClearQueue={clearQueue}
-                  plainChat={chatOnlyHosted}
-                  focusSignal={composerFocus}
-                  models={models}
-                  selectedModel={selectedModel}
-                  approvalMode={settings?.approvalMode ?? "full-access"}
-                  mode={
-                    chatOnlyHosted
-                      ? undefined
-                      : (settings?.agentMode ?? "agent") === "agent"
-                        ? composerMode
-                        : undefined
-                  }
-                  deliveryModeEnabled={false}
-                  thinking={settings?.thinking ?? true}
-                  thinkingDefault={settings?.thinking ?? true}
-                  modelEfforts={settings?.modelEfforts}
-                  streaming={activeThreadStreaming}
-                  runStatus={chatOnlyHosted ? null : agentRunState?.running ? agentRunState.status ?? null : null}
-                  hasEvents={(activeThread?.events.length ?? 0) > 0}
-                  providers={providers}
-                  selectedProviderId={selectedProviderId}
-                  onStop={showGlobalStop ? stopRun : undefined}
-                  onSelectModel={(id) => applyComposerModel(selectedProviderId, id)}
-                  onSelectProviderModel={(providerId, modelId) => applyComposerModel(providerId, modelId)}
-                  onManageModels={() => {
-                    setSettingsPage("models");
-                    setView("settings");
-                  }}
-                  onOpenUsage={
-                    chatOnlyHosted
-                      ? undefined
-                      : () => {
-                          setSettingsPage("data");
-                          setView("settings");
-                        }
-                  }
-                  onSelectApproval={
-                    chatOnlyHosted ? () => {} : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
-                  }
-                  onSelectMode={chatOnlyHosted ? undefined : selectMode}
-                  onToggleThinking={(on) => patchSettings({ thinking: on })}
-                  onSetModelEffort={(providerId, modelId, mode: ModelReasoningMode | undefined) => {
-                    const key = modelEffortKey(providerId, modelId);
-                    const next = { ...(settings?.modelEfforts ?? {}) };
-                    if (mode) next[key] = mode;
-                    else delete next[key];
-                    patchSettings({ modelEfforts: next });
-                  }}
-                  imageModelSettings={
-                    selectedModelKind === "image"
-                      ? {
-                          providerId: selectedProviderId,
-                          modelId: selectedModel,
-                          saved: savedImageParams,
-                          onChange: (providerId, modelId, params: ImageModelParams) => {
-                            const key = imageModelParamsKey(providerId, modelId);
-                            const next = { ...(settings?.imageModelParams ?? {}) };
-                            if (Object.keys(params).length === 0) delete next[key];
-                            else next[key] = params;
-                            patchSettings({ imageModelParams: next });
-                          },
-                        }
-                      : undefined
-                  }
-                  videoModelSettings={
-                    selectedModelKind === "video"
-                      ? {
-                          providerId: selectedProviderId,
-                          modelId: selectedModel,
-                          saved: savedVideoParams,
-                          onChange: (providerId, modelId, params: VideoModelParams) => {
-                            const key = videoModelParamsKey(providerId, modelId);
-                            const next = { ...(settings?.videoModelParams ?? {}) };
-                            if (Object.keys(params).length === 0) delete next[key];
-                            else next[key] = params;
-                            patchSettings({ videoModelParams: next });
-                          },
-                        }
-                      : undefined
-                  }
-                  contextSnapshot={activeContextSnapshot}
-                  contextLength={selectedContextLength}
-                  threadKey={activeThreadId}
-                  compactionNotice={chatOnlyHosted ? null : activeCompactionNotice}
-                  threadsForPicker={activeProject?.threads}
-                  activeThreadId={activeThreadId}
-                  workspaceRoot={workspaceRoot}
-                  goalText={
-                    chatOnlyHosted
-                      ? null
-                      : activeThread?.goal?.status === "active"
-                        ? activeThread.goal.text
-                        : null
-                  }
-                  onSetGoal={
-                    chatOnlyHosted
-                      ? undefined
-                      : (text) => {
-                          const thread =
-                            activeThread ??
-                            ({
-                              ...emptyThread(),
-                              mode: composerMode,
-                              model: selectedModel,
-                              providerId: selectedProviderId,
-                            } satisfies Thread);
-                          applyGoalToThreadRef.current(thread, text);
-                        }
-                  }
-                >
-                  <WorkspaceBar
-                    platform={boot?.platform === "web" ? "web" : "desktop"}
-                    projects={projects}
-                    activeProjectId={activeProjectId}
-                    projectName={projectName}
-                    workspaceRoot={workspaceRoot}
-                    homeDir={boot?.homeDir ?? null}
-                    onSelectProject={(projectId) => void selectProject(projectId)}
-                    onPickFolder={(startIn) => void addProjectFolder(startIn)}
-                    wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
-                    onOpenSshHosts={
-                      boot?.platform === "desktop"
-                        ? () => {
-                            setSettingsPage("sshHosts");
-                            setView("settings");
-                          }
-                        : undefined
-                    }
-                    onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
-                    onOpenSourceControl={() => {
-                      openPanelTab("git");
-                    }}
-                  />
-                </ComposerDock>
-              </div>
+              {composerNode}
             </main>
 
             {panelVisible && (

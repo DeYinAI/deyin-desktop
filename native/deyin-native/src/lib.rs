@@ -1,13 +1,25 @@
 //! Deyin's in-house native hot path. All algorithms implemented from scratch —
 //! no third-party algorithm crates; napi is binding glue only.
 
+pub mod acp_framing;
 pub mod compress;
 pub mod grep;
+pub mod ndjson_framing;
+pub mod process_watchdog;
+pub mod ring_buffer;
 pub mod sse;
 pub mod tokenizer;
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+fn current_time_ms() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .unwrap_or_default()
+    .as_millis() as u64
+}
 
 /// Parse one SSE `data:` line.
 /// Returns null for keep-alives/non-data lines, the string "[DONE]" sentinel is
@@ -42,6 +54,123 @@ pub struct SseChunkResult {
 pub fn frame_sse_chunk(buffer: String, chunk: String) -> SseChunkResult {
   let (payloads, rest, is_done) = sse::frame_chunk(&buffer, &chunk);
   SseChunkResult { payloads, rest, is_done }
+}
+
+#[napi(object)]
+pub struct AcpChunkResult {
+  pub payloads: Vec<String>,
+  pub rest: String,
+}
+
+/// Frame a raw byte chunk into complete ACP JSON-RPC message lines.
+#[napi]
+pub fn frame_acp_chunk(buffer: String, chunk: String) -> AcpChunkResult {
+  let (payloads, rest) = acp_framing::frame_acp_chunk(&buffer, &chunk);
+  AcpChunkResult { payloads, rest }
+}
+
+/// Check if a line is a JSON-RPC 2.0 message.
+#[napi]
+pub fn is_json_rpc(line: String) -> bool {
+  acp_framing::is_json_rpc(&line)
+}
+
+#[napi(object)]
+pub struct NdjsonChunkResult {
+  pub lines: Vec<String>,
+  pub rest: String,
+}
+
+/// Frame a raw byte chunk into complete NDJSON lines (for Claude Code, Codex, OpenCode).
+#[napi]
+pub fn frame_ndjson_chunk(buffer: String, chunk: String) -> NdjsonChunkResult {
+  let (lines, rest) = ndjson_framing::frame_ndjson_chunk(&buffer, &chunk);
+  NdjsonChunkResult { lines, rest }
+}
+
+/// Append a line to a named terminal ring buffer.
+#[napi]
+pub fn ring_buffer_append(buffer_id: String, line: String, capacity: Option<u32>) {
+  ring_buffer::append_line(&buffer_id, line, capacity.unwrap_or(10_000) as usize);
+}
+
+/// Get the recent lines from a named ring buffer.
+#[napi]
+pub fn ring_buffer_get_lines(buffer_id: String, max_lines: Option<u32>) -> Vec<String> {
+  ring_buffer::get_recent_lines(&buffer_id, max_lines.map(|m| m as usize))
+}
+
+/// Clear a named terminal ring buffer.
+#[napi]
+pub fn ring_buffer_clear(buffer_id: String) {
+  ring_buffer::clear_buffer(&buffer_id);
+}
+
+/// Remove a named terminal ring buffer from memory.
+#[napi]
+pub fn ring_buffer_remove(buffer_id: String) {
+  ring_buffer::remove_buffer(&buffer_id);
+}
+
+/// Register a process with the high-resolution watchdog.
+#[napi]
+pub fn watchdog_register(
+  id: String,
+  pid: u32,
+  timeout_ms: f64,
+  stall_threshold_ms: f64,
+  now_ms: Option<f64>,
+) {
+  let now = now_ms.map(|n| n as u64).unwrap_or_else(current_time_ms);
+  process_watchdog::register(id, pid, timeout_ms as u64, stall_threshold_ms as u64, now);
+}
+
+/// Record a heartbeat or activity for a process in the watchdog.
+#[napi]
+pub fn watchdog_heartbeat(id: String, now_ms: Option<f64>) -> bool {
+  let now = now_ms.map(|n| n as u64).unwrap_or_else(current_time_ms);
+  process_watchdog::record_heartbeat(&id, now)
+}
+
+#[napi(object)]
+pub struct WatchdogCheckResult {
+  pub status: String,
+  pub elapsed_ms: f64,
+  pub inactive_ms: f64,
+}
+
+/// Check status of a process in the watchdog.
+#[napi]
+pub fn watchdog_check(id: String, now_ms: Option<f64>) -> WatchdogCheckResult {
+  let now = now_ms.map(|n| n as u64).unwrap_or_else(current_time_ms);
+  match process_watchdog::inspect(&id, now) {
+    process_watchdog::WatchdogStatus::Running { elapsed_ms, inactive_ms } => WatchdogCheckResult {
+      status: "running".to_string(),
+      elapsed_ms: elapsed_ms as f64,
+      inactive_ms: inactive_ms as f64,
+    },
+    process_watchdog::WatchdogStatus::Stalled { elapsed_ms, inactive_ms } => WatchdogCheckResult {
+      status: "stalled".to_string(),
+      elapsed_ms: elapsed_ms as f64,
+      inactive_ms: inactive_ms as f64,
+    },
+    process_watchdog::WatchdogStatus::TimedOut { elapsed_ms } => WatchdogCheckResult {
+      status: "timed-out".to_string(),
+      elapsed_ms: elapsed_ms as f64,
+      inactive_ms: 0.0,
+    },
+    process_watchdog::WatchdogStatus::NotFound => WatchdogCheckResult {
+      status: "not-found".to_string(),
+      elapsed_ms: 0.0,
+      inactive_ms: 0.0,
+    },
+  }
+}
+
+/// Unregister a process from the watchdog.
+#[napi]
+pub fn watchdog_unregister(id: String) -> bool {
+  process_watchdog::unregister(&id)
 }
 
 #[napi]

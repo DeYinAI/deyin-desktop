@@ -13,6 +13,13 @@ import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { summarizeActivityBlock } from "../toolActivity.js";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 import { formatTokens } from "../formatTokens.js";
+export {
+  BotWorkflowCard,
+  BotStageProgressCard,
+  BotWatchdogAlertCard,
+  BotReviewMergeCard,
+} from "./BotModeCards.js";
+import { BotReviewMergeCard, BotStageProgressCard } from "./BotModeCards.js";
 
 /** Distance from the bottom (px) within which we consider the view "pinned". */
 const PIN_THRESHOLD = 64;
@@ -714,8 +721,46 @@ function EventRow({
         </div>
       );
 
-    case "tool":
+    case "tool": {
+      if (event.name === "merge_bot_diff" && event.result) {
+        return (
+          <BotReviewMergeCard
+            workflowName="External Bot Pipeline"
+            branchName={event.summary?.replace(/^merge bot branch\s*/i, "").trim() || "bot/worktree"}
+            stagesCompleted={1}
+            totalStages={1}
+            diffSummary={event.result}
+            onMerge={async (branch) => {
+              if (window.deyin?.botWorkflows?.merge) {
+                await window.deyin.botWorkflows.merge(workspaceRoot || "", branch);
+              }
+            }}
+          />
+        );
+      }
+      if (event.name === "delegate_external_bot") {
+        const stageProgress: any = {
+          stageId: event.startedAt ? String(event.startedAt) : "bot-run",
+          stageName: event.summary || "Delegate to External Bot",
+          agentId: "external-bot",
+          status: event.result ? (event.ok === false ? "failed" : "completed") : "running",
+          elapsedMs: event.durationMs ?? 0,
+          heartbeatCount: 1,
+          linesProduced: event.result ? event.result.split("\n").length : 0,
+          outputSummary: event.result,
+          error: event.ok === false ? event.result : undefined,
+        };
+        return (
+          <BotStageProgressCard
+            stage={stageProgress}
+            onNudge={(id) => window.deyin?.externalAgents?.nudge(id, "Progress check")}
+            onAbort={(id) => window.deyin?.externalAgents?.abort(id)}
+            onViewLogs={(id) => window.deyin?.externalAgents?.logs(id, 50)}
+          />
+        );
+      }
       return <ToolCard event={event} />;
+    }
 
     case "subagent":
       return <SubagentCard event={event} onOpen={onOpenSubagent} />;

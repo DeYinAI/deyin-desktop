@@ -180,12 +180,21 @@ export function Field(props: {
 }
 
 /** Card wrapping a titled block of `Field`s / rows. */
-export function FormSection(props: { title: ReactNode; note?: ReactNode; children: ReactNode }) {
+export function FormSection(props: {
+  title: ReactNode;
+  note?: ReactNode;
+  action?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="form-section">
       <div className="form-section__head">
         <span className="form-section__title">{props.title}</span>
         {props.note && <span className="form-section__note">{props.note}</span>}
+        {(props.action || props.actions) && (
+          <span className="form-section__action">{props.action || props.actions}</span>
+        )}
       </div>
       <div className="form-section__body">{props.children}</div>
     </section>

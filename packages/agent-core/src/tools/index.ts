@@ -36,6 +36,12 @@ import { repoMapTool } from "./repo-map.js";
 import { applyPatchTool } from "./patch.js";
 import { checkCompilerErrorsTool } from "./compiler-check.js";
 import { testRunnerTool } from "./test-runner.js";
+import {
+  listExternalBotsTool,
+  delegateExternalBotTool,
+  inspectBotRunTool,
+  mergeBotDiffTool,
+} from "./bot-tools.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell, executeShellCommand, resolveVirtualEnv, type ShellExecutionResult, type VirtualEnvInfo } from "./bash.js";
@@ -88,6 +94,12 @@ export { repoMapTool, extractSymbolsFromSource, formatRepoMap } from "./repo-map
 export { applyPatchTool, parseUnifiedDiff, applyHunksToFile, type FilePatch, type PatchHunk } from "./patch.js";
 export { checkCompilerErrorsTool, extractCompilerErrors } from "./compiler-check.js";
 export { testRunnerTool, formatTestOutput } from "./test-runner.js";
+export {
+  listExternalBotsTool,
+  delegateExternalBotTool,
+  inspectBotRunTool,
+  mergeBotDiffTool,
+} from "./bot-tools.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export { commitFileMutation, applyFileMutationDirect } from "./file-mutation.js";
 export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
@@ -145,6 +157,10 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   applyPatchTool,
   checkCompilerErrorsTool,
   testRunnerTool,
+  listExternalBotsTool,
+  delegateExternalBotTool,
+  inspectBotRunTool,
+  mergeBotDiffTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

@@ -77,6 +77,14 @@ export function createMainWindow(): BrowserWindow {
   });
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
+
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    console.log(`[renderer console ${level}] ${message} (${sourceId}:${line})`);
+  });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[renderer fail-load] ${errorCode}: ${errorDescription} on ${validatedURL}`);
+  });
+
   if (devUrl) {
     window.loadURL(devUrl);
   } else {

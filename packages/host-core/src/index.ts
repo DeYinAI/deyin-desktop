@@ -39,3 +39,4 @@ export * from "./indexer/embedder.js";
 export * from "./indexer/chunker.js";
 export * from "./indexer/store.js";
 export * from "./indexer/ignore.js";
+export * from "./bot-flow/index.js";

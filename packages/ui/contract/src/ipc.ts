@@ -81,6 +81,8 @@ import type {
   DirectoryEntry,
   GitHubRepoEntry,
   GitHubAuthState,
+  ExternalAgentDescriptor,
+  BotWorkflowDefinition,
 } from "./types.js";
 
 /** Decision for an agent permission request (mirrors agent-core). */
@@ -310,6 +312,19 @@ export const CH = {
   sshHostsPinFingerprint: "deyin:ssh:pinFingerprint",
   sshHostsImportKey: "deyin:ssh:importKey",
   wslTestDistro: "deyin:automations:wslTest",
+  externalAgentsList: "deyin:externalAgents:list",
+  externalAgentsTest: "deyin:externalAgents:test",
+  externalAgentsRun: "deyin:externalAgents:run",
+  externalAgentsAbort: "deyin:externalAgents:abort",
+  externalAgentsNudge: "deyin:externalAgents:nudge",
+  externalAgentsLogs: "deyin:externalAgents:logs",
+  botWorkflowsList: "deyin:botWorkflows:list",
+  botWorkflowsSave: "deyin:botWorkflows:save",
+  botWorkflowsDelete: "deyin:botWorkflows:delete",
+  botWorkflowsRun: "deyin:botWorkflows:run",
+  botWorkflowsAbort: "deyin:botWorkflows:abort",
+  botWorkflowsMerge: "deyin:botWorkflows:merge",
+  botWorkflowsEvent: "deyin:botWorkflows:event",
 } as const;
 
 /** The API the preload script exposes on `window.deyin`. */
@@ -699,6 +714,32 @@ export interface DeyinApi {
   };
   beta: {
     submitFeedback(payload: { category: string; message: string; rating?: number }): Promise<{ ok: boolean }>;
+  };
+  externalAgents: {
+    list(forceRefresh?: boolean): Promise<ExternalAgentDescriptor[]>;
+    test(agentId: string): Promise<{ ok: boolean; message: string; version?: string }>;
+    run(options: {
+      agentId: string;
+      prompt: string;
+      cwd: string;
+      model?: string;
+      timeoutMs?: number;
+      stallThresholdMs?: number;
+      runId?: string;
+      logBufferId?: string;
+    }): Promise<{ ok: boolean; error?: string; outputText: string; runId?: string }>;
+    abort(runId: string): Promise<boolean>;
+    nudge(runId: string, message?: string): Promise<boolean>;
+    logs(runId: string, maxLines?: number): Promise<string[]>;
+  };
+  botWorkflows: {
+    list(): Promise<BotWorkflowDefinition[]>;
+    save(workflow: BotWorkflowDefinition): Promise<BotWorkflowDefinition>;
+    delete(id: string): Promise<boolean>;
+    run(workflowId: string, cwd: string): Promise<{ ok: boolean; runId?: string }>;
+    abort(runId: string): Promise<boolean>;
+    merge(workspaceRoot: string, branchName: string): Promise<{ ok: boolean; message: string }>;
+    onEvent(cb: (event: any) => void): () => void;
   };
 }
 

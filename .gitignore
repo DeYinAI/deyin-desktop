@@ -51,6 +51,7 @@ coverage/
 .deyin-local/
 .legacy/
 .agent/
+.deyin/worktrees/
 
 # ZCode agent-session artifacts
 .zcode/
