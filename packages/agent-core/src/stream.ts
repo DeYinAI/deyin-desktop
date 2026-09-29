@@ -1,6 +1,13 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
-import { addImage, fetchWithTransientRetry, imagesFromMessage, type StreamImage } from "@deyin/host-core";
+import {
+  addImage,
+  fetchWithTransientRetry,
+  imagesFromMessage,
+  readWithIdleTimeout,
+  type StreamImage,
+} from "@deyin/host-core";
 import type { ReasoningEffort } from "@deyin/host-core/shared";
+import { ProviderHttpError, ProviderStreamError, retryAfterMsOf, streamErrorFromFrame } from "./stream-errors.js";
 import { buildWireMessages, type CompressionResult, type WireOptions } from "./wire.js";
 import {
   normalizeUsage,
@@ -71,6 +78,8 @@ interface WireDelta {
 
 interface WireChunk {
   choices?: { delta?: WireDelta; message?: unknown; finish_reason?: string | null }[];
+  /** Mid-stream fault frame (`{ message, type, code }` or a string); absent or null on healthy chunks. */
+  error?: unknown;
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
@@ -206,16 +215,22 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       }
 
       if (!res.ok) {
-        const finalDetail = res.status === 400 ? detail : await res.text().catch(() => "");
-        throw new Error(
-          `Chat request failed (${res.status}). ${finalDetail.trim().slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`
+        // `detail` is the body of the latest failed response (each retry above
+        // refreshes it). A body can only be read once, so re-reading it here for
+        // non-400 statuses always came back empty and reported a 401 "invalid API
+        // key" as a "temporary network problem".
+        throw new ProviderHttpError(
+          `Chat request failed (${res.status}). ${detail.trim().slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`
             .trim()
             .slice(0, 2000),
+          res.status,
+          retryAfterMsOf(res),
         );
       }
     }
     if (!res.body) {
-      throw new Error(`Chat request failed (${res.status}). The provider returned no response body.`);
+      // A 200 with nothing to read is a gateway glitch, not a verdict on the request.
+      throw new ProviderStreamError(`Chat request failed (${res.status}). The provider returned no response body.`, true);
     }
 
     const parser = new StreamAccumulator(built.compression);
@@ -225,7 +240,9 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     let doneEvent: StreamEvent | null = null;
 
     while (doneEvent === null) {
-      const { done, value } = await reader.read();
+      // An idle limit turns a silently dropped connection into a retryable
+      // error instead of a run that hangs until the user presses stop.
+      const { done, value } = await readWithIdleTimeout(reader);
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
@@ -255,6 +272,11 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
         yield event;
       }
     }
+    // Complete means the provider said so: a `[DONE]` sentinel, or at least a
+    // finish_reason on the last chunk. EOF with neither is a stream that was cut
+    // off (proxy timeout, upstream crash) — indistinguishable, in the text alone,
+    // from a model that simply stopped, so the loop is told and decides.
+    const terminated = doneEvent !== null || parser.hasFinishReason();
     if (doneEvent === null) doneEvent = parser.finish();
 
     if (doneEvent.type !== "done") {
@@ -286,6 +308,7 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       usage,
       ...(continuations > 0 ? { continuations } : {}),
       ...(images.length > 0 ? { images } : {}),
+      ...(terminated ? {} : { incomplete: true as const }),
     };
     return;
   }
@@ -360,6 +383,12 @@ export class StreamAccumulator {
     } catch {
       return []; // keep-alives / malformed lines
     }
+
+    // A gateway that faults mid-response reports it as an `error` frame and then
+    // closes cleanly. There are no `choices` in that frame, so ignoring it turned
+    // the fault into a silently truncated "answer".
+    const frameError = streamErrorFromFrame(chunk.error);
+    if (frameError) throw frameError;
 
     if (chunk.usage) {
       this.usage = normalizeUsage({
@@ -458,6 +487,11 @@ export class StreamAccumulator {
   /** Images collected so far, for callers that fold across continuations. */
   collectedImages(): StreamImage[] {
     return [...this.images];
+  }
+
+  /** Has any chunk carried a `finish_reason`? The provider's own "I am done" marker. */
+  hasFinishReason(): boolean {
+    return this.finishReason !== null;
   }
 
   finish(): StreamEvent {

@@ -148,7 +148,7 @@ Layered, later wins: defaults -> `~/.deyin/config.json` -> project `deyin.json` 
   "model": "GLM-5.2",
   "agent": "build",
   "thinking": true,
-  "maxSteps": 40,
+  "maxSteps": 100,               // model round-trips per run (default 100); null = unlimited
   "permissions": [
     { "tool": "bash", "action": "allow" },   // allow | ask | deny; tool name or "*"
     { "tool": "write", "action": "ask" }
@@ -168,7 +168,26 @@ Layered, later wins: defaults -> `~/.deyin/config.json` -> project `deyin.json` 
 
 Env vars: `DEYIN_PROVIDER` / `DEYIN_PROVIDER_ID`, `DEYIN_MODEL`, `DEYIN_AGENT`,
 `DEYIN_API_BASE_URL`, `DEYIN_OAUTH_ISSUER`, `DEYIN_CLIENT_ID`, `DEYIN_THINKING`,
-`DEYIN_MAX_STEPS`, `DEYIN_DATA_DIR`.
+`DEYIN_MAX_STEPS`, `DEYIN_DATA_DIR`, `DEYIN_STREAM_IDLE_TIMEOUT_MS`.
+
+### Long-running tasks
+
+A run continues until the model answers without asking for a tool, so it is not
+cut short by hiccups along the way:
+
+- A dropped connection, a `429`/`5xx`, or an error frame inside a stream is retried
+  with backoff (up to 5 replays per step, 40 per run; `Retry-After` is honoured).
+  Errors that retrying cannot fix (bad key, bad request, refused connection) surface
+  immediately.
+- A stream that goes silent for `DEYIN_STREAM_IDLE_TIMEOUT_MS` (default 300000 ms,
+  `0` disables) is treated as stalled and replayed.
+- A reply cut off by the output-token limit is resumed instead of returned half-written.
+- A turn that ends by announcing an action ("Now let me run the tests:") or with an
+  empty reply is nudged to carry on, at most twice in a row.
+
+Each retry and nudge is announced on stderr (`[retry]`, `[loop]`), and appears as a
+`stream-retry` / `evidence-gate` event in `--json` output. `maxSteps` still bounds
+the number of model round-trips; `null` removes the cap.
 
 ### Project instructions
 

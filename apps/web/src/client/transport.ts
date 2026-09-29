@@ -3,7 +3,7 @@ import { beginBrowserLogin, completeBrowserLogin } from "@deyin/oauth-client/bro
 import {
   DEFAULT_CAPABILITIES,
   DEFAULT_PROVIDERS,
-  DEFAULT_SETTINGS,
+  settingsFromStored,
   mergePresetProviders,
   applyEvent,
   computeStats,
@@ -393,8 +393,29 @@ function writeLocal<T>(key: string, value: T): void {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-/* DEFAULT_SETTINGS, DEFAULT_CAPABILITIES and DEFAULT_PROVIDERS come from
- * @deyin/host-core/shared — the same seed data the desktop stores use. */
+/**
+ * The persisted settings, brought up to the current schema. The desktop's
+ * SettingsStore does this on start-up; the web client keeps the same blob in
+ * localStorage, so without this its one-time migrations — such as lifting the
+ * old 40-step run cap that made long tasks stop early — never reached web
+ * users. Runs once per schema bump: the migrated blob is written back stamped
+ * with the new version.
+ */
+function loadSettings(): DeyinSettings {
+  let json: string | null = null;
+  try {
+    json = localStorage.getItem("deyin.settings");
+  } catch {
+    // Storage unavailable (private mode, quota): behave as if nothing was saved.
+  }
+  const { settings, needsWrite } = settingsFromStored(json);
+  if (needsWrite) writeLocal("deyin.settings", settings);
+  return settings;
+}
+
+/* DEFAULT_CAPABILITIES and DEFAULT_PROVIDERS come from @deyin/host-core/shared —
+ * the same seed data the desktop stores use (as do the settings defaults, through
+ * settingsFromStored above). */
 
 type StoredProvider = StoredProviderBase;
 
@@ -665,14 +686,14 @@ export function createBrowserTransport(): DeyinApi {
     },
     settings: {
       get: async () => {
-        const stored = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS);
+        const stored = loadSettings();
         if (CHAT_ONLY && stored.agentMode === "agent") {
           return { ...stored, agentMode: "chat" as const };
         }
         return stored;
       },
       set: async (patch) => {
-        const next = { ...readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS), ...patch };
+        const next = { ...loadSettings(), ...patch };
         if (CHAT_ONLY && next.agentMode === "agent") {
           next.agentMode = "chat";
         }
@@ -769,8 +790,9 @@ export function createBrowserTransport(): DeyinApi {
         // Per-phase model routing: resolve an endpoint + key for every provider a
         // role model targets, so the server can route a role to another provider.
         // Step-limit setting rides along with agent.start (null = unlimited).
- const agentMaxSteps = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS).agentMaxSteps;
- const roleModels = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS).roleModels ?? {};
+        const runSettings = loadSettings();
+        const agentMaxSteps = runSettings.agentMaxSteps;
+        const roleModels = runSettings.roleModels ?? {};
         const roleProviders: Record<string, WebAgentProviderRouting> = {};
         for (const ref of Object.values(roleModels)) {
           const sep = typeof ref === "string" ? ref.indexOf("::") : -1;
@@ -1300,7 +1322,7 @@ export function createBrowserTransport(): DeyinApi {
     },
     diagnostics: {
       send: async (note) => {
-        const settings = readLocal<DeyinSettings>("deyin.settings", DEFAULT_SETTINGS);
+        const settings = loadSettings();
         return sendDiagnosticsReport(
           { oauthIssuer: OAUTH_ISSUER },
           () => oauth.getAccessToken().catch(() => null),

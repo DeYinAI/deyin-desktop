@@ -149,6 +149,56 @@ test("web agent: provider failure surfaces an error and unlocks with done", asyn
   }
 });
 
+test("web agent: a transient provider error is retried and announced as stream-retry", async () => {
+  const server = await startMockOpenAI((index) =>
+    index === 0 ? [{ error: { type: "overloaded_error", message: "Overloaded" } }] : textResponse("recovered"),
+  );
+  const root = mkdtempSync(join(tmpdir(), "deyin-web-agent-"));
+  const envelopes: AgentEventEnvelope[] = [];
+  const host = makeHost(root, envelopes);
+  try {
+    host.start(baseOptions({ provider: { baseUrl: server.url, token: "t", apiFormat: "chat-completions" } }));
+    const done = await waitForDone(envelopes);
+
+    assert.equal(done.event.type === "done" ? done.event.reason : null, "completed", "the blip must not end the run");
+    assert.equal(server.requests.length, 2, "the step is replayed once");
+    const retry = envelopes.find((e) => e.event.type === "stream-retry");
+    assert.ok(retry && retry.event.type === "stream-retry", "stream-retry forwarded to the UI");
+    assert.equal(retry.event.attempt, 1);
+    assert.equal(retry.event.maxAttempts, 5);
+    assert.equal(envelopes.some((e) => e.event.type === "error"), false, "no error event for a recovered blip");
+    const text = envelopes.flatMap((e) => (e.event.type === "text-delta" ? [e.event.delta] : [])).join("");
+    assert.equal(text, "recovered");
+  } finally {
+    host.dispose();
+    await server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("web agent: loop-guard interventions reach the UI on the gate channel, as on desktop", async () => {
+  // The same failing call three times in a row trips the storm detector.
+  const server = await startMockOpenAI((index) =>
+    index < 3 ? toolCallResponse(`call-${index}`, "read", { path: "does-not-exist.txt" }) : textResponse("stopping here"),
+  );
+  const root = mkdtempSync(join(tmpdir(), "deyin-web-agent-"));
+  const envelopes: AgentEventEnvelope[] = [];
+  const host = makeHost(root, envelopes);
+  try {
+    host.start(baseOptions({ provider: { baseUrl: server.url, token: "t", apiFormat: "chat-completions" } }));
+    await waitForDone(envelopes);
+
+    const guard = envelopes.find((e) => e.event.type === "evidence-gate" && e.event.code.startsWith("loop-guard:"));
+    assert.ok(guard && guard.event.type === "evidence-gate", "loop-guard forwarded");
+    assert.equal(guard.event.code, "loop-guard:storm");
+    assert.match(guard.event.message, /read/);
+  } finally {
+    host.dispose();
+    await server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("web agent: enter_plan_mode emits mode-changed and create_plan reaches the UI inside the sandbox", async () => {
   let request = 0;
   const server = await startMockOpenAI(() => {

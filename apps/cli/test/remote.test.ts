@@ -11,6 +11,29 @@ function capture(): { stream: PassThrough; text: () => string } {
   return { stream, text: () => value };
 }
 
+test("remote run sends an explicit null maxSteps (unlimited) instead of dropping it", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) raw += String(chunk);
+    bodies.push(JSON.parse(raw) as Record<string, unknown>);
+    res.writeHead(200, { "content-type": "application/x-ndjson", "x-deyin-exit-code": "0" });
+    res.end('{"type":"result","reason":"completed"}\n');
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  try {
+    const base = { url: `http://127.0.0.1:${address.port}`, prompt: "p", yes: true, stdout: capture().stream, stderr: capture().stream };
+    await runRemote({ ...base, maxSteps: null });
+    await runRemote({ ...base });
+    assert.ok("maxSteps" in bodies[0]! && bodies[0]!.maxSteps === null, "null is sent as JSON null: the server must not fall back to its own cap");
+    assert.ok(!("maxSteps" in bodies[1]!), "an omitted cap is not sent at all");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("remote run forwards streamed server events and bearer auth", async () => {
   let requestBody = "";
   let auth = "";

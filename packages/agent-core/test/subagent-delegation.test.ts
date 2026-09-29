@@ -384,3 +384,58 @@ test("without a state store runs stay one-shot and resume says so", async () => 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/* ── step limit ────────────────────────────────────────────────────────── */
+
+test("a subagent stopped by its step limit says so instead of passing off a partial report as finished", async () => {
+  const dir = tempDir();
+  // Every reply says something and asks for one more tool call, so the child never gets to finish.
+  const server = await startMockOpenAI(() => [
+    { choices: [{ delta: { content: "Partial findings so far." } }] },
+    {
+      choices: [
+        { delta: { tool_calls: [{ index: 0, id: "call_g", type: "function", function: { name: "glob", arguments: JSON.stringify({ pattern: "*.ts" }) } }] } },
+      ],
+    },
+    { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+  ]);
+  try {
+    const result = await runSubagent(DEF, "map the repo", {
+      cwd: dir,
+      parent: { model: "test-model", providerId: "openference" },
+      parentRouting: { apiBaseUrl: server.url, getToken: async () => "test-token" },
+      permissionEngine: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      state: new SubagentStateStore(dir),
+      sessionId: "s1",
+      maxStepsDefault: 1,
+    });
+    assert.equal(result.ok, true);
+    assert.match(result.report, /^Partial findings so far\./, "what the child did say is kept");
+    assert.match(result.report, /stopped at its step limit \(1 steps\)/);
+    assert.match(result.report, /Resume it with its agent_id/);
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a subagent that finishes within its step limit reports exactly what it said", async () => {
+  const dir = tempDir();
+  const server = await startMockOpenAI(() => textResponse("Found it: src/loop.ts."));
+  try {
+    const result = await runSubagent(DEF, "where is the loop?", {
+      cwd: dir,
+      parent: { model: "test-model", providerId: "openference" },
+      parentRouting: { apiBaseUrl: server.url, getToken: async () => "test-token" },
+      permissionEngine: new PermissionEngine(),
+      resolvePermission: async () => "deny",
+      maxStepsDefault: 1,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.report, "Found it: src/loop.ts.");
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

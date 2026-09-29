@@ -33,7 +33,7 @@ import {
   type ToolRegistry,
 } from "@deyin/agent-core";
 import { CheckpointStore, checkpointFileOpsFromRoot, createImageBridge, ImageStore, listModels, revertCheckpoint, type ModelInfo } from "@deyin/host-core";
-import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
+import { buildPromptCacheKeyFor, describeEvidenceGate, describeStreamRetry, resolveWireProvider } from "@deyin/host-core/shared";
 import { loginWithDevice } from "@deyin/oauth-client/node";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -313,6 +313,19 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
         case "compaction":
           notice(`Context compacted (${event.droppedMessages} messages dropped, ${event.truncatedToolResults} tool results truncated).`);
           break;
+        case "stream-retry":
+          // The failed attempt's partial output is void; the replay streams it afresh.
+          setStreamText("");
+          setStreamReasoning("");
+          notice(describeStreamRetry(event));
+          break;
+        case "evidence-gate": {
+          // Delivery-mode gates stay silent here as before; the loop's own
+          // "keep going" nudges are worth a line.
+          const gate = describeEvidenceGate(event.code, event.message);
+          if (gate.tone === "notice") notice(gate.text);
+          break;
+        }
         case "run-summary": {
           const s = event.summary;
           notice(
@@ -585,7 +598,8 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           },
           promptCacheKey: buildPromptCacheKeyFor({ providerId: ctx.config.providerId, model, cwd: ctx.cwd }),
           imageOutput: modelList.find((entry) => entry.id === model)?.imageOutput === true,
-          maxSteps: agent.maxSteps ?? ctx.config.maxSteps,
+          // An agent that sets maxSteps: null means "unlimited"; `??` would ignore that and use the global cap.
+          maxSteps: agent.maxSteps !== undefined ? agent.maxSteps : ctx.config.maxSteps,
           signal: controller.signal,
           // The wire and prompt cache settings above keep TUI transcripts aligned
           // with Desktop, web, and headless runs.

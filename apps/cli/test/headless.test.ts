@@ -16,12 +16,15 @@ function capture(): { stream: PassThrough; text: () => string } {
   return { stream, text: () => buffer };
 }
 
-function makeCtx(apiBaseUrl: string): { ctx: ReturnType<typeof createContext>; cleanup: () => void } {
+function makeCtx(
+  apiBaseUrl: string,
+  extraConfig: { maxSteps?: number | null } = {},
+): { ctx: ReturnType<typeof createContext>; cleanup: () => void } {
   const dataDir = mkdtempSync(join(tmpdir(), "deyin-data-"));
   const cwd = mkdtempSync(join(tmpdir(), "deyin-ws-"));
   const previous = process.env.DEYIN_DATA_DIR;
   process.env.DEYIN_DATA_DIR = dataDir;
-  const ctx = createContext({ cwd, overrides: { apiBaseUrl, model: "test-model" } });
+  const ctx = createContext({ cwd, overrides: { apiBaseUrl, model: "test-model", ...extraConfig } });
   if (previous === undefined) delete process.env.DEYIN_DATA_DIR;
   else process.env.DEYIN_DATA_DIR = previous;
   return {
@@ -102,6 +105,39 @@ test("--json emits NDJSON events ending with a result record", async () => {
     await server.close();
     cleanup();
   }
+});
+
+test("an explicit null maxSteps runs unlimited even when the config caps the run", async () => {
+  // Four rounds of tool calls before the final answer; the configured cap is 2.
+  const script = (i: number): unknown[] => (i < 4 ? toolCallResponse(`call_${i}`, "todo_read", {}) : textResponse("finished"));
+  const resultOf = async (maxSteps: number | null | undefined): Promise<{ reason: unknown; finalText: unknown }> => {
+    const server = await startMockOpenAI(script);
+    const { ctx, cleanup } = makeCtx(server.url, { maxSteps: 2 });
+    const out = capture();
+    try {
+      await runHeadless({
+        ctx,
+        prompt: "keep going",
+        json: true,
+        ...(maxSteps !== undefined ? { maxSteps } : {}),
+        stdout: out.stream,
+        stderr: capture().stream,
+        getToken: async () => "t",
+      });
+      const events = out.text().trim().split("\n").map((l) => JSON.parse(l) as { type: string; reason?: unknown; finalText?: unknown });
+      const result = events.at(-1)!;
+      assert.equal(result.type, "result");
+      return { reason: result.reason, finalText: result.finalText };
+    } finally {
+      await server.close();
+      cleanup();
+    }
+  };
+
+  // Omitted: the configured cap applies (the old behaviour, and the default for a plain `deyin run`).
+  assert.equal((await resultOf(undefined)).reason, "max-steps");
+  // Explicit null is "unlimited"; `??` used to read it as "not set" and fall back to the cap.
+  assert.deepEqual(await resultOf(null), { reason: "completed", finalText: "finished" });
 });
 
 test("write tools are auto-denied without --yes and executed with it", async () => {

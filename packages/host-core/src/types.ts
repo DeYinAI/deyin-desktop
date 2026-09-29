@@ -1002,6 +1002,13 @@ export type AgentUiEvent =
      summary?: string;
    }
  | { type: "evidence-gate"; code: string; message: string; toolName?: string }
+ /**
+  * The model connection dropped mid-response and the host is replaying the same
+  * step. Whatever text streamed for the failed attempt is void: the retry
+  * re-streams the whole response, so the renderer discards its live buffers
+  * rather than showing the answer twice.
+  */
+ | { type: "stream-retry"; attempt: number; maxAttempts: number; reason: string; delayMs: number }
  | {
      type: "evidence-sign-off";
      stepId: string;
