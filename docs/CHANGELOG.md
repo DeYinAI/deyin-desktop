@@ -3,7 +3,39 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.28`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.29`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.29 — 2026-09-29
+
+### Highlights
+
+- **Agent Runs Keep Going Until the Task Is Done:** Closed the ways a run could end early without the work being
+  finished. The agent no longer stops on a statement of intent ("Let me run the tests…") or an empty reply: the loop
+  nudges the model to carry on (at most twice in a row, so a model with nothing left to do can still finish), and the
+  system prompt now tells it to keep going until the request is fully resolved and to fix a failing build or test
+  rather than only report it.
+- **Long Replies Resume Instead of Being Cut Off:** When a reply hits the model's output limit, including in the middle
+  of a tool call, the agent now resumes automatically (up to 3 times) and tells the model when a tool call was
+  truncated, instead of treating the cut-off text as the final answer.
+- **Automatic Recovery from Provider Hiccups:** Rate limits and overload responses (429, 5xx), connection resets,
+  error frames delivered inside an otherwise healthy stream (Chat Completions, Anthropic and Responses wire formats),
+  streams that stall (5-minute idle limit, configurable via `DEYIN_STREAM_IDLE_TIMEOUT_MS`), and streams that close
+  without a completion marker are now retried with jittered backoff that honors `Retry-After` — up to 5 attempts per
+  step and 40 per run. Output from a failed attempt is discarded so it never doubles up, and the timeline shows
+  "retrying in Ns (a/b)". Permanent failures (bad key, malformed request, refused connection) still surface immediately.
+- **Stale 40-Step Cap Lifted:** Settings files created before the unlimited default still carried the old 40-step
+  cap, so long tasks kept stopping at "step limit reached". A one-time migration (schema v22) lifts it on desktop and
+  in the web client (choosing 40 again afterwards is respected), and an explicit `maxSteps: null` (unlimited) is now
+  honored consistently by the web host and the CLI (headless, remote, `serve` and TUI). A subagent that reaches its
+  own step limit now says so instead of silently reporting success.
+- **Web Search That Survives Bot Checks:** DuckDuckGo's HTTP 202 "anomaly" challenge was being parsed as "no results",
+  which led models to conclude that nothing existed. The built-in search now treats a challenge as a failure, falls
+  back to Bing, leaves a blocked engine alone for a while (5 minutes after a challenge, 1 minute after an error), and
+  reports "search unavailable" honestly when every engine fails.
+- **Clearer Run Notices:** The loop's keep-going nudges now appear as neutral activity lines instead of red "Delivery
+  gate — step not verifiable yet" errors, the web host forwards loop-guard events the same way the desktop does, and
+  the CLI prints `[retry]` / `[loop]` lines on stderr (and the matching events with `--json`). `docs/CLI.md` documents
+  the long-running-task behavior.
 
 ## 1.0.28 — 2026-09-22
 
