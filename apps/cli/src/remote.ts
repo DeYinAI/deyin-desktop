@@ -12,7 +12,8 @@ export interface RemoteRunOptions {
   model?: string;
   agent?: string;
   thinking?: boolean;
-  maxSteps?: number;
+  /** Step cap; null = unlimited (sent as JSON null so the server does not fall back to its own cap). */
+  maxSteps?: number | null;
   trustWorkspace?: boolean;
   token?: string;
   username?: string;

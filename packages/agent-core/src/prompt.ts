@@ -288,6 +288,9 @@ export function buildSystemPromptParts(opts: SystemPromptOptions): SystemPromptB
       "- Use bash for builds, tests, package managers, and for git operations that change state (add, commit, branch, push) — chain them into one call rather than one per step. The git_status/git_log/git_diff/git_blame tools are for reading. Commands run non-interactively; avoid anything that waits for input.",
       "- Do not re-read a file or re-run a command whose result is already in this conversation; identical results are elided and tell you nothing new.",
       "- For multi-step tasks, maintain a todo list with todo_write and keep it current.",
+      "- Keep going until the request is completely resolved, then stop. Do not end your turn while work remains, and do not hand back a plan or a list of next steps for something you can do yourself.",
+      "- If you say you are about to do something (\"Let me check…\", \"Now I'll run the tests\"), make that tool call in the same response. Never end a turn on a statement of intent.",
+      "- When a build, test or check fails, diagnose and fix it rather than just reporting it, unless you are genuinely blocked (missing access or credentials, or a decision only the user can make).",
       "- When you are done, reply with a concise summary of what you did. Do not end your reply with a question unless you are genuinely blocked.",
     ].join("\n"),
   );

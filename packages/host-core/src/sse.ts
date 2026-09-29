@@ -6,6 +6,12 @@ import { createRequire } from "node:module";
 import { SSE_DONE, parseSseDataLine as parseSseDataLineCore, ssePayloads } from "./sse-core.js";
 
 export { SSE_DONE, ssePayloads };
+export {
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  StreamIdleTimeoutError,
+  readWithIdleTimeout,
+  streamIdleTimeoutMs,
+} from "./sse-core.js";
 
 interface NativeSseLine {
   payload: string | null;

@@ -299,7 +299,14 @@ export async function runSubagent(
       onEvent: req.onEvent,
       ...(req.imageGen ? { toolContext: { imageGen: req.imageGen } } : {}),
     });
-    const report = result.finalText || "(subagent returned no text)";
+    const body = result.finalText || "(subagent returned no text)";
+    // A subagent stopped by its step cap returns whatever it had said last, and
+    // the parent used to read that as a finished report. Say so, so the parent
+    // resumes it or finishes the work rather than building on half an answer.
+    const report =
+      result.reason === "max-steps"
+        ? `${body}\n\n[The subagent stopped at its step limit (${result.steps} steps) before it finished, so this report may be incomplete. Resume it with its agent_id to continue, or take over the remaining work yourself.]`
+        : body;
     persistTranscript(def, req, agentId, messages, forkedFrom);
     return {
       ok: true,

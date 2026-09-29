@@ -23,7 +23,7 @@ import {
   type AgentRunResult,
   type McpConnection,
 } from "@deyin/agent-core";
-import { buildPromptCacheKeyFor, resolveWireProvider } from "@deyin/host-core/shared";
+import { buildPromptCacheKeyFor, describeEvidenceGate, describeStreamRetry, resolveWireProvider } from "@deyin/host-core/shared";
 import { CheckpointStore, createImageBridge, ImageStore, listModels } from "@deyin/host-core";
 import type { CliContext } from "./context.js";
 import { cliProviderRouting, createCliShell, resolveCliModel, tokenSource } from "./context.js";
@@ -44,7 +44,8 @@ export interface HeadlessOptions {
   resumeId?: string;
   /** Fork the resumed/continued session before appending the prompt. */
   fork?: boolean;
-  maxSteps?: number;
+  /** Step cap for this run; null = unlimited. Omit to use the configured cap. */
+  maxSteps?: number | null;
   /** Trust workspace-owned hooks and MCP configuration for this run. */
   trustWorkspace?: boolean;
   /** Comma-separated CLI file attachments (images become multimodal input). */
@@ -277,6 +278,18 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       case "compaction":
         stderr.write(dim(`[context] compacted (${event.droppedMessages} messages dropped)\n`));
         break;
+      case "stream-retry":
+        // Text already streamed to stdout cannot be taken back; the replay re-emits
+        // it from the start, so mark the seam. (--json consumers get the event itself.)
+        stderr.write(dim(`\n[retry] ${describeStreamRetry(event)}\n`));
+        break;
+      case "evidence-gate": {
+        // Delivery-mode gates stay silent here as before; the loop's own
+        // "keep going" nudges are worth a line.
+        const gate = describeEvidenceGate(event.code, event.message);
+        if (gate.tone === "notice") stderr.write(dim(`[loop] ${gate.text}\n`));
+        break;
+      }
       case "run-summary": {
         const s = event.summary;
         stderr.write(
@@ -402,7 +415,8 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       cwd: ctx.cwd,
       shell,
       thinking: ctx.config.thinking,
-      maxSteps: opts.maxSteps ?? ctx.config.maxSteps,
+      // `??` would read an explicit null (unlimited) as "not set" and fall back to the config cap.
+      maxSteps: opts.maxSteps !== undefined ? opts.maxSteps : ctx.config.maxSteps,
       signal: opts.signal,
       // Cache parity with desktop: compression + prompt caching + stable key.
       wire: {

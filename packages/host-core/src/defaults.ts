@@ -3,7 +3,7 @@ import { pickVideoModelParamsRecord } from "./video-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
-export const SETTINGS_SCHEMA_VERSION = 21;
+export const SETTINGS_SCHEMA_VERSION = 22;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -91,6 +91,16 @@ export function migrateSettings(raw: unknown): DeyinSettings {
           : Math.max(1, Math.min(10_000, Math.floor(v)))
         : DEFAULT_SETTINGS.agentMaxSteps;
   }
+  // v22: 40 was the old default step cap, and it was written into every
+  // settings.json created before the default became null (unlimited). Flipping
+  // DEFAULT_SETTINGS alone did nothing for those installs, so their long tasks
+  // kept stopping at "step limit reached" — the very "cuts short" symptom the
+  // unlimited default was meant to end. Lift the stale value once, on the
+  // upgrade only: 40 is still a selectable choice, and picking it again lands at
+  // v22 and is then left alone.
+  if (schemaVersionOf(input) < 22 && merged.agentMaxSteps === 40) {
+    merged.agentMaxSteps = DEFAULT_SETTINGS.agentMaxSteps;
+  }
   merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
   merged.roleModels = pickRoleRecord(merged.roleModels);
   merged.subagentModels = pickStringRecord(merged.subagentModels);
@@ -152,6 +162,33 @@ if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration 
   }
   if (!["full-access", "ask-first", "read-only"].includes(merged.approvalMode)) merged.approvalMode = "full-access";
   return merged;
+}
+
+/**
+ * Settings from a persisted JSON blob (the web client keeps them in localStorage).
+ *
+ * The desktop's SettingsStore migrates on start-up; anything else that reads the
+ * blob has to apply the same rule or its one-time migrations never run. The
+ * version check must look at the blob *as stored*: layering DEFAULT_SETTINGS
+ * underneath first would hand a blob that has no `schemaVersion` the current one,
+ * and it would sail past its migrations. `needsWrite` says the result differs from
+ * what is stored, so the caller persists it and the migration happens only once.
+ */
+export function settingsFromStored(json: string | null): { settings: DeyinSettings; needsWrite: boolean } {
+  let parsed: unknown;
+  try {
+    parsed = json ? JSON.parse(json) : undefined;
+  } catch {
+    parsed = undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { settings: { ...DEFAULT_SETTINGS }, needsWrite: false };
+  }
+  const stored = parsed as Partial<DeyinSettings>;
+  if (stored.schemaVersion === SETTINGS_SCHEMA_VERSION) {
+    return { settings: { ...DEFAULT_SETTINGS, ...stored }, needsWrite: false };
+  }
+  return { settings: migrateSettings(stored), needsWrite: true };
 }
 
 /** Roles a model override may target; keys outside this set are dropped. */

@@ -1323,6 +1323,18 @@ export class DesktopAgentHost {
                 toolName: event.toolName,
               });
               break;
+            case "stream-retry":
+              // The model connection hiccuped and the loop is replaying the step
+              // after a backoff. The renderer drops the failed attempt's partial
+              // output and shows a one-line note instead of an error.
+              this.send(options.threadId, {
+                type: "stream-retry",
+                attempt: event.attempt,
+                maxAttempts: event.maxAttempts,
+                reason: event.reason,
+                delayMs: event.delayMs,
+              });
+              break;
             case "loop-guard":
               // Surfaced on the existing gate channel: from the user's point of
               // view this is the same kind of thing — the host stepped in and
@@ -1346,6 +1358,8 @@ export class DesktopAgentHost {
                   `${event.summary.duplicateResults} duplicate results elided, ` +
                   `${event.summary.loopGuardTrips} loop-guard trips), ` +
                   `${event.summary.compactionPasses} compaction passes, ` +
+                  (event.summary.streamRetries ? `${event.summary.streamRetries} stream retries, ` : "") +
+                  (event.summary.continuationNudges ? `${event.summary.continuationNudges} continuation nudges, ` : "") +
                   `cache hit rate ${(event.summary.cacheHitRate * 100).toFixed(1)}%`,
               );
               break;

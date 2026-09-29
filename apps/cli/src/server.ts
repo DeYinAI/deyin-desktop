@@ -39,6 +39,15 @@ function authorized(req: IncomingMessage, token: string | undefined): boolean {
   return req.headers.authorization === `Bearer ${token}`;
 }
 
+/**
+ * A request's step cap. The body is untrusted JSON: a number is a cap, an explicit
+ * null means unlimited, and anything else (absent, a string, an object) means "use
+ * the server's configured cap" — which is `undefined`, not null.
+ */
+export function maxStepsFromBody(value: unknown): number | null | undefined {
+  return value === null || typeof value === "number" ? value : undefined;
+}
+
 function capture(): { stream: NodeJS.WritableStream; read: () => string } {
   let output = "";
   return {
@@ -97,7 +106,7 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           continueLast?: boolean;
           resumeId?: string;
           fork?: boolean;
-          maxSteps?: number;
+          maxSteps?: number | null;
           trustWorkspace?: boolean;
           files?: string[];
           cwd?: string;
@@ -125,7 +134,7 @@ export function createCliServer(ctx: CliContext, opts: CliServerOptions = {}): S
           continueLast: request.continueLast === true,
           resumeId: request.resumeId,
           fork: request.fork === true,
-          maxSteps: request.maxSteps,
+          maxSteps: maxStepsFromBody(request.maxSteps),
           trustWorkspace: request.trustWorkspace === true,
           files: Array.isArray(request.files) ? request.files.filter((file): file is string => typeof file === "string") : undefined,
           stdout: out.stream,

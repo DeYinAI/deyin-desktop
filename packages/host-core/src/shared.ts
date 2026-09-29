@@ -9,6 +9,7 @@ export * from "./types.js";
 export * from "./config.js";
 export * from "./defaults.js";
 export * from "./agent-run.js";
+export * from "./run-notices.js";
 export * from "./usage.js";
 export * from "./openference.js";
 export * from "./search.js";

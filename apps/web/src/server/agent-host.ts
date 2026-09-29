@@ -547,8 +547,10 @@ export class WebAgentHost {
       todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
       resolvePermission: (req) => this.askPermission(options.threadId, req.toolName, req.summary),
       cwd: this.root,
-      // Client step-limit setting (older web clients send none → keep the old cap).
-      maxSteps: options.maxSteps ?? 100,
+      // Client step-limit setting. Older web clients send none → keep the old cap;
+      // an explicit null is the user's "unlimited" and must stay unlimited (`??`
+      // would have turned it back into 100).
+      maxSteps: options.maxSteps === undefined ? 100 : options.maxSteps,
       signal: state.abort.signal,
       shell: await this.ensureShell(options.threadId),
       evidenceGatesEnabled: options.mode === "delivery",
@@ -975,6 +977,19 @@ export class WebAgentHost {
         break;
       case "evidence-gate":
         this.emit(threadId, { type: "evidence-gate", code: event.code, message: event.message, toolName: event.toolName });
+        break;
+      case "stream-retry":
+        this.emit(threadId, {
+          type: "stream-retry",
+          attempt: event.attempt,
+          maxAttempts: event.maxAttempts,
+          reason: event.reason,
+          delayMs: event.delayMs,
+        });
+        break;
+      case "loop-guard":
+        // Same channel and code shape as the desktop host, so the renderer words it identically.
+        this.emit(threadId, { type: "evidence-gate", code: `loop-guard:${event.code}`, message: event.detail });
         break;
       default:
         break;

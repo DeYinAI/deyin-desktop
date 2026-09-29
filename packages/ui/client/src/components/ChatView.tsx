@@ -12,6 +12,7 @@ import { extractHtmlPageFromMarkdownLoose } from "../htmlPage.js";
 import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { summarizeActivityBlock } from "../toolActivity.js";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
+import { describeEvidenceGate } from "@deyin/host-core/shared";
 import { formatTokens } from "../formatTokens.js";
 export {
   BotWorkflowCard,
@@ -839,13 +840,17 @@ function EventRow({
     case "optimization":
       return <OptimizationCard event={event} />;
 
-    case "evidence-gate":
+    case "evidence-gate": {
+      // The gate channel also carries the loop's "keep going" nudges; only real
+      // delivery-mode gates get the red treatment.
+      const gate = describeEvidenceGate(event.code, event.message);
       return (
-        <div className="activity-line activity-line--error">
-          <Icon name="shield" size={13} />
-          <span title={event.message}>Delivery gate ({event.code}) — step not verifiable yet</span>
+        <div className={gate.tone === "error" ? "activity-line activity-line--error" : "activity-line"}>
+          <Icon name={gate.tone === "error" ? "shield" : "refresh"} size={13} />
+          <span title={event.message}>{gate.text}</span>
         </div>
       );
+    }
 
     case "evidence-sign-off":
       return (
@@ -1015,6 +1020,8 @@ function StatusLine({
 }
 
 function statusIconForLabel(label: string): string {
+  // Before the "finished|failed" check below: a retry reason can say "the provider finished it".
+  if (/— retrying in \d+s \(\d+\/\d+\)$/.test(label)) return "refresh";
   if (/created \d+ task/i.test(label)) return "list";
   if (/worked on it/i.test(label)) return "bolt";
   if (/run stopped|step limit|compacted/i.test(label)) return "clock";

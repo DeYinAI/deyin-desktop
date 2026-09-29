@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, migrateSettings } from "../src/defaults.js";
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, migrateSettings, settingsFromStored } from "../src/defaults.js";
 import { FileStorage } from "../src/storage.js";
 import { AgentsStore, SettingsStore } from "../src/stores.js";
 
@@ -87,6 +87,50 @@ test("migrateSettings keeps agentMaxSteps null (unlimited) and clamps bad number
   assert.equal(migrateSettings({ agentMaxSteps: -3 }).agentMaxSteps, null);
   assert.equal(migrateSettings({ agentMaxSteps: 999_999 }).agentMaxSteps, 10_000);
   assert.equal(migrateSettings({ agentMaxSteps: 12.9 }).agentMaxSteps, 12);
+});
+
+test("upgrading lifts the stale 40-step default to unlimited once", () => {
+  // 40 was the old default and sits in every settings.json written before the
+  // default became null, so flipping DEFAULT_SETTINGS alone never reached them.
+  assert.equal(migrateSettings({ schemaVersion: 21, agentMaxSteps: 40 }).agentMaxSteps, null);
+  assert.equal(migrateSettings({ agentMaxSteps: 40 }).agentMaxSteps, null, "pre-schemaVersion files too");
+
+  // Any other explicit cap is a deliberate choice and is kept.
+  assert.equal(migrateSettings({ schemaVersion: 21, agentMaxSteps: 60 }).agentMaxSteps, 60);
+  assert.equal(migrateSettings({ schemaVersion: 21, agentMaxSteps: 100 }).agentMaxSteps, 100);
+
+  // Once at the current schema, picking 40 again in Settings is left alone.
+  assert.equal(
+    migrateSettings({ schemaVersion: SETTINGS_SCHEMA_VERSION, agentMaxSteps: 40 }).agentMaxSteps,
+    40,
+  );
+});
+
+test("the 40-step lift runs once: a re-chosen cap survives writes and restarts", async () => {
+  const dir = tempDir();
+  try {
+    // Seed synchronously: FileStorage.writeJson is queued, so a store built right
+    // after it would never see the seed (it would read an empty file).
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ schemaVersion: 21, agentMaxSteps: 40 }));
+    const storage = new FileStorage(dir);
+    const store = new SettingsStore(storage);
+    assert.equal(store.get().agentMaxSteps, null, "the upgrade lifts the stale default");
+
+    // The user deliberately picks 40 in Settings; an unrelated write keeps it.
+    store.set({ agentMaxSteps: 40 });
+    assert.equal(store.set({ terminalFontSize: 14 }).agentMaxSteps, 40);
+    await storage.flush();
+
+    const onDisk = storage.readJson<{ schemaVersion?: number; agentMaxSteps?: number | null }>("settings.json", {});
+    assert.equal(onDisk.schemaVersion, SETTINGS_SCHEMA_VERSION, "every write stamps the current schema version");
+    assert.equal(onDisk.agentMaxSteps, 40);
+
+    // A restart re-reads the file: the migration must not fire a second time.
+    const restarted = new SettingsStore(new FileStorage(dir));
+    assert.equal(restarted.get().agentMaxSteps, 40, "40 chosen after the upgrade is not lifted again on relaunch");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("migrateSettings clamps out-of-range values and repairs invalid enums", () => {
@@ -232,4 +276,50 @@ test("roleModels: defaults to empty and survives garbage", () => {
   assert.deepEqual(migrateSettings({}).roleModels, {});
   assert.deepEqual(migrateSettings({ roleModels: ["plan"] }).roleModels, {});
   assert.deepEqual(migrateSettings({ roleModels: null }).roleModels, {});
+});
+
+/* Settings read from a persisted blob (the web client's localStorage) ----------- */
+
+test("settingsFromStored: an older blob is migrated and flagged for write-back", () => {
+  const { settings, needsWrite } = settingsFromStored(JSON.stringify({ schemaVersion: 21, theme: "light", agentMaxSteps: 40 }));
+  assert.equal(needsWrite, true);
+  assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.equal(settings.theme, "light", "the user's other choices survive");
+  assert.equal(settings.agentMaxSteps, DEFAULT_SETTINGS.agentMaxSteps, "the stale 40-step cap is lifted");
+});
+
+test("settingsFromStored: a blob with no schemaVersion still gets its migrations", () => {
+  // The trap: layering DEFAULT_SETTINGS under the blob before checking would stamp it
+  // with the current version and skip the migration.
+  const { settings, needsWrite } = settingsFromStored(JSON.stringify({ theme: "light", agentMaxSteps: 40 }));
+  assert.equal(needsWrite, true);
+  assert.equal(settings.agentMaxSteps, DEFAULT_SETTINGS.agentMaxSteps);
+  assert.equal(settings.theme, "light");
+  assert.equal(settings.schemaVersion, SETTINGS_SCHEMA_VERSION);
+});
+
+test("settingsFromStored: a current blob is left alone, including a deliberately chosen 40", () => {
+  const { settings, needsWrite } = settingsFromStored(
+    JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, agentMaxSteps: 40, theme: "warm" }),
+  );
+  assert.equal(needsWrite, false);
+  assert.equal(settings.agentMaxSteps, 40);
+  assert.equal(settings.theme, "warm");
+  // Keys the blob predates are filled from the defaults, as readLocal always did.
+  assert.equal(settings.terminalScrollback, DEFAULT_SETTINGS.terminalScrollback);
+});
+
+test("settingsFromStored: nothing usable stored means defaults and nothing to write", () => {
+  for (const json of [null, "", "not json", "[]", "42", "null", '"a string"']) {
+    const { settings, needsWrite } = settingsFromStored(json);
+    assert.equal(needsWrite, false, `${JSON.stringify(json)} must not be persisted over`);
+    assert.deepEqual(settings, DEFAULT_SETTINGS);
+  }
+});
+
+test("settingsFromStored: the defaults it hands back are a copy, not the shared object", () => {
+  const first = settingsFromStored(null).settings;
+  first.theme = "light";
+  assert.notEqual(DEFAULT_SETTINGS.theme, "light");
+  assert.notEqual(settingsFromStored(null).settings.theme, "light");
 });

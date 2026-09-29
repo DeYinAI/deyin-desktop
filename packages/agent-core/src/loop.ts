@@ -30,7 +30,25 @@ import { ResultDeduper, snipToolResult } from "./tool-result.js";
 import type { ModelRole, PreviousStep, StepRouter } from "./model-routing.js";
 import { buildRecallSuffix } from "./recall.js";
 import type { PermissionDecision, PermissionEngine, PermissionResolver } from "./permissions.js";
+import {
+  diagnoseTurnEnd,
+  LENGTH_RECOVERY_LIMIT,
+  LENGTH_RECOVERY_NUDGE,
+  LOST_TOOL_CALL_RETRY_LIMIT,
+  STALL_NUDGE_STREAK_LIMIT,
+  TRUNCATED_TOOL_CALL_RESULT,
+  unfinishedTurnCode,
+  unfinishedTurnNotice,
+  unfinishedTurnNudge,
+} from "./continuation.js";
 import { streamChatEvents } from "./stream.js";
+import {
+  classifyTransientFailure,
+  DEFAULT_STREAM_RETRY_POLICY,
+  sleepUnlessAborted,
+  streamRetryDelayMs,
+  type StreamRetryPolicy,
+} from "./stream-errors.js";
 import type { StreamImage } from "@deyin/host-core";
 import { inlineImageDirective } from "./tools/generate-image.js";
 import type { ProviderApiFormat } from "./transports.js";
@@ -61,6 +79,32 @@ const TODO_RECONCILE_NUDGE_BUDGET = 2;
  * satisfaction (report_goal_met) before letting a final answer through regardless.
  */
 const GOAL_RECONCILE_NUDGE_BUDGET = 2;
+/**
+ * Ceiling on transient-failure replays across one run. Each step already gets
+ * its own attempt budget (the retry policy); this stops a connection that fails
+ * on and off for hours from retrying forever while still letting a long
+ * autonomous run ride out the occasional blip.
+ */
+const MAX_RUN_STREAM_RETRIES = 40;
+/** Replays of one step whose stream ended before the provider's end-of-response marker. */
+const INCOMPLETE_STREAM_REPLAY_LIMIT = 2;
+/**
+ * Tool calls whose arguments were cut off by the output-token limit. Identity
+ * based (WeakSet), so the marker follows the call object from the stream to the
+ * executor without widening the AgentToolCall wire type.
+ */
+const truncatedToolCalls = new WeakSet<AgentToolCall>();
+
+/** Does this string parse as a JSON object, i.e. could it be a complete argument payload? */
+function isCompleteJsonObject(text: string): boolean {
+  if (text.trim().length === 0) return true; // no-argument tools send an empty payload
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
+}
 
 /** Format compiler or language-server diagnostics into a concise prompt for the agent. */
 export function formatDiagnostics(items: DiagnosticItem[]): string {
@@ -114,6 +158,12 @@ export type AgentEvent =
       summary?: string;
     }
   | { type: "evidence-gate"; code: string; message: string; toolName?: string }
+  /**
+   * The model connection failed in a way that is worth replaying (dropped
+   * stream, 5xx, overloaded) and the loop is about to try the same step again
+   * after `delayMs`. Whatever text/reasoning the failed attempt streamed is void.
+   */
+  | { type: "stream-retry"; attempt: number; maxAttempts: number; reason: string; delayMs: number }
   | { type: "loop-guard"; code: GuardIntervention["code"]; message: string; detail: string }
   | { type: "run-summary"; summary: RunSummary }
   | { type: "model-routed"; step: number; role: ModelRole; model: string; providerId?: string }
@@ -143,6 +193,10 @@ export interface RunSummary {
    * than the region it replaced). Gated retries are free and not counted.
    */
   foldFailures: number;
+  /** Model requests replayed after a transient failure or a cut-off stream. Omitted when zero. */
+  streamRetries?: number;
+  /** Times the loop nudged the model to carry on after an empty, announce-only or truncated turn. Omitted when zero. */
+  continuationNudges?: number;
   promptTokens: number;
   cachedPromptTokens: number;
   /** cachedPromptTokens / promptTokens, 0 when nothing was sent. */
@@ -201,6 +255,20 @@ maxSteps?: number | null;
    * before completing (default true). Off for hosts/tests that script exact steps.
    */
   goalReconcile?: boolean;
+  /**
+   * Keep going when a turn ends without a tool call but has plainly not
+   * finished: an empty reply, text that ends by announcing an action ("Let me
+   * check the config:"), or a reply cut off by the output-token limit. The loop
+   * nudges the model to carry on (default true). Off for hosts/tests that
+   * script exact steps.
+   */
+  continuationNudges?: boolean;
+  /**
+   * Overrides for replaying a model request after a transient failure (dropped
+   * connection, 5xx, overloaded, idle stream). Defaults to 5 attempts backing
+   * off from 1.5s to 20s; tests pass tiny delays.
+   */
+  streamRetry?: Partial<StreamRetryPolicy>;
   /**
    * Drain pending user steering messages queued mid-flight.
    * Invoked at step boundaries so incoming user messages steer the running agent.
@@ -345,12 +413,32 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     loopGuardTrips: 0,
     compactionPasses: 0,
     foldFailures: 0,
+    streamRetries: 0,
+    continuationNudges: 0,
   };
 
   const mutatedPaths: string[] = [];
   let goalReported = false;
   let goalReconcileNudges = 0;
   let todoReconcileNudges = 0;
+
+  // Keep-going state. Every counter here bounds a recovery so a misbehaving
+  // provider or model can be helped along, but never wedge the run.
+  const retryPolicy: StreamRetryPolicy = { ...DEFAULT_STREAM_RETRY_POLICY, ...opts.streamRetry };
+  /** Transient-failure replays of the step in flight; cleared when a step's stream completes. */
+  let stepRetries = 0;
+  let runRetries = 0;
+  /** Cut-off-stream replays of the step in flight. */
+  let incompleteReplays = 0;
+  /** A replay ended the same way, so this provider's streams simply carry no end marker; stop asking. */
+  let cutOffStreamsAccepted = false;
+  /** Replays of the step in flight whose stream promised tool calls and delivered none. */
+  let lostToolCallReplays = 0;
+  /** Consecutive continuation nudges with no tool call in between. */
+  let stallStreak = 0;
+  /** Consecutive output-limit resumes. */
+  let lengthResumes = 0;
+  let stepLimitWarned = false;
 
   const ctx: ToolContext = {
     cwd: opts.cwd,
@@ -606,6 +694,19 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     return true;
   };
 
+  /**
+   * Announce that the step in flight is about to be replayed and wait out the
+   * backoff. Callers own their attempt budget; the run-wide ceiling is shared.
+   * Returns once the delay has elapsed or the run was aborted (callers re-check
+   * the signal), never throws.
+   */
+  const replayAfter = async (attempt: number, maxAttempts: number, reason: string, delayMs: number): Promise<void> => {
+    runRetries += 1;
+    counters.streamRetries += 1;
+    emit({ type: "stream-retry", attempt, maxAttempts, reason, delayMs });
+    await sleepUnlessAborted(delayMs, opts.signal);
+  };
+
   for (let step = 1; step <= maxSteps; step++) {
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
@@ -620,7 +721,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     }
 
     // Nearing or reaching configured finite step cap: inject graceful warning so the agent can wrap up
-    if (Number.isFinite(maxSteps) && step === maxSteps && maxSteps > 1) {
+    // (Once: a replayed step re-enters here with the same step number.)
+    if (Number.isFinite(maxSteps) && step === maxSteps && maxSteps > 1 && !stepLimitWarned) {
+      stepLimitWarned = true;
       append({
         role: "user",
         content: `[step limit warning] You are on step ${step} of ${maxSteps} (the configured step limit). Wrap up any remaining work, summarize what was accomplished, and provide your final response now.`,
@@ -680,6 +783,10 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     let reasoning = "";
     let toolCalls: AgentToolCall[] = [];
     let streamImages: StreamImage[] = [];
+    /** Why the provider says it stopped (`stop`, `length`, `tool_calls`, …), when it said. */
+    let finishReason: string | null = null;
+    /** The stream ended without the provider's own end-of-response marker. */
+    let streamIncomplete = false;
     // Priced with the same estimator the anchor delta uses, and captured before
     // the reply is appended, so `usageAnchor` describes exactly this request.
     const surfaceAtRequest = priceMessages(opts.messages);
@@ -711,6 +818,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
           reasoning = event.reasoning;
           toolCalls = event.toolCalls;
           streamImages = event.images ?? [];
+          finishReason = event.finishReason;
+          streamIncomplete = event.incomplete === true;
           if (event.usage) {
             usage.promptTokens += event.usage.promptTokens;
             usage.completionTokens += event.usage.completionTokens;
@@ -769,12 +878,86 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
           continue;
         }
       }
+      // A dropped connection, a 5xx, an overloaded frame: the same request
+      // usually succeeds a moment later, and losing a long autonomous run to one
+      // is the most avoidable way for it to end. Anything else (bad credentials,
+      // a rejected request) will not change on replay and surfaces immediately.
+      const transient = classifyTransientFailure(err);
+      if (
+        transient &&
+        stepRetries < retryPolicy.maxAttempts &&
+        runRetries < MAX_RUN_STREAM_RETRIES
+      ) {
+        stepRetries += 1;
+        await replayAfter(
+          stepRetries,
+          retryPolicy.maxAttempts,
+          transient.reason,
+          streamRetryDelayMs(stepRetries, retryPolicy, transient.retryAfterMs),
+        );
+        if (opts.signal?.aborted) return finish("aborted", step);
+        step -= 1; // replay this step
+        continue;
+      }
       throw err;
     }
 
     // A step that completed without needing compaction re-arms the breaker.
     consecutiveCompacts = 0;
+    stepRetries = 0;
     previousMessageCount = sentMessageCount;
+
+    // The provider's stream ended without its own end-of-response marker: the
+    // connection was cut, so what arrived may be a partial answer or a tool call
+    // missing its tail. Replaying is cheap next to acting on half a response.
+    // If a replay is cut the same way, this provider simply never sends the
+    // marker, and every later step is taken at face value.
+    if (streamIncomplete && !cutOffStreamsAccepted) {
+      if (incompleteReplays < INCOMPLETE_STREAM_REPLAY_LIMIT && runRetries < MAX_RUN_STREAM_RETRIES) {
+        incompleteReplays += 1;
+        await replayAfter(
+          incompleteReplays,
+          INCOMPLETE_STREAM_REPLAY_LIMIT,
+          "The response stream ended before the provider finished it",
+          streamRetryDelayMs(incompleteReplays, retryPolicy),
+        );
+        if (opts.signal?.aborted) return finish("aborted", step);
+        step -= 1;
+        continue;
+      }
+      if (incompleteReplays > 0) cutOffStreamsAccepted = true;
+    }
+    incompleteReplays = 0;
+
+    // "tool_calls" with no tool call delivered: the request asked to act and the
+    // action was lost in transit. Ending the run here would strand the model
+    // mid-task, so replay the step before treating it as an answer.
+    if (finishReason === "tool_calls" && toolCalls.length === 0) {
+      if (lostToolCallReplays < LOST_TOOL_CALL_RETRY_LIMIT && runRetries < MAX_RUN_STREAM_RETRIES) {
+        lostToolCallReplays += 1;
+        await replayAfter(
+          lostToolCallReplays,
+          LOST_TOOL_CALL_RETRY_LIMIT,
+          "The model asked to call a tool but no tool call arrived",
+          streamRetryDelayMs(lostToolCallReplays, retryPolicy),
+        );
+        if (opts.signal?.aborted) return finish("aborted", step);
+        step -= 1;
+        continue;
+      }
+    } else {
+      lostToolCallReplays = 0;
+    }
+
+    if (finishReason !== "length") {
+      lengthResumes = 0;
+    } else {
+      // Calls are emitted in order, so only the last one in a length-truncated
+      // response can be cut off. Marked so the executor can say why it failed
+      // instead of the generic "invalid JSON" the model would just repeat.
+      const last = toolCalls.at(-1);
+      if (last && !isCompleteJsonObject(last.arguments)) truncatedToolCalls.add(last);
+    }
 
     // A model that draws its own pictures returns them beside the text. Store
     // each one and append its embed directive so the reply renders the image —
@@ -809,6 +992,26 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     };
 
     if (toolCalls.length === 0) {
+      // Cut off by the output-token limit mid-answer (or with the whole budget
+      // spent thinking): the run must not end on half a sentence. Resume from
+      // where it stopped, a bounded number of times in a row.
+      if (
+        finishReason === "length" &&
+        opts.continuationNudges !== false &&
+        step < maxSteps &&
+        lengthResumes < LENGTH_RECOVERY_LIMIT
+      ) {
+        lengthResumes += 1;
+        counters.continuationNudges += 1;
+        emit({
+          type: "evidence-gate",
+          code: "output_truncated",
+          message: "The model hit its output-token limit mid-response; asked it to continue.",
+        });
+        append({ role: "user", content: LENGTH_RECOVERY_NUDGE });
+        continue;
+      }
+
       // Delivery mode: reject premature "all done" claims until every step is
       // signed off. Append the gate message as a user turn and keep the loop going.
       if (evidenceGates && ledger) {
@@ -816,6 +1019,28 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         if (!gate.ok) {
           emit({ type: "evidence-gate", code: gate.code, message: gate.message });
           append({ role: "user", content: `Delivery gate (${gate.code}): ${gate.message} Continue working the steps; do not repeat this summary.` });
+          continue;
+        }
+      }
+
+      // The turn ended with no tool call, but not because the model finished: it
+      // returned nothing, or its last words promise an action ("Let me check the
+      // config:") that never came. Nothing in the protocol separates that from a
+      // real answer, so the text is read. Bounded per streak of stalls; a tool
+      // call in between resets it, so a long run can be pushed along many times.
+      if (
+        opts.continuationNudges !== false &&
+        toolSchemas.length > 0 &&
+        finishReason !== "content_filter" &&
+        step < maxSteps &&
+        stallStreak < STALL_NUDGE_STREAK_LIMIT
+      ) {
+        const unfinished = diagnoseTurnEnd(content);
+        if (unfinished) {
+          stallStreak += 1;
+          counters.continuationNudges += 1;
+          emit({ type: "evidence-gate", code: unfinishedTurnCode(unfinished), message: unfinishedTurnNotice(unfinished) });
+          append({ role: "user", content: unfinishedTurnNudge(unfinished) });
           continue;
         }
       }
@@ -874,6 +1099,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       await maybeCompact("pressure", stepWindow);
       return finish("completed", step);
     }
+
+    // The model acted, so any streak of continuation nudges is over.
+    stallStreak = 0;
 
     // Run same-step tool calls concurrently (Cursor-style). Results are appended
     // in the original tool_calls order so the transcript stays valid for providers
@@ -962,6 +1190,8 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       loopGuardTrips: counters.loopGuardTrips,
       compactionPasses: counters.compactionPasses,
       foldFailures: counters.foldFailures,
+      ...(counters.streamRetries > 0 ? { streamRetries: counters.streamRetries } : {}),
+      ...(counters.continuationNudges > 0 ? { continuationNudges: counters.continuationNudges } : {}),
       promptTokens: usage.promptTokens,
       cachedPromptTokens: cached,
       cacheHitRate: usage.promptTokens > 0 ? cached / usage.promptTokens : 0,
@@ -1068,6 +1298,8 @@ async function executeCall(
   ledger: EvidenceLedger | undefined,
   guard: LoopGuard,
 ): Promise<GuardOutcome> {
+  // Identity check first: the name repair below can hand back a copy of the call.
+  const cutOff = truncatedToolCalls.has(call);
   call = repairRepeatedToolName(call, opts.tools);
   const argsKey = call.arguments.trim();
   const out = (result: string, flags: { ok: boolean; denied?: boolean }): GuardOutcome => ({
@@ -1091,7 +1323,12 @@ async function executeCall(
     args = call.arguments.trim() ? (JSON.parse(call.arguments) as Record<string, unknown>) : {};
   } catch {
     emit({ type: "tool-start", call, summary: call.name });
-    const msg = "ERROR: tool arguments were not valid JSON. Emit a single well-formed JSON object.";
+    // A payload that was cut off by the output limit needs a different fix
+    // (smaller calls) than a malformed one (well-formed JSON); saying so keeps
+    // the model from resending the same oversized call.
+    const msg = cutOff
+      ? TRUNCATED_TOOL_CALL_RESULT
+      : "ERROR: tool arguments were not valid JSON. Emit a single well-formed JSON object.";
     emit({ type: "tool-end", call, result: msg, ok: false });
     return out(msg, { ok: false });
   }

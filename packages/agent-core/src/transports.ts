@@ -1,6 +1,7 @@
 import type { AgentMessage, AgentToolCall, TokenUsage, WireTool } from "./types.js";
 import { addImage, fetchWithTransientRetry, parseImagePart, type StreamImage } from "@deyin/host-core";
 import type { ReasoningEffort } from "@deyin/host-core/shared";
+import { ProviderHttpError, ProviderStreamError, retryAfterMsOf, streamErrorFromFrame } from "./stream-errors.js";
 import { toAnthropicMessages, toResponsesInput, type CompressionResult, type WireOptions } from "./wire.js";
 
 /**
@@ -32,7 +33,16 @@ export type StreamEvent =
       continuations?: number;
       /** Images the model produced inside the completion, in arrival order. */
       images?: StreamImage[];
+      /**
+       * Set when the stream ended without the provider's own end-of-response
+       * marker (no `[DONE]`/finish_reason, `message_stop` or `response.completed`):
+       * the connection was cut, so `content`/`toolCalls` may be a partial answer.
+       */
+      incomplete?: true;
     };
+
+/** The terminal event of a completion. */
+export type DoneEvent = Extract<StreamEvent, { type: "done" }>;
 
 export interface TransportOptions {
   apiBaseUrl: string;
@@ -169,6 +179,7 @@ export class AnthropicAccumulator {
   private usage: TokenUsage | null = null;
   private calls = new Map<number, { id: string; name: string; arguments: string }>();
   private error: string | null = null;
+  private errorType: string | undefined;
   private readonly images: StreamImage[] = [];
   private readonly seenImages = new Set<string>();
   private readonly compressionInfo?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
@@ -250,7 +261,9 @@ export class AnthropicAccumulator {
       case "message_stop":
         return this.finish();
       case "error":
-        this.error = ev.error?.message ?? "Anthropic API error";
+        // `||`, not `??`: an empty message must still register as a failure.
+        this.error = ev.error?.message || ev.error?.type || "Anthropic API error";
+        this.errorType = ev.error?.type;
         return null;
       default:
         return null; // ping / content_block_* ignored
@@ -261,7 +274,18 @@ export class AnthropicAccumulator {
     return this.error;
   }
 
-  finish(): StreamEvent {
+  /** The in-stream error typed as transient (`overloaded_error`, `api_error`) or permanent, or null. */
+  takeError(): Error | null {
+    if (this.error === null) return null;
+    return streamErrorFromFrame({ type: this.errorType, message: this.error }) ?? new ProviderStreamError(this.error, false);
+  }
+
+  /** Did the model report why it stopped (`message_delta.stop_reason`)? */
+  hasFinishReason(): boolean {
+    return this.finishReason !== null;
+  }
+
+  finish(): DoneEvent {
     const toolCalls: AgentToolCall[] = [...this.calls.entries()]
       .sort(([a], [b]) => a - b)
       .map(([index, c]) => ({
@@ -351,7 +375,11 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
     signal: opts.signal,
   });
   if (!res.ok) {
-    throw new Error(`Anthropic request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000));
+    throw new ProviderHttpError(
+      `Anthropic request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000),
+      res.status,
+      retryAfterMsOf(res),
+    );
   }
 
   const acc = new AnthropicAccumulator(built.compression);
@@ -360,18 +388,21 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
     if (event) {
       if (event.type === "done") {
         // An error frame followed by message_stop must surface as a failure.
-        const error = acc.getError();
-        if (error) throw new Error(error);
+        const error = acc.takeError();
+        if (error) throw error;
         yield event;
         return;
       }
       yield event;
     }
   }
-  const error = acc.getError();
-  if (error) throw new Error(error);
-  // Stream ended without message_stop (proxy cut): emit what we have.
-  yield acc.finish();
+  const error = acc.takeError();
+  if (error) throw error;
+  // Stream ended without message_stop (proxy cut): emit what we have, flagged.
+  // A stop_reason without message_stop still means the model finished, so only
+  // a stream with neither is reported as cut off.
+  const cutOff = acc.finish();
+  yield acc.hasFinishReason() ? cutOff : { ...cutOff, incomplete: true };
 }
 
 /* OpenAI Responses API ------------------------------------------------------ */
@@ -401,8 +432,17 @@ interface ResponsesWireEvent {
   /** response.image_generation_call.* frames carry the payload at the top level. */
   result?: unknown;
   partial_image_b64?: string;
-  response?: { usage?: ResponsesUsage; incomplete_details?: { reason?: string } };
+  response?: {
+    usage?: ResponsesUsage;
+    incomplete_details?: { reason?: string };
+    /** `response.failed` puts the failure here. */
+    error?: { code?: string; message?: string };
+  };
+  /** Some gateways nest a standalone `error` event's payload here… */
   error?: { code?: string; message?: string };
+  /** …while OpenAI's own `error` event carries it at the top level. */
+  code?: string;
+  message?: string;
 }
 
 /**
@@ -420,6 +460,7 @@ export class ResponsesAccumulator {
   private calls = new Map<string, { id: string; name: string; arguments: string }>();
   private order: string[] = [];
   private error: string | null = null;
+  private errorCode: string | undefined;
   private readonly images: StreamImage[] = [];
   private readonly seenImages = new Set<string>();
   private readonly compressionInfo?: { originalTokens: number; compressedTokens: number; ratio: number; results: CompressionResult[] };
@@ -516,13 +557,25 @@ export class ResponsesAccumulator {
         return this.finish();
       }
       case "response.failed": {
-        this.error = ev.error?.message ?? "Responses API error";
+        const failure = ev.response?.error ?? ev.error;
+        this.recordError(failure?.message || failure?.code || "Responses API error", failure?.code);
         this.mergeUsage(ev.response?.usage);
         return this.finish();
+      }
+      case "error": {
+        // A standalone fault event: the stream may still close cleanly after it.
+        const failure = ev.error ?? { code: ev.code, message: ev.message };
+        this.recordError(failure.message || failure.code || "Responses API error", failure.code);
+        return null;
       }
       default:
         return null; // response.created / .output_text.done / .output_item.added(others) ...
     }
+  }
+
+  private recordError(message: string, code: string | undefined): void {
+    this.error = message;
+    this.errorCode = code;
   }
 
   private mergeUsage(usage: ResponsesUsage | undefined): void {
@@ -540,7 +593,18 @@ export class ResponsesAccumulator {
     return this.error;
   }
 
-  finish(): StreamEvent {
+  /** The in-stream error typed as transient (`server_error`, `rate_limit_exceeded`) or permanent, or null. */
+  takeError(): Error | null {
+    if (this.error === null) return null;
+    return streamErrorFromFrame({ code: this.errorCode, message: this.error }) ?? new ProviderStreamError(this.error, false);
+  }
+
+  /** Has the response reached a terminal state (`response.completed` / `.incomplete`)? */
+  hasFinishReason(): boolean {
+    return this.finishReason !== null;
+  }
+
+  finish(): DoneEvent {
     const toolCalls: AgentToolCall[] = this.order
       .map((id) => this.calls.get(id))
       .filter((c): c is { id: string; name: string; arguments: string } => Boolean(c && c.name.length > 0))
@@ -599,7 +663,11 @@ export async function* streamResponsesEvents(opts: TransportOptions): AsyncGener
     signal: opts.signal,
   });
   if (!res.ok) {
-    throw new Error(`Responses request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000));
+    throw new ProviderHttpError(
+      `Responses request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000),
+      res.status,
+      retryAfterMsOf(res),
+    );
   }
 
   const acc = new ResponsesAccumulator(built.compression);
@@ -608,15 +676,17 @@ export async function* streamResponsesEvents(opts: TransportOptions): AsyncGener
     if (event) {
       if (event.type === "done") {
         // response.failed emits a done frame — never surface it as success.
-        const error = acc.getError();
-        if (error) throw new Error(error);
+        const error = acc.takeError();
+        if (error) throw error;
         yield event;
         return;
       }
       yield event;
     }
   }
-  const error = acc.getError();
-  if (error) throw new Error(error);
-  yield acc.finish();
+  const error = acc.takeError();
+  if (error) throw error;
+  // No response.completed/.incomplete before EOF: the connection was cut.
+  const cutOff = acc.finish();
+  yield acc.hasFinishReason() ? cutOff : { ...cutOff, incomplete: true };
 }

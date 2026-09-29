@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AgentEventEnvelope, ChatMode, ContextUsageSnapshot, DiffSnippetLine, ThreadEvent } from "@deyin/contract";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, truncateToolResultUi } from "@deyin/contract";
+import { describeStreamRetry } from "@deyin/host-core/shared";
 import {
   isBetterPlanDoc,
   looksLikePlan,
@@ -603,6 +604,26 @@ class AgentStateStore {
         t.runEvents = [...t.runEvents, { kind: "evidence-gate", code: event.code, message: event.message }];
         this.notifyStructural();
         break;
+      case "stream-retry": {
+        // The loop is replaying this step after a connection hiccup, so whatever
+        // the failed attempt streamed is void: drop it instead of showing it twice.
+        t.textBuffer = "";
+        t.reasoningBuffer = "";
+        t.streamText = "";
+        t.streamReasoning = "";
+        t.seq += 1;
+        t.status = {
+          ...t.status,
+          phase: "waiting",
+          label: `Reconnecting (${event.attempt}/${event.maxAttempts})…`,
+          retryCount: event.attempt,
+          maxRetries: event.maxAttempts,
+        };
+        t.runEvents = [...t.runEvents, { kind: "thought", label: describeStreamRetry(event) }];
+        this.notifyStructural();
+        this.notifyStream(threadId);
+        break;
+      }
       case "evidence-sign-off":
         t.runEvents = [
           ...t.runEvents,
