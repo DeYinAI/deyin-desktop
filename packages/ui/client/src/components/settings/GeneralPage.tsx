@@ -58,6 +58,9 @@ export function GeneralPage({ settings, version, platform, chatOnly, onChange }:
     if (updateState.status === "downloaded" && updateState.availableVersion) {
       return fill(t("update.downloaded"), { version: updateState.availableVersion });
     }
+    if (updateState.status === "installing" && updateState.availableVersion) {
+      return fill(t("update.installing"), { version: updateState.availableVersion });
+    }
     return null;
   })();
 
