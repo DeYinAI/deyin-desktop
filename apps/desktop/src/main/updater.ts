@@ -1,137 +1,30 @@
 import { app, BrowserWindow } from "electron";
-import electronUpdater, { type AppUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
 import { CH } from "@deyin/contract";
-import type { UpdatesState } from "@deyin/contract";
+import { logLine } from "./logger.js";
+import { createUpdateController as createController, type UpdateController } from "./update-controller.js";
 
-export interface UpdateController {
-  getState(): UpdatesState;
-  check(opts?: { userInitiated?: boolean }): Promise<UpdatesState>;
-  checkThrottled(minIntervalMs?: number): Promise<UpdatesState>;
-  download(): Promise<UpdatesState>;
-  install(): void;
-}
+export type { UpdateController } from "./update-controller.js";
 
 /**
- * In-app update controller over electron-updater. The feed is the public
- * DeYinAI/deyin-releases repo baked into app-update.yml at package time (the
- * source repo is private, so clients must poll a public one).
+ * Electron wiring for the in-app updater. All update logic lives in
+ * update-controller.ts, which takes these Electron touchpoints as injected
+ * dependencies so it can be tested without a running app.
  */
 export function createUpdateController(opts: {
   /** Read once at update-available time: download automatically only when on. */
   isAutoUpdateEnabled: () => boolean;
 }): UpdateController {
-  let state: UpdatesState = { status: "idle", currentVersion: app.getVersion() };
-  let userInitiatedCheck = false;
-
-  const setState = (patch: Partial<UpdatesState>): UpdatesState => {
-    state = { ...state, ...patch };
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(CH.updatesState, state);
-    }
-    return state;
-  };
-
-  // Dev/unpackaged builds have no app-update.yml feed; report a stable
-  // unsupported state instead of letting electron-updater throw ENOENT.
-  if (!app.isPackaged) {
-    setState({ status: "unsupported" });
-    return {
-      getState: () => state,
-      check: async () => state,
-      checkThrottled: async () => state,
-      download: async () => state,
-      install: () => undefined,
-    };
-  }
-
-  const autoUpdater: AppUpdater = electronUpdater.autoUpdater;
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-
-  autoUpdater.on("checking-for-update", () => {
-    setState({ status: "checking", error: undefined, progressPercent: undefined });
-  });
-  autoUpdater.on("update-available", (info) => {
-    setState({ status: "available", availableVersion: info.version });
-    if (opts.isAutoUpdateEnabled()) {
-      void autoUpdater.downloadUpdate().catch(() => {
-        /* surfaced via the error event */
-      });
-    }
-  });
-  autoUpdater.on("update-not-available", () => {
-    setState({ status: "not-available", availableVersion: undefined });
-  });
-  autoUpdater.on("download-progress", (progress) => {
-    setState({ status: "downloading", progressPercent: Math.round(progress.percent) });
-  });
-  autoUpdater.on("update-downloaded", (info) => {
-    setState({ status: "downloaded", availableVersion: info.version, progressPercent: 100 });
-  });
-  autoUpdater.on("error", (err) => {
-    console.error("[deyin updater]", err);
-    const isDownloadError =
-      state.status === "downloading" ||
-      (state.status === "available" && Boolean(state.availableVersion));
-    if (isDownloadError) {
-      setState({ status: "error", error: err.message });
-    } else if (userInitiatedCheck) {
-      setState({ status: "error", error: err.message, availableVersion: undefined });
-    } else {
-      // Background poll failed (e.g. no published release yet) — stay quiet in the UI.
-      setState({ status: "not-available", availableVersion: undefined, error: undefined });
-    }
-    userInitiatedCheck = false;
-  });
-
-  let lastCheckTime = 0;
-  let inFlightCheck: Promise<UpdatesState> | null = null;
-
-  const check = async (opts?: { userInitiated?: boolean }): Promise<UpdatesState> => {
-    if (inFlightCheck) return inFlightCheck;
-    userInitiatedCheck = opts?.userInitiated ?? false;
-    lastCheckTime = Date.now();
-    inFlightCheck = (async () => {
-      try {
-        await autoUpdater.checkForUpdates();
-      } catch {
-        /* surfaced via the error event */
-      } finally {
-        inFlightCheck = null;
-      }
-      return state;
-    })();
-    return inFlightCheck;
-  };
-
-  const checkThrottled = async (minIntervalMs = 15 * 60 * 1000): Promise<UpdatesState> => {
-    if (inFlightCheck) return inFlightCheck;
-    if (Date.now() - lastCheckTime < minIntervalMs) return state;
-    return check({ userInitiated: false });
-  };
-
-  const download = async (): Promise<UpdatesState> => {
-    if (state.status === "available") {
-      try {
-        await autoUpdater.downloadUpdate();
-      } catch {
-        /* surfaced via the error event */
-      }
-    }
-    return state;
-  };
-
-  return {
-    getState: () => state,
-    check,
-    checkThrottled,
-    download,
-    install: () => {
-      if (state.status === "downloaded") {
-        // isSilent: true (runs installer with /S in background, no windows)
-        // isForceRunAfter: true (automatically relaunches Deyin after update)
-        autoUpdater.quitAndInstall(true, true);
+  return createController({
+    isPackaged: app.isPackaged,
+    currentVersion: app.getVersion(),
+    getAutoUpdater: () => electronUpdater.autoUpdater,
+    broadcast: (state) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(CH.updatesState, state);
       }
     },
-  };
+    isAutoUpdateEnabled: opts.isAutoUpdateEnabled,
+    log: (message) => logLine("info", `[updater] ${message}`),
+  });
 }

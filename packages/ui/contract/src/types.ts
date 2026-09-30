@@ -133,6 +133,8 @@ export type UpdateStatus =
   | "not-available"
   | "downloading"
   | "downloaded"
+  /** "Restart to update" was chosen: the app is handing off to the installer and is about to quit. */
+  | "installing"
   | "error"
   | "unsupported";
 

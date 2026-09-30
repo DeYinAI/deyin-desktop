@@ -1,11 +1,8 @@
 import { useEffect, useState } from "react";
 import type { UpdatesState } from "@deyin/contract";
 import { useT } from "../i18n.js";
+import { updateBannerMessage } from "../updateBannerMessage.js";
 import { Icon } from "./Icon.js";
-
-function fill(template: string, vars: Record<string, string | number>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
-}
 
 type UpdateBannerVariant = "sidebar" | "rail";
 
@@ -40,9 +37,9 @@ export function UpdateBanner({ variant = "sidebar" }: UpdateBannerProps) {
   }, []);
 
   if (!state) return null;
-  if (state.status === "unsupported" || state.status === "idle" || state.status === "checking" || state.status === "not-available") {
-    return null;
-  }
+  // Idle / checking / up-to-date / unsupported have nothing to show.
+  const message = updateBannerMessage(state, t);
+  if (message === null) return null;
 
   const version = state.availableVersion ?? "";
   if (state.status === "available" && version && dismissedVersion === version) return null;
@@ -50,28 +47,15 @@ export function UpdateBanner({ variant = "sidebar" }: UpdateBannerProps) {
   if (state.status === "error" && !state.availableVersion) return null;
   if (state.status === "error" && errorDismissed) return null;
 
-  const message =
-    state.status === "available"
-      ? fill(t("update.available"), { version })
-      : state.status === "downloading"
-        ? fill(t("update.downloading"), { version, percent: state.progressPercent ?? 0 })
-        : state.status === "downloaded"
-          ? fill(t("update.downloaded"), { version })
-          : fill(t("update.error"), { message: state.error ?? "unknown" });
+  const installing = state.status === "installing";
 
   if (variant === "rail") {
-    const title =
-      state.status === "downloaded"
-        ? fill(t("update.downloaded"), { version })
-        : state.status === "available"
-          ? fill(t("update.available"), { version })
-          : message;
     return (
       <button
         type="button"
-        className="update-pill update-pill--rail"
-        title={title}
-        aria-label={title}
+        className={installing ? "update-pill update-pill--rail update-pill--installing" : "update-pill update-pill--rail"}
+        title={message}
+        aria-label={message}
         onClick={() => {
           if (state.status === "downloaded") window.deyin.updates.install();
           else if (state.status === "available") void window.deyin.updates.download();
@@ -86,9 +70,11 @@ export function UpdateBanner({ variant = "sidebar" }: UpdateBannerProps) {
   const pillClass =
     state.status === "downloading"
       ? "update-pill update-pill--downloading"
-      : state.status === "downloaded"
-        ? "update-pill update-pill--ready"
-        : "update-pill";
+      : installing
+        ? "update-pill update-pill--installing"
+        : state.status === "downloaded"
+          ? "update-pill update-pill--ready"
+          : "update-pill";
 
   return (
     <div className={pillClass} role="status">
@@ -110,6 +96,12 @@ export function UpdateBanner({ variant = "sidebar" }: UpdateBannerProps) {
             className="update-pill__progress-bar"
             style={{ width: `${Math.min(100, Math.max(0, state.progressPercent ?? 0))}%` }}
           />
+        </div>
+      )}
+      {installing && (
+        // No aria-valuenow: an indeterminate progressbar, per ARIA.
+        <div className="update-pill__progress update-pill__progress--indeterminate" role="progressbar" aria-label={message}>
+          <div className="update-pill__progress-bar" />
         </div>
       )}
       <div className="update-pill__actions">
