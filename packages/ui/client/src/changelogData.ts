@@ -10,6 +10,12 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    "version": "1.0.30",
+    "date": "2026-09-29",
+    "title": "v1.0.30 (2026-09-29)",
+    "content": "### Highlights\n\n- **Visible Progress While an Update Installs:** Clicking \"Restart to update\" used to run the installer silently and\n  close the app at once, leaving nothing on screen while it worked (about 20 seconds on the machine we measured), so an\n  install looked the same as a crash. It now shows a small \"Installing update…\" card with an animated progress bar\n  straight away, and the sidebar update pill and Settings → General show the same state. On Windows it then hands off to\n  the installer in visible mode, so the installer's own progress window is on screen while the files are replaced and\n  Deyin reopens by itself. The card respects reduced-motion settings and is translated (English, 中文, Deutsch). It\n  applies to updates started from a version that includes it, so you will see it from the update after this one.\n- **A Stalled Install Can't Fail Silently:** If the installer doesn't start within 30 seconds, the card clears and an\n  error explains what to do instead of spinning forever. A failed hand-off or an updater error in the middle of an\n  install is now reported, and a stray background update event can no longer overwrite the \"installing\" state or let a\n  second click start another install."
+  },
+  {
     "version": "1.0.29",
     "date": "2026-09-29",
     "title": "v1.0.29 (2026-09-29)",

@@ -3,7 +3,23 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.29`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.30`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.30 — 2026-09-29
+
+### Highlights
+
+- **Visible Progress While an Update Installs:** Clicking "Restart to update" used to run the installer silently and
+  close the app at once, leaving nothing on screen while it worked (about 20 seconds on the machine we measured), so an
+  install looked the same as a crash. It now shows a small "Installing update…" card with an animated progress bar
+  straight away, and the sidebar update pill and Settings → General show the same state. On Windows it then hands off to
+  the installer in visible mode, so the installer's own progress window is on screen while the files are replaced and
+  Deyin reopens by itself. The card respects reduced-motion settings and is translated (English, 中文, Deutsch). It
+  applies to updates started from a version that includes it, so you will see it from the update after this one.
+- **A Stalled Install Can't Fail Silently:** If the installer doesn't start within 30 seconds, the card clears and an
+  error explains what to do instead of spinning forever. A failed hand-off or an updater error in the middle of an
+  install is now reported, and a stray background update event can no longer overwrite the "installing" state or let a
+  second click start another install.
 
 ## 1.0.29 — 2026-09-29
 
