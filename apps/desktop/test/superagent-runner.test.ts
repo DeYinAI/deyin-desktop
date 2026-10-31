@@ -12,7 +12,7 @@ import {
   type AgentRunResult,
 } from "@deyin/agent-core";
 import { AgentRunError, type AgentRunRequest, type AgentTool, type Logger } from "@deyin/superagent";
-import { SessionHistory, repairHistory, sessionFileName } from "../src/main/superagent/history.js";
+import { SessionHistory, repairHistory, sessionFileName, trimHistory } from "../src/main/superagent/history.js";
 import { AgentCoreRunner, UNATTENDED_NOTE, parseModelId, type RunnerDeps } from "../src/main/superagent/runner.js";
 import { WORKER_BUILTIN_TOOLS, toToolDefinition } from "../src/main/superagent/tools.js";
 
@@ -337,4 +337,33 @@ test("history survives a broken file and writes atomically", () => {
   history.schedule("y", () => live);
   history.flush("y");
   assert.equal(history.load("y").length, 2);
+});
+
+test("a stored conversation never ends in calls without results, even when it is saved mid-turn", () => {
+  const dir = tempDir();
+  const history = new SessionHistory(dir, 5);
+  history.save("t1", [
+    { role: "system", content: "s" },
+    { role: "user", content: "go" },
+    { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "bash", arguments: "{}" }] },
+  ] as AgentMessage[]);
+  const stored = JSON.parse(readFileSync(join(dir, "t1.json"), "utf8")) as { messages: { role: string }[] };
+  assert.deepEqual(stored.messages.map((message) => message.role), ["user"]);
+});
+
+test("a stored conversation is bounded: the oldest turns go, and it starts at a user message", () => {
+  const turn = (n: number): AgentMessage[] => [
+    { role: "user", content: `u${n} ${"x".repeat(200)}` },
+    { role: "assistant", content: "", toolCalls: [{ id: `c${n}`, name: "bash", arguments: "{}" }] } as AgentMessage,
+    { role: "tool", toolCallId: `c${n}`, content: "y".repeat(200) } as AgentMessage,
+    { role: "assistant", content: `a${n}` },
+  ];
+  const messages = [1, 2, 3, 4, 5, 6, 7, 8].flatMap(turn);
+  const trimmed = trimHistory(messages, 2000);
+  assert.ok(JSON.stringify(trimmed).length <= 2000);
+  assert.equal(trimmed[0]?.role, "user");
+  assert.equal(trimmed.at(-1)?.content, "a8", "the newest turn is kept");
+  assert.deepEqual(repairHistory(trimmed), trimmed, "what is left is a state a provider accepts");
+  assert.equal(trimHistory(messages, 10_000_000).length, messages.length, "a conversation within the bound is untouched");
+  assert.equal(trimHistory([{ role: "user", content: "z".repeat(5000) }], 100).length, 1, "the last message is never dropped");
 });

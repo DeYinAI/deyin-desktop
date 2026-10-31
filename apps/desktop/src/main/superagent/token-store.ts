@@ -36,6 +36,8 @@ export function createCipher(backend: SecretBackend): Cipher {
  * The agent account's GitHub token, kept in one file readable only by the user. The token never leaves this store except to the
  * runtime, which puts it in a worker's shell environment; it is not part of any view and not logged.
  */
+const TOKEN_SHAPE = /^[\x21-\x7e]{8,512}$/;
+
 export class TokenStore {
   private token: string | undefined;
 
@@ -64,6 +66,8 @@ export class TokenStore {
   set(token: string): void {
     const plain = token.trim();
     if (!plain) throw new Error("The token is empty");
+    // GitHub tokens are short and plain; anything else would only end up in a header or an environment variable by mistake.
+    if (!TOKEN_SHAPE.test(plain)) throw new Error("That does not look like a GitHub token");
     mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
     const temporary = `${this.file}.${process.pid}.tmp`;
     try {

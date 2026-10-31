@@ -11872,7 +11872,8 @@ modal's confirm button. */
 }
 .superagent__admission {
   display: grid;
-  grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(0, 1fr));
+  overflow-x: auto;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(3, minmax(110px, 1fr));
   gap: 8px 10px;
   align-items: center;
   font-size: 12.5px;

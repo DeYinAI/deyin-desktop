@@ -74,15 +74,22 @@ without acting. When those decisions match what you would have wanted, switch th
 
 - Workers run **as you, with your environment**, in a worktree of the repository. Deyin does not sandbox them. File
   tools are confined to the worktree, but a shell command is not. _Blocked commands_ (Settings → Workers) is a
-  best-effort screen of commands the shell refuses to start; it is **not a security boundary**. If you do not trust the
-  people on the allow-list, or the contents of the repository, run Deyin in a VM or as a dedicated user.
+  best-effort screen of commands the shell refuses to start; it is **not a security boundary**: `python3 -c`,
+  `busybox rm`, `$(which rm)` and many other spellings get past it. If you do not trust the people on the allow-list, or
+  the contents of the repository (a worker reads both, and an instruction hidden in an issue can steer it), run Deyin in
+  a VM or as a dedicated user.
 - Workers get file, search, git, shell, web fetch and search, and to-do tools. They do not get the browser, computer use,
   MCP servers, your memory, or tools that need a person to answer. The orchestrator gets only its own `orchestrator_*`
   tools: it can read the thread, but not run a command or touch a file.
 - The agent account's token is stored **encrypted** with the operating system's secret store (Electron `safeStorage`),
   in a file readable only by you. On Linux without a keyring it falls back to a plain file with the same permissions,
-  and says so. The token is never logged, never sent to a model, and never shown again; it reaches only the worker's
-  shell, as `GH_TOKEN`/`GITHUB_TOKEN`, so that `git` and `gh` can act as the agent.
+  and says so. It is never logged, never shown again, and never put in a prompt. It reaches only the worker's shell, as
+  `GH_TOKEN`/`GITHUB_TOKEN`, so that `git` and `gh` can act as the agent. Because the shell has it, **a worker can use
+  it**, so give the token access to this one repository and nothing else. If a command prints the token, Deyin replaces
+  it with `[REDACTED]` before the model or the stored conversation sees it (also in its Base64 and URL-encoded forms).
+  The worker's shell starts without the credential-looking variables of Deyin's own environment (names containing
+  `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `SSH_AUTH_SOCK` and similar); a credential kept under a plain name is not
+  recognized.
 - **`git` and `gh` must be on your `PATH`.** The _Needs setup_ list tells you if one is missing.
 - The agent ignores its own messages, so it cannot trigger itself.
 - The repository cannot be changed while tickets are open. Reset Superagent to start over.
@@ -93,8 +100,8 @@ and reading images from messages.
 
 ## Files
 
-Under Deyin's data folder, in `superagent/`: `settings.json` (settings, no secrets), `state.json` (tickets, decisions,
-conversations; a `.bak` copy is kept), `repos/` (the agent's own clone of the repository, unless you set a local
+Under Deyin's data folder, in `superagent/`: `settings.json` (settings, no secrets), `state.json` (tickets, decisions, messages;
+a `.bak` copy is kept), `repos/` (the agent's own clone of the repository, unless you set a local
 checkout), `work/` (worktrees, unless you set a directory), `sessions/` (each agent's conversation), and `token.json` (the
 encrypted token). **Reset** deletes the tickets and conversations and returns the settings to their defaults; the token stays, and
 worktrees on disk are left for you to remove.

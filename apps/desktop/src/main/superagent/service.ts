@@ -41,6 +41,7 @@ export class SuperagentService {
   private readonly runtime: Superagent;
   private readonly probe: (command: string) => Promise<boolean>;
   private missing: string[] = [];
+  private startFailure: string | undefined;
   private pushTimer: NodeJS.Timeout | undefined;
   private exclusive: Promise<unknown> = Promise.resolve();
   private disposed = false;
@@ -62,10 +63,17 @@ export class SuperagentService {
   }
 
   async start(): Promise<void> {
-    await this.checkPrograms();
-    await this.runtime.start();
-    // Even while switched off, the window should say whose account the stored token is.
-    if (this.tokens.get()) void this.runtime.refreshAccount();
+    try {
+      this.startFailure = undefined;
+      await this.checkPrograms();
+      await this.runtime.start();
+      // Even while switched off, the window should say whose account the stored token is.
+      if (this.tokens.get()) void this.runtime.refreshAccount();
+    } catch (error) {
+      // The window shows it; it must not stop the app from starting.
+      this.startFailure = error instanceof Error ? error.message : String(error);
+      this.options.logger.warn(`could not start: ${this.startFailure}`);
+    }
   }
 
   /** Stops every run and writes everything down; the app calls it as it quits. */
@@ -73,6 +81,8 @@ export class SuperagentService {
     this.disposed = true;
     if (this.pushTimer) clearTimeout(this.pushTimer);
     this.pushTimer = undefined;
+    // First, because stopping can outlast the app's patience at quit; and again for what the stopped runs wrote.
+    this.runner.flush();
     await this.runtime.stop();
     this.runner.flush();
   }
@@ -94,8 +104,9 @@ export class SuperagentService {
   /** The runtime's view, with what this machine lacks added to the setup gaps. */
   view(): SuperagentView {
     const view = this.runtime.view();
-    if (this.missing.length === 0) return view;
-    return { ...view, status: { ...view.status, ready: false, gaps: [...view.status.gaps, ...this.missing] } };
+    const gaps = [...this.missing, ...(this.startFailure ? [`Superagent could not start: ${this.startFailure}`] : [])];
+    if (gaps.length === 0) return view;
+    return { ...view, status: { ...view.status, ready: false, gaps: [...view.status.gaps, ...gaps] } };
   }
 
   private async reply<T>(run: () => Promise<T> | T): Promise<SuperagentReply<T>> {

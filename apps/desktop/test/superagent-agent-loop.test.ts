@@ -113,6 +113,35 @@ test("a worker's shell sees its credentials, its files stay in its directory, an
   }
 });
 
+test("a command that prints its environment shows the model no credential, and none is stored; the desktop's own credentials never reach the shell", async () => {
+  const root = tempDir();
+  const cwd = join(root, "ticket");
+  mkdirSync(cwd);
+  process.env.AWS_SECRET_ACCESS_KEY = "host-credential-value";
+  process.env.DEYIN_TEST_PLAIN = "ordinary-value";
+  const steps: Reply[] = [
+    { call: { name: "bash", args: { command: 'printenv GH_TOKEN; echo "host=${AWS_SECRET_ACCESS_KEY-unset} plain=$DEYIN_TEST_PLAIN"; printf "%s" "$GH_TOKEN" | base64' } } },
+    { text: "Done." },
+  ];
+  const model = await modelServer((index) => steps[index]!);
+  try {
+    const sessions = join(root, "sessions");
+    await runnerFor(model.url, sessions, root).run(worker(cwd));
+    const seen = model.requests[1]!.messages.filter((message) => message.role === "tool").at(-1)?.content ?? "";
+    assert.match(seen, /\[REDACTED\]/, "the token was printed, so it was replaced");
+    assert.match(seen, /host=unset plain=ordinary-value/, "a credential of the desktop is not in the worker's shell; other variables are");
+    for (const text of [JSON.stringify(model.requests), readFileSync(join(sessions, "t1.json"), "utf8")]) {
+      assert.ok(!text.includes(SECRET), "the token is in neither a prompt nor the stored conversation");
+      assert.ok(!text.includes(Buffer.from(SECRET).toString("base64")), "nor in its Base64 form");
+      assert.ok(!text.includes("host-credential-value"));
+    }
+  } finally {
+    delete process.env.AWS_SECRET_ACCESS_KEY;
+    delete process.env.DEYIN_TEST_PLAIN;
+    await model.close();
+  }
+});
+
 test("a blocked command is refused to the model, and the rest of the run goes on", async () => {
   const root = tempDir();
   const cwd = join(root, "ticket");

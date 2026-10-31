@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SuperagentReply } from "@deyin/contract";
 import type { SuperagentView } from "@deyin/superagent/client";
 
@@ -24,6 +24,15 @@ export function useSuperagent(): SuperagentController {
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // How many calls are in flight: a second one must not clear the busy state of the first, and nothing is set once unmounted.
+  const inFlight = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!api) {
@@ -50,18 +59,22 @@ export function useSuperagent(): SuperagentController {
 
   const ask = useCallback(
     async <T,>(call: () => Promise<SuperagentReply<T>>): Promise<T | undefined> => {
+      // Every control is disabled while a call is out, so a call that finds another one running is a double click.
+      if (inFlight.current > 0) return undefined;
+      inFlight.current += 1;
       setBusy(true);
       setError(null);
       try {
         const reply = await call();
         if (reply.ok) return reply.value;
-        setError(reply.error);
+        if (mounted.current) setError(reply.error);
         return undefined;
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause));
         return undefined;
       } finally {
-        setBusy(false);
+        inFlight.current -= 1;
+        if (mounted.current) setBusy(inFlight.current > 0);
       }
     },
     [],
@@ -70,7 +83,7 @@ export function useSuperagent(): SuperagentController {
   const act = useCallback(
     async (call: () => Promise<SuperagentReply>): Promise<SuperagentView | undefined> => {
       const next = await ask(call);
-      if (next) setView(next);
+      if (next && mounted.current) setView(next);
       return next;
     },
     [ask],

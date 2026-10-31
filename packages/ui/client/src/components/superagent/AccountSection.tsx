@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SuperagentVerification } from "@deyin/contract";
 import type { SuperagentView } from "@deyin/superagent/client";
 import { Callout } from "../ui/index.js";
@@ -13,6 +13,8 @@ export function AccountSection({ view, controller }: { view: SuperagentView; con
   const [verified, setVerified] = useState<SuperagentVerification | null>(null);
   const { account, accountError } = view.status;
   const api = window.deyin.superagent;
+  // A check answers for one account and repository; once either changes the answer no longer holds.
+  useEffect(() => setVerified(null), [account?.login, view.settings.github.repository]);
 
   const connect = async () => {
     if (!api || !token.trim()) return;
@@ -68,6 +70,7 @@ export function AccountSection({ view, controller }: { view: SuperagentView; con
               <input
                 className="input input-mono"
                 type="password"
+                aria-label="GitHub token"
                 autoComplete="off"
                 spellCheck={false}
                 placeholder="github_pat_…"

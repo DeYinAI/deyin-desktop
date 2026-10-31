@@ -49,6 +49,8 @@ export class GithubClient {
 
   private url(path: string, query?: Query): string {
     const url = path.startsWith("http") ? new URL(path) : new URL(`${this.base}/${path.replace(/^\//, "")}`);
+    // The token goes wherever a request goes, so a full URL (a page link from a response) must lead to the API itself.
+    if (url.origin !== new URL(this.base).origin) throw new GithubError(400, "Refusing to send the GitHub token to another host");
     for (const [name, value] of Object.entries(query ?? {})) if (value !== undefined) url.searchParams.set(name, String(value));
     return url.toString();
   }

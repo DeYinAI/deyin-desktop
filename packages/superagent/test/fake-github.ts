@@ -119,6 +119,12 @@ export class FakeGithub {
     const page = Number(url.searchParams.get("page") ?? 1);
     const per = Number(url.searchParams.get("per_page") ?? 30);
     const slice = <T>(items: T[]) => items.slice((page - 1) * per, page * per);
+    /** A listing page, with the Link header GitHub sends while more pages remain. */
+    const list = <T>(items: T[], headers: Record<string, string> = {}): FetchResponse => {
+      const next = new URL(rawUrl);
+      next.searchParams.set("page", String(page + 1));
+      return this.respond(200, slice(items), page * per < items.length ? { ...headers, link: `<${next.toString()}>; rel="next"` } : headers);
+    };
     const after = <T extends { updated_at?: string; created_at?: string }>(items: T[]) => items.filter((item) => !since || (item.updated_at ?? item.created_at ?? "") > since);
     let match: RegExpExecArray | null;
     if (path === "user") return this.respond(200, { login: this.agent, id: 4242 });
@@ -127,8 +133,7 @@ export class FakeGithub {
       const fresh = this.notifications.filter((item) => !since || item.updated_at > since);
       const etag = `"n${fresh.length}-${this.notifications.length}"`;
       if (init?.headers?.["If-None-Match"] === etag && fresh.length === 0) return this.respond(304, undefined, { etag });
-      return this.respond(
-        200,
+      return list(
         fresh.map((item) => ({
           id: String(item.number), reason: item.reason, updated_at: item.updated_at, repository: { full_name: this.repo },
           subject: { type: this.issues.get(item.number)?.pr ? "PullRequest" : "Issue", url: `https://api.github.com/repos/${this.repo}/issues/${item.number}` },
@@ -149,11 +154,11 @@ export class FakeGithub {
         return this.respond(201, this.addComment(issue.number, { user: this.agent, body: body.body }));
       }
       const issue = this.issues.get(Number(match[1]));
-      return issue ? this.respond(200, slice(after(issue.comments))) : this.respond(404, { message: "Not Found" });
+      return issue ? list(after(issue.comments)) : this.respond(404, { message: "Not Found" });
     }
     if ((match = new RegExp(`^repos/${this.repo}/pulls/(\\d+)/comments$`).exec(path))) {
       const issue = this.issues.get(Number(match[1]));
-      return issue ? this.respond(200, slice(after(issue.reviewComments))) : this.respond(404, { message: "Not Found" });
+      return issue ? list(after(issue.reviewComments)) : this.respond(404, { message: "Not Found" });
     }
     if ((match = new RegExp(`^repos/${this.repo}/pulls/(\\d+)/comments/(\\d+)/replies$`).exec(path))) {
       const issue = this.issues.get(Number(match[1]));
@@ -171,7 +176,7 @@ export class FakeGithub {
     }
     if ((match = new RegExp(`^repos/${this.repo}/pulls/(\\d+)/reviews$`).exec(path))) {
       const issue = this.issues.get(Number(match[1]));
-      return issue ? this.respond(200, slice(issue.reviews)) : this.respond(404, { message: "Not Found" });
+      return issue ? list(issue.reviews) : this.respond(404, { message: "Not Found" });
     }
     if ((match = new RegExp(`^repos/${this.repo}/pulls/(\\d+)$`).exec(path))) {
       const issue = this.issues.get(Number(match[1]));
@@ -180,15 +185,15 @@ export class FakeGithub {
     }
     if (path === `repos/${this.repo}/issues`) {
       const open = [...this.issues.values()].filter((issue) => issue.state === "open").map((issue) => this.issueJson(issue));
-      return this.respond(200, slice(open));
+      return list(open);
     }
     if (path === `repos/${this.repo}/issues/comments`) {
       const all = [...this.issues.values()].flatMap((issue) => issue.comments.map((comment) => ({ ...comment, issue_url: `https://api.github.com/repos/${this.repo}/issues/${issue.number}` })));
-      return this.respond(200, slice(after(all)));
+      return list(after(all));
     }
     if (path === `repos/${this.repo}/pulls/comments`) {
       const all = [...this.issues.values()].flatMap((issue) => issue.reviewComments.map((comment) => ({ ...comment, pull_request_url: `https://api.github.com/repos/${this.repo}/pulls/${issue.number}` })));
-      return this.respond(200, slice(after(all)));
+      return list(after(all));
     }
     if ((match = new RegExp(`^repos/${this.repo}/commits/[^/]+/check-runs$`).exec(path))) return this.respond(200, { check_runs: [{ name: "ci", status: "completed", conclusion: "success", html_url: "https://example.test/ci" }] });
     if ((match = new RegExp(`^repos/${this.repo}/commits/[^/]+/status$`).exec(path))) return this.respond(200, { state: "success", statuses: [] });

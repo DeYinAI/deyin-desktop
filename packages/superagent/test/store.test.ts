@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { State } from "../src/core/state.js";
 import { JsonStore } from "../src/store.js";
-import { request, makeRig } from "./helpers.js";
+import { request, makeRig, trigger } from "./helpers.js";
 
 const temp = () => mkdtempSync(join(tmpdir(), "superagent-store-"));
 
@@ -119,4 +119,15 @@ test("prune drops old unreferenced triggers and settled receipts but keeps live 
   assert.equal(rig.state.triggers.has("old"), false);
   assert.equal(rig.state.triggers.has("fresh"), true);
   assert.ok(State.from(rig.state.toJSON()).triggers.has("fresh"));
+});
+
+test("the history is bounded: the oldest unreferenced messages go first, however recent", () => {
+  const rig = makeRig();
+  for (let n = 0; n < 5100; n++) rig.state.triggers.set(`t${n}`, { ...trigger({ id: `t${n}` }), at: new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString() });
+  assert.equal(rig.state.prune(new Date("2026-01-02T00:00:00.000Z")), 100);
+  assert.equal(rig.state.triggers.size, 5000);
+  assert.equal(rig.state.triggers.has("t0"), false);
+  assert.equal(rig.state.triggers.has("t99"), false);
+  assert.equal(rig.state.triggers.has("t100"), true);
+  assert.equal(rig.state.triggers.has("t5099"), true);
 });
