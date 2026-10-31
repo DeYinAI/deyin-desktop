@@ -119,7 +119,7 @@ export class SuperagentService {
     }
   }
 
-  /** Runs `task` after every earlier exclusive task; token changes and resets must not overlap. */
+  /** Runs `task` after every earlier exclusive task; token changes, resets and everything that changes the state or settings must not overlap. */
   private serialized<T>(task: () => Promise<T>): Promise<T> {
     const next = this.exclusive.then(task, task);
     this.exclusive = next.catch(() => undefined);
@@ -131,10 +131,12 @@ export class SuperagentService {
   }
 
   saveSettings(raw: unknown, baseRevision: number): Promise<SuperagentReply> {
-    return this.reply(() => {
-      this.runtime.saveSettings(raw, baseRevision);
-      return this.view();
-    });
+    return this.serialized(() =>
+      this.reply(() => {
+        this.runtime.saveSettings(raw, baseRevision);
+        return this.view();
+      }),
+    );
   }
 
   /** Stores the agent account's token if GitHub accepts it; otherwise keeps the one in place and says why. */
@@ -178,24 +180,30 @@ export class SuperagentService {
   }
 
   stopTicket(ticketId: string): Promise<SuperagentReply> {
-    return this.reply(() => {
-      this.runtime.stopTicket(ticketId);
-      return this.view();
-    });
+    return this.serialized(() =>
+      this.reply(() => {
+        this.runtime.stopTicket(ticketId);
+        return this.view();
+      }),
+    );
   }
 
   retryTicket(ticketId: string): Promise<SuperagentReply> {
-    return this.reply(() => {
-      this.runtime.retryTicket(ticketId);
-      return this.view();
-    });
+    return this.serialized(() =>
+      this.reply(() => {
+        this.runtime.retryTicket(ticketId);
+        return this.view();
+      }),
+    );
   }
 
   requeue(triggerId: string): Promise<SuperagentReply> {
-    return this.reply(() => {
-      if (!this.runtime.requeue(triggerId)) throw new UserError("invalid", "That message cannot be sent to assessment again");
-      return this.view();
-    });
+    return this.serialized(() =>
+      this.reply(() => {
+        if (!this.runtime.requeue(triggerId)) throw new UserError("invalid", "That message cannot be sent to assessment again");
+        return this.view();
+      }),
+    );
   }
 
   reset(): Promise<SuperagentReply> {

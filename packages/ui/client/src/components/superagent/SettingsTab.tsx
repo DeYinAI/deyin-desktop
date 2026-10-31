@@ -186,13 +186,13 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
           <Text mono value={draft.github.repository} placeholder="owner/name" onChange={(repository) => edit((s) => ({ ...s, github: { ...s.github, repository } }))} />
         </Field>
         <SettingCard title="Watch issues" description="New issues and the comments on them.">
-          <Toggle checked={draft.github.observeIssues} onChange={(observeIssues) => edit((s) => ({ ...s, github: { ...s.github, observeIssues } }))} />
+          <Toggle label="Watch issues" checked={draft.github.observeIssues} onChange={(observeIssues) => edit((s) => ({ ...s, github: { ...s.github, observeIssues } }))} />
         </SettingCard>
         <SettingCard title="Watch pull requests" description="New pull requests, reviews and review comments.">
-          <Toggle checked={draft.github.observePulls} onChange={(observePulls) => edit((s) => ({ ...s, github: { ...s.github, observePulls } }))} />
+          <Toggle label="Watch pull requests" checked={draft.github.observePulls} onChange={(observePulls) => edit((s) => ({ ...s, github: { ...s.github, observePulls } }))} />
         </SettingCard>
         <SettingCard title="Watch comments" description="Conversation comments, mentions included, anywhere in the repository.">
-          <Toggle checked={draft.github.observeComments} onChange={(observeComments) => edit((s) => ({ ...s, github: { ...s.github, observeComments } }))} />
+          <Toggle label="Watch comments" checked={draft.github.observeComments} onChange={(observeComments) => edit((s) => ({ ...s, github: { ...s.github, observeComments } }))} />
         </SettingCard>
         <SettingCard title="Check GitHub every" description={`Seconds between polls, ${SETTINGS_LIMITS.pollSeconds.min} to ${SETTINGS_LIMITS.pollSeconds.max}.`}>
           <NumberField min={SETTINGS_LIMITS.pollSeconds.min} max={SETTINGS_LIMITS.pollSeconds.max} value={draft.github.pollSeconds} onChange={(pollSeconds) => edit((s) => ({ ...s, github: { ...s.github, pollSeconds } }))} />
@@ -254,7 +254,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
           <div key={rule.id} className="superagent__rule">
             <div className="superagent__rule-head">
               <Text value={rule.name} max={SETTINGS_LIMITS.ruleName} label="Rule name" onChange={(name) => edit((s) => withRule(s, rule.id, { name }))} />
-              <Toggle checked={rule.enabled} onChange={(enabled) => edit((s) => withRule(s, rule.id, { enabled }))} />
+              <Toggle label={`Rule enabled: ${rule.name || rule.id}`} checked={rule.enabled} onChange={(enabled) => edit((s) => withRule(s, rule.id, { enabled }))} />
               <button
                 type="button"
                 className="btn btn--ghost btn--small"

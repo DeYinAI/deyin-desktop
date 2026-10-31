@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { UserError } from "../src/core/errors.js";
 import { ticketStage } from "../src/core/model.js";
 import type { Decision, Ticket } from "../src/core/types.js";
+import { MAX_PENDING_FOLLOWUPS } from "../src/core/state.js";
 import { makeRig, makeSettings, request, trigger, type Rig } from "./helpers.js";
 
 const accept = (rig: Rig, id: string, patch: Record<string, unknown> = {}): Decision =>
@@ -396,4 +397,69 @@ test("what is kept of a long message has a bound, and its id and gating are unaf
   assert.ok(stored.text.length < 20_100);
   assert.match(stored.text, /more characters not kept\]$/);
   assert.equal(rig.engine.receive(long), "duplicate");
+});
+
+test("a message the policy no longer admits when its evaluation starts is recorded as ignored, not lost", () => {
+  const rig = makeRig();
+  const t = request();
+  rig.engine.receive(t);
+  assert.equal(rig.state.threads.get("github:1")?.pending.length, 1);
+  rig.setSettings(makeSettings({ policy: { sources: { github: { allowed: [{ id: "bob" }] } } } }));
+  rig.engine.evaluateDue();
+  assert.equal(rig.engine.candidates().length, 0);
+  const decision = rig.state.decisions.get(rig.state.disposition(t.id)!.decisionId!)!;
+  assert.equal(decision.kind, "ignore");
+  assert.deepEqual(decision.triggerIds, [t.id]);
+  assert.equal(decision.reason[0]?.code, "not_a_member");
+  assert.equal(rig.state.threads.get("github:1")?.pending.length, 0);
+});
+
+test("stopping on a person's follow-up needs a live ticket, an unpaused runtime, and a message that reached it", () => {
+  const rig = makeRig();
+  const { ticket } = accepted(rig);
+  start(rig, ticket);
+  const stop = trigger({ text: "stop please" });
+  rig.engine.receive(stop);
+  const outcome = { kind: "stop", ticketId: ticket.id, reason: "asked" } as const;
+
+  rig.setSettings(makeSettings({ paused: true }));
+  assert.throws(() => rig.engine.decide(stop.id, outcome), (error: unknown) => error instanceof UserError && error.code === "paused");
+  assert.equal(ticket.ended, undefined);
+  rig.setSettings(makeSettings());
+  assert.throws(() => rig.engine.decide("missing", outcome), (error: unknown) => error instanceof UserError && error.code === "noAssessment");
+  const elsewhere = trigger({ number: 8, text: "unrelated" });
+  rig.engine.receive(elsewhere);
+  assert.throws(() => rig.engine.decide(elsewhere.id, outcome), (error: unknown) => error instanceof UserError && error.code === "notReached");
+
+  const decision = rig.engine.decide(stop.id, outcome);
+  assert.equal(decision.kind, "stop");
+  assert.equal(decision.evalId, "");
+  assert.equal(rig.state.disposition(stop.id)?.decisionId, decision.id);
+  assert.equal(rig.engine.decide(stop.id, outcome).id, decision.id, "idempotent");
+});
+
+test("a follow-up on a ticket that has ended cannot be used to stop it", () => {
+  const rig = makeRig();
+  const { ticket } = accepted(rig);
+  start(rig, ticket);
+  const note = trigger({ text: "stop, please" });
+  rig.engine.receive(note);
+  rig.engine.report(ticket.id, { state: "ready", summary: "done" });
+  assert.ok(ticket.ended);
+  assert.throws(() => rig.engine.decide(note.id, { kind: "stop", ticketId: ticket.id, reason: "late" }), (error: unknown) => error instanceof UserError && error.code === "ticketEnded");
+  assert.equal(rig.state.disposition(note.id)?.decisionId, undefined);
+});
+
+test("follow-up notices wait for the orchestrator in bounded numbers, and a stale one is dropped with the next prune", () => {
+  const rig = makeRig();
+  const { ticket } = accepted(rig);
+  start(rig, ticket);
+  for (let i = 0; i < MAX_PENDING_FOLLOWUPS + 25; i++) rig.engine.receive(trigger({ text: `message ${i}` }));
+  const waiting = rig.engine.pendingNotices().filter((notice) => notice.kind === "follow_up");
+  assert.equal(waiting.length, MAX_PENDING_FOLLOWUPS, "the oldest give way");
+  assert.equal(rig.state.triggers.get(waiting.at(-1)!.triggerId!)?.text, `message ${MAX_PENDING_FOLLOWUPS + 24}`, "the newest are kept");
+
+  assert.equal(rig.state.prune(new Date("2026-01-01T12:00:00.000Z")), 0, "within a day they stay");
+  rig.state.prune(new Date("2026-01-03T00:00:00.000Z"));
+  assert.equal(rig.engine.pendingNotices().filter((notice) => notice.kind === "follow_up").length, 0);
 });
