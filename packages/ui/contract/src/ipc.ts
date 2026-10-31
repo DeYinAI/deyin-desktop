@@ -1,3 +1,4 @@
+import type { Settings as SuperagentSettings, SuperagentView } from "@deyin/superagent/client";
 import type {
   AccountUsage,
   AgentEventEnvelope,
@@ -325,7 +326,27 @@ export const CH = {
   botWorkflowsAbort: "deyin:botWorkflows:abort",
   botWorkflowsMerge: "deyin:botWorkflows:merge",
   botWorkflowsEvent: "deyin:botWorkflows:event",
+  superagentView: "deyin:superagent:view",
+  superagentSaveSettings: "deyin:superagent:saveSettings",
+  superagentSetToken: "deyin:superagent:setToken",
+  superagentClearToken: "deyin:superagent:clearToken",
+  superagentVerify: "deyin:superagent:verify",
+  superagentStopTicket: "deyin:superagent:stopTicket",
+  superagentRetryTicket: "deyin:superagent:retryTicket",
+  superagentRequeue: "deyin:superagent:requeue",
+  superagentReset: "deyin:superagent:reset",
+  superagentChanged: "deyin:superagent:changed",
 } as const;
+
+/** A Superagent call's outcome; a failure carries a message meant for the person, not an exception across IPC. */
+export type SuperagentReply<T = SuperagentView> = { ok: true; value: T } | { ok: false; error: string };
+
+/** What the agent account's token can do on the watched repository. */
+export interface SuperagentVerification {
+  login: string;
+  canPush: boolean;
+  repository: string;
+}
 
 /** The API the preload script exposes on `window.deyin`. */
 export interface DeyinApi {
@@ -434,6 +455,25 @@ export interface DeyinApi {
     testWsl(distro: string): Promise<{ ok: boolean; message: string; nodeVersion?: string; deyinVersion?: string }>;
     onEvent(cb: (payload: { runId: string; automationId: string; event: AgentUiEvent }) => void): () => void;
     onRunFinished(cb: (payload: { run: AutomationRun }) => void): () => void;
+  };
+  /**
+   * Superagent: a proactive, policy-gated coding agent for one GitHub repository (desktop only; it needs the local runtime
+   * and git). Off until set up; the token belongs to a dedicated agent account and is stored encrypted, never returned.
+   */
+  superagent?: {
+    view(): Promise<SuperagentReply>;
+    /** `baseRevision` is the `settingsRevision` the edit started from; a stale one is refused. */
+    saveSettings(settings: SuperagentSettings, baseRevision: number): Promise<SuperagentReply>;
+    setToken(token: string): Promise<SuperagentReply>;
+    clearToken(): Promise<SuperagentReply>;
+    verify(): Promise<SuperagentReply<SuperagentVerification>>;
+    stopTicket(ticketId: string): Promise<SuperagentReply>;
+    retryTicket(ticketId: string): Promise<SuperagentReply>;
+    /** Sends a decided message to assessment again. */
+    requeue(triggerId: string): Promise<SuperagentReply>;
+    /** Forgets all tickets, decisions and conversations; settings and the token stay. */
+    reset(): Promise<SuperagentReply>;
+    onChanged(cb: (view: SuperagentView) => void): () => void;
   };
   /** SSH targets for remote automation runs (desktop only). */
   sshHosts?: {

@@ -64,6 +64,7 @@ import type { DeyinConfig } from "@deyin/contract";
 import { DesktopAgentHost } from "./agent.js";
 import { AutomationsStore, BotWorkflowsStore, BotWorkflowEngine } from "@deyin/host-core";
 import { AutomationService } from "./automations/service.js";
+import { registerSuperagent, superagentDir } from "./superagent/register.js";
 import { ExternalAgentService } from "./external-agents/service.js";
 import { BotWorkflowScheduler } from "./external-agents/scheduler.js";
 import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
@@ -416,6 +417,8 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   } catch (err) {
     console.warn("[deyin] automation seed skipped:", err);
   }
+
+  const superagent = registerSuperagent({ dir: superagentDir(storage.dir), deps: agentDeps });
 
   const workspaceService = new WorkspaceService(automations.sshHosts);
   const github = new GitHubService();
@@ -1239,6 +1242,8 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     shutdown: async () => {
       // Abort in-flight agent runs first so MCP children observe the signal.
       agentHost.stopAll();
+      // Superagent's workers are agent runs too; a stuck one must not hold the app open.
+      await Promise.race([superagent.dispose(), new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
       automations.dispose();
       botWorkflowScheduler.dispose();
       // Also hangs up the pooled MCP servers, which now outlive a single run.

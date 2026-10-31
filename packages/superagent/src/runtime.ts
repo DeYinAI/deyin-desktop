@@ -144,6 +144,8 @@ export class Superagent {
     if (this.started) return;
     this.started = true;
     this.abort = new AbortController();
+    // A stop disposed the store's autosave; starting again must save again.
+    this.store.autosave();
     const { engine, orchestrator, executor, state } = this.parts;
     orchestrator.recover();
     executor.recover();

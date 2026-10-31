@@ -222,3 +222,24 @@ test("resolveVirtualEnv discovers local Python venv directories and bin paths", 
   }
 });
 
+test("ToolContext.env reaches the shell command, in the foreground and in the background, and wins over the process environment", { skip: !isPosix }, async () => {
+  process.env.DEYIN_TEST_TOKEN = "from-process";
+  try {
+    const env = { DEYIN_TEST_TOKEN: "from-run", DEYIN_TEST_OTHER: "extra" };
+    const direct = await executeShellCommand('printf "%s|%s" "$DEYIN_TEST_TOKEN" "$DEYIN_TEST_OTHER"', process.cwd(), { env });
+    assert.equal(direct.output, "from-run|extra");
+    const plain = await executeShellCommand('printf "%s" "$DEYIN_TEST_TOKEN"', process.cwd());
+    assert.equal(plain.output, "from-process", "a run without env sees only the process environment");
+
+    const background = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
+    const context: ToolContext = { ...ctx(), env, registerBackgroundTask: (id, promise) => void background.set(id, promise) };
+    const foreground = await bashTool.execute({ command: 'printf "%s" "$DEYIN_TEST_OTHER"' }, context);
+    assert.equal(foreground, "extra");
+    const started = await bashTool.execute({ command: 'printf "%s" "$DEYIN_TEST_OTHER"', block_until_ms: 0 }, context);
+    const taskId = /task_id: (\S+)/.exec(started)?.[1];
+    assert.ok(taskId);
+    assert.equal((await background.get(taskId))?.output, "extra");
+  } finally {
+    delete process.env.DEYIN_TEST_TOKEN;
+  }
+});

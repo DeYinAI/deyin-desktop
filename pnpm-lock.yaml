@@ -134,6 +134,9 @@ importers:
       '@deyin/optimization-plugin':
         specifier: workspace:*
         version: link:../../packages/plugins/optimization
+      '@deyin/superagent':
+        specifier: workspace:*
+        version: link:../../packages/superagent
       '@deyin/tools':
         specifier: workspace:*
         version: link:../../packages/tools/tools
@@ -992,6 +995,9 @@ importers:
       '@deyin/host-core':
         specifier: workspace:*
         version: link:../../host-core
+      '@deyin/superagent':
+        specifier: workspace:*
+        version: link:../../superagent
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -1041,6 +1047,9 @@ importers:
       '@deyin/host-core':
         specifier: workspace:*
         version: link:../../host-core
+      '@deyin/superagent':
+        specifier: workspace:*
+        version: link:../../superagent
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

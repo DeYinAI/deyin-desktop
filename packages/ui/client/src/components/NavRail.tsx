@@ -5,7 +5,7 @@ import { UpdateBanner } from "./UpdateBanner.js";
 
 interface NavRailProps {
   /** Which top-level view is showing, so its rail button reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "bot" | "workflows";
+  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "superagent" | "bot" | "workflows";
   platform?: "desktop" | "web";
   currentMode?: ChatMode;
   onSwitchMode?: (mode: ChatMode) => void;
@@ -14,6 +14,7 @@ interface NavRailProps {
   onNewTask: () => void;
   onOpenSearch: () => void;
   onOpenAutomations: () => void;
+  onOpenSuperagent: () => void;
   onOpenWorkflows?: () => void;
   onOpenCustomize: () => void;
   onOpenSettings: () => void;
@@ -46,6 +47,14 @@ export function NavRail(props: NavRailProps) {
           label: t("nav.automations"),
           onClick: props.onOpenAutomations,
           active: props.activeView === "automations",
+        }]
+      : []),
+    ...(props.platform !== "web"
+      ? [{
+          icon: "rocket" as IconName,
+          label: t("nav.superagent"),
+          onClick: props.onOpenSuperagent,
+          active: props.activeView === "superagent",
         }]
       : []),
     { icon: "customize", label: t("nav.customize"), onClick: props.onOpenCustomize },

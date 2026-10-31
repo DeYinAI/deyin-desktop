@@ -152,6 +152,11 @@ without adopting its operator/lifestyle scope:
 - Unattended runs skip permission prompts, but not unconditionally: OS input synthesis (`computer_*`) and browser navigation are denied rather than auto-allowed, because there is no user present to answer. `deny` always beats skip-all in the permission engine. Workspace-provided `hooks.json` and `mcp.json` are ignored unless that workspace was already trusted through an interactive session, since an unattended run cannot show the trust dialog.
 - Note: for both SSH and WSL targets the token and prompt are streamed over the child's stdin, so they never appear in the command line (`/proc/<pid>/cmdline`) or in the login shell's environment. `DEYIN_TOKEN` is still present in the `deyin` child process environment while a run is active, so treat the SSH host — or the distro — as a trusted machine. The remote command runs under a job-control shell that traps `EXIT`/`HUP` and kills its whole process group, so a dropped connection or a stopped run leaves no orphaned `deyin` process.
 
+## Superagent
+- A proactive coding agent for one GitHub repository (desktop only, off by default): it watches issues, pull requests and comments, accepts requests only from an allow-list of accounts, and works each accepted request in its own git worktree, ending in a pull request.
+- Acts as a dedicated GitHub account whose token is stored encrypted and never sent to a model. **Observe** mode records what it would have taken on before you let it act (**Auto**).
+- The agents' instructions are the [dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype) prompts, unchanged; the engine is `packages/superagent`. Setup, limits and safety notes: [SUPERAGENT.md](./SUPERAGENT.md).
+
 ## MCP
 - Connect Model Context Protocol servers; discover and call their tools from chat.
 - Config: `.deyin/mcp.json` (workspace), legacy `~/.deyin/mcp.json` (migrated on upgrade),

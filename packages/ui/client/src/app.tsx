@@ -54,6 +54,7 @@ import { applyGoalToProjects } from "./threadGoal.js";
 import { estimateContextFromThreadEvents } from "./contextEstimate.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { AutomationsView } from "./components/AutomationsView.js";
+import { SuperagentPage } from "./components/superagent/SuperagentPage.js";
 import { BotModeView } from "./components/BotModeView.js";
 import { BotWorkflowsView } from "./components/BotWorkflowsView.js";
 import { PlansView } from "./components/PlansView.js";
@@ -154,7 +155,7 @@ function clampFraction(value: number): number {
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 const CONTINUE_PROMPT = "Continue the task from where you stopped. Check the todo list and workspace state first, then finish the remaining work.";
 
-type View = "workspace" | "settings" | "upgrade" | "automations" | "bot" | "workflows";
+type View = "workspace" | "settings" | "upgrade" | "automations" | "superagent" | "bot" | "workflows";
 
 interface PendingApproval {
   requestId: string;
@@ -2624,6 +2625,7 @@ const continueFromStepLimit = useCallback(() => {
     window.deyin.telemetry?.record("settings-opened");
   }, []);
   const sidebarOpenAutomations = useCallback(() => setView("automations"), []);
+  const sidebarOpenSuperagent = useCallback(() => setView("superagent"), []);
   const sidebarOpenWorkflows = useCallback((workflowId?: string | null) => {
     setSelectedWorkflowForEdit(workflowId ?? null);
     setView("workflows");
@@ -3067,6 +3069,7 @@ const continueFromStepLimit = useCallback(() => {
             onNewTask={newTask}
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAutomations={() => setView("automations")}
+            onOpenSuperagent={sidebarOpenSuperagent}
             onOpenWorkflows={() => sidebarOpenWorkflows(null)}
             onOpenCustomize={() => {
               setSettingsPage("appearance");
@@ -3115,6 +3118,7 @@ const continueFromStepLimit = useCallback(() => {
           onOpenPlans={sidebarOpenPlans}
           onOpenSettings={sidebarOpenSettings}
           onOpenAutomations={sidebarOpenAutomations}
+          onOpenSuperagent={sidebarOpenSuperagent}
           onOpenWorkflows={sidebarOpenWorkflows}
           onOpenCustomize={sidebarOpenCustomize}
           pendingByThread={pendingByThread}
@@ -3135,6 +3139,12 @@ const continueFromStepLimit = useCallback(() => {
                 setSettingsPage("sshHosts");
                 setView("settings");
               }}
+            />
+          ) : view === "superagent" ? (
+            <SuperagentPage
+              models={models}
+              selectedProviderId={selectedProviderId}
+              onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
             />
           ) : view === "workflows" ? (
             <BotWorkflowsView

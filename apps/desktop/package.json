@@ -46,6 +46,7 @@
     "@deyin/llm": "workspace:*",
     "@deyin/oauth-client": "workspace:*",
     "@deyin/optimization-plugin": "workspace:*",
+    "@deyin/superagent": "workspace:*",
     "@deyin/tools": "workspace:*",
     "@deyin/ui": "workspace:*",
     "@types/node": "^22.10.2",
