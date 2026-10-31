@@ -40,7 +40,10 @@ export const emptyStateData = (): StateData => ({
 /** The most messages kept besides those a live ticket or thread refers to. */
 export const MAX_TRIGGERS = 5000;
 
-const RETENTION_MS = { triggers: 30 * 86_400_000, receipts: 14 * 86_400_000, notices: 7 * 86_400_000 };
+const RETENTION_MS = { triggers: 30 * 86_400_000, receipts: 14 * 86_400_000, notices: 7 * 86_400_000, followUps: 86_400_000 };
+
+/** The most follow-up notices kept waiting for the orchestrator: anyone may write on a public repository, and a stalled orchestrator must not let them pile up. */
+export const MAX_PENDING_FOLLOWUPS = 100;
 
 export class State {
   readonly triggers = new Map<string, Trigger>();
@@ -179,7 +182,9 @@ export class State {
     }
     const noticeCutoff = cutoff(RETENTION_MS.notices);
     const before = this.notices.length;
-    this.notices = this.notices.filter((notice) => !notice.delivered || notice.at >= noticeCutoff);
+    // A follow-up is only worth telling while the ticket it reached can still be stopped on it; a day on, it is stale.
+    const followUpCutoff = cutoff(RETENTION_MS.followUps);
+    this.notices = this.notices.filter((notice) => (notice.delivered ? notice.at >= noticeCutoff : notice.kind !== "follow_up" || notice.at >= followUpCutoff));
     removed += before - this.notices.length;
     if (removed > 0) this.touch();
     return removed;

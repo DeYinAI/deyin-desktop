@@ -6,12 +6,12 @@
 import { UserError } from "./errors.js";
 import { followsDone, humanTriggerInput, liveAssignment, ticketStage } from "./model.js";
 import { asReason, reasonText } from "./reasons.js";
-import type { State } from "./state.js";
+import { MAX_PENDING_FOLLOWUPS, type State } from "./state.js";
 import { key } from "./text.js";
 import type { Policy } from "../policy.js";
 import type {
-  Assignment, Candidate, Decision, DomainEvent, Evaluation, Execution, Mandate, Notice, Outcome, PolicyEffect, Receipt, ReplyPurpose,
-  ReportState, Thread, ThreadRef, Ticket, TicketEndBy, TicketInput, TicketOutcome, Trigger, TriggerDisposition,
+  Assignment, Candidate, Decision, DomainEvent, Evaluation, Execution, Mandate, Notice, Outcome, PolicyEffect, Reason, Receipt, ReplyPurpose,
+  ReportState, Strength, Thread, ThreadRef, Ticket, TicketEndBy, TicketInput, TicketOutcome, Trigger, TriggerDisposition,
 } from "./types.js";
 import { parseThreadKey, threadKey } from "./types.js";
 
@@ -217,16 +217,24 @@ export class Engine {
   private startEvaluation(thread: Thread): void {
     const policy = this.policy();
     const admitted: { trigger: Trigger; strength: "explicit" | "inferred"; basis: Mandate["basis"] }[] = [];
+    const refused: Reason[] = [];
+    const refusedIds: string[] = [];
     for (const id of thread.pending) {
       const trigger = this.state.triggers.get(id);
       const disposition = this.state.dispositions.get(id);
       if (!trigger || !disposition) continue;
       const result = policy.gate(trigger, thread, this.ticketsOf(thread));
       if (result.admissible) admitted.push({ trigger, strength: result.strength, basis: result.basis });
-      else disposition.filtered = { code: result.reason };
+      else {
+        disposition.filtered = { code: result.reason };
+        refusedIds.push(id);
+        refused.push({ code: result.reason });
+      }
     }
     thread.pending = [];
     if (admitted.length === 0) {
+      // Admissible when it arrived, not now (the policy changed while it waited): left on record as ignored, not lost.
+      if (refusedIds.length > 0) this.recordDirect({ thread, triggerIds: refusedIds, kind: "ignore", reason: refused, strength: "inferred" });
       this.state.touch();
       return;
     }
@@ -343,16 +351,25 @@ export class Engine {
     if (!ticket) throw new UserError("unknownTicket", `No such ticket to stop: ${outcome.ticketId}`);
     const earlier = disposition.decisionId ? this.state.decisions.get(disposition.decisionId) : undefined;
     if (earlier?.kind === "stop" && earlier.ticketId === ticket.id) return earlier;
+    if (ticket.ended) throw new UserError("ticketEnded");
     if (!ticket.inputs.some((input) => input.kind === "trigger" && input.triggerId === triggerId && humanTriggerInput(input))) throw new UserError("notReached");
-    const policy = this.policy();
-    if (policy.paused) throw new UserError("paused");
+    if (this.policy().paused) throw new UserError("paused");
+    const decision = this.recordDirect({ triggerIds: [triggerId], kind: "stop", reason: [asReason(outcome.reason)], strength: "explicit", ticketId: ticket.id, threadKey: threadKey(trigger.threads[0]!) });
+    this.endTicket(ticket, "human", "stopped", reasonText(decision.reason));
+    return decision;
+  }
+
+  /** Records a decision that no evaluation held (a person's follow-up stopped a ticket; a queued message the policy no longer admits). */
+  private recordDirect(fields: { thread?: Thread; threadKey?: string; triggerIds: string[]; kind: Decision["kind"]; reason: Reason[]; strength: Strength; ticketId?: string }): Decision {
     const decision: Decision = {
-      id: this.state.nextId("d"), evalId: "", threadKey: threadKey(trigger.threads[0]!), triggerIds: [triggerId], policyVersion: policy.version, at: this.now(),
-      kind: "stop", reason: [asReason(outcome.reason)], strength: "explicit", ticketId: ticket.id,
+      id: this.state.nextId("d"), evalId: "", threadKey: fields.thread?.key ?? fields.threadKey ?? "", triggerIds: fields.triggerIds, policyVersion: this.policy().version, at: this.now(),
+      kind: fields.kind, reason: fields.reason, strength: fields.strength, ...(fields.ticketId ? { ticketId: fields.ticketId } : {}),
     };
     this.state.decisions.set(decision.id, decision);
-    disposition.decisionId = decision.id;
-    if (!ticket.ended) this.endTicket(ticket, "human", "stopped", reasonText(decision.reason));
+    for (const id of fields.triggerIds) {
+      const disposition = this.state.dispositions.get(id);
+      if (disposition) disposition.decisionId = decision.id;
+    }
     this.state.touch();
     this.emit({ type: "decision.recorded", decisionId: decision.id });
     return decision;
@@ -983,6 +1000,11 @@ export class Engine {
       id: this.state.nextId("n"), at: this.now(), kind: notice.kind, text: notice.text,
       ...(notice.ticketId ? { ticketId: notice.ticketId } : {}), ...(notice.triggerId ? { triggerId: notice.triggerId } : {}),
     });
+    if (notice.kind === "follow_up") {
+      // The oldest wait no longer: a stop is only ever asked of the latest messages.
+      const waiting = this.state.notices.filter((item) => item.kind === "follow_up" && !item.delivered);
+      for (const stale of waiting.slice(0, Math.max(0, waiting.length - MAX_PENDING_FOLLOWUPS))) this.state.notices.splice(this.state.notices.indexOf(stale), 1);
+    }
     this.state.touch();
   }
 

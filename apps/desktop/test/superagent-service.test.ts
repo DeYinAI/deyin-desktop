@@ -41,7 +41,7 @@ function github(accepted: string[]): FetchLike {
   };
 }
 
-function makeService(options: { accepted?: string[]; programs?: string[]; probe?: (command: string) => Promise<boolean>; broadcast?: (view: SuperagentView) => void; dir?: string } = {}) {
+function makeService(options: { accepted?: string[]; programs?: string[]; probe?: (command: string) => Promise<boolean>; broadcast?: (view: SuperagentView) => void; dir?: string; fetch?: FetchLike } = {}) {
   const dir = options.dir ?? tempDir();
   const programs = options.programs ?? ["git", "gh"];
   const service = new SuperagentService({
@@ -55,7 +55,7 @@ function makeService(options: { accepted?: string[]; programs?: string[]; probe?
       builtinTools: () => createBuiltinRegistry(),
     },
     broadcast: options.broadcast ?? (() => undefined),
-    fetch: github(options.accepted ?? ["ghp_good_token", "ghp_also_good"]),
+    fetch: options.fetch ?? github(options.accepted ?? ["ghp_good_token", "ghp_also_good"]),
     logger: silent,
     probe: options.probe ?? (async (command) => programs.includes(command)),
     tickMs: 20,
@@ -247,4 +247,29 @@ test("the safeStorage cipher encrypts when it can and says plainly when it canno
   assert.equal(cipher.decrypt(plain), "secret");
   assert.equal(cipher.decrypt(sealed), "secret", "what was sealed stays readable");
   assert.throws(() => cipher.decrypt("junk"), /Unrecognized/);
+});
+
+test("a settings save and ticket actions wait for a token change that is in progress", async () => {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inner = github(["ghp_good_token"]);
+  const { service } = makeService({
+    fetch: async (url, init) => {
+      if (new URL(url).pathname === "/user") await held;
+      return inner(url, init);
+    },
+  });
+  await service.start();
+  const events: string[] = [];
+  const revision = ok<SuperagentView>(service.current()).settingsRevision;
+  const connecting = service.setToken("ghp_good_token").then(() => events.push("token"));
+  const saving = service.saveSettings({ github: { repository: "acme/app" } }, revision).then(() => events.push("save"));
+  const stopping = service.stopTicket("t0").then(() => events.push("stop"));
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.deepEqual(events, [], "nothing runs while the token is being checked");
+  release();
+  await Promise.all([connecting, saving, stopping]);
+  assert.deepEqual(events, ["token", "save", "stop"], "and then in the order they were asked for");
 });
