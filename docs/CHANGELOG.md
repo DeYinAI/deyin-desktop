@@ -5,6 +5,37 @@ All notable **public** releases of Deyin are documented here.
 > **Note on Versioning History:**
 > Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.30`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
 
+## 1.0.31 — 2026-10-31
+
+### Highlights
+
+- **Superagent — A Proactive Coding Agent for One GitHub Repository (Desktop, Off by Default):** A new **Superagent**
+  page in the sidebar watches a GitHub repository as a dedicated agent account, decides which requests it may act on,
+  and works each accepted request in its own git worktree, ending in a pull request that you review and merge — it never
+  merges. It follows the design of [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)
+  (MIT): the agents' instructions are that project's Markdown prompts, unchanged, with a short "This installation"
+  section added after them; the engine, GitHub client, store and desktop integration are Deyin's own. Nothing runs until
+  you connect the agent account's token, set the repository, list the GitHub accounts allowed to ask, and switch it on;
+  with an empty allow-list it never acts on anything. Setup, the three modes (Mentions only, Observe, Auto), what it can
+  and cannot do, and where its files live are in [`docs/SUPERAGENT.md`](./SUPERAGENT.md).
+- **Safe by Default, Honest About Limits:** The agent's token is stored encrypted with the operating system's secret
+  store, never logged, never shown again and never put in a prompt; it reaches only the worker's shell, and if a command
+  prints it, it is replaced with `[REDACTED]` (also when the output was cut in the middle of it) before the model or the
+  stored conversation sees it. A worker's shell starts without the credential-looking variables of Deyin's own
+  environment. Workers still run as you: file tools are confined to the ticket's worktree, but a shell command is not, so
+  the _blocked commands_ list is a best-effort screen, not a sandbox — run Deyin in a VM or as a dedicated user if you do
+  not trust the people on the allow-list or the repository's contents. Observe mode records what the agent _would_ have
+  taken on without acting, so you can check its judgment before switching to Auto.
+- **Activity at a Glance:** The Activity tab lists tickets with the ones that need a person first (a question, a
+  blocked worker, an undelivered reply, a failure), and shows messages waiting for assessment, recent decisions with
+  their reasons, and the replies posted on GitHub. You can stop, retry or resume a ticket, send a message to assessment
+  again, pause everything, or reset. State survives restarts (atomic writes with a backup copy; a damaged or wrongly
+  shaped state file falls back to the previous copy instead of losing the queue), and stopping the app waits for a
+  reply that is being posted.
+- **Agent Tools Can Be Given Per-Run Environment Variables:** `bash` tool calls now accept a per-run environment on the
+  tool context (set or remove variables) on top of the app's own shell environment, which Superagent uses to hand a
+  worker its GitHub credentials without putting them in the app's global environment.
+
 ## 1.0.30 — 2026-09-29
 
 ### Highlights
