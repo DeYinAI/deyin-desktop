@@ -4,7 +4,7 @@ import { ticketStage } from "../src/core/model.js";
 import { GithubClient, GithubError, authenticatedAccount, canPush } from "../src/github/client.js";
 import { claimPull, sendReceipt } from "../src/github/channel.js";
 import { GithubReader } from "../src/github/read.js";
-import { GithubSource, githubScope } from "../src/github/source.js";
+import { GithubSource, githubScope, isAfter } from "../src/github/source.js";
 import { MARKER, commentTrigger, githubAddress, mentions } from "../src/github/triggers.js";
 import { settingsPolicy } from "../src/policy.js";
 import { Engine } from "../src/core/engine.js";
@@ -384,6 +384,16 @@ test("an observed repository with more new comments than one round reads is not 
   w.fake.tick();
   await w.source.poll();
   assert.equal(w.state.triggers.size, 1150, "the rest is read next round instead of the same first thousand again");
+});
+
+test("times are compared as moments, whichever way they are written", () => {
+  assert.equal(isAfter("2026-01-01T00:00:05Z", "2026-01-01T00:00:05.000Z"), false, "the same moment");
+  assert.equal(isAfter("2026-01-01T00:00:05Z", "2026-01-01T00:00:05.700Z"), false, "GitHub's whole seconds are not later than the runtime's fraction");
+  assert.equal(isAfter("2026-01-01T00:00:06Z", "2026-01-01T00:00:05.700Z"), true);
+  assert.equal(isAfter("2026-01-01T00:00:05.001Z", "2026-01-01T00:00:05Z"), true);
+  assert.equal(isAfter(undefined, "2026-01-01T00:00:05Z"), false);
+  assert.equal(isAfter(null, "2026-01-01T00:00:05Z"), false);
+  assert.equal(isAfter("not a time", "2026-01-01T00:00:05Z"), false);
 });
 
 test("the client sends the token to the API only", async () => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AssessmentSchema, assessmentOutcome, directionAllowed } from "../src/agents/assessment.js";
+import { followUpNotice } from "../src/agents/cards.js";
 import { ticketStage } from "../src/core/model.js";
 import { agentsWorld, call } from "./agents-world.js";
 import { AGENT, makeSettings, request, trigger } from "./helpers.js";
@@ -345,4 +346,50 @@ test("unsubscribe drops every ticket subscription on a thread", async () => {
   const answer = await call(world.orchestrator(), "orchestrator_thread_unsubscribe", { thread: "github:1" });
   assert.equal(answer.removed, 1);
   assert.ok(!world.state.threads.get("github:1")?.subscriptions.includes(id));
+});
+
+test("a person's message that a worker decides is told to the orchestrator, which may stop the ticket on it and nothing more", async () => {
+  const world = agentsWorld();
+  const id = await world.accept(request());
+  world.start(id);
+  const ticket = world.state.tickets.get(id)!;
+  const note = trigger({ text: "actually, never mind: stop please" });
+  world.receive(note);
+  assert.equal(world.engine.candidates().length, 0, "the worker decides it; it is not a candidate");
+
+  const [notice] = world.engine.pendingNotices().filter((item) => item.kind === "follow_up");
+  assert.equal(notice?.triggerId, note.id);
+  const told = JSON.parse(followUpNotice(world.state, note.id)!);
+  assert.equal(told.kind, "follow_up");
+  assert.equal(told.trigger_id, note.id);
+  assert.equal(told.text, "actually, never mind: stop please");
+  assert.deepEqual(told.delivered_to.map((item: { ticket_id: string }) => item.ticket_id), [id]);
+  assert.match(told.note, /act only if the person asks to stop/);
+
+  // Not the same as a message the person never sent to this ticket, and not an accept or ignore.
+  const other = trigger({ number: 9, text: "unrelated" });
+  world.receive(other);
+  const refused = await call(world.orchestrator(), "orchestrator_route", { decisions: [{ kind: "stop", trigger_id: other.id, ticket_id: id }] });
+  assert.match(refused.results[0].refused, /did not reach|No assessment/i);
+  assert.equal(ticket.ended, undefined);
+  await assert.rejects(call(world.orchestrator(), "orchestrator_trigger_requeue", { trigger_id: note.id }), /worker decides/);
+
+  const stopped = await call(world.orchestrator(), "orchestrator_route", { decisions: [{ kind: "stop", trigger_id: note.id, ticket_id: id, reason: "The person asked to stop" }] });
+  assert.equal(stopped.results[0].decision, "stop");
+  const ended = world.state.tickets.get(id)!.ended;
+  assert.equal(ended?.by, "human");
+  assert.equal(ended?.outcome, "stopped");
+  const again = await call(world.orchestrator(), "orchestrator_route", { decisions: [{ kind: "stop", trigger_id: note.id, ticket_id: id }] });
+  assert.equal(again.results[0].decision, "stop", "stopping again answers the same");
+  assert.equal(followUpNotice(world.state, note.id), undefined, "nothing owns it any more");
+  const later = trigger({ text: "go on after all" });
+  world.receive(later);
+  assert.ok(world.state.tickets.get(id)?.ended, "a stopped ticket stays stopped");
+});
+
+test("a follow-up is not announced when a person's message was not for a ticket's worker", () => {
+  const world = agentsWorld();
+  world.receive(request());
+  world.receive(trigger({ number: 5, text: "just talking" }));
+  assert.deepEqual(world.engine.pendingNotices().filter((item) => item.kind === "follow_up"), []);
 });

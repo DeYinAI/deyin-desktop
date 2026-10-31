@@ -34,6 +34,18 @@ test("each role's prompt carries its upstream sections verbatim and only its own
   assert.ok(!worker.includes("## Policy"));
 });
 
+test("both roles are told what this installation lacks, and only the orchestrator is told about images", () => {
+  const orchestrator = composePrompt("orchestrator", input());
+  const worker = composePrompt("worker", input());
+  for (const prompt of [orchestrator, worker]) {
+    assert.match(prompt, /## This installation\nGitHub is the only Source and Channel here\. Feishu is not configured/);
+    assert.match(prompt, /gh pr checks/);
+    assert.ok(prompt.indexOf("## This installation") > prompt.indexOf("## CLI usage"), "after the upstream text it qualifies");
+  }
+  assert.match(orchestrator, /Images cannot be read here/);
+  assert.ok(!worker.includes("Images cannot be read here"));
+});
+
 test("team sections default to the upstream text and take the installation's override", () => {
   const plain = composePrompt("worker", input());
   assert.ok(plain.includes(PROMPT_DATA["team/delivery"]!));

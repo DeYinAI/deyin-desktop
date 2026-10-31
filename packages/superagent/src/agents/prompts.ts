@@ -29,6 +29,16 @@ const ENVIRONMENT_HEADING =
 const POLICY_HEAD =
   "## Policy\nPolicy version {version}; accept mode {mode}. The accept mode and the rules decide proactive candidates only: an explicit request is routed as dispatch says, in any mode and whatever the rules.";
 
+/** What differs here from the deployment the upstream text was written for: only the facts this installation changes. */
+const INSTALLATION_HEAD =
+  "## This installation\nGitHub is the only Source and Channel here. Feishu is not configured: there is no lark-cli and no Feishu skill, so ignore the instructions above that concern Feishu, and read and reply through GitHub. The GitHub skill above is the only skill; there is no skills command.";
+const INSTALLATION_CHECKS =
+  "Check results and CI status are not delivered to you as messages; read them when you need them, with gh (for example gh pr checks) or the github/pulls/<number>/checks resource.";
+const INSTALLATION_IMAGES = "Images cannot be read here: orchestrator_eval_read refuses an image, so judge from the text and say so when an image might have held the answer.";
+
+/** The Installation section for a role. */
+export const installationSection = (role: Role): string => [INSTALLATION_HEAD, INSTALLATION_CHECKS, ...(role === "orchestrator" ? [INSTALLATION_IMAGES] : [])].join(" ");
+
 export interface EnvVariable { key: string; value: string; description: string }
 
 export interface EnvironmentInput {
@@ -130,6 +140,7 @@ export function composePrompt(role: Role, input: EnvironmentInput): string {
     `${part("handoff")}\n${part(`handoff-${role}`)}`,
     // The GitHub skill documents the github/... resources and how workers use gh; both roles read it.
     `## GitHub skill\n${skillBody("skill/github")}\n\n## CLI usage\n${part("cli")}`,
+    installationSection(role),
     `${ENVIRONMENT_HEADING}\n${environmentLines(environmentVariables(input))}`,
     ...(role === "orchestrator" ? [policySection(settings)] : []),
   ];

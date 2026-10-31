@@ -104,6 +104,34 @@ test("notices are delivered after a successful run and kept after a failed one",
   assert.equal(world.engine.pendingNotices().length, 0);
 });
 
+test("a follow-up notice is sent as the message the workers read, and dropped when no ticket owns it any more", async () => {
+  const world = agentsWorld();
+  const id = await world.accept(request());
+  world.engine.noticesDelivered(world.engine.pendingNotices().map((notice) => notice.id));
+  world.start(id);
+  const told = trigger({ text: "please stop" });
+  world.receive(told);
+  const runner = new ScriptedRunner();
+  const { driver } = orchestratorOf(world, runner);
+  driver.tick();
+  await driver.settle();
+  const message = JSON.parse(runner.runs[0]!.messages[0]!);
+  assert.equal(message.kind, "follow_up");
+  assert.equal(message.trigger_id, told.id);
+  assert.equal(world.engine.pendingNotices().length, 0);
+
+  // A second one whose ticket ends before the orchestrator gets to it has nothing left to say, and does not keep it busy.
+  const late = trigger({ text: "and another thing" });
+  world.receive(late);
+  world.engine.stopTicket(id);
+  assert.equal(world.engine.pendingNotices().length, 1);
+  driver.tick();
+  await driver.settle();
+  assert.equal(runner.runs.length, 1, "no run for a notice that says nothing");
+  assert.equal(world.engine.pendingNotices().length, 0);
+  assert.equal(driver.hasWork(), false);
+});
+
 test("a failed run delivers its candidates again, and a restart does too", async () => {
   const world = agentsWorld();
   const t = request();

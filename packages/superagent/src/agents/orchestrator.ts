@@ -7,7 +7,7 @@ import type { State } from "../core/state.js";
 import type { Trigger } from "../core/types.js";
 import { AgentRunError, type AgentRunner, type AgentTool, type Logger } from "../ports.js";
 import type { Settings } from "../settings.js";
-import { candidateCard } from "./cards.js";
+import { candidateCard, followUpNotice } from "./cards.js";
 
 export const ORCHESTRATOR_SESSION = "orchestrator";
 const BACKOFF_START_MS = 5_000;
@@ -96,7 +96,10 @@ export class OrchestratorDriver {
       for (const notice of engine.pendingNotices()) {
         if (sentNotices.has(notice.id)) continue;
         sentNotices.add(notice.id);
-        messages.push(notice.text);
+        const text = notice.kind === "follow_up" ? (notice.triggerId ? followUpNotice(state, notice.triggerId) : undefined) : notice.text;
+        if (text) messages.push(text);
+        // Nothing to tell any more (the ticket ended before the orchestrator got to it): done, not waiting for ever.
+        else engine.noticesDelivered([notice.id]);
       }
       return messages;
     };

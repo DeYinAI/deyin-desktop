@@ -22,14 +22,18 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8")) as unknown;
 }
 
-/** Reads a JSON file, falling back to its `.bak` generation; `undefined` when neither exists. @throws when both are unreadable. */
-function readGenerations(path: string, logger?: StoreLogger): unknown | undefined {
+/**
+ * Reads a JSON file and checks it with `parse`, falling back to its `.bak` generation when the file is unreadable or not what `parse`
+ * accepts (a torn write can leave valid JSON that is not a state); `undefined` when neither exists.
+ * @throws when both are unusable.
+ */
+function readGenerations<T>(path: string, parse: (raw: unknown) => T, logger?: StoreLogger): T | undefined {
   const failures: string[] = [];
   for (const candidate of [path, `${path}.bak`]) {
     if (!existsSync(candidate)) continue;
     try {
-      const value = readJson(candidate);
-      if (candidate !== path) logger?.warn(`superagent: ${path} was unreadable; recovered from ${candidate}`);
+      const value = parse(readJson(candidate));
+      if (candidate !== path) logger?.warn(`superagent: ${path} was unusable; recovered from ${candidate}`);
       return value;
     } catch (error) {
       failures.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`);
@@ -72,13 +76,20 @@ export class JsonStore {
   /** Loads settings and state; creates neither file until something changes. */
   load(): { state: State; settings: Settings } {
     mkdirSync(this.dir, { recursive: true });
-    const settingsFile = readGenerations(this.settingsPath, this.options.logger) as SettingsFile | undefined;
-    if (settingsFile) {
-      this.revision = settingsFile.revision;
-      this.settingsValue = parseSettings(settingsFile.settings);
+    const stored = readGenerations(
+      this.settingsPath,
+      (raw) => {
+        const file = raw as Partial<SettingsFile> | null;
+        if (!file || typeof file.revision !== "number" || !Number.isInteger(file.revision) || file.revision < 0) throw new Error("not a settings file");
+        return { revision: file.revision, settings: parseSettings(file.settings) };
+      },
+      this.options.logger,
+    );
+    if (stored) {
+      this.revision = stored.revision;
+      this.settingsValue = stored.settings;
     }
-    const data = readGenerations(this.statePath, this.options.logger) as StateData | undefined;
-    this.state = State.from(data);
+    this.state = readGenerations(this.statePath, (raw) => State.from(raw as StateData), this.options.logger) ?? State.from(undefined);
     this.written = this.state.revision;
     return { state: this.state, settings: this.settingsValue };
   }

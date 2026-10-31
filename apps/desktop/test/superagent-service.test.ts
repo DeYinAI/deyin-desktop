@@ -101,6 +101,15 @@ test("a token GitHub accepts is stored encrypted and never appears in a view", a
   assert.ok(!JSON.stringify(service.current()).includes("ghp_good_token"));
 });
 
+test("a token pasted with its header, quotes or line break is stored as the token itself", async () => {
+  for (const pasted of ["Bearer ghp_good_token", "Authorization: Bearer ghp_good_token", "token ghp_good_token", '"ghp_good_token"', "'ghp_good_token'\n", "bearer   `ghp_good_token`"]) {
+    const { service, dir } = makeService();
+    await service.start();
+    ok(await service.setToken(pasted));
+    assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), "ghp_good_token", pasted);
+  }
+});
+
 test("a token GitHub rejects is not kept, and the one in place keeps working", async () => {
   const { service, dir } = makeService();
   await service.start();

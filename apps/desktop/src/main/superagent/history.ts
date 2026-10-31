@@ -42,14 +42,19 @@ export const MAX_STORED_CHARS = 4_000_000;
 
 /** `messages` without the oldest turns until it serializes within `limit`, starting at a user message so no tool result is left without its call. */
 export function trimHistory(messages: readonly AgentMessage[], limit = MAX_STORED_CHARS): AgentMessage[] {
-  let kept = [...messages];
-  while (kept.length > 1 && JSON.stringify(kept).length > limit) {
-    let next = Math.max(1, Math.ceil(kept.length / 4));
-    while (next < kept.length && kept[next]!.role !== "user") next += 1;
+  // Each message is measured once, so cutting more turns costs nothing more than subtracting.
+  const sizes = messages.map((message) => JSON.stringify(message).length + 1);
+  let total = sizes.reduce((sum, size) => sum + size, 1);
+  let start = 0;
+  while (messages.length - start > 1 && total > limit) {
+    let next = start + Math.max(1, Math.ceil((messages.length - start) / 4));
+    while (next < messages.length && messages[next]!.role !== "user") next += 1;
     // A conversation with no user message after the cut keeps its last turn alone.
-    kept = kept.slice(next < kept.length ? next : kept.length - 1);
+    if (next >= messages.length) next = messages.length - 1;
+    for (let index = start; index < next; index++) total -= sizes[index]!;
+    start = next;
   }
-  return kept;
+  return start === 0 ? [...messages] : messages.slice(start);
 }
 
 const SAFE = /^[A-Za-z0-9_-]{1,80}$/;

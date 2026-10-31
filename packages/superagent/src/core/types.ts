@@ -227,6 +227,8 @@ export interface Notice {
   id: string;
   kind: "report" | "follow_up" | "text";
   ticketId?: string;
+  /** For a follow-up: the trigger, which the message is made from when it is sent (the tickets it reached may have changed by then). */
+  triggerId?: string;
   text: string;
   at: string;
   delivered?: true;

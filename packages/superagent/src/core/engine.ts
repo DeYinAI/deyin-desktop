@@ -55,6 +55,9 @@ export interface WorkerReport {
   answers?: string;
 }
 
+/** What a worker is told when asked for its status (the upstream text, which says this is not a request to carry on). */
+const STATUS_REQUEST = "Report the current ticket status with orchestrator_report. This is a status-only request: do not resume implementation or perform external actions.";
+
 const MAX_NOTICE = 1200;
 /** The most of a message that is kept; GitHub allows 65,536 characters in one. */
 export const MAX_TRIGGER_TEXT = 20_000;
@@ -122,7 +125,9 @@ export class Engine {
         if (reached === "owner") owned = true;
       }
     }
-    if (!owned) this.queueForEval(trigger, disposition);
+    // The orchestrator hears of a person's message a worker decides, so that it can stop the work when that is what was asked.
+    if (owned) this.addNotice({ kind: "follow_up", triggerId: trigger.id, text: "" });
+    else this.queueForEval(trigger, disposition);
     this.state.touch();
     this.emit({ type: "trigger.received", triggerId: trigger.id });
     return "stored";
@@ -304,7 +309,8 @@ export class Engine {
     if (!thread) {
       const earlier = this.state.dispositions.get(triggerId)?.decisionId;
       const decision = earlier ? this.state.decisions.get(earlier) : undefined;
-      if (decision && outcome.kind !== "stop") return decision;
+      if (outcome.kind === "stop") return this.stopFollowUp(triggerId, outcome);
+      if (decision) return decision;
       throw new UserError("noAssessment");
     }
     const evaluation = thread.evaluating!;
@@ -323,6 +329,33 @@ export class Engine {
         throw new Error(`Unhandled outcome ${JSON.stringify(never)}`);
       }
     }
+  }
+
+  /**
+   * Stops a ticket on a person's message that reached it as a follow-up, which no assessment holds because the ticket's worker decides it.
+   * Idempotent for the same ticket. @throws UserError when the message did not reach the ticket as a person's, or processing is paused.
+   */
+  private stopFollowUp(triggerId: string, outcome: Extract<Outcome, { kind: "stop" }>): Decision {
+    const trigger = this.state.triggers.get(triggerId);
+    const disposition = this.state.dispositions.get(triggerId);
+    if (!trigger || !disposition) throw new UserError("noAssessment");
+    const ticket = this.state.tickets.get(outcome.ticketId);
+    if (!ticket) throw new UserError("unknownTicket", `No such ticket to stop: ${outcome.ticketId}`);
+    const earlier = disposition.decisionId ? this.state.decisions.get(disposition.decisionId) : undefined;
+    if (earlier?.kind === "stop" && earlier.ticketId === ticket.id) return earlier;
+    if (!ticket.inputs.some((input) => input.kind === "trigger" && input.triggerId === triggerId && humanTriggerInput(input))) throw new UserError("notReached");
+    const policy = this.policy();
+    if (policy.paused) throw new UserError("paused");
+    const decision: Decision = {
+      id: this.state.nextId("d"), evalId: "", threadKey: threadKey(trigger.threads[0]!), triggerIds: [triggerId], policyVersion: policy.version, at: this.now(),
+      kind: "stop", reason: [asReason(outcome.reason)], strength: "explicit", ticketId: ticket.id,
+    };
+    this.state.decisions.set(decision.id, decision);
+    disposition.decisionId = decision.id;
+    if (!ticket.ended) this.endTicket(ticket, "human", "stopped", reasonText(decision.reason));
+    this.state.touch();
+    this.emit({ type: "decision.recorded", decisionId: decision.id });
+    return decision;
   }
 
   private threadEvaluating(triggerId: string): Thread | undefined {
@@ -517,7 +550,7 @@ export class Engine {
     const ticket = this.liveTicket(ticketId);
     const live = liveAssignment(ticket);
     if (!live || live.state !== "running" || !live.idleAt) return false;
-    this.pushInput(ticket, (id, at) => ({ id, kind: "text", text: "Report your current status now with orchestrator_report.", at }));
+    this.pushInput(ticket, (id, at) => ({ id, kind: "text", text: STATUS_REQUEST, at }));
     return true;
   }
 
@@ -945,8 +978,11 @@ export class Engine {
 
   // ---- notices & policy --------------------------------------------------------------------------------------------
 
-  addNotice(notice: { kind: Notice["kind"]; ticketId?: string; text: string }): void {
-    this.state.notices.push({ id: this.state.nextId("n"), at: this.now(), kind: notice.kind, text: notice.text, ...(notice.ticketId ? { ticketId: notice.ticketId } : {}) });
+  addNotice(notice: { kind: Notice["kind"]; ticketId?: string; triggerId?: string; text: string }): void {
+    this.state.notices.push({
+      id: this.state.nextId("n"), at: this.now(), kind: notice.kind, text: notice.text,
+      ...(notice.ticketId ? { ticketId: notice.ticketId } : {}), ...(notice.triggerId ? { triggerId: notice.triggerId } : {}),
+    });
     this.state.touch();
   }
 
