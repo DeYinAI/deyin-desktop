@@ -253,6 +253,8 @@ export async function executeShellCommand(
     signal?: AbortSignal;
     shell?: ToolShell;
     onData?: (delta: string) => void;
+    /** Extra environment for this command, over the process environment and the project's virtual environment. */
+    env?: Readonly<Record<string, string>>;
   },
 ): Promise<ShellExecutionResult> {
   const timeoutS = Math.min(options?.timeoutS ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
@@ -282,7 +284,7 @@ export async function executeShellCommand(
       }
     }
   }
-  return runCommandDetailed(command, cwd, timeoutS, options?.signal, options?.onData);
+  return runCommandDetailed(command, cwd, timeoutS, options?.signal, options?.onData, options?.env);
 }
 
 async function runCommandDetailed(
@@ -291,6 +293,7 @@ async function runCommandDetailed(
   timeoutS: number,
   signal?: AbortSignal,
   onData?: (delta: string) => void,
+  runEnv?: Readonly<Record<string, string>>,
 ): Promise<ShellExecutionResult> {
   const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
@@ -301,7 +304,7 @@ async function runCommandDetailed(
     // (skip heavy prompts/banners), mirroring Cursor's CURSOR_AGENT.
     const child = spawn(file, args, {
       cwd: spawnCwd,
-      env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv },
+      env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv, ...runEnv },
       windowsHide: true,
       detached: posix,
     });
@@ -369,6 +372,7 @@ function runBackgroundCommand(
   command: string,
   cwd: string,
   timeoutS: number,
+  runEnv?: Readonly<Record<string, string>>,
 ): Promise<{ output: string; exitCode: number | null }> {
   const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
@@ -380,7 +384,7 @@ function runBackgroundCommand(
     try {
       child = spawn(file, args, {
         cwd: spawnCwd,
-        env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv },
+        env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv, ...runEnv },
         windowsHide: true,
         detached: posix,
       });
@@ -481,7 +485,7 @@ export const bashTool: ToolDefinition = {
         return "ERROR: background bash tasks are not supported in this environment.";
       }
       const taskId = randomUUID();
-      const promise = runBackgroundCommand(command, cwd, timeoutS);
+      const promise = runBackgroundCommand(command, cwd, timeoutS, ctx.env);
       ctx.registerBackgroundTask(taskId, promise);
       return `Background task started.\ntask_id: ${taskId}\nUse the await tool to poll for completion.`;
     }
@@ -491,6 +495,7 @@ export const bashTool: ToolDefinition = {
       signal: ctx.signal,
       shell: ctx.shell,
       onData: ctx.onOutput,
+      ...(ctx.env ? { env: ctx.env } : {}),
     });
     return result.output;
   },

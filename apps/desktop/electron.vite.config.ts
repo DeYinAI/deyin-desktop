@@ -74,6 +74,7 @@ const bundledWorkspacePackages = [
   "@deyin/bundle-base",
   "@deyin/bundle-desktop-app",
   "@deyin/optimization-plugin",
+  "@deyin/superagent",
 ] as const;
 
 // Optional native/ML deps referenced via dynamic import from bundled workspace code.

@@ -137,7 +137,7 @@ const SettingsSchema = s.object({
       maxWorkers: withDefault(s.number({ int: true, ...LIMITS.maxWorkers }), () => 2),
       /** Directory holding the ticket worktrees; empty means `<dataDir>/work`. */
       directory: withDefault(s.string({ trim: true, check: (path) => (path === "" || path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) ? undefined : "an absolute path, or empty") }), () => ""),
-      /** Local clone of the repository that worktrees branch from; empty lets the runtime clone it into `<dataDir>/repo`. */
+      /** Local clone of the repository that worktrees branch from; empty lets the runtime clone it into `<dataDir>/repos`. */
       checkout: withDefault(s.string({ trim: true, check: (path) => (path === "" || path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path) ? undefined : "an absolute path, or empty") }), () => ""),
       blockedCommands: withDefault(s.array(CommandNameSchema, { max: 50 }), () => []),
     }),

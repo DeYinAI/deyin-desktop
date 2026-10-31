@@ -9,6 +9,7 @@ import type {
   TerminalExitEvent,
   UpdatesState,
 } from "@deyin/contract";
+import type { SuperagentView } from "@deyin/superagent/client";
 
 const api: DeyinApi = {
   bootstrap: () => ipcRenderer.invoke(CH.bootstrap),
@@ -376,6 +377,22 @@ agent: {
       const listener = (_e: unknown, payload: { run: AutomationRun }) => cb(payload);
       ipcRenderer.on(CH.automationRunFinished, listener);
       return () => ipcRenderer.removeListener(CH.automationRunFinished, listener);
+    },
+  },
+  superagent: {
+    view: () => ipcRenderer.invoke(CH.superagentView),
+    saveSettings: (settings, baseRevision) => ipcRenderer.invoke(CH.superagentSaveSettings, settings, baseRevision),
+    setToken: (token) => ipcRenderer.invoke(CH.superagentSetToken, token),
+    clearToken: () => ipcRenderer.invoke(CH.superagentClearToken),
+    verify: () => ipcRenderer.invoke(CH.superagentVerify),
+    stopTicket: (ticketId) => ipcRenderer.invoke(CH.superagentStopTicket, ticketId),
+    retryTicket: (ticketId) => ipcRenderer.invoke(CH.superagentRetryTicket, ticketId),
+    requeue: (triggerId) => ipcRenderer.invoke(CH.superagentRequeue, triggerId),
+    reset: () => ipcRenderer.invoke(CH.superagentReset),
+    onChanged: (cb) => {
+      const listener = (_e: unknown, view: SuperagentView) => cb(view);
+      ipcRenderer.on(CH.superagentChanged, listener);
+      return () => ipcRenderer.removeListener(CH.superagentChanged, listener);
     },
   },
   sshHosts: {

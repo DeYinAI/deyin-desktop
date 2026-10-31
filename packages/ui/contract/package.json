@@ -28,7 +28,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@deyin/host-core": "workspace:*"
+    "@deyin/host-core": "workspace:*",
+    "@deyin/superagent": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -9,7 +9,7 @@ import type { BotWorkflowDefinition, DeyinSettings, ExternalAgentDescriptor, Use
 interface SidebarProps {
   platform: "desktop" | "web";
   /** Which top-level view is showing, so its nav row reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "bot" | "workflows";
+  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "superagent" | "bot" | "workflows";
   projects: Project[];
   activeProjectId: string | null;
   activeThreadId: string | null;
@@ -43,6 +43,8 @@ interface SidebarProps {
   onOpenSettings: () => void;
   /** Open the Automations view (scheduled agent runs). */
   onOpenAutomations: () => void;
+  /** Open the Superagent view (a proactive agent for one GitHub repository). */
+  onOpenSuperagent: () => void;
   /** Open the Bot Workflows / Pipelines editor surface. */
   onOpenWorkflows?: (workflowId?: string | null) => void;
   /** Open the appearance/customisation surface. */
@@ -339,6 +341,15 @@ export function Sidebar(props: SidebarProps) {
         >
           <Icon name="automation" size={14} />
           <span>{t("nav.automations")}</span>
+        </button>
+        )}
+        {props.platform !== "web" && (
+        <button
+          className={`nav-item nav-item--feature${props.activeView === "superagent" ? " nav-item--active" : ""}`}
+          onClick={props.onOpenSuperagent}
+        >
+          <Icon name="rocket" size={14} />
+          <span>{t("nav.superagent")}</span>
         </button>
         )}
         {isBotView && props.onOpenWorkflows && (
