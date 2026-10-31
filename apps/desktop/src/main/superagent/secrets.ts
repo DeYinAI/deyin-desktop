@@ -87,6 +87,7 @@ export function redactingTool(tool: ToolDefinition, secrets: readonly string[]):
         if (error instanceof Error) {
           // Only when it holds a secret: some errors (an abort) have a read-only message, and the loop recognizes them by type.
           const message = redact(error.message, secrets);
+          // eslint-disable-next-line preserve-caught-error -- the original is what holds the secret, so it must not travel as a cause
           if (message !== error.message) throw new Error(message);
         }
         throw error;
