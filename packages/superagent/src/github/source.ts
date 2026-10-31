@@ -65,10 +65,19 @@ const nextPage = (link: string | null | undefined): string | undefined => /<([^>
 function resumeAfter<T>(page: { items: T[]; truncated: boolean }, stamp: (item: T) => string | null | undefined, since: string, started: string): string {
   if (!page.truncated) return started;
   const last = page.items.length > 0 ? stamp(page.items[page.items.length - 1] as T) : undefined;
-  return last && last > since ? last : since;
+  return isAfter(last, since) ? (last as string) : since;
 }
 
-const earliest = (...times: string[]): string => times.reduce((a, b) => (a < b ? a : b));
+/**
+ * Whether `a` is a later moment than `b`. Compared as times, not text: GitHub writes `…:00Z` and this runtime `…:00.000Z`, which as
+ * text puts the same moment in the wrong order. A missing or unreadable time is after nothing.
+ */
+export const isAfter = (a: string | null | undefined, b: string): boolean => {
+  const left = a ? Date.parse(a) : Number.NaN;
+  return left > Date.parse(b);
+};
+
+const earliest = (...times: string[]): string => times.reduce((a, b) => (isAfter(a, b) ? b : a));
 
 export class GithubSource {
   constructor(private readonly deps: SourceDeps) {}
@@ -204,7 +213,7 @@ export class GithubSource {
       const reviews = await this.deps.client.paginate<unknown>(`repos/${this.repo}/pulls/${number}/reviews`, {}, options);
       for (const raw of reviews.items) {
         const parsed = parseComment(raw);
-        if ((parsed.submitted_at ?? "") > since) this.comment(round, parsed, ref, "review");
+        if (isAfter(parsed.submitted_at, since)) this.comment(round, parsed, ref, "review");
       }
       resume = earliest(resume, resumeAfter(review, created, since, started), resumeAfter(reviews, (raw) => parseComment(raw).submitted_at, since, started));
       this.pullState(issue, number);
@@ -250,8 +259,8 @@ export class GithubSource {
     let newest = since;
     for (const raw of page.items) {
       const issue = parseIssue(raw);
-      if (issue.created_at <= since) continue;
-      newest = issue.created_at > newest ? issue.created_at : newest;
+      if (!isAfter(issue.created_at, since)) continue;
+      newest = isAfter(issue.created_at, newest) ? issue.created_at : newest;
       const isPr = !!issue.pull_request;
       if (isPr ? !settings.observePulls : !settings.observeIssues) continue;
       if (sameName(issue.user.login, round.agent)) continue;
@@ -267,14 +276,14 @@ export class GithubSource {
     for (const raw of conversation.items) {
       const parsed = parseComment(raw);
       const number = numberOf((raw as Record<string, unknown>).issue_url as string | undefined);
-      if (!number || (parsed.created_at ?? "") <= since) continue;
+      if (!number || !isAfter(parsed.created_at, since)) continue;
       this.comment(round, parsed, { number, isPr: /\/pull\//.test(parsed.html_url ?? "") }, "conversation");
     }
     const inline = await this.deps.client.paginate<unknown>(`repos/${this.repo}/pulls/comments`, { since, sort: "created", direction: "asc" }, opts);
     for (const raw of inline.items) {
       const parsed = parseComment(raw);
       const number = numberOf((raw as Record<string, unknown>).pull_request_url as string | undefined);
-      if (!number || (parsed.created_at ?? "") <= since) continue;
+      if (!number || !isAfter(parsed.created_at, since)) continue;
       this.comment(round, parsed, { number, isPr: true }, "inline");
     }
     // Both listings are oldest first; one that stopped early resumes after its last item, and the cursor is the earlier of the two.

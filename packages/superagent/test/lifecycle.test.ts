@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { Superagent } from "../src/index.js";
 import { FakeGithub } from "./fake-github.js";
-import { FakeWorkspace, ScriptedRunner, silent } from "./agents-world.js";
+import { FakeWorkspace, ScriptedRunner, call, silent } from "./agents-world.js";
 import { AGENT, REPO } from "./helpers.js";
 
 const dirs: string[] = [];
@@ -56,4 +56,53 @@ test("state keeps being saved after the runtime was stopped and started again", 
     }
   };
   await until(() => saved() > 0, "the trigger reaches state.json");
+});
+
+test("stopping waits for a reply that is being posted, so nothing is recorded after the store stopped saving", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "superagent-stop-"));
+  dirs.push(dataDir);
+  const fake = new FakeGithub();
+  let posting = 0;
+  let started = 0;
+  const slowFetch: typeof fake.fetch = async (url, init) => {
+    if (init?.method === "POST") {
+      started++;
+      posting++;
+      try {
+        // The post takes a while and does not notice the stop (a response already on its way).
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+      } finally {
+        posting--;
+      }
+    }
+    return fake.fetch(url, init);
+  };
+  const runner = new ScriptedRunner(async (run) => {
+    if (run.role === "worker") return new Promise<string>((resolve) => run.signal.addEventListener("abort", () => resolve("")));
+    for (const message of run.messages) {
+      if (!message.startsWith("{")) continue;
+      const card = JSON.parse(message) as { strength?: string; trigger_id: string };
+      if (card.strength === "explicit") {
+        await call(run.tools, "orchestrator_route", { decisions: [{ kind: "accept", trigger_id: card.trigger_id, title: "Fix", worktree_name: "fix", acknowledgement: "On it." }] });
+      }
+    }
+    return "";
+  });
+  const sa = new Superagent({
+    dataDir, runner, secrets: { githubToken: () => "ghp_test" }, logger: silent, fetch: slowFetch, workspace: new FakeWorkspace(), now: () => fake.clock.now, tickMs: 10, saveDebounceMs: 10,
+  });
+  instances.push(sa);
+  sa.saveSettings({ enabled: true, github: { repository: REPO }, policy: { sources: { github: { allowed: [{ id: "alice" }] } } }, eval: { mode: "observe" } }, 0);
+  await sa.start();
+  await until(() => sa.view().status.poll.at !== null, "first poll");
+  fake.tick();
+  fake.addIssue({ number: 1, title: "Typo", user: "alice" });
+  fake.tick();
+  fake.addComment(1, { user: "alice", body: `@${AGENT} please fix the typo` });
+  fake.notify(1);
+  fake.tick(61_000);
+  await until(() => started > 0, "the acknowledgement is being posted");
+  assert.equal(posting, 1);
+  await sa.stop();
+  assert.equal(posting, 0, "stop returned only after the post ended");
 });

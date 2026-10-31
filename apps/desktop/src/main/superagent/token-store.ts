@@ -38,6 +38,14 @@ export function createCipher(backend: SecretBackend): Cipher {
  */
 const TOKEN_SHAPE = /^[\x21-\x7e]{8,512}$/;
 
+/** What was meant by a pasted token: without spaces, line breaks, quotes, or the `Bearer ` / `token ` of an Authorization header copied with it. */
+function tidyToken(pasted: string): string {
+  let token = pasted.trim();
+  token = token.replace(/^(?:authorization:\s*)?(?:bearer|token)\s+/i, "");
+  token = token.replace(/^(["'`])(.*)\1$/s, "$2");
+  return token.trim();
+}
+
 export class TokenStore {
   private token: string | undefined;
 
@@ -64,7 +72,7 @@ export class TokenStore {
   }
 
   set(token: string): void {
-    const plain = token.trim();
+    const plain = tidyToken(token);
     if (!plain) throw new Error("The token is empty");
     // GitHub tokens are short and plain; anything else would only end up in a header or an environment variable by mistake.
     if (!TOKEN_SHAPE.test(plain)) throw new Error("That does not look like a GitHub token");

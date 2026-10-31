@@ -34,6 +34,18 @@ test("redaction replaces every occurrence and leaves other text alone", () => {
 
 const tool = (execute: ToolDefinition["execute"]): ToolDefinition => ({ name: "t", description: "", parameters: { type: "object", properties: {} }, tier: "read", summarize: () => "t", execute });
 
+test("redaction also hides the piece of a secret that output was cut in the middle of", () => {
+  const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+  const cut = "\n... [output truncated: 4000 more characters]";
+  assert.equal(redact(`env\nGH_TOKEN=${token.slice(0, 14)}${cut}`, [token]), `env\nGH_TOKEN=${REDACTED}${cut}`);
+  assert.equal(redact(`out\n[stderr]\n${token.slice(0, 9)}`, [token]), `out\n[stderr]\n${REDACTED}`);
+  assert.equal(redact(`${token.slice(-10)} and more`, [token]), `${REDACTED} and more`);
+  assert.equal(redact(`cut mid ${token.slice(0, 14)}${cut} tail ${token.slice(0, 9)}`, [token]), `cut mid ${REDACTED}${cut} tail ${REDACTED}`);
+  assert.equal(redact(`ghp_ab${cut}`, [token]), `${REDACTED}${cut}`, "six characters is the shortest piece hidden");
+  assert.equal(redact(`ghp_a${cut}`, [token]), `ghp_a${cut}`, "a shorter piece is left alone");
+  assert.equal(redact(`GH_TOKEN=${token.slice(0, 9)} is in the middle`, [token]), `GH_TOKEN=${token.slice(0, 9)} is in the middle`, "only cut points are checked");
+});
+
 test("a redacting tool hides secrets in its result and in its errors, and passes everything else through", async () => {
   const secrets = ["SECRET1234"];
   const ok = redactingTool(tool(async () => "token=SECRET1234"), secrets);

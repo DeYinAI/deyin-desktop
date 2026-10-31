@@ -65,7 +65,6 @@ export class Superagent {
   private accountError: string | undefined;
   private accountCheckedAt = 0;
   private poll: { at?: string; error?: string; nextAt: number; running?: Promise<void> | undefined } = { nextAt: 0 };
-  private sending = false;
   private timer: ReturnType<typeof setInterval> | undefined;
   private lastPrune = 0;
   private started = false;
@@ -162,7 +161,8 @@ export class Superagent {
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
     this.abort.abort();
-    await Promise.all([this.parts.orchestrator.stop(), this.parts.executor.stop(), this.poll.running]);
+    // Everything in flight finishes (aborted) before the store stops saving, so nothing it records is lost.
+    await Promise.all([this.parts.orchestrator.stop(), this.parts.executor.stop(), this.poll.running, this.tickRun, this.sendRun]);
     this.store.dispose();
   }
 
@@ -176,10 +176,17 @@ export class Superagent {
     });
   }
 
-  private ticking = false;
-  private async tick(): Promise<void> {
-    if (this.ticking || !this.started) return;
-    this.ticking = true;
+  private tickRun: Promise<void> | undefined;
+  private tick(): Promise<void> {
+    if (this.tickRun || !this.started) return Promise.resolve();
+    const run = this.runTick().finally(() => {
+      this.tickRun = undefined;
+    });
+    this.tickRun = run;
+    return run;
+  }
+
+  private async runTick(): Promise<void> {
     try {
       const { engine, orchestrator, executor } = this.parts;
       const settings = this.settings();
@@ -201,8 +208,6 @@ export class Superagent {
       }
     } catch (error) {
       this.options.logger.warn(`superagent loop error: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.ticking = false;
     }
   }
 
@@ -261,25 +266,30 @@ export class Superagent {
   // ---- outbound replies --------------------------------------------------------------------------------------------
 
   /** Delivers every receipt that is due; one at a time, so a second caller waits for the first. */
-  async sendReplies(): Promise<void> {
-    if (this.sending) return;
-    this.sending = true;
-    try {
-      const { engine, client } = this.parts;
-      const settings = this.settings();
-      if (settings.paused || !settings.github.repository || !this.account) return;
-      for (const receipt of engine.receiptsPending()) {
-        try {
-          const result = await sendReceipt(client, { repository: settings.github.repository, agent: this.account.login }, receipt, this.abort.signal);
-          if (result === "sent") engine.receiptSent(receipt.id);
-          else engine.receiptDropped(receipt.id, "channelGone");
-        } catch (error) {
-          if (this.abort.signal.aborted) return;
-          engine.receiptFailed(receipt.id, error instanceof Error ? error.message : String(error));
-        }
+  sendReplies(): Promise<void> {
+    if (!this.sendRun) {
+      this.sendRun = this.deliverReplies().finally(() => {
+        this.sendRun = undefined;
+      });
+    }
+    return this.sendRun;
+  }
+
+  private sendRun: Promise<void> | undefined;
+
+  private async deliverReplies(): Promise<void> {
+    const { engine, client } = this.parts;
+    const settings = this.settings();
+    if (settings.paused || !settings.github.repository || !this.account) return;
+    for (const receipt of engine.receiptsPending()) {
+      try {
+        const result = await sendReceipt(client, { repository: settings.github.repository, agent: this.account.login }, receipt, this.abort.signal);
+        if (result === "sent") engine.receiptSent(receipt.id);
+        else engine.receiptDropped(receipt.id, "channelGone");
+      } catch (error) {
+        if (this.abort.signal.aborted) return;
+        engine.receiptFailed(receipt.id, error instanceof Error ? error.message : String(error));
       }
-    } finally {
-      this.sending = false;
     }
   }
 

@@ -1,5 +1,5 @@
 /** Compact, bounded model-facing projections of triggers, tickets, threads, decisions and inputs; full texts stay behind resources. */
-import { latestAssignment, ticketStage } from "../core/model.js";
+import { humanTriggerInput, latestAssignment, ticketStage } from "../core/model.js";
 import { reasonText } from "../core/reasons.js";
 import type { State } from "../core/state.js";
 import { preview } from "../core/text.js";
@@ -275,4 +275,28 @@ export function candidateCard(ctx: InputContext, candidate: Candidate, settings:
         ? "Route it with orchestrator_route as dispatch says: accept, attach, stop or ignore."
         : "Ignore it with orchestrator_route if the card shows it touches no enabled rule; else assess it with orchestrator_eval, orchestrator_eval_read, then orchestrator_eval_decide.",
   };
+}
+
+/** Tickets whose worker owns a person's follow-up: it reached them as a message, so the worker decides whether it is theirs. */
+export function followupOwners(state: State, trigger: Trigger): string[] {
+  const disposition = state.dispositions.get(trigger.id);
+  if (!disposition) return [];
+  return disposition.fanout.filter((id) => {
+    const ticket = state.tickets.get(id);
+    return !!ticket && !ticket.ended && ticket.inputs.some((input) => input.kind === "trigger" && input.triggerId === trigger.id && humanTriggerInput(input));
+  });
+}
+
+const FOLLOWUP_NOTE = "Its ticket's worker has it and decides; act only if the person asks to stop the work (orchestrator_route kind stop with this trigger_id).";
+
+/** What the orchestrator is told of a person's message that went straight to the workers of open tickets; `undefined` when none still owns it. */
+export function followUpNotice(state: State, triggerId: string): string | undefined {
+  const trigger = state.triggers.get(triggerId);
+  if (!trigger) return undefined;
+  const tickets = followupOwners(state, trigger).flatMap((id) => {
+    const ticket = state.tickets.get(id);
+    return ticket ? [{ ticket_id: id, title: ticket.title, state: ticketCard(ticket).state }] : [];
+  });
+  if (tickets.length === 0) return undefined;
+  return JSON.stringify({ kind: "follow_up", ...triggerMessage(trigger, { allowed: true }), delivered_to: tickets, note: FOLLOWUP_NOTE });
 }

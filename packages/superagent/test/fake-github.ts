@@ -43,9 +43,10 @@ export class FakeGithub {
 
   tick(ms = 1000): string {
     this.clock.now = new Date(this.clock.now.getTime() + ms);
-    return this.clock.now.toISOString();
+    return this.stamp();
   }
-  private stamp = () => this.clock.now.toISOString();
+  /** As GitHub writes times: whole seconds, no fraction (the runtime's own are `…:00.000Z`). */
+  private stamp = () => this.clock.now.toISOString().replace(/\.\d{3}Z$/, "Z");
 
   addIssue(input: { number: number; title?: string; body?: string; user?: string; pr?: { head?: string; base?: string }; assignees?: string[] }): FakeIssue {
     const issue: FakeIssue = {
@@ -125,12 +126,12 @@ export class FakeGithub {
       next.searchParams.set("page", String(page + 1));
       return this.respond(200, slice(items), page * per < items.length ? { ...headers, link: `<${next.toString()}>; rel="next"` } : headers);
     };
-    const after = <T extends { updated_at?: string; created_at?: string }>(items: T[]) => items.filter((item) => !since || (item.updated_at ?? item.created_at ?? "") > since);
+    const after = <T extends { updated_at?: string; created_at?: string }>(items: T[]) => items.filter((item) => !since || Date.parse(item.updated_at ?? item.created_at ?? "") > Date.parse(since));
     let match: RegExpExecArray | null;
     if (path === "user") return this.respond(200, { login: this.agent, id: 4242 });
     if (path === `repos/${this.repo}`) return this.respond(200, { permissions: { push: true }, archived: false });
     if (path === "notifications") {
-      const fresh = this.notifications.filter((item) => !since || item.updated_at > since);
+      const fresh = this.notifications.filter((item) => !since || Date.parse(item.updated_at) > Date.parse(since));
       const etag = `"n${fresh.length}-${this.notifications.length}"`;
       if (init?.headers?.["If-None-Match"] === etag && fresh.length === 0) return this.respond(304, undefined, { etag });
       return list(

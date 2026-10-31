@@ -33,10 +33,45 @@ export function secretValues(env: Readonly<Record<string, string>>): string[] {
   return [...found].filter((value) => value.length >= MIN_SECRET_LENGTH).sort((a, b) => b.length - a.length);
 }
 
-/** `text` with every secret replaced, so a command that prints its environment shows the model nothing it can leak. */
+/** A cut-off piece of a secret this short is not worth hiding either: a few characters of a long token help nobody. */
+const MIN_PARTIAL = 6;
+
+/** Where a tool's output may have been cut in two: the end, and the markers the tools leave where they cut or switch streams. */
+const CUT_MARKER = /\n\.\.\. \[output truncated|\n\[stderr\]\n/g;
+
+/** `text` with the longest piece of `secret` that it ends with before `end` replaced (a secret whose rest a cut then took), or `undefined`. */
+function redactPartialBefore(text: string, end: number, secret: string): string | undefined {
+  for (let length = Math.min(secret.length - 1, end); length >= MIN_PARTIAL; length--) {
+    if (text.startsWith(secret.slice(0, length), end - length)) return `${text.slice(0, end - length)}${REDACTED}${text.slice(end)}`;
+  }
+  return undefined;
+}
+
+/**
+ * `text` with every secret replaced, so a command that prints its environment shows the model nothing it can leak. Output is cut
+ * to a limit, and the cut can fall inside a secret, so the piece of a secret before a cut (and after the start of the text) goes too.
+ */
 export function redact(text: string, secrets: readonly string[]): string {
   let result = text;
   for (const secret of secrets) if (result.includes(secret)) result = result.split(secret).join(REDACTED);
+  const cuts = [...result.matchAll(CUT_MARKER)].map((match) => match.index);
+  for (const end of [result.length, ...cuts].sort((a, b) => b - a)) {
+    for (const secret of secrets) {
+      const redacted = redactPartialBefore(result, end, secret);
+      if (redacted !== undefined) {
+        result = redacted;
+        break;
+      }
+    }
+  }
+  for (const secret of secrets) {
+    for (let length = Math.min(secret.length - 1, result.length); length >= MIN_PARTIAL; length--) {
+      if (result.startsWith(secret.slice(-length))) {
+        result = `${REDACTED}${result.slice(length)}`;
+        break;
+      }
+    }
+  }
   return result;
 }
 

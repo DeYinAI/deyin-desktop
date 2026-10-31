@@ -131,3 +131,32 @@ test("the history is bounded: the oldest unreferenced messages go first, however
   assert.equal(rig.state.triggers.has("t100"), true);
   assert.equal(rig.state.triggers.has("t5099"), true);
 });
+
+test("valid JSON that is not a state or settings file is treated like a torn one: the previous generation is used", () => {
+  const dir = temp();
+  try {
+    const store = new JsonStore(dir);
+    const { state } = store.load();
+    state.ensureThread({ source: "github", id: "1" }, "2026-01-01T00:00:00.000Z");
+    state.touch();
+    store.flush();
+    store.saveSettings({ github: { repository: "acme/app" } }, 0);
+    store.saveSettings({ github: { repository: "acme/other" } }, 1);
+    state.ensureThread({ source: "github", id: "2" }, "2026-01-01T00:00:00.000Z");
+    state.touch();
+    store.flush();
+    writeFileSync(join(dir, "state.json"), "{}\n");
+    writeFileSync(join(dir, "settings.json"), '{"revision":"x"}\n');
+    const warnings: string[] = [];
+    const reloaded = new JsonStore(dir, { logger: { warn: (message) => warnings.push(message) } });
+    const { state: recovered, settings } = reloaded.load();
+    assert.equal(recovered.threads.size, 1);
+    assert.equal(settings.github.repository, "acme/app");
+    assert.equal(reloaded.settingsRevision, 1);
+    assert.equal(warnings.length, 2);
+    writeFileSync(join(dir, "state.json.bak"), "{}");
+    assert.throws(() => new JsonStore(dir).load(), /unreadable and was left untouched/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

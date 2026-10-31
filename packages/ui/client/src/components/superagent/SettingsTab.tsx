@@ -75,7 +75,11 @@ function Text(props: { value: string; onChange: (value: string) => void; mono?: 
 /** A number the person is typing: only a number reaches the draft, and what was typed stays on screen until the field is left. */
 function NumberField(props: { value: number; min: number; max: number; onChange: (value: number) => void }) {
   const [text, setText] = useState(String(props.value));
-  useEffect(() => setText(String(props.value)), [props.value]);
+  const focused = useRef(false);
+  // Not rewritten under the cursor ("007" would become "7" while it is typed); it settles when the field is left.
+  useEffect(() => {
+    if (!focused.current) setText(String(props.value));
+  }, [props.value]);
   return (
     <input
       className="input input--narrow"
@@ -83,12 +87,18 @@ function NumberField(props: { value: number; min: number; max: number; onChange:
       min={props.min}
       max={props.max}
       value={text}
+      onFocus={() => {
+        focused.current = true;
+      }}
       onChange={(event) => {
         setText(event.target.value);
         const value = Number(event.target.value);
         if (event.target.value.trim() !== "" && Number.isFinite(value)) props.onChange(value);
       }}
-      onBlur={() => setText(String(props.value))}
+      onBlur={() => {
+        focused.current = false;
+        setText(String(props.value));
+      }}
     />
   );
 }

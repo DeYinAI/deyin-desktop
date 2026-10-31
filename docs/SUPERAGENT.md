@@ -8,7 +8,8 @@ It is **off by default**, and with an empty allow-list it never acts on anything
 
 The design follows [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)
 (MIT). The agents' instructions in `packages/superagent/prompts` and `packages/superagent/skills` are that project's
-Markdown prompts, unchanged (see `packages/superagent/UPSTREAM-LICENSE`). The code around them is Deyin's own:
+Markdown prompts, unchanged (see `packages/superagent/UPSTREAM-LICENSE`); Deyin adds a short _This installation_ section
+after them that says what is different here (GitHub only, no Feishu, no images). The code around them is Deyin's own:
 `packages/superagent` (the engine, GitHub client, store and prompts, with no dependency on Electron) and
 `apps/desktop/src/main/superagent` (the desktop side: it runs the agents on Deyin's own agent loop).
 
@@ -93,10 +94,16 @@ without acting. When those decisions match what you would have wanted, switch th
 - **`git` and `gh` must be on your `PATH`.** The _Needs setup_ list tells you if one is missing.
 - The agent ignores its own messages, so it cannot trigger itself.
 - The repository cannot be changed while tickets are open. Reset Superagent to start over.
-- The model for assessment and for workers can be set separately; by default both use the model chosen in the app.
+- The model for assessment and for workers can be set separately; by default both use the model chosen in the app. What
+  people write on GitHub (issues, comments, pull request text) is sent to that model, like any other prompt.
+- The agent clones the repository over **HTTPS** with its token. If you point Superagent at a local checkout, give it an
+  HTTPS `origin`: with an SSH `origin` a worker would push with your own keys, not the agent account's token.
+- When a person writes on a thread a ticket follows, the message goes to that ticket's worker, which decides whether it
+  is theirs. The orchestrator is told, and may stop the ticket if the person asks to stop; it cannot accept or redirect that
+  message. Ask for new work in a new message after a stop.
 
-Not in this version: reading CI results, Feishu or other chat channels, agents editing their own settings or prompts,
-and reading images from messages.
+Not in this version: CI results arriving as messages (a worker can read them with `gh pr checks`), Feishu or other chat
+channels, agents editing their own settings or prompts, and reading images from messages.
 
 ## Files
 

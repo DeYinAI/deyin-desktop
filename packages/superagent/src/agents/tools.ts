@@ -4,11 +4,11 @@
  */
 import { UserError } from "../core/errors.js";
 import type { Engine } from "../core/engine.js";
-import { humanTriggerInput, liveAssignment } from "../core/model.js";
+import { liveAssignment } from "../core/model.js";
 import { reasonText } from "../core/reasons.js";
 import type { State } from "../core/state.js";
 import { IM_WORDS, NOTE_WORDS, wordCount } from "../core/text.js";
-import type { Decision, Ticket, Trigger } from "../core/types.js";
+import type { Decision, Ticket } from "../core/types.js";
 import { parseThreadKey } from "../core/types.js";
 import { claimPull } from "../github/channel.js";
 import type { GithubClient } from "../github/client.js";
@@ -17,7 +17,7 @@ import * as s from "../schema.js";
 import type { Infer, Schema } from "../schema.js";
 import type { Settings } from "../settings.js";
 import { Assessor, AssessmentSchema, EvalReadSchema, WorktreeNameSchema, AcknowledgementSchema, assessmentOutcome } from "./assessment.js";
-import { ticketCard } from "./cards.js";
+import { followupOwners, ticketCard } from "./cards.js";
 import { readResource, resourceGrammar, type ResourceHost } from "./resources.js";
 
 export interface ToolsHost {
@@ -111,16 +111,6 @@ interface Routed { decision?: Decision["kind"]; reason: string; ticketId?: strin
 
 function fromDecision(decision: Decision): Routed {
   return { decision: decision.kind, reason: decision.reason.map(reasonText).join("; "), ticketId: decision.ticketId, triggerIds: decision.triggerIds };
-}
-
-/** Tickets whose worker owns a person's follow-up: it reached them as a message, so the worker decides whether it is theirs. */
-function followupOwners(state: State, trigger: Trigger): string[] {
-  const disposition = state.dispositions.get(trigger.id);
-  if (!disposition) return [];
-  return disposition.fanout.filter((id) => {
-    const ticket = state.tickets.get(id);
-    return !!ticket && !ticket.ended && ticket.inputs.some((input) => humanTriggerInput(input) && input.kind === "trigger" && input.triggerId === trigger.id);
-  });
 }
 
 function route(host: ToolsHost, item: RouteItem, decided: ReadonlyMap<string, string>): Routed | { refused: string } {
