@@ -1,0 +1,33 @@
+{
+  "name": "@deyin/superagent",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Deyin Superagent: a proactive, policy-gated coding agent for one GitHub repository. Runtime-agnostic domain core (policy, engine, tickets), JSON store, GitHub source and channel, orchestrator/worker tools and prompts. The host supplies the agent runner.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/superagent"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "prompts", "skills", "UPSTREAM-LICENSE"],
+  "scripts": {
+    "embed": "node scripts/embed-prompts.mjs",
+    "build": "node scripts/embed-prompts.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.23.12",
+    "typescript": "^5.6.3"
+  }
+}
