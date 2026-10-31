@@ -29,7 +29,7 @@ export async function sendReceipt(
     }
     // A retry after an unconfirmed send must not post twice: look for the marker among comments made since the receipt.
     const path = rootId === undefined ? `repos/${repository}/issues/${number}/comments` : `repos/${repository}/pulls/${number}/comments`;
-    const recent = await client.paginate<unknown>(path, { since: receipt.createdAt }, { maxPages: 3, ...(signal ? { signal } : {}) });
+    const recent = await client.paginate<unknown>(path, { since: receipt.createdAt }, { maxPages: 10, ...(signal ? { signal } : {}) });
     const delivered = recent.items.some((raw) => {
       const comment = parseComment(raw);
       return sameName(comment.user.login, agent) && (comment.body ?? "").includes(marker) && (rootId === undefined || comment.in_reply_to_id === rootId);

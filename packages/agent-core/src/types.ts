@@ -95,10 +95,11 @@ export interface ToolContext {
    */
   shell?: ToolShell;
   /**
-   * Extra environment for shell commands this run starts, merged over the process environment. Carries an unattended worker's
-   * credentials (a GitHub token, a git identity) without writing them to disk; never logged.
+   * Environment changes for shell commands this run starts, applied over the process environment: a string sets a variable, `null`
+   * removes it. Carries an unattended worker's credentials (a GitHub token, a git identity) without writing them to disk, and
+   * lets the host keep its own secrets out of that worker's shell; never logged.
    */
-  env?: Readonly<Record<string, string>>;
+  env?: Readonly<Record<string, string | null>>;
   /**
    * Per-call callback bound by the loop: tools that produce incremental output
    * (bash) call this to emit `tool-delta` events while still running.

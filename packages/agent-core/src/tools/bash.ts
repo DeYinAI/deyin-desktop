@@ -169,6 +169,16 @@ interface ShellInvocation {
   env?: Record<string, string>;
 }
 
+/** The environment a command starts with: the process's, the shell's own additions, then the run's changes (`null` removes). */
+function spawnEnvironment(shellEnv: Record<string, string> | undefined, runEnv: Readonly<Record<string, string | null>> | undefined): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, DEYIN_AGENT: "1", ...shellEnv };
+  for (const [name, value] of Object.entries(runEnv ?? {})) {
+    if (value === null) delete env[name];
+    else env[name] = value;
+  }
+  return env;
+}
+
 export interface VirtualEnvInfo {
   rootDir: string;
   binDir: string;
@@ -254,7 +264,7 @@ export async function executeShellCommand(
     shell?: ToolShell;
     onData?: (delta: string) => void;
     /** Extra environment for this command, over the process environment and the project's virtual environment. */
-    env?: Readonly<Record<string, string>>;
+    env?: Readonly<Record<string, string | null>>;
   },
 ): Promise<ShellExecutionResult> {
   const timeoutS = Math.min(options?.timeoutS ?? DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S);
@@ -293,7 +303,7 @@ async function runCommandDetailed(
   timeoutS: number,
   signal?: AbortSignal,
   onData?: (delta: string) => void,
-  runEnv?: Readonly<Record<string, string>>,
+  runEnv?: Readonly<Record<string, string | null>>,
 ): Promise<ShellExecutionResult> {
   const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
@@ -304,7 +314,7 @@ async function runCommandDetailed(
     // (skip heavy prompts/banners), mirroring Cursor's CURSOR_AGENT.
     const child = spawn(file, args, {
       cwd: spawnCwd,
-      env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv, ...runEnv },
+      env: spawnEnvironment(extraEnv, runEnv),
       windowsHide: true,
       detached: posix,
     });
@@ -372,7 +382,7 @@ function runBackgroundCommand(
   command: string,
   cwd: string,
   timeoutS: number,
-  runEnv?: Readonly<Record<string, string>>,
+  runEnv?: Readonly<Record<string, string | null>>,
 ): Promise<{ output: string; exitCode: number | null }> {
   const { file, args, spawnCwd, env: extraEnv } = shellFor(command, cwd);
   const posix = platform() !== "win32";
@@ -384,7 +394,7 @@ function runBackgroundCommand(
     try {
       child = spawn(file, args, {
         cwd: spawnCwd,
-        env: { ...process.env, DEYIN_AGENT: "1", ...extraEnv, ...runEnv },
+        env: spawnEnvironment(extraEnv, runEnv),
         windowsHide: true,
         detached: posix,
       });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelInfo } from "@deyin/contract";
 import { ADMISSION_OPTIONS, SETTINGS_LIMITS, type Settings, type SuperagentView } from "@deyin/superagent/client";
 import { useConfirm } from "../ConfirmDialog.js";
@@ -59,14 +59,48 @@ function ModelSelect(props: { value: Settings["eval"]["model"]; models: ModelInf
   );
 }
 
-function Text(props: { value: string; onChange: (value: string) => void; mono?: boolean; placeholder?: string }) {
-  return <input className={`input${props.mono ? " input-mono" : ""}`} value={props.value} placeholder={props.placeholder} onChange={(event) => props.onChange(event.target.value)} />;
+function Text(props: { value: string; onChange: (value: string) => void; mono?: boolean; placeholder?: string; max?: number; label?: string }) {
+  return (
+    <input
+      className={`input${props.mono ? " input-mono" : ""}`}
+      value={props.value}
+      placeholder={props.placeholder}
+      maxLength={props.max}
+      aria-label={props.label}
+      onChange={(event) => props.onChange(event.target.value)}
+    />
+  );
+}
+
+/** A number the person is typing: only a number reaches the draft, and what was typed stays on screen until the field is left. */
+function NumberField(props: { value: number; min: number; max: number; onChange: (value: number) => void }) {
+  const [text, setText] = useState(String(props.value));
+  useEffect(() => setText(String(props.value)), [props.value]);
+  return (
+    <input
+      className="input input--narrow"
+      type="number"
+      min={props.min}
+      max={props.max}
+      value={text}
+      onChange={(event) => {
+        setText(event.target.value);
+        const value = Number(event.target.value);
+        if (event.target.value.trim() !== "" && Number.isFinite(value)) props.onChange(value);
+      }}
+      onBlur={() => setText(String(props.value))}
+    />
+  );
 }
 
 function Lines(props: { value: string; rows?: number; onCommit: (value: string) => void; placeholder?: string; mono?: boolean }) {
-  // Edited as typed and applied when the field loses focus, so a half-typed login never reaches the settings.
+  // What was typed stays as typed while the field has focus (a trailing newline or "@" is not rewritten under the cursor), and every
+  // change reaches the draft at once, so Save and the switches in the header always act on what is on screen.
   const [text, setText] = useState(props.value);
-  useEffect(() => setText(props.value), [props.value]);
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) setText(props.value);
+  }, [props.value]);
   return (
     <textarea
       className={`input${props.mono ? " input-mono" : ""}`}
@@ -74,8 +108,17 @@ function Lines(props: { value: string; rows?: number; onCommit: (value: string) 
       value={text}
       placeholder={props.placeholder}
       spellCheck={false}
-      onChange={(event) => setText(event.target.value)}
-      onBlur={() => props.onCommit(text)}
+      onFocus={() => {
+        focused.current = true;
+      }}
+      onChange={(event) => {
+        setText(event.target.value);
+        props.onCommit(event.target.value);
+      }}
+      onBlur={() => {
+        focused.current = false;
+        setText(props.value);
+      }}
     />
   );
 }
@@ -142,14 +185,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
           <Toggle checked={draft.github.observeComments} onChange={(observeComments) => edit((s) => ({ ...s, github: { ...s.github, observeComments } }))} />
         </SettingCard>
         <SettingCard title="Check GitHub every" description={`Seconds between polls, ${SETTINGS_LIMITS.pollSeconds.min} to ${SETTINGS_LIMITS.pollSeconds.max}.`}>
-          <input
-            className="input input--narrow"
-            type="number"
-            min={SETTINGS_LIMITS.pollSeconds.min}
-            max={SETTINGS_LIMITS.pollSeconds.max}
-            value={draft.github.pollSeconds}
-            onChange={(event) => edit((s) => ({ ...s, github: { ...s.github, pollSeconds: Number(event.target.value) } }))}
-          />
+          <NumberField min={SETTINGS_LIMITS.pollSeconds.min} max={SETTINGS_LIMITS.pollSeconds.max} value={draft.github.pollSeconds} onChange={(pollSeconds) => edit((s) => ({ ...s, github: { ...s.github, pollSeconds } }))} />
         </SettingCard>
         <Field label="Branch prefix" hint="Workers open their pull requests from branches that start with this.">
           <Text mono value={draft.github.branchPrefix} onChange={(branchPrefix) => edit((s) => ({ ...s, github: { ...s.github, branchPrefix } }))} />
@@ -207,7 +243,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
         {draft.policy.rules.map((rule) => (
           <div key={rule.id} className="superagent__rule">
             <div className="superagent__rule-head">
-              <Text value={rule.name} onChange={(name) => edit((s) => withRule(s, rule.id, { name }))} />
+              <Text value={rule.name} max={SETTINGS_LIMITS.ruleName} label="Rule name" onChange={(name) => edit((s) => withRule(s, rule.id, { name }))} />
               <Toggle checked={rule.enabled} onChange={(enabled) => edit((s) => withRule(s, rule.id, { enabled }))} />
               <button
                 type="button"
@@ -217,7 +253,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
                 Remove
               </button>
             </div>
-            <textarea className="input" rows={4} value={rule.instruction} placeholder="Describe the requests this rule covers, and where it stops." onChange={(event) => edit((s) => withRule(s, rule.id, { instruction: event.target.value }))} />
+            <textarea className="input" rows={4} maxLength={SETTINGS_LIMITS.ruleInstruction} aria-label="Rule instruction" value={rule.instruction} placeholder="Describe the requests this rule covers, and where it stops." onChange={(event) => edit((s) => withRule(s, rule.id, { instruction: event.target.value }))} />
           </div>
         ))}
       </FormSection>
@@ -234,14 +270,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
           <ModelSelect value={draft.eval.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, eval: { ...s.eval, model } }))} />
         </SettingCard>
         <SettingCard title="Time to decide" description={`Seconds before an assessment is dropped, ${SETTINGS_LIMITS.evalTimeoutSeconds.min} to ${SETTINGS_LIMITS.evalTimeoutSeconds.max}.`}>
-          <input
-            className="input input--narrow"
-            type="number"
-            min={SETTINGS_LIMITS.evalTimeoutSeconds.min}
-            max={SETTINGS_LIMITS.evalTimeoutSeconds.max}
-            value={draft.eval.timeoutSeconds}
-            onChange={(event) => edit((s) => ({ ...s, eval: { ...s.eval, timeoutSeconds: Number(event.target.value) } }))}
-          />
+          <NumberField min={SETTINGS_LIMITS.evalTimeoutSeconds.min} max={SETTINGS_LIMITS.evalTimeoutSeconds.max} value={draft.eval.timeoutSeconds} onChange={(timeoutSeconds) => edit((s) => ({ ...s, eval: { ...s.eval, timeoutSeconds } }))} />
         </SettingCard>
       </FormSection>
 
@@ -250,14 +279,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
           <ModelSelect value={draft.executor.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, executor: { ...s.executor, model } }))} />
         </SettingCard>
         <SettingCard title="Parallel workers" description={`Tickets worked on at once, ${SETTINGS_LIMITS.maxWorkers.min} to ${SETTINGS_LIMITS.maxWorkers.max}.`}>
-          <input
-            className="input input--narrow"
-            type="number"
-            min={SETTINGS_LIMITS.maxWorkers.min}
-            max={SETTINGS_LIMITS.maxWorkers.max}
-            value={draft.executor.maxWorkers}
-            onChange={(event) => edit((s) => ({ ...s, executor: { ...s.executor, maxWorkers: Number(event.target.value) } }))}
-          />
+          <NumberField min={SETTINGS_LIMITS.maxWorkers.min} max={SETTINGS_LIMITS.maxWorkers.max} value={draft.executor.maxWorkers} onChange={(maxWorkers) => edit((s) => ({ ...s, executor: { ...s.executor, maxWorkers } }))} />
         </SettingCard>
         <Field label="Worktrees directory" hint="An absolute path. Empty keeps them inside Deyin's data folder.">
           <Text mono value={draft.executor.directory} onChange={(directory) => edit((s) => ({ ...s, executor: { ...s.executor, directory } }))} />

@@ -41,7 +41,7 @@ function github(accepted: string[]): FetchLike {
   };
 }
 
-function makeService(options: { accepted?: string[]; programs?: string[]; broadcast?: (view: SuperagentView) => void; dir?: string } = {}) {
+function makeService(options: { accepted?: string[]; programs?: string[]; probe?: (command: string) => Promise<boolean>; broadcast?: (view: SuperagentView) => void; dir?: string } = {}) {
   const dir = options.dir ?? tempDir();
   const programs = options.programs ?? ["git", "gh"];
   const service = new SuperagentService({
@@ -55,9 +55,9 @@ function makeService(options: { accepted?: string[]; programs?: string[]; broadc
       builtinTools: () => createBuiltinRegistry(),
     },
     broadcast: options.broadcast ?? (() => undefined),
-    fetch: github(options.accepted ?? ["good", "also-good"]),
+    fetch: github(options.accepted ?? ["ghp_good_token", "ghp_also_good"]),
     logger: silent,
-    probe: async (command) => programs.includes(command),
+    probe: options.probe ?? (async (command) => programs.includes(command)),
     tickMs: 20,
     saveDebounceMs: 5,
   });
@@ -90,37 +90,54 @@ test("a fresh install is off, empty and not ready, with the setup steps spelled 
 test("a token GitHub accepts is stored encrypted and never appears in a view", async () => {
   const { service, dir } = makeService();
   await service.start();
-  const view = ok<SuperagentView>(await service.setToken("  good  "));
+  const view = ok<SuperagentView>(await service.setToken("  ghp_good_token  "));
   assert.equal(view.status.account?.login, "agent-bot");
   assert.ok(!view.status.gaps.some((gap) => /connect a github token/i.test(gap)));
 
   const file = readFileSync(join(dir, "token.json"), "utf8");
-  assert.ok(!file.includes("good"), "the token is not written in the clear");
-  assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), "good");
+  assert.ok(!file.includes("ghp_good_token"), "the token is not written in the clear");
+  assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), "ghp_good_token");
   if (process.platform !== "win32") assert.equal(statSync(join(dir, "token.json")).mode & 0o077, 0, "only the user can read it");
-  assert.ok(!JSON.stringify(service.current()).includes("good"));
+  assert.ok(!JSON.stringify(service.current()).includes("ghp_good_token"));
 });
 
 test("a token GitHub rejects is not kept, and the one in place keeps working", async () => {
   const { service, dir } = makeService();
   await service.start();
-  assert.match(failure(await service.setToken("bad")), /rejected the token/);
+  assert.match(failure(await service.setToken("ghp_bad_token")), /rejected the token/);
   assert.equal(existsSync(join(dir, "token.json")), false, "nothing was stored");
   assert.equal(ok<SuperagentView>(service.current()).status.account, null);
 
-  ok(await service.setToken("good"));
-  assert.match(failure(await service.setToken("bad")), /rejected the token/);
+  ok(await service.setToken("ghp_good_token"));
+  assert.match(failure(await service.setToken("ghp_bad_token")), /rejected the token/);
   const view = ok<SuperagentView>(service.current());
   assert.equal(view.status.account?.login, "agent-bot");
-  assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), "good");
+  assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), "ghp_good_token");
 
   assert.match(failure(await service.setToken("   ")), /empty/);
+});
+
+test("something that is not a token is refused before it is stored or sent anywhere", async () => {
+  const { service, dir } = makeService();
+  await service.start();
+  for (const text of ["short", "has a space inside", "line\nbreak_in_token", "x".repeat(600)]) {
+    assert.match(failure(await service.setToken(text)), /does not look like a GitHub token/, text.slice(0, 12));
+  }
+  assert.equal(existsSync(join(dir, "token.json")), false);
+});
+
+test("a start that fails is shown in the setup list instead of being lost, and does not throw", async () => {
+  const { service } = makeService({ probe: async () => { throw new Error("no shell here"); } });
+  await service.start();
+  const status = ok<SuperagentView>(service.current()).status;
+  assert.equal(status.ready, false);
+  assert.ok(status.gaps.some((gap) => /could not start: no shell here/i.test(gap)), status.gaps.join("|"));
 });
 
 test("disconnecting forgets the token, stops the runtime's runs, and the service keeps working after", async () => {
   const { service, dir } = makeService();
   await service.start();
-  ok(await service.setToken("good"));
+  ok(await service.setToken("ghp_good_token"));
   const view = ok<SuperagentView>(await service.clearToken());
   assert.equal(view.status.account, null);
   assert.ok(view.status.gaps.some((gap) => /token/i.test(gap)));
@@ -128,14 +145,14 @@ test("disconnecting forgets the token, stops the runtime's runs, and the service
 
   // Still alive: settings save and a token can be connected again.
   ok(await service.saveSettings({ github: { repository: "acme/app" } }, ok<SuperagentView>(service.current()).settingsRevision));
-  assert.equal(ok<SuperagentView>(await service.setToken("also-good")).status.account?.login, "agent-bot");
+  assert.equal(ok<SuperagentView>(await service.setToken("ghp_also_good")).status.account?.login, "agent-bot");
 });
 
 test("verify says who the token is and whether it can push to the watched repository", async () => {
   const { service } = makeService();
   await service.start();
   assert.match(failure(await service.verify()), /No GitHub token/);
-  ok(await service.setToken("good"));
+  ok(await service.setToken("ghp_good_token"));
   assert.match(failure(await service.verify()), /Set the repository/);
   ok(await service.saveSettings({ github: { repository: "acme/app" } }, ok<SuperagentView>(service.current()).settingsRevision));
   assert.deepEqual(ok(await service.verify()), { login: "agent-bot", canPush: true, repository: "acme/app" });
@@ -191,7 +208,7 @@ test("settings and tokens survive a restart of the app", async () => {
   const dir = tempDir();
   const first = makeService({ dir }).service;
   await first.start();
-  ok(await first.setToken("good"));
+  ok(await first.setToken("ghp_good_token"));
   ok(await first.saveSettings({ github: { repository: "acme/app" }, policy: { sources: { github: { allowed: [{ id: "alice" }] } } } }, 0));
   await first.dispose();
 

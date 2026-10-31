@@ -332,3 +332,65 @@ test("commentTrigger carries addressed, channel and a version-sensitive id", () 
   assert.equal(commentTrigger({ ...base, user: { login: AGENT } }, { number: 1, isPr: false }, "conversation", AGENT).human, false);
   assert.equal(commentTrigger({ ...base, user: { login: "x[bot]", type: "Bot" } }, { number: 1, isPr: false }, "conversation", AGENT).human, false);
 });
+
+test("more notifications than one page holds are all read, in order of arrival", async () => {
+  const w = world();
+  await w.source.poll();
+  for (let n = 1; n <= 120; n++) {
+    w.fake.tick();
+    w.fake.addIssue({ number: n, body: "plain" });
+    w.fake.addComment(n, { user: "alice", body: `@${AGENT} please look at #${n}` });
+    w.fake.notify(n);
+  }
+  w.fake.tick();
+  const report = await w.source.poll();
+  assert.deepEqual(report.failures, []);
+  assert.equal(report.notifications, 120);
+  assert.equal(report.triggers, 120);
+  assert.equal((await w.source.poll()).triggers, 0, "nothing is read twice");
+});
+
+test("a thread with more new comments than one round reads is read to the end over the next rounds", async () => {
+  const w = world();
+  w.fake.addIssue({ number: 4, body: "busy" });
+  await w.source.poll();
+  for (let i = 0; i < 1150; i++) {
+    w.fake.tick();
+    w.fake.addComment(4, { user: "alice", body: `comment ${i}` });
+  }
+  w.fake.notify(4);
+  w.fake.tick();
+  await w.source.poll();
+  assert.equal(w.state.triggers.size, 1000, "a round reads ten pages of a hundred");
+  w.fake.tick();
+  w.fake.notify(4);
+  w.fake.tick();
+  await w.source.poll();
+  assert.equal(w.state.triggers.size, 1150, "the next round goes on where this one stopped");
+});
+
+test("an observed repository with more new comments than one round reads is not stuck on the first of them", async () => {
+  const w = world(makeSettings({ github: { observeComments: true } }));
+  w.fake.addIssue({ number: 5, body: "busy" });
+  await w.source.poll();
+  for (let i = 0; i < 1150; i++) {
+    w.fake.tick();
+    w.fake.addComment(5, { user: "alice", body: `comment ${i}` });
+  }
+  w.fake.tick();
+  await w.source.poll();
+  const first = w.state.triggers.size;
+  assert.equal(first, 1000);
+  w.fake.tick();
+  await w.source.poll();
+  assert.equal(w.state.triggers.size, 1150, "the rest is read next round instead of the same first thousand again");
+});
+
+test("the client sends the token to the API only", async () => {
+  const sent: string[] = [];
+  const client = new GithubClient({ token: () => "t", fetch: async (url) => { sent.push(url); return { status: 200, headers: { get: () => null }, text: async () => "[]" }; } });
+  await client.get("user");
+  await assert.rejects(client.request("GET", "https://evil.example/x"), (error: unknown) => error instanceof GithubError && /another host/.test(error.message));
+  await client.request("GET", "https://api.github.com/next?page=2");
+  assert.deepEqual(sent, ["https://api.github.com/user", "https://api.github.com/next?page=2"]);
+});

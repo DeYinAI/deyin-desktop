@@ -58,3 +58,13 @@ test("setupGaps lists what is missing and refuses the agent's own account as an 
   assert.deepEqual(setupGaps(ready, { hasToken: true, login: "agent" }), []);
   assert.match(setupGaps(ready, { hasToken: true, login: "ALICE" }).join(" "), /own GitHub account/);
 });
+
+test("a branch prefix git cannot take as a branch name is refused", () => {
+  const prefix = (branchPrefix: string) => parseSettings({ github: { branchPrefix } }).github.branchPrefix;
+  assert.equal(prefix("agent/"), "agent/");
+  assert.equal(prefix("bots/superagent-"), "bots/superagent-");
+  assert.equal(prefix(""), "");
+  for (const bad of ["-x", "--", ".hidden/", "/abs", "a//b", "a/.b", "a..b", "x.lock", "x.lock/", "ends."]) {
+    assert.throws(() => prefix(bad), UserError, bad);
+  }
+});

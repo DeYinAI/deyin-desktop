@@ -56,6 +56,8 @@ export interface WorkerReport {
 }
 
 const MAX_NOTICE = 1200;
+/** The most of a message that is kept; GitHub allows 65,536 characters in one. */
+export const MAX_TRIGGER_TEXT = 20_000;
 /** An evaluation the orchestrator never received expires after this many evaluation timeouts. */
 const UNDELIVERED_GRACE = 6;
 
@@ -97,9 +99,11 @@ export class Engine {
   // ---- intake ------------------------------------------------------------------------------------------------------
 
   /** Stores a Trigger, delivers it to the tickets subscribed to its threads, and queues it for assessment when nobody owns it. */
-  receive(trigger: Trigger): "stored" | "duplicate" {
-    if (this.state.triggers.has(trigger.id)) return "duplicate";
-    if (trigger.threads.length === 0) throw new UserError("invalid", "A trigger belongs to at least one thread");
+  receive(incoming: Trigger): "stored" | "duplicate" {
+    if (this.state.triggers.has(incoming.id)) return "duplicate";
+    if (incoming.threads.length === 0) throw new UserError("invalid", "A trigger belongs to at least one thread");
+    // Anyone may write on a public repository, so what is kept of a message has a bound; the source still has all of it.
+    const trigger = incoming.text.length > MAX_TRIGGER_TEXT ? { ...incoming, text: `${incoming.text.slice(0, MAX_TRIGGER_TEXT)}\n[… ${incoming.text.length - MAX_TRIGGER_TEXT} more characters not kept]` } : incoming;
     const at = this.now();
     this.state.triggers.set(trigger.id, trigger);
     const disposition: TriggerDisposition = { fanout: [], at };

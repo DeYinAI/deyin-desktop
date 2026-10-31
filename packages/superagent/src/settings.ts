@@ -109,7 +109,16 @@ const GithubSchema = s.object({
   observePulls: withDefault(s.boolean(), () => false),
   observeComments: withDefault(s.boolean(), () => false),
   /** Prefix of the branch a worker opens its PR from; the last path segment is the worktree name. */
-  branchPrefix: withDefault(s.string({ trim: true, max: 40, pattern: /^[A-Za-z0-9._/-]*$/ }), () => "agent/"),
+  branchPrefix: withDefault(
+    s.string({
+      trim: true,
+      max: 40,
+      pattern: /^[A-Za-z0-9._/-]*$/,
+      // Git reads a leading "-" as an option, and refuses these shapes as branch names.
+      check: (value) => (/^[-./]|\.\.|\/\/|\/\.|\.lock(\/|$)|\.$/.test(value) ? "use letters, digits, - _ . and /, starting with a letter or digit, such as agent/" : undefined),
+    }),
+    () => "agent/",
+  ),
 });
 
 const SettingsSchema = s.object({

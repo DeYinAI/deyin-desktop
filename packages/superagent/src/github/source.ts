@@ -50,6 +50,26 @@ const numberOf = (url: string | null | undefined): number | undefined => {
 };
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** Pages of 50 notifications read in one round. */
+const NOTIFICATION_PAGES = 10;
+/** Pages of 100 read from a thread or stream in one round before the rest waits for the next. */
+const READ_PAGES = 10;
+
+const nextPage = (link: string | null | undefined): string | undefined => /<([^>]+)>;\s*rel="next"/.exec(link ?? "")?.[1];
+
+/**
+ * Where the next read of a time-ordered listing should start, given what this one saw: after its last item when it stopped
+ * before the end (so the rest is read next round instead of being skipped), otherwise at the start of this round.
+ * Never earlier than `since`, which keeps a listing of old items edited recently from moving the cursor back.
+ */
+function resumeAfter<T>(page: { items: T[]; truncated: boolean }, stamp: (item: T) => string | null | undefined, since: string, started: string): string {
+  if (!page.truncated) return started;
+  const last = page.items.length > 0 ? stamp(page.items[page.items.length - 1] as T) : undefined;
+  return last && last > since ? last : since;
+}
+
+const earliest = (...times: string[]): string => times.reduce((a, b) => (a < b ? a : b));
+
 export class GithubSource {
   constructor(private readonly deps: SourceDeps) {}
 
@@ -103,13 +123,24 @@ export class GithubSource {
       ...(round.signal ? { signal: round.signal } : {}),
     });
     if (result.pollInterval) round.report.intervalSeconds = Math.max(round.report.intervalSeconds, result.pollInterval);
-    if (result.etag) this.deps.state.cursors["gh:notifications:etag"] = result.etag;
     if (result.status === 304 || !Array.isArray(result.data)) {
+      if (result.etag) this.deps.state.cursors["gh:notifications:etag"] = result.etag;
       this.setCursor("gh:notifications", since);
       return;
     }
+    const notifications: unknown[] = [...result.data];
+    let next = nextPage(result.headers.get("link"));
+    for (let page = 1; next && page < NOTIFICATION_PAGES; page++) {
+      const more = await client.request<unknown[]>("GET", next, round.signal ? { signal: round.signal } : {});
+      if (Array.isArray(more.data)) notifications.push(...more.data);
+      next = nextPage(more.headers.get("link"));
+    }
+    // Beyond the pages read, the rest stays unread: the cursor and the etag stay as they were, so the next round asks again.
+    const truncated = next !== undefined;
+    if (truncated) round.report.failures.push(`notifications: more than ${NOTIFICATION_PAGES * 50} are waiting; reading the newest first`);
+    else if (result.etag) this.deps.state.cursors["gh:notifications:etag"] = result.etag;
     const numbers = new Set<number>();
-    for (const item of result.data) {
+    for (const item of notifications) {
       if (!isRecord(item) || !isRecord(item.repository) || !isRecord(item.subject)) continue;
       if (typeof item.repository.full_name !== "string" || !sameName(item.repository.full_name, this.repo)) continue;
       const type = item.subject.type;
@@ -130,7 +161,7 @@ export class GithubSource {
       }
     }
     // A failed thread keeps the cursor where it was, so its notification is read again next round.
-    if (!failed) this.setCursor("gh:notifications", round.started.toISOString());
+    if (!failed && !truncated) this.setCursor("gh:notifications", round.started.toISOString());
   }
 
   // ---- threads -----------------------------------------------------------------------------------------------------
@@ -160,19 +191,25 @@ export class GithubSource {
       const watching = isPr ? settings.github.observePulls : settings.github.observeIssues;
       if (opened.addressed || watching) this.receive(round, opened);
     }
-    const comments = await this.deps.client.paginate<unknown>(`repos/${this.repo}/issues/${number}/comments`, { since }, { ...(round.signal ? { signal: round.signal } : {}) });
+    const started = round.started.toISOString();
+    const options = { maxPages: READ_PAGES, ...(round.signal ? { signal: round.signal } : {}) };
+    const created = (raw: unknown): string | null | undefined => parseComment(raw).created_at;
+    const comments = await this.deps.client.paginate<unknown>(`repos/${this.repo}/issues/${number}/comments`, { since }, options);
     for (const raw of comments.items) this.comment(round, parseComment(raw), ref, "conversation");
+    // Each listing is oldest first, so one that stopped early resumes after its last item; the thread's cursor is the earliest of them.
+    let resume = resumeAfter(comments, created, since, started);
     if (isPr) {
-      const review = await this.deps.client.paginate<unknown>(`repos/${this.repo}/pulls/${number}/comments`, { since }, { ...(round.signal ? { signal: round.signal } : {}) });
+      const review = await this.deps.client.paginate<unknown>(`repos/${this.repo}/pulls/${number}/comments`, { since }, options);
       for (const raw of review.items) this.comment(round, parseComment(raw), ref, "inline");
-      const reviews = await this.deps.client.paginate<unknown>(`repos/${this.repo}/pulls/${number}/reviews`, {}, { maxPages: 3, ...(round.signal ? { signal: round.signal } : {}) });
+      const reviews = await this.deps.client.paginate<unknown>(`repos/${this.repo}/pulls/${number}/reviews`, {}, options);
       for (const raw of reviews.items) {
         const parsed = parseComment(raw);
         if ((parsed.submitted_at ?? "") > since) this.comment(round, parsed, ref, "review");
       }
+      resume = earliest(resume, resumeAfter(review, created, since, started), resumeAfter(reviews, (raw) => parseComment(raw).submitted_at, since, started));
       this.pullState(issue, number);
     }
-    this.setCursor(cursorName, round.started.toISOString());
+    this.setCursor(cursorName, resume);
   }
 
   private pullState(issue: GhIssue, number: number): void {
@@ -209,7 +246,7 @@ export class GithubSource {
   private async streamIssues(round: Round): Promise<void> {
     const settings = this.deps.settings().github;
     const since = this.cursor("gh:stream:issues") ?? round.started.toISOString();
-    const page = await this.deps.client.paginate<unknown>(`repos/${this.repo}/issues`, { state: "open", sort: "created", direction: "asc", since }, { maxPages: 3, ...(round.signal ? { signal: round.signal } : {}) });
+    const page = await this.deps.client.paginate<unknown>(`repos/${this.repo}/issues`, { state: "open", sort: "created", direction: "asc", since }, { maxPages: READ_PAGES, ...(round.signal ? { signal: round.signal } : {}) });
     let newest = since;
     for (const raw of page.items) {
       const issue = parseIssue(raw);
@@ -225,7 +262,7 @@ export class GithubSource {
 
   private async streamComments(round: Round): Promise<void> {
     const since = this.cursor("gh:stream:comments") ?? round.started.toISOString();
-    const opts = { maxPages: 3, ...(round.signal ? { signal: round.signal } : {}) };
+    const opts = { maxPages: READ_PAGES, ...(round.signal ? { signal: round.signal } : {}) };
     const conversation = await this.deps.client.paginate<unknown>(`repos/${this.repo}/issues/comments`, { since, sort: "created", direction: "asc" }, opts);
     for (const raw of conversation.items) {
       const parsed = parseComment(raw);
@@ -240,7 +277,10 @@ export class GithubSource {
       if (!number || (parsed.created_at ?? "") <= since) continue;
       this.comment(round, parsed, { number, isPr: true }, "inline");
     }
-    this.setCursor("gh:stream:comments", conversation.truncated || inline.truncated ? since : round.started.toISOString());
+    // Both listings are oldest first; one that stopped early resumes after its last item, and the cursor is the earlier of the two.
+    const started = round.started.toISOString();
+    const created = (raw: unknown): string | null | undefined => parseComment(raw).created_at;
+    this.setCursor("gh:stream:comments", earliest(resumeAfter(conversation, created, since, started), resumeAfter(inline, created, since, started)));
   }
 
   // ---- followed threads --------------------------------------------------------------------------------------------

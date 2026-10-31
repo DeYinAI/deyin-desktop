@@ -10,6 +10,7 @@ import {
 } from "@deyin/agent-core";
 import { AgentRunError, blockedCommand, type AgentRunRequest, type AgentRunResult as RunnerResult, type AgentRunner, type Logger, type ModelRef } from "@deyin/superagent";
 import { SessionHistory } from "./history.js";
+import { redactingTool, secretValues, workerEnvironment } from "./secrets.js";
 import { COMMAND_TOOLS, WORKER_BUILTIN_TOOLS, toToolDefinition } from "./tools.js";
 
 /** Told to every unattended conversation, after the role's own prompt. */
@@ -37,6 +38,8 @@ export interface RunnerDeps {
   /** The directory a conversation without a working directory (the orchestrator) starts in. */
   homeDir: string;
   saveDebounceMs?: number;
+  /** The environment the desktop itself runs in, which a worker's shell starts from; the process's own by default. */
+  hostEnv?: () => Readonly<Record<string, string | undefined>>;
 }
 
 /** The app's `providerId::modelId` setting as a model reference; a bare id belongs to the primary provider. */
@@ -76,6 +79,9 @@ export class AgentCoreRunner implements AgentRunner {
   private registry(request: AgentRunRequest): ToolRegistry {
     const registry = request.role === "worker" ? this.deps.builtinTools().filtered(WORKER_BUILTIN_TOOLS) : new ToolRegistry();
     for (const tool of request.tools) registry.register(toToolDefinition(tool));
+    // The shell has the agent account's token so that git and gh can act as it; what a command prints must not carry it to the model.
+    const secrets = secretValues(request.env);
+    for (const tool of registry.list()) registry.register(redactingTool(tool, secrets));
     return registry;
   }
 
@@ -114,7 +120,7 @@ export class AgentCoreRunner implements AgentRunner {
           // These runs have no todo list to reconcile and no compiler to ask; both would only add turns.
           todoReconcile: false,
           diagnosticLoopback: false,
-          toolContext: { env: request.env },
+          toolContext: { env: workerEnvironment(request.env, this.deps.hostEnv?.() ?? process.env) },
           drainPendingMessages: () => request.drain().map((content): AgentMessage => ({ role: "user", content })),
           onMessage: () => this.history.schedule(request.sessionId, () => messages),
           beforeTool: async (call, args) => {

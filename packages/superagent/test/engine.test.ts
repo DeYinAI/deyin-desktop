@@ -387,3 +387,13 @@ test("state survives a JSON round trip", () => {
   assert.equal(again.tickets[0]?.id, ticket.id);
   assert.equal(again.counters.t, 1);
 });
+
+test("what is kept of a long message has a bound, and its id and gating are unaffected", () => {
+  const rig = makeRig();
+  const long = request({ text: `@agent-bot ${"x".repeat(70_000)}` });
+  assert.equal(rig.engine.receive(long), "stored");
+  const stored = rig.state.triggers.get(long.id)!;
+  assert.ok(stored.text.length < 20_100);
+  assert.match(stored.text, /more characters not kept\]$/);
+  assert.equal(rig.engine.receive(long), "duplicate");
+});

@@ -37,6 +37,21 @@ export function repairHistory(messages: readonly AgentMessage[]): AgentMessage[]
   return kept;
 }
 
+/** The most a stored conversation may take; the oldest turns go first. The loop compacts what it sends, but it keeps everything it was given. */
+export const MAX_STORED_CHARS = 4_000_000;
+
+/** `messages` without the oldest turns until it serializes within `limit`, starting at a user message so no tool result is left without its call. */
+export function trimHistory(messages: readonly AgentMessage[], limit = MAX_STORED_CHARS): AgentMessage[] {
+  let kept = [...messages];
+  while (kept.length > 1 && JSON.stringify(kept).length > limit) {
+    let next = Math.max(1, Math.ceil(kept.length / 4));
+    while (next < kept.length && kept[next]!.role !== "user") next += 1;
+    // A conversation with no user message after the cut keeps its last turn alone.
+    kept = kept.slice(next < kept.length ? next : kept.length - 1);
+  }
+  return kept;
+}
+
 const SAFE = /^[A-Za-z0-9_-]{1,80}$/;
 
 /** A file name for a session id: the id itself when it is plain, else a sanitized prefix and a hash, so distinct ids never collide. */
@@ -123,7 +138,8 @@ export class SessionHistory {
     const temporary = `${target}.${process.pid}.tmp`;
     try {
       mkdirSync(this.directory, { recursive: true });
-      const body: Stored = { version: 1, messages: messages.filter((message) => message.role !== "system") };
+      // A run that was stopped mid-turn leaves calls without results; the file always holds a state a provider accepts.
+      const body: Stored = { version: 1, messages: trimHistory(repairHistory(messages)) };
       writeFileSync(temporary, JSON.stringify(body), { mode: 0o600 });
       renameSync(temporary, target);
     } catch {

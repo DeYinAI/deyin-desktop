@@ -37,6 +37,9 @@ export const emptyStateData = (): StateData => ({
   cursors: {},
 });
 
+/** The most messages kept besides those a live ticket or thread refers to. */
+export const MAX_TRIGGERS = 5000;
+
 const RETENTION_MS = { triggers: 30 * 86_400_000, receipts: 14 * 86_400_000, notices: 7 * 86_400_000 };
 
 export class State {
@@ -157,6 +160,15 @@ export class State {
       this.triggers.delete(trigger.id);
       this.dispositions.delete(trigger.id);
       removed++;
+    }
+    // However busy the repository, the history has a size: the oldest messages nothing live refers to go first.
+    if (this.triggers.size > MAX_TRIGGERS) {
+      const droppable = [...this.triggers.values()].filter((trigger) => !keep.has(trigger.id)).sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+      for (const trigger of droppable.slice(0, this.triggers.size - MAX_TRIGGERS)) {
+        this.triggers.delete(trigger.id);
+        this.dispositions.delete(trigger.id);
+        removed++;
+      }
     }
     const receiptCutoff = cutoff(RETENTION_MS.receipts);
     for (const receipt of [...this.receipts.values()]) {

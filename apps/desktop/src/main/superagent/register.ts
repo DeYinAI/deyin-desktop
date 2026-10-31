@@ -52,7 +52,7 @@ export function registerSuperagent(options: { dir: string; deps: AgentRunContext
       fetch: fetchNow,
       logger,
     });
-    void service.start().catch((error: unknown) => logger.warn(`could not start: ${error instanceof Error ? error.message : String(error)}`));
+    void service.start();
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
     logger.warn(`unavailable: ${failure}`);

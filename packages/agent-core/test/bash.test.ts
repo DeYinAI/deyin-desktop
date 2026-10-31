@@ -243,3 +243,17 @@ test("ToolContext.env reaches the shell command, in the foreground and in the ba
     delete process.env.DEYIN_TEST_TOKEN;
   }
 });
+
+test("a null in ToolContext.env removes the variable from the command, and a later value in the same map sets it", { skip: !isPosix }, async () => {
+  process.env.DEYIN_TEST_SECRET = "host-secret";
+  process.env.DEYIN_TEST_KEPT = "kept";
+  try {
+    const removed = await executeShellCommand('printf "%s|%s" "${DEYIN_TEST_SECRET-unset}" "$DEYIN_TEST_KEPT"', process.cwd(), { env: { DEYIN_TEST_SECRET: null } });
+    assert.equal(removed.output, "unset|kept");
+    const replaced = await executeShellCommand('printf "%s" "${DEYIN_TEST_SECRET-unset}"', process.cwd(), { env: { DEYIN_TEST_SECRET: "agent" } });
+    assert.equal(replaced.output, "agent");
+  } finally {
+    delete process.env.DEYIN_TEST_SECRET;
+    delete process.env.DEYIN_TEST_KEPT;
+  }
+});

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { CandidateView, DecisionView, ReceiptView, SuperagentView, TicketView } from "@deyin/superagent/client";
 import { Icon } from "../Icon.js";
 import { EmptyState, FormSection, Row, RowList, Tag } from "../settings/controls.js";
+import { useConfirm } from "../ConfirmDialog.js";
 import { needsPerson, ticketLabel, timeAgo } from "./model.js";
 import type { SuperagentController } from "./useSuperagent.js";
 
@@ -18,7 +19,12 @@ function LinkButton({ url, label }: { url: string; label: string }) {
 }
 
 function TicketRow({ ticket, now, controller }: { ticket: TicketView; now: number; controller: SuperagentController }) {
+  const { confirm } = useConfirm();
   const state = ticketLabel(ticket.state);
+  const stop = async () => {
+    const ok = await confirm({ message: `Stop "${ticket.title}"? Its worker is interrupted. You can retry the ticket later.`, destructive: true });
+    if (ok) await controller.act(() => window.deyin.superagent!.stopTicket(ticket.id));
+  };
   const latest = ticket.assignments[0];
   const summary = [
     `requested by @${ticket.requestedBy}`,
@@ -47,7 +53,7 @@ function TicketRow({ ticket, now, controller }: { ticket: TicketView; now: numbe
               </button>
             )}
             {ticket.canStop && (
-              <button type="button" className="btn btn--ghost btn--small" disabled={controller.busy} onClick={() => void controller.act(() => window.deyin.superagent!.stopTicket(ticket.id))}>
+              <button type="button" className="btn btn--ghost btn--small" disabled={controller.busy} onClick={() => void stop()}>
                 Stop
               </button>
             )}
