@@ -3,10 +3,14 @@ import { test } from "node:test";
 import { defaultSettings, type SuperagentStatus } from "@deyin/superagent/client";
 import {
   accountsText,
+  admissionOptions,
   admissionValue,
   blankRule,
+  changedAdvancedCells,
   commandsText,
   githubPolicy,
+  HEADLINE_CELL,
+  modelOptions,
   modelValue,
   needsPerson,
   newRuleId,
@@ -14,12 +18,15 @@ import {
   parseAccounts,
   parseCommands,
   parseModelValue,
+  runStateOf,
+  runStateOptions,
   sameEditable,
   ticketLabel,
   timeAgo,
   withAdmission,
   withGithubPolicy,
   withRule,
+  withRunState,
 } from "../src/components/superagent/model.js";
 
 const status = (patch: Partial<SuperagentStatus> = {}): SuperagentStatus => ({
@@ -124,4 +131,83 @@ test("relative times read naturally", () => {
   assert.equal(timeAgo("2026-01-02T09:00:00Z", now), "3 h ago");
   assert.equal(timeAgo("2025-12-30T12:00:00Z", now), "3 d ago");
   assert.equal(timeAgo("nonsense", now), "unknown");
+});
+
+test("the header's one control maps to the two switches and back", () => {
+  const settings = defaultSettings();
+  assert.equal(runStateOf({ enabled: false, paused: false }), "off");
+  assert.equal(runStateOf({ enabled: true, paused: false }), "on");
+  assert.equal(runStateOf({ enabled: true, paused: true }), "paused");
+  // A stored pause under a disabled Superagent reads as Off, not Paused.
+  assert.equal(runStateOf({ enabled: false, paused: true }), "off");
+
+  for (const state of ["on", "paused", "off"] as const) {
+    assert.equal(runStateOf(withRunState(settings, state)), state, `round trip: ${state}`);
+  }
+  // Pausing needs it enabled; switching it on or off leaves no stale pause behind.
+  assert.deepEqual(pick(withRunState({ ...settings, enabled: false, paused: false }, "paused")), { enabled: true, paused: true });
+  assert.deepEqual(pick(withRunState({ ...settings, enabled: true, paused: true }, "on")), { enabled: true, paused: false });
+  assert.deepEqual(pick(withRunState({ ...settings, enabled: true, paused: true }, "off")), { enabled: false, paused: false });
+  // Nothing but the two switches changes, so the form is not made dirty by the header.
+  assert.equal(sameEditable(settings, withRunState(settings, "paused")), true);
+});
+
+const pick = (s: { enabled: boolean; paused: boolean }) => ({ enabled: s.enabled, paused: s.paused });
+
+test("the headline admission cell is the one that offers all three choices", () => {
+  assert.equal(HEADLINE_CELL, "unlistedAddressed");
+  assert.equal(admissionValue(defaultSettings(), "issues", HEADLINE_CELL), "ignore", "strangers who mention the agent are ignored by default");
+});
+
+test("cells that only Advanced policy shows are counted when they leave their default", () => {
+  const settings = defaultSettings();
+  assert.deepEqual(changedAdvancedCells(settings), [], "a default policy has nothing hidden");
+
+  // The headline cell is on the page itself, so changing it is not 'hidden'.
+  const headline = withAdmission(settings, "issues", HEADLINE_CELL, "explicit");
+  assert.deepEqual(changedAdvancedCells(headline), []);
+
+  // Strangers' unaddressed messages let through is hidden state and must be reported, with where it is.
+  const hidden = withAdmission(settings, "comments", "unlistedUnaddressed", "inferred");
+  assert.deepEqual(changedAdvancedCells(hidden), [{ row: "comments", cell: "unlistedUnaddressed" }]);
+
+  // Ignoring allowed accounts' unaddressed messages is also a change from the default (inferred).
+  const quieter = withAdmission(hidden, "pulls", "listedUnaddressed", "ignore");
+  assert.equal(changedAdvancedCells(quieter).length, 2);
+
+  // Setting a cell back to its default stops counting it.
+  assert.deepEqual(changedAdvancedCells(withAdmission(hidden, "comments", "unlistedUnaddressed", "ignore")), []);
+});
+
+test("the model menu offers the app's default and the provider's chat models only", () => {
+  const models = [{ id: "chat-a", name: "A" }, { id: "draw", name: "D", kind: "image" as const }, { id: "film", name: "F", kind: "video" as const }];
+  const options = modelOptions(models, "acme", null);
+  assert.deepEqual(options.map((o) => o.id), ["", "acme::chat-a"], "image and video models cannot answer messages");
+  assert.equal(options[0]!.label, "The app's default model");
+  assert.equal(options[1]!.label, "chat-a");
+});
+
+test("a stored model the provider no longer offers stays listed, so opening the page does not change it", () => {
+  const options = modelOptions([{ id: "chat-a", name: "A" }], "acme", { providerId: "old", model: "retired" });
+  assert.deepEqual(options.map((o) => o.id), ["", "old::retired", "acme::chat-a"]);
+  assert.equal(options[1]!.label, "old · retired");
+  // Nothing extra when the stored model is among the provider's.
+  assert.equal(modelOptions([{ id: "chat-a", name: "A" }], "acme", { providerId: "acme", model: "chat-a" }).length, 2);
+});
+
+test("each admission cell offers the choices it allows, in plain words", () => {
+  for (const cell of ["listedUnaddressed", "unlistedAddressed", "unlistedUnaddressed"] as const) {
+    const options = admissionOptions(cell);
+    assert.ok(options.length >= 2, `${cell} has a real choice`);
+    assert.ok(options.every((o) => o.label !== o.id), `${cell}: no raw value is shown to a person`);
+  }
+  assert.deepEqual(admissionOptions(HEADLINE_CELL).map((o) => o.label), ["Treat as a request", "Let the agent decide", "Ignore"]);
+});
+
+test("until setup is done only Off can be chosen, and the others say why", () => {
+  const blocked = runStateOptions(false);
+  assert.deepEqual(blocked.map((o) => [o.id, o.label, o.disabled === true]), [["on", "On", true], ["paused", "Paused", true], ["off", "Off", false]]);
+  assert.ok(blocked.filter((o) => o.disabled).every((o) => o.hint === "Finish setup first"));
+  const ready = runStateOptions(true);
+  assert.ok(ready.every((o) => !o.disabled && o.hint === undefined), "nothing is held back once Superagent can run");
 });

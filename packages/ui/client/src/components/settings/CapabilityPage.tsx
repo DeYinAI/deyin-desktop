@@ -177,7 +177,7 @@ export function CapabilityPage({
           {filtered.map((item) => (
             <Row
               key={item.id}
-              icon={<IconTile name={item.name} icon={copy.icon} />}
+              icon={<IconTile icon={copy.icon} />}
               title={item.name}
               tags={item.version ? <Tag tone="muted">v{item.version}</Tag> : undefined}
               description={item.description || item.path}

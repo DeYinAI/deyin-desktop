@@ -10,6 +10,13 @@ interface NavRailProps {
   currentMode?: ChatMode;
   onSwitchMode?: (mode: ChatMode) => void;
   onSelectView?: (view: "workspace" | "bot") => void;
+  /**
+   * Hosted chat-only web has no local shell or git, so Bot Mode's pipelines and
+   * external agent CLIs cannot run there. Off on that build only; the rail then
+   * shows no Workspace/Bot switch at all, since the pair exists to move between
+   * the two.
+   */
+  botModeAvailable?: boolean;
   onNewTask: () => void;
   onOpenPlugins: () => void;
   onOpenSearch: () => void;
@@ -59,7 +66,7 @@ export function NavRail(props: NavRailProps) {
         }]
       : []),
     { icon: "palette", label: t("nav.customize"), onClick: props.onOpenCustomize },
-    ...(props.onSelectView || props.onSwitchMode
+    ...(props.botModeAvailable !== false && (props.onSelectView || props.onSwitchMode)
       ? [
           {
             icon: "layout" as IconName,

@@ -86,6 +86,12 @@ test("commands: discovery, built-ins, $ARGUMENTS expansion and /matching", async
     const deploy = found.find((c) => c.name === "deploy-prod");
     assert.ok(deploy);
     assert.ok(found.some((c) => c.name === "commit" && c.source === "built-in"));
+    // Bot Mode's entry points: the guided pipeline wizard and one-shot delegation.
+    for (const name of ["pipeline", "delegate", "review-pr", "run-tests"]) {
+      assert.ok(found.some((c) => c.name === name && c.source === "built-in"), `missing /${name}`);
+    }
+    const pipeline = found.find((c) => c.name === "pipeline")!;
+    assert.ok(pipeline.body.includes("build-bot-workflow"));
     // Authoring workflows ship as built-in skills, not commands.
     assert.ok(!found.some((c) => c.name === "create-skill"));
 

@@ -429,9 +429,7 @@ export function PluginsView(props: Props) {
                       key={plugin.name}
                       icon={
                         <IconTile
-                          name={plugin.interface?.displayName ?? plugin.name}
                           id={[plugin.hostModule, plugin.name]}
-                          color={plugin.interface?.brandColor}
                           size="lg"
                         />
                       }
@@ -491,7 +489,7 @@ export function PluginsView(props: Props) {
                   return (
                     <Card
                       key={server.id}
-                      icon={<IconTile name={server.name} id={[server.name]} icon="plug" size="lg" />}
+                      icon={<IconTile id={[server.name]} icon="plug" size="lg" />}
                       title={server.name}
                       tags={<Tag tone={state.tone}>{state.label}</Tag>}
                       description={
@@ -523,7 +521,7 @@ export function PluginsView(props: Props) {
                 return (
                   <Card
                     key={row.kind}
-                    icon={<IconTile name={row.title} id={`builtin-${row.kind}`} icon={row.icon} size="lg" />}
+                    icon={<IconTile id={`builtin-${row.kind}`} icon={row.icon} size="lg" />}
                     title={row.title}
                     description={
                       count ? `${row.description} ${count.enabled} of ${count.total} enabled.` : row.description
@@ -544,9 +542,7 @@ export function PluginsView(props: Props) {
                     key={entry.repo}
                     icon={
                       <IconTile
-                        name={entry.interface?.displayName ?? entry.name}
                         id={entry.name}
-                        color={entry.interface?.brandColor}
                         size="lg"
                       />
                     }

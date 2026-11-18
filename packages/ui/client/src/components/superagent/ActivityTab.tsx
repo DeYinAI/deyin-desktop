@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CandidateView, DecisionView, ReceiptView, SuperagentView, TicketView } from "@deyin/superagent/client";
 import { Icon } from "../Icon.js";
 import { EmptyState, FormSection, Row, RowList, Tag } from "../settings/controls.js";
@@ -25,46 +25,27 @@ function TicketRow({ ticket, now, controller }: { ticket: TicketView; now: numbe
     const ok = await confirm({ message: `Stop "${ticket.title}"? Its worker is interrupted. You can retry the ticket later.`, destructive: true });
     if (ok) await controller.act(() => window.deyin.superagent!.stopTicket(ticket.id));
   };
+  // A ticket that needs a person is open with its question in view, also when it starts needing one while the page is open. It
+  // never closes itself; the rest are one line each.
+  const attention = needsPerson(ticket.state);
+  const [open, setOpen] = useState(attention);
+  useEffect(() => {
+    if (attention) setOpen(true);
+  }, [attention]);
   const latest = ticket.assignments[0];
-  const summary = [
-    `requested by @${ticket.requestedBy}`,
-    ticket.prNumber ? `PR #${ticket.prNumber}` : undefined,
-    `updated ${timeAgo(ticket.updatedAt, now)}`,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const summary = [`requested by @${ticket.requestedBy}`, ticket.strength, ticket.prNumber ? `PR #${ticket.prNumber}` : undefined].filter(Boolean).join(" · ");
   return (
-    <div className="superagent__ticket">
-      <Row
-        title={ticket.title}
-        tags={
-          <>
-            <Tag tone={state.tone}>{state.label}</Tag>
-            <Tag tone="muted">{ticket.strength}</Tag>
-          </>
-        }
-        description={summary}
-        actions={
-          <>
-            {ticket.url && <LinkButton url={ticket.url} label="Open on GitHub" />}
-            {ticket.canRetry && (
-              <button type="button" className="btn btn--ghost btn--small" disabled={controller.busy} onClick={() => void controller.act(() => window.deyin.superagent!.retryTicket(ticket.id))}>
-                Retry
-              </button>
-            )}
-            {ticket.canStop && (
-              <button type="button" className="btn btn--ghost btn--small" disabled={controller.busy} onClick={() => void stop()}>
-                Stop
-              </button>
-            )}
-          </>
-        }
-      />
-      {(ticket.attention || ticket.delivery) && (
-        <div className="superagent__note">{ticket.attention ? `Question for a person: ${ticket.attention}` : `The reply could not be posted: ${ticket.delivery}`}</div>
-      )}
-      <details className="superagent__details">
-        <summary>Details</summary>
+    <details className="superagent__ticket" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="superagent__ticket-head">
+        <span className="superagent__ticket-title">{ticket.title}</span>
+        <Tag tone={state.tone}>{state.label}</Tag>
+        <span className="superagent__ticket-time">{timeAgo(ticket.updatedAt, now)}</span>
+      </summary>
+      <div className="superagent__ticket-body">
+        <div className="superagent__ticket-summary">{summary}</div>
+        {(ticket.attention || ticket.delivery) && (
+          <div className="superagent__note">{ticket.attention ? `Question for a person: ${ticket.attention}` : `The reply could not be posted: ${ticket.delivery}`}</div>
+        )}
         <dl className="superagent__facts">
           <dt>Branch</dt>
           <dd className="input-mono">{ticket.branch || "not started"}</dd>
@@ -110,8 +91,23 @@ function TicketRow({ ticket, now, controller }: { ticket: TicketView; now: numbe
             ))}
           </ul>
         )}
-      </details>
-    </div>
+        {(ticket.url || ticket.canRetry || ticket.canStop) && (
+          <div className="superagent__ticket-actions">
+            {ticket.url && <LinkButton url={ticket.url} label="Open on GitHub" />}
+            {ticket.canRetry && (
+              <button type="button" className="btn btn--ghost btn--small" disabled={controller.busy} onClick={() => void controller.act(() => window.deyin.superagent!.retryTicket(ticket.id))}>
+                Retry
+              </button>
+            )}
+            {ticket.canStop && (
+              <button type="button" className="btn btn--ghost btn--small" disabled={controller.busy} onClick={() => void stop()}>
+                Stop
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -170,12 +166,19 @@ function ReceiptRow({ receipt, now }: { receipt: ReceiptView; now: number }) {
   );
 }
 
-/** Tickets first, those that need a person at the top; then what is waiting, what was decided, and what was said. */
+/** Tickets first, those that need a person at the top. Everything the agent weighed and said sits in one log underneath. */
 export function ActivityTab({ view, controller, now }: { view: SuperagentView; controller: SuperagentController; now: number }) {
   const tickets = useMemo(
     () => [...view.tickets].sort((a, b) => Number(needsPerson(b.state)) - Number(needsPerson(a.state)) || b.updatedAt.localeCompare(a.updatedAt)),
     [view.tickets],
   );
+  const waiting = view.candidates.length;
+  const logged = waiting + view.decisions.length + view.receipts.length;
+  // With no ticket to look at, the log is the page: the default mode only observes, and what it saw is shown here.
+  const [logOpen, setLogOpen] = useState(tickets.length === 0 && logged > 0);
+  const counts = [waiting > 0 ? `${waiting} waiting` : undefined, `${view.decisions.length} ${view.decisions.length === 1 ? "decision" : "decisions"}`, view.receipts.length > 0 ? `${view.receipts.length} ${view.receipts.length === 1 ? "reply" : "replies"}` : undefined]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <>
       <FormSection title="Tickets" note={tickets.length > 0 ? `${tickets.length}` : undefined}>
@@ -190,37 +193,44 @@ export function ActivityTab({ view, controller, now }: { view: SuperagentView; c
         )}
       </FormSection>
 
-      {view.candidates.length > 0 && (
-        <FormSection title="Waiting for assessment" note={`${view.candidates.length}`}>
-          <RowList>
-            {view.candidates.map((candidate) => (
-              <CandidateRow key={candidate.triggerId} candidate={candidate} now={now} />
-            ))}
-          </RowList>
-        </FormSection>
-      )}
+      <details className="superagent__log" open={logOpen} onToggle={(event) => setLogOpen(event.currentTarget.open)}>
+        <summary className="superagent__log-head">
+          <span>Activity log</span>
+          <span className="superagent__log-counts">{counts}</span>
+        </summary>
 
-      <FormSection title="Recent decisions" note={view.status.mode === "observe" ? "Observing: inferred requests are recorded, not acted on" : undefined}>
-        {view.decisions.length === 0 ? (
-          <EmptyState title="Nothing decided yet" hint="Messages from allowed accounts on the watched repository show up here once they are assessed." />
-        ) : (
-          <RowList>
-            {view.decisions.map((decision) => (
-              <DecisionRow key={decision.id} decision={decision} now={now} controller={controller} />
-            ))}
-          </RowList>
+        {waiting > 0 && (
+          <FormSection title="Waiting for assessment" note={`${waiting}`}>
+            <RowList>
+              {view.candidates.map((candidate) => (
+                <CandidateRow key={candidate.triggerId} candidate={candidate} now={now} />
+              ))}
+            </RowList>
+          </FormSection>
         )}
-      </FormSection>
 
-      {view.receipts.length > 0 && (
-        <FormSection title="Replies on GitHub">
-          <RowList>
-            {view.receipts.map((receipt) => (
-              <ReceiptRow key={receipt.id} receipt={receipt} now={now} />
-            ))}
-          </RowList>
+        <FormSection title="Recent decisions" note={view.status.mode === "observe" ? "Observing: inferred requests are recorded, not acted on" : undefined}>
+          {view.decisions.length === 0 ? (
+            <EmptyState title="Nothing decided yet" hint="Messages from allowed accounts on the watched repository show up here once they are assessed." />
+          ) : (
+            <RowList>
+              {view.decisions.map((decision) => (
+                <DecisionRow key={decision.id} decision={decision} now={now} controller={controller} />
+              ))}
+            </RowList>
+          )}
         </FormSection>
-      )}
+
+        {view.receipts.length > 0 && (
+          <FormSection title="Replies on GitHub">
+            <RowList>
+              {view.receipts.map((receipt) => (
+                <ReceiptRow key={receipt.id} receipt={receipt} now={now} />
+              ))}
+            </RowList>
+          </FormSection>
+        )}
+      </details>
     </>
   );
 }

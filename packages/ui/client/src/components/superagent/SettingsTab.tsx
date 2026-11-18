@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ModelInfo } from "@deyin/contract";
-import { ADMISSION_OPTIONS, SETTINGS_LIMITS, type Settings, type SuperagentView } from "@deyin/superagent/client";
+import { SETTINGS_LIMITS, type Settings, type SuperagentView } from "@deyin/superagent/client";
 import { useConfirm } from "../ConfirmDialog.js";
+import { MenuSelect, type MenuSelectOption } from "../MenuSelect.js";
 import { Callout } from "../ui/index.js";
 import { Field, FormSection, SettingCard, Toggle } from "../settings/controls.js";
 import { AccountSection } from "./AccountSection.js";
 import {
   accountsText,
+  admissionOptions,
   admissionValue,
   blankRule,
+  changedAdvancedCells,
   commandsText,
   githubPolicy,
+  HEADLINE_CELL,
+  modelOptions,
   modelValue,
   parseAccounts,
   parseCommands,
@@ -36,26 +41,21 @@ const CELLS: { id: AdmissionCell; label: string; hint: string }[] = [
   { id: "unlistedUnaddressed", label: "Anyone else, not addressed to the agent", hint: "Any other message." },
 ];
 
-const ADMISSION_LABELS: Record<string, string> = {
-  explicit: "Treat as a request",
-  inferred: "Let the agent decide",
-  ignore: "Ignore",
-};
+const EVAL_MODES: MenuSelectOption<Settings["eval"]["mode"]>[] = [
+  { id: "off", label: "Off" },
+  { id: "observe", label: "Observe" },
+  { id: "auto", label: "Auto" },
+];
 
-function ModelSelect(props: { value: Settings["eval"]["model"]; models: ModelInfo[]; providerId: string; onChange: (model: Settings["eval"]["model"]) => void }) {
-  const chat = props.models.filter((model) => model.kind !== "image" && model.kind !== "video");
-  const current = modelValue(props.value);
-  const options = chat.map((model) => ({ value: `${props.providerId}::${model.id}`, label: model.id }));
-  if (current && !options.some((option) => option.value === current)) options.unshift({ value: current, label: current.replace("::", " · ") });
+function ModelSelect(props: { label: string; value: Settings["eval"]["model"]; models: ModelInfo[]; providerId: string; onChange: (model: Settings["eval"]["model"]) => void }) {
   return (
-    <select className="select" value={current} onChange={(event) => props.onChange(parseModelValue(event.target.value))}>
-      <option value="">The app's default model</option>
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+    <MenuSelect
+      align="end"
+      label={props.label}
+      value={modelValue(props.value)}
+      options={modelOptions(props.models, props.providerId, props.value)}
+      onChange={(value) => props.onChange(parseModelValue(value))}
+    />
   );
 }
 
@@ -155,6 +155,10 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
   const api = window.deyin.superagent;
   const edit = (change: (current: Settings) => Settings) => setDraft((current) => change(current));
   const github = githubPolicy(draft);
+  // Advanced policy opens when something in it is not at its default, so it never hides a policy that lets more through.
+  // It is only decided once: it must not close under the cursor when a cell is set back.
+  const changed = changedAdvancedCells(draft);
+  const [advancedOpen, setAdvancedOpen] = useState(() => changedAdvancedCells(view.settings).length > 0);
   const save = async () => {
     if (!api) return;
     const saved = await controller.act(() => api.saveSettings({ ...draft, enabled: view.settings.enabled, paused: view.settings.paused }, base.revision));
@@ -211,33 +215,47 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
         </Field>
       </FormSection>
 
-      <FormSection title="What counts as a request" note="By where the message was written and who wrote it">
-        <div className="superagent__admission">
-          <span />
-          {ROWS.map((row) => (
-            <strong key={row.id}>{row.label}</strong>
-          ))}
-          {CELLS.map((cell) => (
-            <div key={cell.id} className="superagent__admission-row">
-              <div title={cell.hint}>{cell.label}</div>
-              {ROWS.map((row) => (
-                <select
-                  key={row.id}
-                  className="select"
-                  aria-label={`${cell.label}, in ${row.label}`}
-                  value={admissionValue(draft, row.id, cell.id)}
-                  onChange={(event) => edit((s) => withAdmission(s, row.id, cell.id, event.target.value))}
-                >
-                  {ADMISSION_OPTIONS[cell.id].map((option) => (
-                    <option key={option} value={option}>
-                      {ADMISSION_LABELS[option] ?? option}
-                    </option>
-                  ))}
-                </select>
-              ))}
-            </div>
-          ))}
-        </div>
+      <FormSection title="What counts as a request" note="When someone who is not on the allowed list mentions the agent">
+        {ROWS.map((row) => (
+          <SettingCard key={row.id} title={row.label}>
+            <MenuSelect
+              align="end"
+              label={`Mentions from anyone else, in ${row.label}`}
+              value={admissionValue(draft, row.id, HEADLINE_CELL)}
+              options={admissionOptions(HEADLINE_CELL)}
+              onChange={(value) => edit((s) => withAdmission(s, row.id, HEADLINE_CELL, value))}
+            />
+          </SettingCard>
+        ))}
+        <p className="superagent__policy-hint">Ignore is the safe choice: only allowed accounts can ask. Treat as a request lets anyone who can comment start work.</p>
+
+        <details className="superagent__advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+          <summary>
+            Advanced policy
+            {changed.length > 0 && <span className="superagent__advanced-count">{changed.length} changed from default</span>}
+          </summary>
+          <div className="superagent__admission">
+            <span />
+            {ROWS.map((row) => (
+              <strong key={row.id}>{row.label}</strong>
+            ))}
+            {CELLS.map((cell) => (
+              <div key={cell.id} className="superagent__admission-row">
+                <div title={cell.hint}>{cell.label}</div>
+                {ROWS.map((row) => (
+                  <MenuSelect
+                    key={row.id}
+                    block
+                    label={`${cell.label}, in ${row.label}`}
+                    value={admissionValue(draft, row.id, cell.id)}
+                    options={admissionOptions(cell.id)}
+                    onChange={(value) => edit((s) => withAdmission(s, row.id, cell.id, value))}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </details>
       </FormSection>
 
       <FormSection
@@ -270,14 +288,10 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
 
       <FormSection title="Assessment" note="How requests are judged">
         <SettingCard title="Mode" description="Off acts only on requests that address the agent directly (an @mention from an allowed account). Observe also reads the other messages it can see and records what it would take on, without acting. Auto acts on those too, within the rules.">
-          <select className="select" value={draft.eval.mode} onChange={(event) => edit((s) => ({ ...s, eval: { ...s.eval, mode: event.target.value as Settings["eval"]["mode"] } }))}>
-            <option value="off">Off</option>
-            <option value="observe">Observe</option>
-            <option value="auto">Auto</option>
-          </select>
+          <MenuSelect align="end" label="Assessment mode" value={draft.eval.mode} options={EVAL_MODES} onChange={(mode) => edit((s) => ({ ...s, eval: { ...s.eval, mode } }))} />
         </SettingCard>
         <SettingCard title="Model" description="Used by the agent that reads and routes messages.">
-          <ModelSelect value={draft.eval.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, eval: { ...s.eval, model } }))} />
+          <ModelSelect label="Assessment model" value={draft.eval.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, eval: { ...s.eval, model } }))} />
         </SettingCard>
         <SettingCard title="Time to decide" description={`Seconds before an assessment is dropped, ${SETTINGS_LIMITS.evalTimeoutSeconds.min} to ${SETTINGS_LIMITS.evalTimeoutSeconds.max}.`}>
           <NumberField min={SETTINGS_LIMITS.evalTimeoutSeconds.min} max={SETTINGS_LIMITS.evalTimeoutSeconds.max} value={draft.eval.timeoutSeconds} onChange={(timeoutSeconds) => edit((s) => ({ ...s, eval: { ...s.eval, timeoutSeconds } }))} />
@@ -286,7 +300,7 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
 
       <FormSection title="Workers" note="Each ticket runs in its own git worktree">
         <SettingCard title="Model" description="Used by the agents that write the code.">
-          <ModelSelect value={draft.executor.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, executor: { ...s.executor, model } }))} />
+          <ModelSelect label="Worker model" value={draft.executor.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, executor: { ...s.executor, model } }))} />
         </SettingCard>
         <SettingCard title="Parallel workers" description={`Tickets worked on at once, ${SETTINGS_LIMITS.maxWorkers.min} to ${SETTINGS_LIMITS.maxWorkers.max}.`}>
           <NumberField min={SETTINGS_LIMITS.maxWorkers.min} max={SETTINGS_LIMITS.maxWorkers.max} value={draft.executor.maxWorkers} onChange={(maxWorkers) => edit((s) => ({ ...s, executor: { ...s.executor, maxWorkers } }))} />

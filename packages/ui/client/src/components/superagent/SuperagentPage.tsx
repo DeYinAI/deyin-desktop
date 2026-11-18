@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
 import type { ModelInfo } from "@deyin/contract";
 import { Icon } from "../Icon.js";
+import { MenuSelect } from "../MenuSelect.js";
 import { Callout } from "../ui/index.js";
-import { EmptyState, Segmented, Tag, Toggle } from "../settings/controls.js";
+import { EmptyState, Segmented } from "../settings/controls.js";
 import { ActivityTab } from "./ActivityTab.js";
-import { overallState } from "./model.js";
+import { overallState, runStateOf, runStateOptions, withRunState, type RunState } from "./model.js";
 import { SettingsTab } from "./SettingsTab.js";
 import { useSuperagent } from "./useSuperagent.js";
 
 type Tab = "activity" | "settings";
+
 
 /** A clock for relative times that moves while the page is open. */
 function useNow(periodMs: number): number {
@@ -53,7 +55,12 @@ export function SuperagentPage(props: { models: ModelInfo[]; selectedProviderId:
   }
 
   const state = overallState(view.status);
-  const flip = (key: "enabled" | "paused", value: boolean) => void controller.act(() => api.saveSettings({ ...view.settings, [key]: value }, view.settingsRevision));
+  const runState = runStateOf(view.settings);
+  const setRunState = (next: RunState) => void controller.act(() => api.saveSettings(withRunState(view.settings, next), view.settingsRevision));
+  // Until the setup is complete it cannot be switched on; turning it off is always possible.
+  const canRun = view.status.ready || view.settings.enabled;
+  // The mode (Active, Observing, Mentions only) is only news while it is running; Off, Paused and Needs setup are said by the control and the callouts.
+  const mode = state.tone === "ok" ? state.label : null;
   const working = view.status.workers.running + (view.status.orchestrator.running ? 1 : 0);
 
   return (
@@ -63,23 +70,23 @@ export function SuperagentPage(props: { models: ModelInfo[]; selectedProviderId:
           <Icon name="arrowLeft" size={14} />
         </button>
         <div className="superagent__head-text">
-          <h1 className="superagent__title">
-            Superagent <Tag tone={state.tone}>{state.label}</Tag>
-          </h1>
+          <h1 className="superagent__title">Superagent</h1>
           <div className="superagent__meta">
             {view.status.repository ? `Watching ${view.status.repository}` : "No repository yet"}
             {view.status.account ? ` as @${view.status.account.login}` : ""}
+            {mode ? ` · ${mode}` : ""}
             {working > 0 ? ` · ${working} working` : ""}
           </div>
         </div>
-        <label className="superagent__switch">
-          <span>Pause</span>
-          <Toggle checked={view.settings.paused} disabled={controller.busy || !view.settings.enabled} onChange={(value) => flip("paused", value)} />
-        </label>
-        <label className="superagent__switch">
-          <span>On</span>
-          <Toggle checked={view.settings.enabled} disabled={controller.busy || (!view.status.ready && !view.settings.enabled)} onChange={(value) => flip("enabled", value)} />
-        </label>
+        <MenuSelect
+          label="Superagent state"
+          className={`superagent__state superagent__state--${runState}`}
+          align="end"
+          value={runState}
+          options={runStateOptions(canRun)}
+          disabled={controller.busy}
+          onChange={setRunState}
+        />
       </header>
 
       <div className="superagent__tabs">

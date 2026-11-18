@@ -141,19 +141,63 @@ Non-local targets (wsl) need distro and use the Openference provider.
   {
     name: "build-bot-workflow",
     description:
-      "Design, build, edit, and validate multi-agent orchestration bot workflows for Deyin Desktop directly via code and configuration files (.deyin/workflows/*.json). Use whenever the user asks to create, build, generate, configure, or modify an external bot or multi-agent workflow pipeline (e.g. chaining Claude, Codex, ZCode, OpenCode, or Cursor with specific models). Operates purely through direct file manipulation and code generation—never uses computer-use or browser automation.",
+      "Guide the user step by step through building, editing, and running a multi-agent bot pipeline (Claude Code, Codex, ZCode, OpenCode, Cursor chained as stages) stored in .deyin/workflows/*.json. Use whenever the user asks to create, build, configure, edit, or run an external bot or multi-agent workflow pipeline, or types /pipeline. Interviews with ask_question, validates with bot_workflow_validate, and never uses computer-use or browser automation.",
     content: `
 # Build Bot Workflow
 
-Create multi-agent orchestration pipelines for Deyin Desktop by writing JSON definition files directly into \`.deyin/workflows/<slug>.json\`.
+Take the user from a one-line goal to a validated, runnable multi-agent pipeline, asking one small question at a time. A pipeline is a JSON file at \`<workspaceRoot>/.deyin/workflows/<slug>.json\`; writing it registers it in Bot Mode (Bot Flow tab) automatically.
 
-**RULE**: Never use computer use or browser automation. Workflows are file-first: writing the JSON file automatically registers it in the Deyin UI, Telemetry HUD, and execution engine.
+## Rules
+- Never use computer use or browser automation.
+- Every question goes through \`ask_question\`: plain-text questions are not shown to the user. Ask at most 2 questions per call, give every option a one-sentence description, mark one option \`recommended\`, and remember the user can type their own answer under "Other".
+- Do not ask what you can find out. Probe first (step 1), and only offer agents that are installed.
+- Do not write the file until the draft passes \`bot_workflow_validate\`.
+- Keep your own commentary to a sentence or two between questions. The questions are the interface.
 
-## 1. File Location
-All workflows live in \`<workspaceRoot>/.deyin/workflows/<workflow-slug>.json\`. Ensure the directory exists with \`mkdir -p .deyin/workflows\`.
+## Interview
 
-## 2. Schema Specification
-Workflow files must conform to the BotWorkflowDefinition schema:
+### 1. Look around
+Call \`list_external_bots\`. Note each agent's \`id\`, whether it is \`installed\`, and its \`availableModels\`. If no agent is installed, say so, point to Settings, and stop.
+
+### 2. Goal (skip when the user already said it)
+If the text after \`/pipeline\` states a goal, use it. Otherwise ask one question, "What should this pipeline do?", with example options such as "Build a feature end to end", "Fix a bug and verify it" and "Review the current changes". The user types their own goal under "Other".
+
+### 3. Shape and lead agent (one call, two questions)
+- Shape: "Plan, build, review" (3 stages, recommended for features), "Build, then review" (2 stages), "One agent in an isolated worktree" (1 stage).
+- Lead agent: the installed agents. Recommend by fit: claude for planning and refactors, codex for review and tests, zcode for fast multi-file edits, opencode for validation or local models, cursor for quick lint fixes.
+
+### 4. Reviewer (only when the shape includes review)
+One question, "Who should review?": installed agents other than the lead first (a different model catches different mistakes), then "Same agent as the lead".
+
+### 5. Draft
+Build the definition in your head from the answers. Do not show raw JSON to the user yet.
+- \`id\`: kebab-case slug of the name. \`name\`: short Title Case. \`description\`: one sentence describing the hand-offs.
+- Stage \`id\`s are short kebab-case words (\`plan\`, \`build\`, \`review\`) and unique within the pipeline.
+- First stage: write the user's goal into \`userPromptTemplate\` as plain text. The Run button and the scheduler pass no inputs, so \`{{inputs.goal}}\` resolves to an empty string there. Use \`{{inputs.goal}}\` only if the user wants a reusable pipeline that is always started from chat.
+- Later stages receive the previous stage with \`{{stage.<previous-id>.output}}\`; a review stage should also get \`{{stage.<build-id>.diff}}\`.
+- Set \`worktree.isolate\` to true for any stage that edits code. Use the default watchdog (\`timeoutMs\` 900000, \`stallThresholdMs\` 120000, \`onStallAction\` "alert-user").
+- Set \`modelOverride\` only when the user asked for a specific model and it appears in that agent's \`availableModels\`.
+- Leave \`schedule\` off (\`"enabled": false\`) unless the user asked for a routine.
+- \`createdAt\` and \`updatedAt\` are the current time in milliseconds.
+
+### 6. Validate
+Call \`bot_workflow_validate\` with \`workflow\` set to the draft. Fix every error it reports and call it again until it returns \`ok\`. Mention a warning to the user only when it changes what they should expect.
+
+### 7. Write
+\`mkdir -p .deyin/workflows\`, then write the JSON to \`.deyin/workflows/<id>.json\` with the \`write\` tool. Confirm it registered by calling \`bot_workflow_validate\` with \`path\` set to that file. Then give the user a short summary: the stages in order, who runs each one, and what is handed between them.
+
+### 8. Hand off
+Ask one question: "Pipeline <name> is ready. What next?" with options "Run it now" (recommended), "Save for later" and "Edit a stage".
+- Run it now: call \`bot_workflow_run\` with \`workflow_id\`. Tell the user it is running; progress shows in the strip above the composer and in the Bot Flow tab. Do not poll it.
+- Save for later: say where it is saved and stop.
+- Edit a stage: ask which stage and what to change (a different agent, a different model, or a rewritten prompt) in one call, apply the change, validate, write, and return to this step.
+
+## Editing an existing pipeline
+When the user wants to change a pipeline that already exists, \`read\` its file, apply the change, then continue from step 6. Never rewrite fields the user did not ask about.
+
+## Reference
+
+### Schema
 \`\`\`json
 {
   "id": "kebab-case-unique-id",
@@ -161,54 +205,33 @@ Workflow files must conform to the BotWorkflowDefinition schema:
   "description": "Short explanation of the pipeline's purpose and agent handoffs.",
   "createdAt": 1758547200000,
   "updatedAt": 1758547200000,
-  "schedule": {
-    "enabled": false,
-    "cronExpression": "0 * * * *",
-    "intervalMinutes": 60
-  },
+  "schedule": { "enabled": false, "cronExpression": "0 * * * *", "intervalMinutes": 60 },
   "stages": [
     {
       "id": "stage-id",
       "name": "Stage Name",
       "agentId": "claude",
-      "modelOverride": "opus-5.0",
-      "systemPrompt": "Role instructions for this stage.",
-      "userPromptTemplate": "Task prompt. Can reference {{inputs.goal}} and prior stage {{stage.<id>.output}}.",
-      "worktree": {
-        "isolate": true,
-        "branchNamePattern": "bot/{{stage.id}}-{{run.id}}"
-      },
-      "watchdog": {
-        "timeoutMs": 900000,
-        "stallThresholdMs": 120000,
-        "onStallAction": "alert-user"
-      },
+      "modelOverride": "optional-model-id",
+      "systemPrompt": "Optional role instructions for this stage.",
+      "userPromptTemplate": "Task prompt. May reference prior stages with {{stage.<id>.output}}.",
+      "worktree": { "isolate": true, "branchNamePattern": "bot/{{stage.id}}-{{run.id}}" },
+      "watchdog": { "timeoutMs": 900000, "stallThresholdMs": 120000, "onStallAction": "alert-user" },
       "outputArtifactPatterns": ["**/*.md", "src/**/*.ts"]
     }
   ]
 }
 \`\`\`
 
-## 3. Supported External Agents & Models
-- **claude** (Claude Code CLI): \`opus-5.0\`, \`claude-4.6-sonnet\`, \`claude-4.5-opus\`, \`claude-3-7-sonnet\`. Ideal for architecture, planning, refactoring.
-- **codex** (OpenAI Codex CLI): \`gpt-5.6-luna\`, \`gpt-5.3-codex\`, \`o3-mini\`, \`gpt-4o\`. Ideal for reviewing specs, adversarial critique, test writing.
-- **zcode** (ZCode / Zed ACP): \`glm-5.3-flash-high\`, \`glm-5.3\`, \`glm-5-turbo\`. Ideal for high-speed implementation and multi-file code editing.
-- **opencode** (OpenCode ACP): \`anthropic/claude-sonnet-4-20250514\`, \`openai/gpt-4o\`, \`local/llama3\`. Ideal for validation, test runners, local models.
-- **cursor** (Cursor CLI): \`composer-2.5-fast\`, \`auto\`. Ideal for fast workspace linting and fixes.
+### Agents
+\`agentId\` is one of the ids \`list_external_bots\` returns: typically \`claude\` (Claude Code CLI), \`codex\` (OpenAI Codex CLI), \`zcode\` (ZCode / Zed ACP), \`opencode\` (OpenCode ACP) and \`cursor\` (Cursor CLI). Take model ids from each agent's \`availableModels\`; never invent one.
 
-## 4. Context Passing Syntax
-- \`{{inputs.<name>}}\` - Input parameters provided at run time (e.g. \`{{inputs.goal}}\`).
-- \`{{stage.<id>.output}}\` - Text output from an upstream stage.
-- \`{{stage.<id>.diff}}\` - Git diff produced by an upstream stage in its isolated worktree.
-- \`{{stage.<id>.branch}}\` - Git branch of an upstream stage.
-- \`{{artifacts}}\` - All captured file artifacts from previous stages.
-- \`{{workspace.root}}\` - Absolute path of workspace.
-
-## 5. Verification
-After writing the file:
-1. Confirm the JSON is valid with \`read\`.
-2. Present a clear summary of the stages and data handoffs to the user.
-3. Inform the user that the pipeline is ready to execute immediately in Deyin Desktop under **Bot Mode > Workflows** or via 1-click Execute in the Telemetry HUD.
+### Context passing
+- \`{{inputs.<name>}}\`: run-time input. Only set when the run is started with \`bot_workflow_run\`'s \`goal\`; empty from the Run button and the scheduler.
+- \`{{stage.<id>.output}}\`: text output of an upstream stage.
+- \`{{stage.<id>.diff}}\`: git diff an upstream stage produced in its isolated worktree.
+- \`{{stage.<id>.branch}}\`: git branch of an upstream stage.
+- \`{{artifacts}}\`: all file artifacts captured from previous stages.
+- \`{{workspace.root}}\`: absolute path of the workspace.
 `,
   },
   {

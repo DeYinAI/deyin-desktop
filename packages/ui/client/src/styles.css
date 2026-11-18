@@ -92,7 +92,17 @@ code {
   --ui-active: color-mix(in srgb, var(--color-text) 12%, transparent);
   --ui-text-2: color-mix(in srgb, var(--color-text) 55%, var(--color-text-muted));
   --ui-elevated: color-mix(in srgb, var(--color-text) 18%, var(--color-bg));
-  --ui-line: color-mix(in srgb, var(--color-text) 16%, transparent);
+  /* Separation is carried by weight, not ink: a hairline marks a boundary, a
+     line marks a control. Matches the DeepSeek Harness border ramp (l2 12% for
+     dividers, l4 20% for controls), so a list of rows reads as one object
+     rather than a stack of framed boxes. */
+  --ui-line: color-mix(in srgb, var(--color-text) 12%, transparent);
+  --ui-line-strong: color-mix(in srgb, var(--color-text) 20%, transparent);
+  --ui-hairline: color-mix(in srgb, var(--color-text) 6%, transparent);
+  /* The shared hairline width: one device pixel at 1x, so borders never fatten
+     into the double rule a 1px border draws on a retuned display. */
+  --ui-border: 0.5px solid var(--ui-line-strong);
+  --ui-divider: 0.5px solid var(--ui-hairline);
   --sb-inset: 3px;
 }
 :root[data-theme="light"] {
@@ -1141,42 +1151,45 @@ code {
 }
 
 /* Chips ---------------------------------------------------------------------- */
+/* Chips: soft fill, no frame — the same treatment as tags and buttons, so a
+   filter row stops reading as a row of outlined pills. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--color-border);
-  background: transparent;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
   color: var(--color-text-muted);
   font-size: 12px;
   white-space: nowrap;
 }
 .chip:hover {
-  border-color: var(--color-border-strong);
+  background: color-mix(in srgb, var(--color-text) 12%, transparent);
   color: var(--color-text);
 }
 .chip--small {
-  padding: 3px 8px;
+  height: 24px;
+  padding: 0 8px;
   font-size: 11px;
 }
 .chip--active {
-  background: var(--color-surface-overlay);
+  background: color-mix(in srgb, var(--color-text) 14%, transparent);
   color: var(--color-text);
-  border-color: var(--color-border-strong);
 }
 .chip--warn {
   color: #f0883e;
-  border-color: rgba(240, 136, 62, 0.4);
+  background: rgba(240, 136, 62, 0.14);
 }
 .chip--warn:hover {
   color: #f0883e;
-  border-color: rgba(240, 136, 62, 0.7);
+  background: rgba(240, 136, 62, 0.2);
 }
 .chip--on {
   color: var(--color-accent);
-  border-color: rgba(79, 124, 255, 0.4);
+  background: var(--color-accent-soft);
 }
 .chip__dot {
   width: 7px;
@@ -1243,12 +1256,16 @@ code {
 }
 
 /* Two-level model menu ---------------------------------------------------- */
-.modelmenu {
+/* Compound selector: `.modelmenu` shares an element with the generic
+   `.anchored-menu__panel` rule declared further down, which would otherwise
+   win on source order and stretch this menu to 70vh. */
+.anchored-menu__panel.modelmenu {
   display: flex;
   flex-direction: column;
   width: 296px;
-  max-height: min(440px, calc(100vh - 32px));
+  max-height: min(380px, calc(100dvh - 96px));
   padding: 4px;
+  overflow: hidden;
 }
 .modelmenu__search {
   display: flex;
@@ -3128,43 +3145,58 @@ padding/colors without losing the chevron to the shorthand above. */
 }
 
 /* Buttons ---------------------------------------------------------------- */
+/* Buttons follow DSH: the primary action is a light fill on dark (no blue slab
+   repeating down the page), and secondary actions are a soft gray fill with no
+   frame — the frame was what made toolbars read as a row of boxes. */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface-raised);
+  border: none;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text);
   font-size: 13px;
+  line-height: 20px;
+  transition: background 0.12s ease;
 }
 .btn:hover:not(:disabled) {
-  border-color: var(--color-text-faint);
+  background: color-mix(in srgb, var(--color-text) 14%, transparent);
 }
 .btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .btn--primary {
-  background: var(--color-accent);
-  border-color: var(--color-accent);
-  color: white;
+  background: var(--color-text);
+  border-color: transparent;
+  color: var(--color-bg);
 }
 .btn--primary:hover:not(:disabled) {
-  background: var(--color-accent-hover);
+  background: color-mix(in srgb, var(--color-text) 86%, var(--color-bg));
 }
 .btn--outline {
   background: transparent;
+  box-shadow: inset 0 0 0 0.5px var(--ui-line);
+}
+.btn--outline:hover:not(:disabled) {
+  background: var(--ui-hover);
 }
 .btn--ghost {
   background: transparent;
   border-color: transparent;
   color: var(--color-text-muted);
 }
+.btn--ghost:hover:not(:disabled) {
+  background: var(--ui-hover);
+  color: var(--color-text);
+}
 .btn--danger {
-  background: rgba(255, 107, 107, 0.12);
-  border-color: rgba(255, 107, 107, 0.4);
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  border-color: transparent;
   color: var(--color-danger);
 }
 .btn--send {
@@ -4479,10 +4511,10 @@ body.is-resizing-ew {
 
 .settings__content {
   overflow-y: auto;
-  padding: 34px 44px 72px;
+  padding: 28px 40px 72px;
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border: none;
+  border-radius: var(--radius-xl);
 }
 
 .settings-page {
@@ -4491,37 +4523,40 @@ body.is-resizing-ew {
   padding-bottom: 24px;
 }
 
-/* Major page divisions (General, Appearance, Terminal, …) */
+/* Page headers: one title at 20px/500 — the size DSH uses for every page
+   header — with the description on its own line under it. No negative
+   letter-spacing: at this size the type reads calmer without it. */
 .settings-block__header {
   margin: 0;
 }
 .settings-block__title {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 500;
   margin: 0;
-  letter-spacing: -0.02em;
-  line-height: 1.25;
+  line-height: 28px;
+  letter-spacing: 0;
 }
 .settings-block--continued {
   margin-top: 36px;
   padding-top: 32px;
-  border-top: 1px solid var(--color-border);
+  border-top: var(--ui-divider);
 }
 .settings-block--continued .settings-block__title {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.015em;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 22px;
+  letter-spacing: 0;
   color: var(--color-text);
 }
 .settings-block__desc {
   color: var(--color-text-muted);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 20px;
   max-width: 68ch;
-  margin: 8px 0 0;
+  margin: 4px 0 0;
 }
 .settings-block__body {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 .settings-block__body > .section-head:first-child {
   margin-top: 0;
@@ -4533,10 +4568,11 @@ body.is-resizing-ew {
   gap: 12px;
 }
 .settings-page__header h1 {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 500;
   margin: 0;
-  letter-spacing: -0.02em;
+  line-height: 28px;
+  letter-spacing: 0;
 }
 .settings-page__actions {
   display: flex;
@@ -4547,34 +4583,44 @@ body.is-resizing-ew {
 .settings-page__desc {
   color: var(--color-text-muted);
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 20px;
   max-width: 68ch;
-  margin: 8px 0 18px;
+  margin: 4px 0 20px;
 }
 
+/* A settings row: title and description on the left, the control at the end.
+   Frameless with a 0.5px rule under it — the shape DSH gives every
+   configurable row — so a group of ten settings reads as one column instead of
+   ten framed boxes. */
 .setting-card {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  margin-bottom: 10px;
+  gap: 8px;
+  padding: 16px 0;
+  border: none;
+  border-bottom: var(--ui-divider);
+  border-radius: 0;
+  background: transparent;
+  margin-bottom: 0;
 }
 .setting-card__meta {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 48px;
 }
 .setting-card__title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
 }
 .setting-card__desc {
   font-size: 12px;
   color: var(--color-text-muted);
-  margin-top: 3px;
-  line-height: 1.5;
+  margin-top: 0;
+  line-height: 18px;
 }
 .setting-card__control {
   flex-shrink: 0;
@@ -4583,22 +4629,26 @@ body.is-resizing-ew {
   gap: 10px;
 }
 
-/* One card, hairline-separated rows: the default shape for setting groups. */
+/* A group of rows reads as one block: no frame, and the last row hands its
+   rule to whatever section follows rather than doubling it. */
 .setting-group {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  overflow: hidden;
-  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  margin-bottom: 0;
 }
 .setting-group .setting-card {
   border: none;
+  border-bottom: var(--ui-divider);
   border-radius: 0;
   margin: 0;
   background: transparent;
 }
-.setting-group .setting-card + .setting-card {
-  border-top: 1px solid var(--color-hairline);
+.setting-group > .setting-card:last-child {
+  border-bottom: none;
 }
 
 .swatch-row {
@@ -4624,44 +4674,62 @@ body.is-resizing-ew {
 }
 
 /* Segmented tab bar (in-page groups) ------------------------------------------ */
+/* In-page tabs: DSH's underline row. The filled pill group this used to be
+   added a second framed control next to the nav and competed with the page
+   header; an underline sits in the same column rhythm as the sections below. */
 .tabbar {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface-raised);
-  margin-bottom: 18px;
+  display: flex;
+  align-items: flex-end;
+  gap: 22px;
+  padding: 0;
+  border: none;
+  border-bottom: var(--ui-divider);
+  border-radius: 0;
+  background: transparent;
+  margin-bottom: 20px;
 }
 .tabbar__tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 7px 1px 9px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12.5px;
-  line-height: 1.4;
-  transition: background 0.12s ease, color 0.12s ease;
+  font-size: 13px;
+  line-height: 20px;
+  transition: color 0.12s ease;
 }
 .tabbar__tab:hover {
   color: var(--color-text);
 }
 .tabbar__tab--active {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-  font-weight: 600;
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 500;
+}
+.tabbar__tab--active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--color-text);
 }
 
 /* Controls ------------------------------------------------------------------- */
+/* Switch: 36x20 like DSH's, but the off track stays a muted line rather than a
+   filled slab, so a column of ten rows reads as settings instead of LEDs. */
 .toggle {
-  width: 38px;
-  height: 22px;
+  width: 36px;
+  height: 20px;
   border-radius: var(--radius-pill);
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface-raised);
+  border: none;
+  background: color-mix(in srgb, var(--color-text) 16%, transparent);
   position: relative;
   padding: 0;
   transition: background 0.15s ease;
@@ -4678,7 +4746,6 @@ body.is-resizing-ew {
 }
 .toggle--on {
   background: var(--color-accent);
-  border-color: var(--color-accent);
 }
 .toggle--on .toggle__thumb {
   transform: translateX(16px);
@@ -4690,25 +4757,30 @@ body.is-resizing-ew {
   cursor: not-allowed;
 }
 
+/* Selects take DSH's control shape: a soft gray fill, no frame, and a 12px
+   radius. The chevron stays as the only affordance, which is enough once the
+   fill marks the control. */
 .select {
 	/* Chevron data-URI lives in a var so scoped selects and the light theme can
 	 reuse/override it without repeating the URL (stroke can't use var()). */
-	--select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23686868' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+	--select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23868b93' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 	appearance: none;
 	-webkit-appearance: none;
-	background: var(--color-surface-raised);
-	border: 1px solid var(--color-border-strong);
+	background: color-mix(in srgb, var(--color-text) 8%, transparent);
+	border: none;
 	color: var(--color-text);
 	border-radius: var(--radius-md);
-	padding: 6px 28px 6px 10px;
+	padding: 8px 30px 8px 12px;
 	font-size: 13px;
 	font-family: inherit;
+	min-height: 36px;
 	background-image: var(--select-chevron);
 	background-repeat: no-repeat;
-	background-position: right 9px center;
+	background-position: right 10px center;
+	cursor: pointer;
 }
 .select:hover:not(:disabled) {
-	border-color: var(--color-text-faint);
+	background-color: color-mix(in srgb, var(--color-text) 14%, transparent);
 }
 .select:focus {
 	outline: none;
@@ -4727,19 +4799,74 @@ body.is-resizing-ew {
 	--select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a9a96' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
+/* A dropdown built from the app's menu (MenuSelect). It looks like .select when closed, and its open list is the themed menu
+   instead of the operating system's. */
+.menu-select {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 36px;
+  padding: 8px 10px 8px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-select:hover:not(:disabled),
+.menu-select[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--color-text) 14%, transparent);
+}
+.menu-select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.menu-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.menu-select--block {
+  width: 100%;
+}
+.menu-select__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-select__chev {
+  flex: none;
+  color: var(--color-text-muted);
+}
+/* Two classes, so this wins over .rule-menu's 200px, which comes later in the file. */
+.anchored-menu__panel.menu-select__panel {
+  min-width: 160px;
+}
+
 .input {
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-strong);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+  border: var(--ui-border);
   color: var(--color-text);
   border-radius: var(--radius-md);
-  padding: 6px 10px;
+  padding: 8px 11px;
   font-size: 13px;
   font-family: inherit;
   outline: none;
   width: 100%;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--color-text) 20%, transparent);
 }
 .input:focus {
   border-color: var(--color-accent);
+  background: transparent;
+  box-shadow: inset 0 0 0 0.5px var(--color-accent);
 }
 
 .range-row {
@@ -5195,11 +5322,18 @@ body.is-resizing-ew {
 .codepreview__card--dark .cp-num { color: #79c0ff; }
 
 /* Stats ------------------------------------------------------------------------ */
+/* A grid of figures: one framed group with hairline separators between cells,
+   rather than six framed cards. The boundary belongs to the set, not to each
+   number. */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 14px;
+  gap: 1px;
+  margin-bottom: 24px;
+  border: var(--ui-border);
+  border-radius: var(--radius-lg);
+  background: var(--ui-hairline);
+  overflow: hidden;
 }
 @media (max-width: 900px) {
   .stat-grid {
@@ -5207,8 +5341,8 @@ body.is-resizing-ew {
   }
 }
 .stat-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border: none;
+  border-radius: 0;
   background: var(--color-surface);
   padding: 14px 16px;
 }
@@ -5217,15 +5351,17 @@ body.is-resizing-ew {
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  line-height: 18px;
   color: var(--color-text-muted);
 }
 .stat-card__label svg {
   color: var(--color-text-faint);
 }
 .stat-card__value {
-  font-size: 22px;
-  font-weight: 700;
-  margin-top: 6px;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 28px;
+  margin-top: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5236,19 +5372,23 @@ body.is-resizing-ew {
   margin-top: 2px;
 }
 
+/* Usage summaries: a section on the page ground rather than a framed card.
+   The title and the 28px rhythm group them, matching every other settings
+   block. */
 .usage-card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  padding: 14px 16px;
-  margin-bottom: 14px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  margin-bottom: 28px;
 }
 .usage-card__title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
   margin-bottom: 12px;
 }
 .usage-card__foot {
@@ -5277,9 +5417,12 @@ body.is-resizing-ew {
 }
 .search-field__input {
   padding: 9px 30px 9px 32px;
-  border-radius: var(--radius-lg);
-  border-color: var(--color-border);
-  background: var(--color-surface-raised);
+  border-radius: var(--radius-md);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+.search-field__input:hover:not(:focus) {
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
 }
 .search-field__input::-webkit-search-cancel-button {
   display: none;
@@ -5303,24 +5446,30 @@ body.is-resizing-ew {
   color: var(--color-text);
 }
 
+/* Section heading above a list. DSH sets these at 14px/500 in sentence case
+   with a muted count beside the title; the uppercase eyebrow this used to be
+   read as a label rather than a group title and stacked a second type scale
+   on top of the page header. */
 .section-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  margin: 22px 0 8px;
+  margin: 28px 0 8px;
   padding-bottom: 0;
   border-bottom: none;
 }
 .section-head__title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--color-text-faint);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-text);
 }
 .section-head__count,
 .section-head__note {
   font-size: 12px;
+  line-height: 18px;
   color: var(--color-text-faint);
 }
 .section-head__aside {
@@ -5345,38 +5494,34 @@ body.is-resizing-ew {
   max-width: 68ch;
 }
 
-/* No `overflow: hidden` here: it would clip a row's "…" menu. The first and
-   last rows round their own corners instead, so hover fills stay inside the
-   frame. */
+/* Rows sit on the page ground, one hairline apart, so the list reads as a
+   single column rather than a stack of framed cards. The list keeps no frame
+   of its own: nesting a card per row (or one card around all of them) is what
+   made these pages feel boxed in. */
 .row-list--card {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-}
-.row-list--card > .row:first-child {
-  border-top-left-radius: inherit;
-  border-top-right-radius: inherit;
-}
-.row-list--card > .row:last-child {
-  border-bottom-left-radius: inherit;
-  border-bottom-right-radius: inherit;
+  border: none;
+  border-radius: 0;
+  background: transparent;
 }
 .row-list--card .row + .row {
-  border-top: 1px solid var(--color-hairline);
+  border-top: var(--ui-divider);
 }
 
 /* Marketplace listings. The column count is fixed rather than auto-fitting so
-   a category holding one entry gets a card the same width as every other. */
+   a category holding one entry gets a card the same width as every other.
+   These stay framed: two columns of tappable install cards need the boundary. */
 .row-list--grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   align-items: stretch;
+  border: none;
+  background: transparent;
 }
 .row-list--grid > .row {
-  border: 1px solid var(--color-border);
+  border: var(--ui-border);
   border-radius: var(--radius-lg);
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
 }
 @media (max-width: 1080px) {
   .row-list--grid {
@@ -5384,16 +5529,19 @@ body.is-resizing-ew {
   }
 }
 
+/* DSH's row: a 48px icon tile, a 14px/500 title, a 13px muted line, and the
+   controls at the end. Nothing is boxed, so the eye reads names first. */
 .row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   width: 100%;
   /* A floor rather than a fixed height: rows with and without tags still line
      up, but a long title is free to wrap. */
-  min-height: 58px;
-  padding: 11px 14px;
+  min-height: 64px;
+  padding: 8px;
   min-width: 0;
+  border-radius: var(--radius-md);
   text-align: left;
   border: none;
   background: transparent;
@@ -5401,29 +5549,37 @@ body.is-resizing-ew {
 }
 .row--clickable:hover,
 .row-list--grid > .row:hover {
-  background: var(--color-surface-raised);
+  background: var(--ui-hover);
+}
+.row-list--grid > .row:hover {
+  background: var(--color-surface-overlay);
 }
 .row__main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 .row__title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .row__name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .row__desc {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 18px;
   color: var(--color-text-muted);
-  margin-top: 2px;
+  margin-top: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5465,12 +5621,11 @@ body.is-resizing-ew {
 }
 
 /* Rounded app-icon tile holding a vendor logo or a glyph.
-   Brand colors rarely work on both themes, so IconTile supplies a tint per
-   theme; --tile-color is the single-value form for manifest brand colors.
-   A hairline-bordered surface with a faint tint wash: the glyph carries the
-   color, the tile stays quiet. */
+   One ink for every entry: a neutral wash with the glyph riding the muted text
+   color, so a list of extensions reads as one family rather than as a stack of
+   competing brand accents. Brand hues stay in the manifests, unused by the
+   tile. */
 .tile {
-  --tile-tint: var(--tile-color-dark, var(--tile-color, var(--color-text)));
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5478,12 +5633,9 @@ body.is-resizing-ew {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  color: var(--tile-tint);
-  background: color-mix(in srgb, var(--tile-tint) 7%, var(--color-bg));
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-text) 5%, var(--color-bg));
   box-shadow: inset 0 0 0 0.5px var(--ui-line);
-}
-:root[data-theme="light"] .tile {
-  --tile-tint: var(--tile-color-light, var(--tile-color, var(--color-text)));
 }
 .tile > svg {
   display: block;
@@ -5493,10 +5645,12 @@ body.is-resizing-ew {
   height: 26px;
   border-radius: 8px;
 }
+/* The list icon size DSH uses: 48px with a 12px radius, which carries a vendor
+   mark at a glance without turning the row into a card. */
 .tile--lg {
-  width: 44px;
-  height: 44px;
-  border-radius: 14px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
 }
 
 .tile-strip {
@@ -5523,32 +5677,33 @@ body.is-resizing-ew {
   filter: grayscale(0.85);
 }
 
+/* Status chips: a tinted fill, no frame. A 1px border on a 10px chip is more
+   ink than the glyph inside it, which is what made these read as clutter
+   beside the row title. */
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-raised);
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
   color: var(--color-text-muted);
-  font-size: 10.5px;
-  line-height: 1.6;
+  font-size: 10px;
+  line-height: 1;
   white-space: nowrap;
 }
 .tag--ok {
   color: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
 }
 .tag--warn {
   color: var(--color-warning);
-  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
 }
 .tag--bad {
   color: var(--color-danger);
-  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 }
 
 /* Pill segmented control (scope filters, ranges) ----------------------------- */
@@ -5621,23 +5776,28 @@ body.is-resizing-ew {
   min-width: 0;
 }
 
+/* Empty lists: a quiet line of text and a hint, no dashed frame. A dashed box
+   around "nothing here" adds a border precisely where there is no content to
+   bound. */
 .empty-state {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 34px 16px;
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-lg);
+  padding: 40px 16px;
+  border: none;
+  border-radius: 0;
   color: var(--color-text-faint);
   text-align: center;
 }
 .empty-state__title {
   font-size: 13px;
+  line-height: 20px;
   color: var(--color-text-muted);
 }
 .empty-state__hint {
   font-size: 12px;
+  line-height: 18px;
   max-width: 44ch;
 }
 
@@ -7244,6 +7404,19 @@ body.is-resizing-ns {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* What the block did, on the same row as its duration: the reference harness
+ * keeps one head line per block, so the work summary lives here rather than in
+ * a fold of its own. */
+.run__head-work {
+  min-width: 0;
+  margin-left: 10px;
+  color: var(--color-text-faint);
+  font-size: 13px;
+  line-height: 24px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .run__chev {
   flex: none;
   margin-left: 4px;
@@ -7251,28 +7424,6 @@ body.is-resizing-ns {
 }
 .run__chev--open {
   transform: rotate(180deg);
-}
-.run__sub {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  height: 32px;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--ui-text-2);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  transition: color 100ms ease;
-}
-.run__sub:hover {
-  color: var(--color-text);
-}
-.run__sub .run__chev {
-  margin-left: 0;
 }
 .run__steps {
   display: flex;
@@ -9058,31 +9209,40 @@ modal's confirm button. */
 }
 
 /* Shared form primitives (Field / FormSection) ------------------------------ */
+/* A titled form block: a heading row and its fields, on the page ground.
+   DSH never frames these — the heading and the 28px section rhythm do the
+   grouping, so a settings page reads as one column of labelled facts rather
+   than a grid of nested boxes. */
 .form-section {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-surface);
-  margin-bottom: 14px;
-  overflow: hidden;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  margin-bottom: 28px;
+  overflow: visible;
+}
+.form-section:last-child {
+  margin-bottom: 0;
 }
 .form-section__head {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-surface-raised) 45%, transparent);
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px;
+  border-bottom: none;
+  background: transparent;
 }
 .form-section__title {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--color-text);
 }
 .form-section__note {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--color-text-faint);
 }
 .form-section__action {
@@ -9097,8 +9257,8 @@ modal's confirm button. */
 .form-section__body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 8px 0 0;
 }
 /* Cards and lists nested in a section are already framed by it. */
 .form-section__body > .setting-card {
@@ -9115,7 +9275,7 @@ modal's confirm button. */
   border-radius: var(--radius-md);
 }
 .form-section__body > .row-list--plain .row + .row {
-  border-top: 1px solid var(--color-hairline);
+  border-top: var(--ui-divider);
 }
 
 .field {
@@ -10322,7 +10482,8 @@ modal's confirm button. */
   border-radius: var(--radius-pill);
   background: var(--color-surface-overlay);
 }
-.goal-card__action {
+.goal-card__action,
+.bot-run-strip__action {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -10337,9 +10498,99 @@ modal's confirm button. */
   cursor: pointer;
   transition: all 120ms ease;
 }
-.goal-card__action:hover {
+.goal-card__action:hover,
+.bot-run-strip__action:hover {
   background: var(--color-surface-overlay);
   color: var(--color-text);
+}
+
+/* Pipeline run strip: one line above the composer; detail lives in the Bot Flow tab. */
+.bot-run-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: var(--chat-measure);
+  margin: 0 auto 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.bot-run-strip--running {
+  border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
+}
+.bot-run-strip--stalled {
+  border-color: color-mix(in srgb, var(--color-warning) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface));
+}
+.bot-run-strip--failed {
+  border-color: color-mix(in srgb, var(--color-danger) 40%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface));
+}
+.bot-run-strip__dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+}
+.bot-run-strip--running .bot-run-strip__dot {
+  background: var(--color-accent);
+  animation: run-dot-pulse 1.4s ease-in-out infinite;
+}
+.bot-run-strip--stalled .bot-run-strip__dot {
+  background: var(--color-warning);
+}
+.bot-run-strip--completed .bot-run-strip__dot {
+  background: var(--color-success);
+}
+.bot-run-strip--failed .bot-run-strip__dot {
+  background: var(--color-danger);
+}
+.bot-run-strip__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bot-run-strip__name {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.bot-run-strip__detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bot-run-strip__time {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-run-strip--running .bot-run-strip__dot {
+    animation: none;
+  }
 }
 
 /* Project avatar: a filled rounded square with the project's initial. The hue
@@ -11687,25 +11938,27 @@ modal's confirm button. */
   color: var(--color-text-faint);
 }
 
+/* Callouts: a tinted wash, no frame. The fill already separates the note from
+   the page; a border on top of it added a second boundary for the same job. */
 .ui-callout {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--color-surface-raised) 55%, var(--color-bg));
+  border: none;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
   padding: 10px 12px;
   font-size: 12.5px;
   line-height: 1.55;
   color: var(--color-text-muted);
 }
 .ui-callout--good {
-  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
   color: var(--color-text);
 }
 .ui-callout--warn {
-  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   color: var(--color-text);
 }
 .ui-callout--bad {
-  border-color: color-mix(in srgb, var(--color-danger) 45%, var(--color-border));
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
   color: var(--color-text);
 }
 .ui-callout--mono {
@@ -12076,363 +12329,243 @@ modal's confirm button. */
   background: rgba(196, 160, 114, 0.75);
 }
 
-/* Bot Flow Panel & Designer HUD ------------------------------------------------ */
-.bot-flow-panel {
+/* Bot Flow monitor (right-panel tab): one column of disclosure rows ------------ */
+.bot-flow {
   display: flex;
   flex-direction: column;
+  gap: 8px;
   height: 100%;
-  overflow: hidden;
-  background: var(--color-bg);
-}
-
-.bot-flow-panel__top {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.bot-flow-panel__workflow-select-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.bot-flow-panel__select {
-  flex: 1;
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-.bot-flow-panel__run-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.bot-flow-panel__status-pill {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  margin-left: auto;
-}
-
-.bot-flow-panel__content {
-  flex: 1;
   overflow-y: auto;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  padding: 10px 12px;
+  background: var(--color-bg);
 }
-
-.bot-flow-panel__section-title {
+.bot-flow__top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-faint);
-  margin-bottom: 8px;
-}
-
-.bot-flow-panel__stepper {
-  display: flex;
-  flex-direction: column;
   gap: 6px;
 }
-
-.bot-flow-panel__step-card {
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-subtle);
+.bot-flow__select {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
   background: var(--color-surface);
-  transition: all 0.15s ease;
+  color: var(--color-text);
+  font-size: 12px;
 }
-
-.bot-flow-panel__step-card--current {
-  border-color: rgba(96, 165, 250, 0.6);
-  background: rgba(96, 165, 250, 0.04);
+.bot-flow__select:disabled {
+  opacity: 0.7;
 }
-
-.bot-flow-panel__step-card--done {
-  border-color: rgba(34, 197, 94, 0.4);
+.bot-flow__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
 }
-
-.bot-flow-panel__step-card--stalled {
-  border-color: rgba(234, 179, 8, 0.6);
-}
-
-.bot-flow-panel__step-header {
+.bot-flow__run {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 12px;
+  color: var(--color-text-muted);
 }
-
-.bot-flow-panel__step-idx {
+.bot-flow__run-dot,
+.bot-flow__stage-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+}
+.bot-flow__run--running .bot-flow__run-dot,
+.bot-flow__stage--running .bot-flow__stage-dot {
+  background: var(--color-accent);
+  animation: run-dot-pulse 1.4s ease-in-out infinite;
+}
+.bot-flow__run--stalled .bot-flow__run-dot,
+.bot-flow__stage--stalled .bot-flow__stage-dot {
+  background: var(--color-warning);
+}
+.bot-flow__run--completed .bot-flow__run-dot,
+.bot-flow__stage--completed .bot-flow__stage-dot {
+  background: var(--color-success);
+}
+.bot-flow__run--failed .bot-flow__run-dot,
+.bot-flow__stage--failed .bot-flow__stage-dot {
+  background: var(--color-danger);
+}
+.bot-flow__run-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bot-flow__run-time,
+.bot-flow__stage-time {
+  flex-shrink: 0;
   font-size: 11px;
-  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-faint);
 }
-
-.bot-flow-panel__step-name {
-  font-size: 12px;
-  font-weight: 500;
-  flex: 1;
+.bot-flow__stages {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--color-border-subtle);
 }
-
-.bot-flow-panel__step-agent-pill {
+.bot-flow__stage {
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+.bot-flow__stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px 4px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.bot-flow__stage-head:hover {
+  background: var(--color-surface-overlay);
+}
+.bot-flow__stage--queued .bot-flow__stage-head {
+  color: var(--color-text-muted);
+}
+.bot-flow__stage-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bot-flow__stage-agent {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-text-faint);
+}
+.bot-flow__stage-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px 10px 24px;
+}
+.bot-flow__stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.bot-flow__stage-branch {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(96, 165, 250, 0.1);
-  color: var(--color-primary, #60a5fa);
-  font-size: 11px;
-}
-
-.bot-flow-panel__step-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--color-text-muted);
-}
-
-.bot-flow-panel__step-worktree {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--color-text-faint);
-}
-
-.bot-flow-panel__step-timer {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  color: var(--color-primary, #60a5fa);
-}
-
-.bot-flow-panel__empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 16px;
-  color: var(--color-text-faint);
-  text-align: center;
-}
-
-.bot-flow-panel__terminal-box {
-  background: #0d1117;
-  color: #c9d1d9;
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  border-radius: 6px;
-  padding: 8px 10px;
-  min-height: 180px;
-  max-height: 320px;
-  overflow-y: auto;
-  border: 1px solid var(--color-border);
-}
-
-.bot-flow-panel__log-line {
-  line-height: 1.4;
+  min-width: 0;
   word-break: break-all;
 }
-
-.bot-flow-panel__log-placeholder {
-  color: var(--color-text-faint);
-  font-style: italic;
+.bot-flow__stage-error,
+.bot-flow__stage-summary {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-
-/* Bot Mode Dedicated Window & Contextual Navigation ------------------------ */
-.bot-mode-view {
-  display: flex;
-  flex-direction: row;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-  background: var(--color-bg);
+.bot-flow__stage-error {
+  color: var(--color-danger);
 }
-
-.bot-mode-view__chat-pane {
-  flex: 6;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  border-right: 1px solid var(--color-border);
-  position: relative;
-  background: var(--color-bg);
-}
-
-.bot-mode-view__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
-  min-height: 44px;
-  gap: 12px;
-}
-
-.bot-mode-view__header-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.bot-mode-view__badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: rgba(96, 165, 250, 0.12);
-  color: var(--color-primary, #60a5fa);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.bot-mode-view__project-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 7px;
-  border-radius: 4px;
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-raised, rgba(255, 255, 255, 0.04));
+.bot-flow__stage-summary {
   color: var(--color-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
 }
-
-.bot-mode-view__thread-title {
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bot-mode-view__header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.bot-mode-view__quick-chips {
-  padding: 12px 16px 8px;
-  background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border-subtle);
-}
-
-.bot-mode-view__chips-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-faint);
-  margin-bottom: 8px;
-}
-
-.bot-mode-view__chips-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.bot-mode-view__chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 20px;
+.bot-flow__log {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
   border: 1px solid var(--color-border);
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.bot-mode-view__chip:hover {
-  border-color: var(--color-primary, #60a5fa);
-  background: var(--color-surface-hover);
-  color: var(--color-primary, #60a5fa);
-}
-
-.bot-mode-view__stream-container {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-
-.bot-mode-view__composer-wrapper {
-  border-top: 1px solid var(--color-border);
-  background: var(--color-bg);
-}
-
-.bot-mode-view__telemetry-pane {
-  flex: 4;
-  min-width: 320px;
-  max-width: 580px;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+  border-radius: 6px;
   background: var(--color-surface);
-  overflow: hidden;
-  border-left: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
-
-.bot-mode-view__telemetry-header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface-raised, rgba(255, 255, 255, 0.04));
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 44px;
-}
-
-.bot-mode-view__telemetry-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-text);
-}
-
-.bot-mode-view__telemetry-body {
-  flex: 1;
-  min-height: 0;
+.bot-flow__merge {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  align-items: flex-start;
+  gap: 6px;
+}
+.bot-flow__note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.bot-flow__note--error {
+  color: var(--color-danger);
+}
+.bot-flow__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: auto 0;
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--color-text-faint);
+}
+.bot-flow__empty p {
+  margin: 0;
+}
+.bot-flow__empty-title {
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+.bot-flow__empty kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .bot-flow__run--running .bot-flow__run-dot,
+  .bot-flow__stage--running .bot-flow__stage-dot {
+    animation: none;
+  }
 }
 
-.bot-mode-view__telemetry-body .bot-flow-panel {
-  height: 100%;
+/* Bot Mode: the ordinary conversation column; one muted hint when empty --- */
+.bot-hint {
+  max-width: var(--chat-measure);
+  margin: 0 auto;
+  padding: 0 20px 4px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--color-text-faint);
+}
+.bot-hint kbd {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
 }
 
 /* Sidebar Bot Mode Contextual Elements ------------------------------------ */
@@ -12850,85 +12983,6 @@ modal's confirm button. */
   margin-bottom: 16px;
 }
 
-.bot-workflows__flow-summary {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-surface-raised) 45%, transparent);
-  border: 1px solid var(--color-border);
-}
-
-.bot-workflows__flow-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.bot-workflows__flow-node {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-}
-
-.bot-workflows__flow-num {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--color-accent-soft, rgba(96, 165, 250, 0.15));
-  color: var(--color-accent, #60a5fa);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.bot-workflows__flow-title {
-  font-weight: 600;
-  color: var(--color-text);
-  font-size: 12px;
-}
-
-.bot-workflows__flow-agent {
-  font-size: 10.5px;
-  font-family: var(--font-mono, monospace);
-  padding: 1px 5px;
-  border-radius: var(--radius-sm, 4px);
-  background: rgba(99, 102, 241, 0.14);
-  color: #818cf8;
-}
-
-.bot-workflows__flow-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  color: var(--color-text-faint);
-  background: var(--color-surface-raised);
-  padding: 1px 5px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
-}
-
-.bot-workflows__flow-sep {
-  display: inline-flex;
-  align-items: center;
-  color: var(--color-text-faint);
-}
-
-.bot-workflows__flow-arrow {
-  color: var(--color-text-faint);
-}
-
 /* Stage Cards Container & Component */
 .bot-stage-cards {
   display: flex;
@@ -13041,14 +13095,84 @@ modal's confirm button. */
   font-size: 12px;
 }
 
+.bot-stage-card__advanced {
+  border-top: 1px solid var(--color-border);
+}
+
+.bot-stage-card__advanced-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.bot-stage-card__advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.bot-stage-card__advanced-summary::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.bot-stage-card__advanced[open] > .bot-stage-card__advanced-summary::before {
+  transform: rotate(45deg);
+}
+
+.bot-stage-card__advanced-hint {
+  font-weight: 400;
+  font-size: 11.5px;
+  color: var(--color-text-faint);
+}
+
+.bot-workflows__hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 72px 16px;
+  text-align: center;
+  color: var(--color-text-faint);
+}
+
+.bot-workflows__hero-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.bot-workflows__hero-text {
+  max-width: 440px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.bot-workflows__hero-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .bot-stage-card__foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  padding-top: 10px;
 }
 
 .bot-stage-card__toggle-label {
@@ -13154,11 +13278,16 @@ modal's confirm button. */
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.superagent__switch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
+.superagent__state {
+  flex-shrink: 0;
+}
+.superagent__state .menu-select {
+  min-width: 96px;
+}
+.superagent__state--paused .menu-select {
+  color: var(--color-warning, #e8a317);
+}
+.superagent__state--off .menu-select {
   color: var(--color-text-muted);
 }
 .superagent__tabs {
@@ -13194,22 +13323,110 @@ modal's confirm button. */
   background: color-mix(in srgb, var(--color-surface-raised) 50%, transparent);
   overflow: hidden;
 }
-.superagent__note {
+.superagent__ticket-head,
+.superagent__log-head,
+.superagent__advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+.superagent__ticket-head::-webkit-details-marker,
+.superagent__log-head::-webkit-details-marker,
+.superagent__advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.superagent__ticket-head::before,
+.superagent__log-head::before,
+.superagent__advanced > summary::before {
+  content: "";
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid var(--color-text-muted);
+  border-bottom: 1.5px solid var(--color-text-muted);
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+details[open] > .superagent__ticket-head::before,
+details[open] > .superagent__log-head::before,
+.superagent__advanced[open] > summary::before {
+  transform: rotate(45deg);
+}
+.superagent__ticket-head {
+  min-height: 40px;
   padding: 8px 14px;
+}
+.superagent__ticket-head:hover {
+  background: var(--color-surface-overlay);
+}
+.superagent__ticket-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.superagent__ticket-time {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--color-text-faint);
+}
+.superagent__ticket-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 2px 14px 12px 27px;
+  font-size: 12.5px;
+}
+.superagent__ticket-summary {
+  color: var(--color-text-muted);
+}
+.superagent__ticket-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.superagent__log {
+  margin-top: 18px;
+}
+.superagent__log-head {
+  padding: 8px 2px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.superagent__log-counts {
+  margin-left: auto;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--color-text-faint);
+}
+.superagent__advanced {
+  margin-top: 6px;
+  font-size: 12.5px;
+}
+.superagent__advanced > summary {
+  padding: 8px 2px;
+  color: var(--color-text-muted);
+}
+.superagent__advanced-count {
+  margin-left: auto;
+  color: var(--color-warning, #e8a317);
+}
+.superagent__policy-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-faint);
+}
+.superagent__note {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
   font-size: 12.5px;
   color: var(--color-text);
-  border-top: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-warning, #e8a317) 10%, transparent);
-}
-.superagent__details {
-  border-top: 1px solid var(--color-border);
-  padding: 6px 14px 10px;
-  font-size: 12.5px;
-}
-.superagent__details > summary {
-  cursor: pointer;
-  color: var(--color-text-muted);
-  padding: 2px 0;
 }
 .superagent__facts {
   display: grid;
@@ -13270,6 +13487,9 @@ modal's confirm button. */
 }
 .superagent__admission-row {
   display: contents;
+}
+.superagent__admission .menu {
+  min-width: 0;
 }
 .superagent__rule {
   display: flex;
@@ -13339,11 +13559,11 @@ modal's confirm button. */
 .plug__head {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
   padding-top: 28px;
-  margin-bottom: 24px;
+  margin-bottom: 8px;
 }
 .plug__heading {
   min-width: 0;
@@ -13355,7 +13575,7 @@ modal's confirm button. */
   font-weight: 500;
 }
 .plug__heading p {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   color: var(--color-text-muted);
   font-size: 13px;
   line-height: 20px;
@@ -13365,6 +13585,7 @@ modal's confirm button. */
   flex: none;
   align-items: center;
   gap: 8px;
+  padding-top: 2px;
 }
 .plug__outline {
   display: inline-flex;
@@ -13372,19 +13593,19 @@ modal's confirm button. */
   gap: 6px;
   height: 32px;
   padding: 0 12px;
-  border: 0.5px solid var(--ui-line);
-  border-radius: 16px;
+  border: none;
+  border-radius: var(--radius-md);
   background: transparent;
+  box-shadow: inset 0 0 0 0.5px var(--ui-line);
   color: var(--color-text);
   font: inherit;
   font-size: 13px;
   line-height: 20px;
   cursor: pointer;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.12s;
 }
 .plug__outline:hover {
   background: var(--ui-hover);
-  border-color: var(--color-border-strong);
 }
 .plug__add {
   display: inline-flex;
@@ -13410,13 +13631,13 @@ modal's confirm button. */
 .plug__add-main {
   gap: 6px;
   padding: 0 12px;
-  border-radius: 16px 0 0 16px;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
 }
 .plug__add-more {
   width: 32px;
   padding: 0;
   border-left: 0.5px solid color-mix(in srgb, var(--color-bg) 35%, transparent);
-  border-radius: 0 16px 16px 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 .plug__add-main:hover,
 .plug__add-more:hover {
@@ -13425,16 +13646,19 @@ modal's confirm button. */
 .plug__message {
   margin: 0 0 16px;
   padding: 8px 12px;
-  border: 0.5px solid var(--ui-line);
-  border-radius: 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--ui-hover);
   font-size: 13px;
   line-height: 20px;
 }
 .plug__message--ok {
   color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 10%, transparent);
 }
 .plug__message--bad {
   color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
 
 .plug-panel {
@@ -13443,9 +13667,10 @@ modal's confirm button. */
   gap: 10px;
   margin-bottom: 24px;
   padding: 16px;
-  border: 0.5px solid var(--color-border-strong);
-  border-radius: 16px;
+  border: var(--ui-border);
+  border-radius: var(--radius-lg);
 }
+
 .plug-panel__label {
   color: var(--color-text-muted);
   font-size: 12px;
@@ -13498,7 +13723,8 @@ modal's confirm button. */
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 4px;
+  min-height: 28px;
 }
 .plug-section__title {
   margin: 0;
@@ -13509,21 +13735,24 @@ modal's confirm button. */
 .plug-section__count {
   color: var(--color-text-faint);
   font-size: 12px;
+  line-height: 18px;
 }
 .plug-section__aside {
   margin-left: auto;
+  margin-inline-end: -8px;
 }
 .plug-section__link {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  padding: 2px 6px;
+  height: 28px;
+  padding: 0 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 .plug-section__link:hover {
@@ -13532,39 +13761,48 @@ modal's confirm button. */
 }
 .plug-empty {
   margin: 0;
-  padding: 18px 16px;
-  border: 0.5px dashed var(--ui-line);
-  border-radius: 16px;
+  padding: 20px 0;
+  border: none;
+  border-top: var(--ui-divider);
+  border-bottom: var(--ui-divider);
+  border-radius: 0;
   color: var(--color-text-muted);
   font-size: 13px;
-  text-align: center;
+  line-height: 20px;
 }
 .plug-cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   margin: 0;
   padding: 0;
   list-style: none;
 }
+/* Rows sit on the page ground one hairline apart — DSH's list shape. The
+   per-row 0.5px frame this used to carry stacked seven rounded boxes under one
+   another and was the main source of the page's clutter. */
 .plug-card {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-height: 64px;
-  padding: 10px 14px 10px 10px;
-  border: 0.5px solid var(--ui-line);
-  border-radius: 16px;
-  transition: border-color 0.12s, background 0.12s;
+  padding: 8px;
+  margin: 0 -8px;
+  border: none;
+  border-radius: var(--radius-md);
+  transition: background 0.12s;
+}
+.plug-card + .plug-card {
+  box-shadow: 0 -0.5px 0 var(--ui-hairline);
 }
 .plug-card:hover {
-  border-color: var(--color-border-strong);
+  background: var(--ui-hover);
 }
 .plug-card__head {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   padding: 0;
   border: 0;
@@ -13584,18 +13822,19 @@ modal's confirm button. */
   display: flex;
   flex: 1;
   flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 .plug-card__title-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 .plug-card__title {
   overflow: hidden;
   font-size: 14px;
-  line-height: 22px;
+  line-height: 20px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -13604,7 +13843,7 @@ modal's confirm button. */
   overflow: hidden;
   color: var(--color-text-muted);
   font-size: 13px;
-  line-height: 20px;
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

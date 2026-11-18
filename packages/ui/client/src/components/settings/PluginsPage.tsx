@@ -86,7 +86,6 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
         name: plugin.interface?.displayName ?? plugin.name,
         description: plugin.interface?.shortDescription ?? plugin.description ?? componentSummary(plugin),
         category: plugin.interface?.category ?? "Other",
-        color: plugin.interface?.brandColor,
         plugin,
       });
     }
@@ -98,7 +97,6 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
           name: entry.interface?.displayName ?? entry.name,
           description: entry.description,
           category: entry.interface?.category ?? "Community catalog",
-          color: entry.interface?.brandColor,
           repo: entry.repo,
         });
       }
@@ -189,7 +187,7 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
             {kernel.map((plugin) => (
               <Row
                 key={plugin.name}
-                icon={<IconTile name={plugin.name} id={plugin.name} icon="bolt" size="sm" />}
+                icon={<IconTile id={plugin.name} icon="bolt" size="sm" />}
                 title={plugin.name}
                 tags={<Tag tone={plugin.state === "active" ? "ok" : "warn"}>{plugin.state}</Tag>}
                 description={plugin.error ?? plugin.source ?? "Composed by the kernel."}
@@ -218,9 +216,7 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
             onClick={() => toggle(plugin, !plugin.enabled)}
           >
             <IconTile
-              name={plugin.interface?.displayName ?? plugin.name}
               id={[plugin.hostModule, plugin.name]}
-              color={plugin.interface?.brandColor}
               size="lg"
             />
           </button>
@@ -244,7 +240,7 @@ export function PluginsPage({ onToggle, tabs }: { onToggle: (id: string, enabled
             {entries.map((entry) => (
               <Row
                 key={entry.key}
-                icon={<IconTile name={entry.name} id={[entry.plugin?.hostModule, entry.plugin?.name]} color={entry.color} />}
+                icon={<IconTile id={[entry.plugin?.hostModule, entry.plugin?.name]} />}
                 title={entry.name}
                 tags={
                   entry.plugin?.platform === "windows" ? <Tag tone="muted">Windows</Tag> : undefined
@@ -326,7 +322,6 @@ interface ListEntry {
   name: string;
   description: string;
   category: string;
-  color?: string;
   /** Set for installed plugins; catalog-only entries carry `repo` instead. */
   plugin?: PluginInfo;
   repo?: string;

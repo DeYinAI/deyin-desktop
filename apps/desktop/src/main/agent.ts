@@ -92,6 +92,7 @@ import type { ImageService } from "./images.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
 import { createAutomationTools } from "./automation-tools.js";
+import { createBotWorkflowTools, type BotWorkflowToolDeps } from "./bot-workflow-tools.js";
 import type { AutomationService } from "./automations/service.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
@@ -217,6 +218,8 @@ export interface AgentHostOptions {
   externalAgents?: ExternalAgentService;
   /** Bot workflow engine for worktree isolation and 1-click merge tools. */
   botWorkflowEngine?: BotWorkflowEngine;
+  /** Pipeline validate/run tools for the guided pipeline builder. */
+  botWorkflows?: BotWorkflowToolDeps;
 }
 
 /**
@@ -788,6 +791,12 @@ export class DesktopAgentHost {
  registry.register(tool);
  }
  }
+    // Bot pipeline tools (validate / run) for the build-bot-workflow skill.
+    if (this.opts.botWorkflows) {
+      for (const tool of createBotWorkflowTools(this.opts.botWorkflows)) {
+        registry.register(tool);
+      }
+    }
     if (settings.indexingEnabled) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
