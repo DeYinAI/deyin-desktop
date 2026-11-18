@@ -423,7 +423,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const workspaceService = new WorkspaceService(automations.sshHosts);
   const github = new GitHubService();
   const externalAgents = new ExternalAgentService();
-  const botWorkflowsStore = new BotWorkflowsStore(storage, opts.getWorkspaceRoot());
+  const botWorkflowsStore = new BotWorkflowsStore(storage, opts.getWorkspaceRoot);
   const botWorkflowEngine = new BotWorkflowEngine();
   const botWorkflowScheduler = new BotWorkflowScheduler(
     botWorkflowsStore,
@@ -432,6 +432,36 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     opts.getWorkspaceRoot,
     (event) => broadcast(CH.botWorkflowsEvent, event),
   );
+
+  /**
+   * Start a pipeline run and return at once; progress arrives as broadcast
+   * events. Shared by the Bot Flow tab's Run button and the agent's
+   * `bot_workflow_run` tool, so both drive the same run strip and monitor.
+   */
+  const startBotWorkflowRun = (
+    workflowId: string,
+    cwd: string,
+    inputs?: Record<string, string>,
+  ): { runId: string } => {
+    const wf = botWorkflowsStore.get(workflowId);
+    if (!wf) throw new Error(`Workflow '${workflowId}' not found.`);
+    const effectiveCwd = cwd || opts.getWorkspaceRoot() || process.cwd();
+    const runId = randomUUID();
+    void botWorkflowEngine.execute({
+      workflow: wf,
+      workspaceRoot: effectiveCwd,
+      runId,
+      inputs,
+      runner: (runnerOpts) =>
+        externalAgents.runAgent({
+          ...runnerOpts,
+          runId: runnerOpts.runId ?? `${runId}-${runnerOpts.stageId ?? randomUUID()}`,
+          logBufferId: runId,
+        }),
+      onEvent: (event) => broadcast(CH.botWorkflowsEvent, event),
+    });
+    return { runId };
+  };
 
   const agentHost = new DesktopAgentHost({
     config,
@@ -467,6 +497,12 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     },
     externalAgents,
     botWorkflowEngine,
+    botWorkflows: {
+      getWorkspaceRoot: opts.getWorkspaceRoot,
+      listWorkflows: () => botWorkflowsStore.list(),
+      listAgents: (forceRefresh) => externalAgents.listAgents(forceRefresh),
+      startRun: startBotWorkflowRun,
+    },
   });
   let desktopRepoManager: RepoManager | null = null;
   const emitRepoProgress = (e: RepoProgressEvent): void => broadcast(CH.repoProgress, e);
@@ -1166,26 +1202,10 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     botWorkflowScheduler.refresh();
     return res;
   });
-  ipcMain.handle(CH.botWorkflowsRun, async (_e, workflowId: string, cwd: string) => {
-    const wf = botWorkflowsStore.get(workflowId);
-    if (!wf) throw new Error(`Workflow '${workflowId}' not found.`);
-    const effectiveCwd = cwd || opts.getWorkspaceRoot() || process.cwd();
-    const runId = randomUUID();
-    // Launch execution asynchronously with pre-assigned runId
-    void botWorkflowEngine.execute({
-      workflow: wf,
-      workspaceRoot: effectiveCwd,
-      runId,
-      runner: (runnerOpts) =>
-        externalAgents.runAgent({
-          ...runnerOpts,
-          runId: runnerOpts.runId ?? `${runId}-${runnerOpts.stageId ?? randomUUID()}`,
-          logBufferId: runId,
-        }),
-      onEvent: (event) => broadcast(CH.botWorkflowsEvent, event),
-    });
-    return { ok: true, runId };
-  });
+  ipcMain.handle(CH.botWorkflowsRun, async (_e, workflowId: string, cwd: string) => ({
+    ok: true,
+    ...startBotWorkflowRun(workflowId, cwd),
+  }));
   ipcMain.handle(CH.botWorkflowsAbort, (_e, runId: string) => botWorkflowEngine.abort(runId));
   ipcMain.handle(CH.botWorkflowsMerge, async (_e, workspaceRoot: string, branchName: string) => {
     const effectiveRoot = workspaceRoot || opts.getWorkspaceRoot() || process.cwd();

@@ -78,6 +78,41 @@ test("the activity tab shows tickets that need a person first, with their questi
   assert.ok(html.includes("On it.") && html.includes("acknowledgement"));
 });
 
+/** The opening tag of the `<details>` that holds `marker` text in its summary or class. */
+const detailsTag = (html: string, className: string): string => {
+  const match = html.match(new RegExp(`<details class="${className}"[^>]*>`));
+  assert.ok(match, `no <details> with class ${className}`);
+  return match[0];
+};
+
+test("only the tickets that need a person start open, and everything else is one line", () => {
+  const html = render(ActivityTab, { view: view(), controller: controller(), now: NOW });
+  const tickets = [...html.matchAll(/<details class="superagent__ticket"[^>]*>/g)].map((m) => m[0]);
+  assert.equal(tickets.length, 2);
+  assert.match(tickets[0]!, / open/, "the ticket with a question is open");
+  assert.doesNotMatch(tickets[1]!, / open/, "a merged ticket is collapsed");
+  // The one line carries what is needed to find it: the title, the state and the age.
+  assert.match(html, /<summary class="superagent__ticket-head"><span class="superagent__ticket-title">Fix the README typo<\/span>.*?Needs an answer.*?1 h ago/);
+});
+
+test("decisions, waiting messages and replies sit in one activity log with their counts", () => {
+  const html = render(ActivityTab, { view: view(), controller: controller(), now: NOW });
+  assert.equal([...html.matchAll(/class="superagent__log"/g)].length, 1);
+  assert.ok(html.includes("Activity log") && html.includes("1 waiting · 2 decisions · 1 reply"));
+  // There are tickets to look at, so the log starts closed.
+  assert.doesNotMatch(detailsTag(html, "superagent__log"), / open/);
+  // Everything is still in the markup, inside the log.
+  const log = html.slice(html.indexOf('class="superagent__log"'));
+  for (const expected of ["Waiting for assessment", "Recent decisions", "Replies on GitHub"]) assert.ok(log.includes(expected), expected);
+});
+
+test("with no tickets the log opens, because what the agent saw is the page", () => {
+  const observed = render(ActivityTab, { view: view({ tickets: [] }), controller: controller(), now: NOW });
+  assert.match(detailsTag(observed, "superagent__log"), / open/);
+  const nothing = render(ActivityTab, { view: view({ tickets: [], candidates: [], decisions: [], receipts: [] }), controller: controller(), now: NOW });
+  assert.doesNotMatch(detailsTag(nothing, "superagent__log"), / open/, "nothing to show, nothing to open");
+});
+
 test("an empty activity tab explains how a ticket comes about", () => {
   const html = render(ActivityTab, { view: view({ tickets: [], candidates: [], decisions: [], receipts: [] }), controller: controller(), now: NOW });
   assert.ok(html.includes("No tickets yet") && html.includes("Nothing decided yet"));
@@ -99,7 +134,33 @@ test("the settings tab renders every section from the stored settings", () => {
   }
   assert.ok(html.includes("acme/app") && html.includes("alice") && html.includes("ci[bot]"));
   assert.ok(html.includes("Copy fixes") && html.includes("Visual fixes"));
-  assert.ok(html.includes("model-a") && !html.includes(">img<"), "image models are not offered");
-  assert.ok(html.includes("Treat as a request"), "the admission table offers its choices");
+  // Dropdowns are menus: closed, each shows only its current choice. The choices themselves are covered by the model tests.
+  assert.ok(html.includes("The app&#x27;s default model"), "an unset model reads as the app's default");
+  assert.ok(html.includes('aria-label="Assessment mode: ') && html.includes('aria-label="Worker model: '), "every control says what it is for");
+  assert.ok(!html.includes("<select"), "no native select is left to draw the operating system's popup");
+  assert.ok(html.includes("Treat as a request"), "the admission table shows its current choices");
   assert.ok(!html.includes("Unsaved changes"), "an untouched form has no save bar");
+});
+
+test("the settings page asks one question per source and keeps the full table under Advanced policy", () => {
+  const html = render(SettingsTab, { view: view(), controller: controller(), models: [], providerId: "openference" });
+  // Three controls up front, one per source, each showing the stored value (issues was set to explicit in the fixture).
+  const headline = [...html.matchAll(/aria-label="Mentions from anyone else, in ([^":]+): ([^"]+)"/g)];
+  assert.deepEqual(headline.map((m) => m[1]), ["Issues", "Pull requests", "Comments"]);
+  assert.equal(headline[0]![2], "Treat as a request");
+  assert.equal(headline[1]![2], "Ignore");
+  assert.ok(html.includes("Ignore is the safe choice"), "the risk of the permissive choice is stated");
+  // The full 3x3 table is still there, in a closed section: nothing in it differs from its default.
+  const advanced = html.slice(html.indexOf('class="superagent__advanced"'));
+  assert.ok(advanced.includes("Anyone else, not addressed to the agent") && advanced.includes("Allowed account, not addressed to the agent"));
+  assert.doesNotMatch(detailsTag(html, "superagent__advanced"), / open/);
+  assert.ok(!html.includes("changed from default"));
+});
+
+test("Advanced policy opens and says so when a cell in it is not at its default", () => {
+  const changed = view();
+  changed.settings.policy.sources.github = { allowed: [{ id: "alice" }], bots: [], admission: { comments: { unlistedUnaddressed: "inferred" } } };
+  const html = render(SettingsTab, { view: changed, controller: controller(), models: [], providerId: "openference" });
+  assert.match(detailsTag(html, "superagent__advanced"), / open/, "a policy that lets more through is never hidden");
+  assert.ok(html.includes("1 changed from default"));
 });

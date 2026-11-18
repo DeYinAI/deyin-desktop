@@ -40,6 +40,8 @@ interface WorkspacePanelProps {
   platform: "desktop" | "web";
   projectName: string;
   workspaceRoot: string | null;
+  /** Opens the pipeline editor (optionally on one workflow) from the Bot Flow tab. */
+  onOpenWorkflows?: (workflowId?: string | null) => void;
   /** Bumped when the sandbox content changes outside root switches (repo connect). */
   filesRefreshKey?: number;
   activeTab: PanelTab;
@@ -244,7 +246,11 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         />
       </div>
       <div className="wspanel__pane" hidden={current !== "botflow"}>
-        <BotFlowPanel workspaceRoot={props.workspaceRoot} />
+        <BotFlowPanel
+          workspaceRoot={props.workspaceRoot}
+          visible={current === "botflow"}
+          onOpenWorkflows={props.onOpenWorkflows}
+        />
       </div>
     </section>
   );

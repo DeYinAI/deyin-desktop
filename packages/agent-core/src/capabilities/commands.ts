@@ -36,6 +36,30 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
     source: "built-in",
     body: "Find and fix the problem described here (or the most recent error in this conversation): $ARGUMENTS. Reproduce it first when possible, apply the smallest correct fix, then verify.",
   },
+  {
+    name: "pipeline",
+    description: "Build a multi-agent pipeline step by step.",
+    source: "built-in",
+    body: "Load the `build-bot-workflow` skill with the `skill` tool and follow its interview: ask me one `ask_question` at a time, validate the draft, then write the pipeline. What I want it to do: $ARGUMENTS",
+  },
+  {
+    name: "delegate",
+    description: "Hand a task to an external coding agent (Claude Code, Codex, and others).",
+    source: "built-in",
+    body: "Call `list_external_bots` to see which agents are installed, pick the best fit for the task below (use `ask_question` only if it is genuinely unclear), and hand it off with `delegate_external_bot` in an isolated worktree. Task: $ARGUMENTS",
+  },
+  {
+    name: "review-pr",
+    description: "Have an external agent review the current diff.",
+    source: "built-in",
+    body: "Call `list_external_bots` and delegate a review of the uncommitted changes and recent diff to Claude Code with `delegate_external_bot` (fall back to reviewing it yourself when it is not installed). Check for security vulnerabilities, edge-case regressions, and missing tests. $ARGUMENTS",
+  },
+  {
+    name: "run-tests",
+    description: "Run the test suite and recommend targeted fixes.",
+    source: "built-in",
+    body: "Run the project's test suite, report the failing assertions, and recommend targeted fixes. $ARGUMENTS",
+  },
 ];
 
 /** Discover commands: one file per command, filename = command name. */

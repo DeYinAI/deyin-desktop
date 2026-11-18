@@ -55,6 +55,12 @@ interface SidebarProps {
   onSwitchMode?: (mode: import("@deyin/contract").ChatMode) => void;
   /** Select top-level view between Workspace and Bot Mode. */
   onSelectView?: (view: "workspace" | "bot") => void;
+  /**
+   * Hosted chat-only web has no local shell or git, so Bot Mode's pipelines and
+   * external agent CLIs cannot run there: its switch and mission list are hidden
+   * on that build. Absent means available, so the desktop app is unaffected.
+   */
+  botModeAvailable?: boolean;
   /** Pending approvals / MCP auth / questions per thread (sidebar badge). */
   pendingByThread?: Record<string, number>;
 }
@@ -157,10 +163,13 @@ function saveExpandedLists(expanded: Set<string>): void {
 
 export function Sidebar(props: SidebarProps) {
   const t = useT();
+  // A chat-only host cannot run bot missions at all, so it reads as the
+  // workspace sidebar even if a thread still carries the bot mode.
   const isBotView =
-    props.activeView === "bot" ||
-    props.activeView === "workflows" ||
-    (props.activeView !== "workspace" && props.currentMode === "bot");
+    props.botModeAvailable !== false &&
+    (props.activeView === "bot" ||
+      props.activeView === "workflows" ||
+      (props.activeView !== "workspace" && props.currentMode === "bot"));
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -386,7 +395,7 @@ export function Sidebar(props: SidebarProps) {
               onClick={() => { setMoreOpen(false); props.onOpenWorkflows?.(null); }}
             />
           )}
-          {(props.onSelectView || props.onSwitchMode) && (
+          {(props.botModeAvailable !== false && (props.onSelectView || props.onSwitchMode)) && (
             <MoreItem
               icon={isBotView ? "layout" : "bot"}
               label={isBotView ? "Switch to Workspace" : "Switch to Bot mode"}

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Icon, type IconName } from "../Icon.js";
 import { BrandMark, markFor } from "../BrandMark.js";
@@ -316,66 +316,33 @@ const TILE_MARK_SIZE = { sm: 14, md: 17, lg: 24 } as const;
  * Rounded app-icon tile. Resolves a vendor logo from `id` where one exists — so
  * Cloudflare, GitHub and Stripe rows carry their real marks — and otherwise
  * falls back to the caller's glyph, so no entry is ever left without an icon.
- * The tint follows the logo, an explicit `color` from a manifest, or a hash of
- * the name.
+ * Every tile renders in one muted ink: the marks stay monochrome and the wash
+ * stays neutral, so a list reads as a single family. Manifests may still
+ * declare a brand color; the tile deliberately doesn't spend it.
  */
 export function IconTile({
-  name,
   id,
-  color,
   icon,
   size = "md",
 }: {
-  name: string;
   /** Identifiers to resolve a logo from, most specific first (catalog id, host module, vendor). */
   id?: string | (string | undefined)[];
-  /** Brand color declared by a manifest; overrides the resolved logo's tint. */
-  color?: string;
   /** Glyph to fall back to when no logo matches. */
   icon?: IconName;
   size?: "sm" | "md" | "lg";
 }) {
-  // Only `id` feeds the logo lookup: `name` is free text, and a user's skill
-  // called "security" should not pick up the Security plugin's glyph.
+  // Only `id` feeds the logo lookup — never a display name, so a user's skill
+  // called "security" doesn't pick up the Security plugin's glyph.
   const mark = id === undefined ? undefined : markFor(...(Array.isArray(id) ? id : [id]));
-  // Custom properties, so typed as a plain record and cast at the boundary.
-  const style: Record<string, string> = {};
-  if (color) {
-    style["--tile-color"] = color;
-  } else if (mark?.kind === "glyph") {
-    style["--tile-color-dark"] = mark.glyph.dark;
-    style["--tile-color-light"] = mark.glyph.light;
-  } else if (mark?.kind === "brand" && mark.brand.dark && mark.brand.light) {
-    style["--tile-color-dark"] = mark.brand.dark;
-    style["--tile-color-light"] = mark.brand.light;
-  } else if (mark?.kind === "brand") {
-    // A black or near-black logo; carry it in the theme's text color.
-    style["--tile-color"] = "var(--color-text)";
-  } else {
-    const tint = tileTints(name);
-    style["--tile-color-dark"] = tint.dark;
-    style["--tile-color-light"] = tint.light;
-  }
-
   return (
-    <span className={`tile tile--${size}`} style={style as CSSProperties} aria-hidden>
+    <span className={`tile tile--${size}`} aria-hidden>
       {mark?.kind === "brand" ? (
-        <BrandMark brand={mark.brand} size={TILE_MARK_SIZE[size]} />
+        <BrandMark brand={mark.brand} size={TILE_MARK_SIZE[size]} colored={false} />
       ) : (
         <Icon name={mark?.glyph.icon ?? icon ?? "puzzle"} size={TILE_GLYPH_SIZE[size]} />
       )}
     </span>
   );
-}
-
-/**
- * Deterministic tint for entries with no logo, so each keeps a stable identity
- * color. Two lightnesses: the same hue has to carry on both themes.
- */
-function tileTints(seed: string): { dark: string; light: string } {
-  let hue = 0;
-  for (let i = 0; i < seed.length; i++) hue = (hue * 31 + seed.charCodeAt(i)) % 360;
-  return { dark: `hsl(${hue} 55% 62%)`, light: `hsl(${hue} 55% 40%)` };
 }
 
 export function Tag({ children, tone }: { children: ReactNode; tone?: "muted" | "ok" | "warn" | "bad" }) {

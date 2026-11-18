@@ -116,6 +116,11 @@ export interface ComposerProps {
   focusSignal?: number;
   /** Hosted web chat-only: plain messages, no agent controls. */
   plainChat?: boolean;
+  /**
+   * Bot Mode needs a local shell and git for its pipelines and external agent
+   * CLIs, so a chat-only host does not offer `/bot`. Absent means available.
+   */
+  botModeAvailable?: boolean;
 }
 
 const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "hand" | "eye" }> = {
@@ -276,6 +281,7 @@ export function Composer(props: ComposerProps) {
         }
         // Client-side commands handled in App.send, not by the host.
         for (const name of MODE_COMMAND_NAMES) {
+          if (name === "bot" && props.botModeAvailable === false) continue;
           if (!byName.has(name)) {
             byName.set(name, { name, description: MODE_COMMAND_DESC[name] ?? "" });
           }
@@ -289,7 +295,7 @@ export function Composer(props: ComposerProps) {
     return () => {
       alive = false;
     };
-  }, [slashOpen, props.workspaceRoot]);
+  }, [slashOpen, props.workspaceRoot, props.botModeAvailable]);
 
   const slashMatches = (() => {
     if (!slashOpen) return [];
@@ -761,7 +767,9 @@ export function Composer(props: ComposerProps) {
               }}
             >
               <Icon name="route" size={14} />
-              Switch mode (/plan, /ask, /bot)
+              {props.botModeAvailable === false
+                ? "Switch mode (/plan, /ask)"
+                : "Switch mode (/plan, /ask, /bot)"}
             </button>
           )}
           {props.onSetGoal && (

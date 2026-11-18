@@ -273,7 +273,7 @@ export function McpPage({
     return (
       <Row
         key={server.id}
-        icon={<IconTile name={title} id={[server.name, mod?.vendor]} icon="plug" />}
+        icon={<IconTile id={[server.name, mod?.vendor]} icon="plug" />}
         title={title}
         description={<span title={detail || undefined}>{meta}</span>}
         aside={
@@ -390,7 +390,7 @@ export function McpPage({
             {filteredCatalog.map((entry) => (
               <Row
                 key={entry.id}
-                icon={<IconTile name={entry.name} id={[entry.id, entry.vendor]} />}
+                icon={<IconTile id={[entry.id, entry.vendor]} />}
                 title={entry.name}
                 tags={<Tag tone="muted">{authLabel(entry.auth)}</Tag>}
                 description={`${entry.description} — ${entry.vendor} · ${CATEGORY_LABELS[entry.category]}`}

@@ -56,6 +56,7 @@ import { applyGoalToProjects, isReplacingGoal, type GoalApplyOptions } from "./t
 import { estimateContextFromThreadEvents } from "./contextEstimate.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
 import { BotModeView } from "./components/BotModeView.js";
+import { BotRunStrip } from "./components/BotRunStrip.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { ProjectMenu, type ProjectAction } from "./components/ProjectMenu.js";
 import { ConversationHeader } from "./components/ConversationHeader.js";
@@ -179,6 +180,11 @@ const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by s
 const CONTINUE_PROMPT = "Continue the task from where you stopped. Check the todo list and workspace state first, then finish the remaining work.";
 
 type View = "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
+
+/** Opening a right-panel tab surfaces the conversation, but Bot Mode stays Bot Mode. */
+function viewAfterPanelOpen(current: View): View {
+  return current === "bot" ? "bot" : "workspace";
+}
 
 interface PendingApproval {
   requestId: string;
@@ -409,13 +415,13 @@ export function App() {
     setPanelTab(target);
     setPanelStart(false);
     setPanelOpen(true);
-    setView("workspace");
+    setView(viewAfterPanelOpen);
   }, [chatOnlyHosted]);
 
   const openPanelStart = useCallback(() => {
     setPanelStart(true);
     setPanelOpen(true);
-    setView("workspace");
+    setView(viewAfterPanelOpen);
   }, []);
 
   /** Close one tab; the neighbour takes over, and an empty strip falls back to Start. */
@@ -1628,10 +1634,6 @@ export function App() {
     })();
   }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, chatOnlyHosted, draftKeeper]);
 
-  const newBotMission = useCallback(() => {
-    newTask("bot", "bot");
-  }, [newTask]);
-
   const applyGoalToThread = useCallback(
     (thread: Thread, goal: string | null, options?: GoalApplyOptions) => {
       let createdProjectId: string | undefined;
@@ -1789,13 +1791,16 @@ export function App() {
   /** Composer mode change: remembered app-wide and stamped on the active thread. */
   const selectMode = useCallback(
     (mode: ChatMode) => {
+      // Bot Mode runs pipelines and external agent CLIs through a local shell and
+      // git, which a chat-only host does not have, so the mode is refused there.
+      if (mode === "bot" && chatOnlyHosted) return;
       setComposerMode(mode);
       if (activeThreadId) updateThread(activeThreadId, { mode });
       if (mode === "bot") {
         setView("bot");
       }
     },
-    [activeThreadId, updateThread],
+    [activeThreadId, updateThread, chatOnlyHosted],
   );
   selectModeRef.current = selectMode;
 
@@ -2296,13 +2301,27 @@ const continueFromStepLimit = useCallback(() => {
     [activeThreadId, updateThread],
   );
 
+  /**
+   * Parse a composer line as a mode command, refusing the modes this host cannot
+   * run. A chat-only host has no shell or git, so a typed `/bot` falls through
+   * and is sent as ordinary text instead of switching to a mode that cannot work.
+   */
+  const parseComposerModeCommand = useCallback(
+    (text: string) => {
+      const parsed = parseModeCommand(text);
+      if (parsed?.mode === "bot" && chatOnlyHosted) return null;
+      return parsed;
+    },
+    [chatOnlyHosted],
+  );
+
   const send = useCallback(async (text: string, draft: ComposerDraftState) => {
     if (!text || !boot) return;
 
     // /plan, /ask, /bot and /agent are client-side mode commands: a bare command
     // switches the mode and stops there; a command with text runs that text in
     // the new mode. Handled before queueing so it works mid-run too.
-    const modeCommand = parseModeCommand(text);
+    const modeCommand = parseComposerModeCommand(text);
     let runText = text;
     if (modeCommand) {
       applyModeCommand(modeCommand.mode);
@@ -2664,7 +2683,7 @@ const continueFromStepLimit = useCallback(() => {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [activeThread, boot, models, providers, settings, composerMode, applyModeCommand, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, handleGoalInput, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
+  }, [activeThread, boot, models, providers, settings, composerMode, applyModeCommand, parseComposerModeCommand, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, handleGoalInput, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(
@@ -2672,7 +2691,7 @@ const continueFromStepLimit = useCallback(() => {
       if (!text) return;
 
       // A typed mode command applies without interrupting the run.
-      const modeCommand = parseModeCommand(text);
+      const modeCommand = parseComposerModeCommand(text);
       if (modeCommand) {
         applyModeCommand(modeCommand.mode);
         if (modeCommand.prompt.length === 0) {
@@ -2719,7 +2738,7 @@ const continueFromStepLimit = useCallback(() => {
       [activeThread.id]: { text, mode: runMode },
     };
     stopRun();
-  }, [activeThread, settings, boot, composerMode, applyModeCommand, selectedModel, selectedProviderId, startAgentRun, stopRun, handleGoalInput, setQueuedForThread, plainStreamFor]);
+  }, [activeThread, settings, boot, composerMode, applyModeCommand, parseComposerModeCommand, selectedModel, selectedProviderId, startAgentRun, stopRun, handleGoalInput, setQueuedForThread, plainStreamFor]);
 
   const clearQueue = useCallback(() => {
     if (activeThreadId) setQueuedForThread(activeThreadId, null);
@@ -2730,7 +2749,7 @@ const continueFromStepLimit = useCallback(() => {
     const raw = queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim();
     if (!raw || !activeThread) return;
     setQueuedForThread(activeThread.id, null);
-    const modeCommand = parseModeCommand(raw);
+    const modeCommand = parseComposerModeCommand(raw);
     if (modeCommand && modeCommand.prompt.length === 0) {
       applyModeCommand(modeCommand.mode);
       return;
@@ -2740,7 +2759,7 @@ const continueFromStepLimit = useCallback(() => {
     const newThread = ensureThread();
     if (handleGoalInput(text, newThread, mode)) return;
     void startAgentRun(newThread, text, mode);
-  }, [activeThread, composerMode, applyModeCommand, ensureThread, handleGoalInput, setQueuedForThread, startAgentRun]);
+  }, [activeThread, composerMode, applyModeCommand, parseComposerModeCommand, ensureThread, handleGoalInput, setQueuedForThread, startAgentRun]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -3207,6 +3226,7 @@ const continueFromStepLimit = useCallback(() => {
         onStartMultitasking={startMultitasking}
         onClearQueue={clearQueue}
         plainChat={chatOnlyHosted}
+        botModeAvailable={!chatOnlyHosted}
         focusSignal={composerFocus}
         models={models}
         selectedModel={selectedModel}
@@ -3315,36 +3335,167 @@ const continueFromStepLimit = useCallback(() => {
                 applyGoalToThreadRef.current(thread, text);
               }
         }
-      >
-        <WorkspaceBar
-          platform={boot?.platform === "web" ? "web" : "desktop"}
-          projects={projects}
-          activeProjectId={activeProjectId}
-          projectName={projectName}
-          workspaceRoot={workspaceRoot}
-          homeDir={boot?.homeDir ?? null}
-          onSelectProject={(projectId) => void selectProject(projectId)}
-          onPickFolder={(startIn) => void addProjectFolder(startIn)}
-          wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
-          onOpenSshHosts={
-            boot?.platform === "desktop"
-              ? () => {
-                  setSettingsPage("sshHosts");
-                  setView("settings");
-                }
-              : undefined
-          }
-          onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
-          onOpenSourceControl={() => {
-            openPanelTab("git");
-          }}
-        />
-      </ComposerDock>
+      />
     </div>
   );
 
+  const conversationHeaderNode = (
+    <ConversationHeader
+      platform={boot?.platform ?? "desktop"}
+      chatOnly={chatOnlyHosted}
+      mode={composerMode}
+      onModeChange={selectMode}
+      threadId={activeThreadId}
+      threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
+      threadPinned={activeThread?.pinned ?? false}
+      workspaceRoot={workspaceRoot}
+      panelOpen={panelOpen}
+      terminalOpen={terminalVisible}
+      mcpCount={mcpCount}
+      onOpenMcp={() => {
+        setSettingsPage("extensions");
+        setView("settings");
+      }}
+      onTogglePanel={togglePanel}
+      onToggleTerminal={() => {
+        if (terminalVisible) collapsePanel();
+        else openPanelTab("terminal");
+      }}
+      onThreadAction={handleThreadAction}
+      trailing={
+        <>
+          {!chatOnlyHosted && (
+            <EnvironmentBadge env={env} onPickShell={() => openPanelTab("terminal")} />
+          )}
+          {boot?.platform === "web" && !chatOnlyHosted && (
+            <RepoBar
+              repoState={repoState}
+              busy={repoBusy}
+              progressLine={repoProgressLine}
+              connectOpen={repoConnectOpen}
+              onConnectOpenChange={setRepoConnectOpen}
+              onConnect={connectRepo}
+              onShip={shipRepo}
+            />
+          )}
+        </>
+      }
+    />
+  );
+
+  const taskListNode =
+    !chatOnlyHosted && (activeThread?.todos?.length ?? 0) > 0 ? (
+      <div className="chat-column__tasks">
+        <TaskList
+          todos={activeThread!.todos!}
+          running={agentRunState?.running ?? false}
+          title={
+            activeThread!.title !== DEFAULT_THREAD_TITLE ? activeThread!.title : undefined
+          }
+        />
+      </div>
+    ) : null;
+
+  /** Strips docked above the composer: the task list and the pipeline run. */
+  const dockNode = (
+    <>
+      {taskListNode}
+      {!chatOnlyHosted && <BotRunStrip onOpen={() => openPanelTab("botflow")} />}
+    </>
+  );
+
+  const panelNode = panelOpen ? (
+    <div
+      className="wspanel-wrap"
+      style={
+        panelFullscreen
+          ? { flex: "1 1 auto", width: "auto" }
+          : panelWidthPx !== null
+            ? { flex: `0 0 ${panelWidthPx}px`, width: panelWidthPx }
+            : undefined
+      }
+    >
+      {!panelFullscreen && (
+        <div
+          className="wspanel-wrap__resize"
+          onPointerDown={startPanelResize}
+          onDoubleClick={() => {
+            setPanelFraction(PANEL_DEFAULT_FRACTION);
+            storePanelFraction(PANEL_DEFAULT_FRACTION);
+          }}
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize (double-click to reset)"
+        />
+      )}
+      <MemoWorkspacePanel
+        platform={boot?.platform ?? "desktop"}
+        projectName={projectName}
+        workspaceRoot={workspaceRoot}
+        onOpenWorkflows={sidebarOpenWorkflows}
+        filesRefreshKey={filesRefreshKey}
+        activeTab={panelTab}
+        openTabs={panelTabs}
+        startActive={panelStart}
+        previewOnly={chatOnlyHosted}
+        fullscreen={panelFullscreen}
+        onSelectTab={openPanelTab}
+        onCloseTab={closePanelTab}
+        onAddTab={openPanelStart}
+        onToggleFullscreen={() => setPanelFullscreen((v) => !v)}
+        planMarkdown={
+          livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")
+        }
+        pageTitle={activeThread?.pageTitle}
+        pageFileName={activeThread?.pageFileName}
+        planTodos={panelPlanTodos}
+        planTodosRunning={agentRunState?.running ?? false}
+        canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && !activeComposerBusy && !(agentRunState?.running ?? false)}
+        diff={activeDiff}
+        browserUrl={browserUrl}
+        browserPartition={browserPartition}
+        codeDisplay={panelCodeDisplay}
+        browserControlEnabled={settings?.browserControlEnabled ?? true}
+        onOpenGitDiff={openGitDiff}
+        onNavigate={setBrowserUrl}
+        onCollapse={collapsePanel}
+        onOpenFolder={openFolder}
+        onOpenBrowserSettings={openBrowserSettings}
+        onBuildPlan={buildFromPlan}
+        onPlanTodosChange={updatePlanTodos}
+        pendingReview={pendingReview}
+        onApproveChange={approveReview}
+        onRejectChange={rejectReview}
+        threadId={activeThreadId}
+        subagentRuns={subagentRuns}
+        selectedSubagentId={activeSubagentId}
+        onSelectSubagent={setActiveSubagentId}
+        onOpenFile={openWorkspaceFile}
+        onFixSecurityFinding={fixSecurityFinding}
+        onFixAllSecurityFindings={fixAllSecurityFindings}
+        filesOpenRequest={filesOpenRequest}
+        terminalEnv={env}
+        terminalDefaultShell={settings?.defaultShell ?? null}
+        terminalFontSize={settings?.terminalFontSize ?? 12}
+        terminalScrollback={settings?.terminalScrollback ?? 5000}
+        terminalCursorStyle={settings?.terminalCursorStyle ?? "bar"}
+        terminalCopyOnSelect={settings?.terminalCopyOnSelect ?? true}
+        terminalTheme={themeVariant}
+        terminalAttachSessions={terminalAttachSessions}
+        panelWidth={panelWidthPx}
+      />
+    </div>
+  ) : null;
+
   return (
-    <AppProviders language={language}>
+    <AppProviders
+      language={language}
+      onBotRunStarted={() => {
+        // Show the monitor for a new run, but never pull the user out of Settings or another page.
+        if (chatOnlyHosted || (view !== "workspace" && view !== "bot")) return;
+        openPanelTab("botflow");
+      }}
+    >
     <div className="app">
       <TopBar
         platform={boot?.platform ?? "desktop"}
@@ -3394,6 +3545,7 @@ const continueFromStepLimit = useCallback(() => {
             currentMode={composerMode}
             onSwitchMode={selectMode}
             onSelectView={handleSelectView}
+            botModeAvailable={!chatOnlyHosted}
             onNewTask={newTask}
             onOpenPlugins={sidebarOpenPlugins}
             onOpenSearch={() => setSearchOpen(true)}
@@ -3418,6 +3570,7 @@ const continueFromStepLimit = useCallback(() => {
           currentMode={composerMode}
           onSwitchMode={selectMode}
           onSelectView={handleSelectView}
+          botModeAvailable={!chatOnlyHosted}
           projects={projects}
           activeProjectId={activeProjectId}
           activeThreadId={activeThreadId}
@@ -3483,95 +3636,51 @@ const continueFromStepLimit = useCallback(() => {
               workspaceRoot={workspaceRoot}
               initialWorkflowId={selectedWorkflowForEdit}
               onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
-              onRunWorkflow={(_wfId) => {
-                setView("bot");
+              onRunWorkflow={() => {
+                // The run is already started; show it where it is monitored.
                 setComposerMode("bot");
+                setView("bot");
+                openPanelTab("botflow");
               }}
+              onCreateInChat={() => newTask("bot", "bot", undefined, "/pipeline ")}
             />
           ) : view === "bot" ? (
-            <BotModeView
-              workspaceRoot={workspaceRoot}
-              projectName={projectName}
-              activeThread={activeThread}
-              activeThreadId={activeThreadId}
-              chatEvents={chatEvents}
-              chatStreamText={chatStreamText}
-              chatStreamReasoning={chatOnlyHosted ? null : (agentRunState?.streamReasoning ?? null)}
-              greetingName={greetingName}
-              agentRunState={agentRunState}
-              activeThreadStreaming={activeThreadStreaming}
-              chatCodeDisplay={chatCodeDisplay}
-              onOpenFile={chatOnlyHosted ? noop : openFileDiff}
-              onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
-              homeDir={boot?.homeDir ?? null}
-              onUndo={chatOnlyHosted ? noop : undoFileChange}
-              onRevertRun={chatOnlyHosted ? undefined : revertRunChanges}
-              onEditMessage={chatOnlyHosted ? undefined : editMessageAtEvent}
-              onForkAtEvent={forkAtEvent}
-              onMessageFeedback={messageFeedback}
-              onOpenAgentTerminal={
-                chatOnlyHosted
-                  ? undefined
-                  : hasAgentTerminal
-                    ? openAgentTerminal
-                    : undefined
-              }
-              threadTitles={threadTitles}
-              onNewMission={newBotMission}
-              onSwitchToWorkspace={() => {
-                selectMode("agent");
-                setView("workspace");
-              }}
-              onQuickPrompt={(prompt) => {
-                void send(prompt, { ...emptyComposerDraft(), input: prompt });
-              }}
-              onOpenWorkflows={sidebarOpenWorkflows}
-              composerNode={composerNode}
-            />
+            <div className={`app__columns${panelOpen && panelFullscreen ? " app__columns--panel-full" : ""}`} ref={attachColumns}>
+              <BotModeView
+                workspaceRoot={workspaceRoot}
+                activeThreadId={activeThreadId}
+                chatEvents={chatEvents}
+                chatStreamText={chatStreamText}
+                chatStreamReasoning={chatOnlyHosted ? null : (agentRunState?.streamReasoning ?? null)}
+                greetingName={greetingName}
+                agentRunState={agentRunState}
+                chatCodeDisplay={chatCodeDisplay}
+                onOpenFile={chatOnlyHosted ? noop : openFileDiff}
+                onOpenWorkspaceFile={chatOnlyHosted ? undefined : openWorkspaceFile}
+                homeDir={boot?.homeDir ?? null}
+                onUndo={chatOnlyHosted ? noop : undoFileChange}
+                onRevertRun={chatOnlyHosted ? undefined : revertRunChanges}
+                onEditMessage={chatOnlyHosted ? undefined : editMessageAtEvent}
+                onForkAtEvent={forkAtEvent}
+                onMessageFeedback={messageFeedback}
+                onOpenAgentTerminal={
+                  chatOnlyHosted
+                    ? undefined
+                    : hasAgentTerminal
+                      ? openAgentTerminal
+                      : undefined
+                }
+                threadTitles={threadTitles}
+                header={conversationHeaderNode}
+                dock={dockNode}
+                composerNode={composerNode}
+              />
+              {panelNode}
+            </div>
           ) : (<>
           <div className={`app__columns${panelOpen && panelFullscreen ? " app__columns--panel-full" : ""}`} ref={attachColumns}>
             <main className={`chat-column${isChatEmpty ? " chat-column--empty" : ""}`}>
-              <ConversationHeader
-                platform={boot?.platform ?? "desktop"}
-                chatOnly={chatOnlyHosted}
-                mode={composerMode}
-                onModeChange={selectMode}
-                threadId={activeThreadId}
-                threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
-                threadPinned={activeThread?.pinned ?? false}
-                workspaceRoot={workspaceRoot}
-                panelOpen={panelOpen}
-                terminalOpen={terminalVisible}
-                mcpCount={mcpCount}
-                onOpenMcp={() => {
-                  setSettingsPage("extensions");
-                  setView("settings");
-                }}
-                onTogglePanel={togglePanel}
-                onToggleTerminal={() => {
-                  if (terminalVisible) collapsePanel();
-                  else openPanelTab("terminal");
-                }}
-                onThreadAction={handleThreadAction}
-                trailing={
-                  <>
-                    {!chatOnlyHosted && (
-                      <EnvironmentBadge env={env} onPickShell={() => openPanelTab("terminal")} />
-                    )}
-                    {boot?.platform === "web" && !chatOnlyHosted && (
-                      <RepoBar
-                        repoState={repoState}
-                        busy={repoBusy}
-                        progressLine={repoProgressLine}
-                        connectOpen={repoConnectOpen}
-                        onConnectOpenChange={setRepoConnectOpen}
-                        onConnect={connectRepo}
-                        onShip={shipRepo}
-                      />
-                    )}
-                  </>
-                }
-              />
+              {conversationHeaderNode}
 
               <MemoChatView
                 events={chatEvents}
@@ -3609,17 +3718,7 @@ const continueFromStepLimit = useCallback(() => {
                 threadTitles={threadTitles}
               />
 
-              {!chatOnlyHosted && (activeThread?.todos?.length ?? 0) > 0 && (
-                <div className="chat-column__tasks">
-                  <TaskList
-                    todos={activeThread!.todos!}
-                    running={agentRunState?.running ?? false}
-                    title={
-                      activeThread!.title !== DEFAULT_THREAD_TITLE ? activeThread!.title : undefined
-                    }
-                  />
-                </div>
-              )}
+              {dockNode}
 
               {composerNode}
               {!chatOnlyHosted && (
@@ -3631,87 +3730,7 @@ const continueFromStepLimit = useCallback(() => {
               )}
             </main>
 
-            {panelOpen && (
-              <div
-                className="wspanel-wrap"
-                style={
-                  panelFullscreen
-                    ? { flex: "1 1 auto", width: "auto" }
-                    : panelWidthPx !== null
-                      ? { flex: `0 0 ${panelWidthPx}px`, width: panelWidthPx }
-                      : undefined
-                }
-              >
-                {!panelFullscreen && (
-                  <div
-                    className="wspanel-wrap__resize"
-                    onPointerDown={startPanelResize}
-                    onDoubleClick={() => {
-                      setPanelFraction(PANEL_DEFAULT_FRACTION);
-                      storePanelFraction(PANEL_DEFAULT_FRACTION);
-                    }}
-                    role="separator"
-                    aria-orientation="vertical"
-                    title="Drag to resize (double-click to reset)"
-                  />
-                )}
-              <MemoWorkspacePanel
-                platform={boot?.platform ?? "desktop"}
-                projectName={projectName}
-                workspaceRoot={workspaceRoot}
-                filesRefreshKey={filesRefreshKey}
-                activeTab={panelTab}
-                openTabs={panelTabs}
-                startActive={panelStart}
-                previewOnly={chatOnlyHosted}
-                fullscreen={panelFullscreen}
-                onSelectTab={openPanelTab}
-                onCloseTab={closePanelTab}
-                onAddTab={openPanelStart}
-                onToggleFullscreen={() => setPanelFullscreen((v) => !v)}
-                planMarkdown={
-                  livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")
-                }
-                pageTitle={activeThread?.pageTitle}
-                pageFileName={activeThread?.pageFileName}
-                planTodos={panelPlanTodos}
-                planTodosRunning={agentRunState?.running ?? false}
-                canBuildPlan={Boolean(activeThread?.planMarkdown?.trim()) && !activeComposerBusy && !(agentRunState?.running ?? false)}
-                diff={activeDiff}
-                browserUrl={browserUrl}
-                browserPartition={browserPartition}
-                codeDisplay={panelCodeDisplay}
-                browserControlEnabled={settings?.browserControlEnabled ?? true}
-                onOpenGitDiff={openGitDiff}
-                onNavigate={setBrowserUrl}
-                onCollapse={collapsePanel}
-                onOpenFolder={openFolder}
-                onOpenBrowserSettings={openBrowserSettings}
-                onBuildPlan={buildFromPlan}
-                onPlanTodosChange={updatePlanTodos}
-                pendingReview={pendingReview}
-                onApproveChange={approveReview}
-                onRejectChange={rejectReview}
-                threadId={activeThreadId}
-                subagentRuns={subagentRuns}
-                selectedSubagentId={activeSubagentId}
-                onSelectSubagent={setActiveSubagentId}
-                onOpenFile={openWorkspaceFile}
-                onFixSecurityFinding={fixSecurityFinding}
-                onFixAllSecurityFindings={fixAllSecurityFindings}
-                filesOpenRequest={filesOpenRequest}
-                terminalEnv={env}
-                terminalDefaultShell={settings?.defaultShell ?? null}
-                terminalFontSize={settings?.terminalFontSize ?? 12}
-                terminalScrollback={settings?.terminalScrollback ?? 5000}
-                terminalCursorStyle={settings?.terminalCursorStyle ?? "bar"}
-                terminalCopyOnSelect={settings?.terminalCopyOnSelect ?? true}
-                terminalTheme={themeVariant}
-                terminalAttachSessions={terminalAttachSessions}
-                panelWidth={panelWidthPx}
-              />
-              </div>
-            )}
+            {panelNode}
           </div>
           </>)}
           </Suspense>

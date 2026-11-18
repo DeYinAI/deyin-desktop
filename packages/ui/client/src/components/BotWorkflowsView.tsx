@@ -4,6 +4,8 @@ import type {
   ExternalAgentDescriptor,
   WorkflowStageDefinition,
 } from "@deyin/contract";
+import { useBotRun } from "../hooks/useBotRun.js";
+import { useConfirm } from "./ConfirmDialog.js";
 import { Icon } from "./Icon.js";
 import { Callout } from "./ui/index.js";
 import { Field, FormSection, SettingCard, Toggle } from "./settings/controls.js";
@@ -13,6 +15,8 @@ export interface BotWorkflowsViewProps {
   initialWorkflowId?: string | null;
   onBack: () => void;
   onRunWorkflow?: (workflowId: string) => void;
+  /** Opens a fresh Bot Mode chat with `/pipeline` ready, the guided way to author a pipeline. */
+  onCreateInChat?: () => void;
 }
 
 function emptyWorkflow(agentId = "codex"): BotWorkflowDefinition {
@@ -53,8 +57,13 @@ export function BotWorkflowsView({
   initialWorkflowId,
   onBack,
   onRunWorkflow,
+  onCreateInChat,
 }: BotWorkflowsViewProps) {
+  const { confirm } = useConfirm();
+  const { start: startRun } = useBotRun();
   const [workflows, setWorkflows] = useState<BotWorkflowDefinition[]>([]);
+  /** False until the first list arrives, so the empty state never flashes while loading. */
+  const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(initialWorkflowId ?? null);
   const [draft, setDraft] = useState<BotWorkflowDefinition>(() => emptyWorkflow());
   const [dirty, setDirty] = useState(false);
@@ -104,6 +113,8 @@ export function BotWorkflowsView({
         }
       } catch (err: any) {
         setErrorMessage(err.message || "Failed to load workflows");
+      } finally {
+        setLoaded(true);
       }
     },
     [selectedId],
@@ -184,12 +195,13 @@ export function BotWorkflowsView({
     updateStage(index, { userPromptTemplate: `${stage.userPromptTemplate} ${token}` });
   };
 
-  const handleSave = async () => {
+  /** Persist the draft; resolves to the saved workflow's id, or null when nothing was saved. */
+  const handleSave = async (): Promise<string | null> => {
     if (!draft.name.trim()) {
       setErrorMessage("Workflow name cannot be empty");
-      return;
+      return null;
     }
-    if (!window.deyin?.botWorkflows) return;
+    if (!window.deyin?.botWorkflows) return null;
 
     setSaving(true);
     setErrorMessage(null);
@@ -210,8 +222,10 @@ export function BotWorkflowsView({
       setDirty(false);
       setSavedAt(Date.now());
       await loadWorkflows(nextId);
+      return nextId || null;
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to save workflow");
+      return null;
     } finally {
       setSaving(false);
     }
@@ -219,12 +233,28 @@ export function BotWorkflowsView({
 
   const handleDelete = async () => {
     if (!selectedId || !window.deyin?.botWorkflows) return;
-    if (!window.confirm(`Delete workflow "${draft.name}"?`)) return;
+    const accepted = await confirm({
+      title: "Delete pipeline",
+      message: `Delete "${draft.name}"? This cannot be undone.`,
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!accepted) return;
 
     try {
       await window.deyin.botWorkflows.delete(selectedId);
-      await loadWorkflows(null);
-      startNew();
+      const remaining = await window.deyin.botWorkflows.list();
+      setWorkflows(remaining);
+      const next = remaining[0];
+      if (next) {
+        selectWorkflow(next);
+      } else {
+        // Nothing left: go back to the empty state rather than a blank form.
+        setSelectedId(null);
+        setDraft(emptyWorkflow());
+        setDirty(false);
+        setSavedAt(null);
+      }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to delete workflow");
     }
@@ -245,21 +275,17 @@ export function BotWorkflowsView({
   };
 
   const handleRunNow = async () => {
-    if (!selectedId) {
-      // If unsaved, save first then run
-      await handleSave();
+    // Run what is on screen: an unsaved or edited draft is saved first.
+    const targetId = selectedId && !dirty ? selectedId : await handleSave();
+    if (!targetId) return;
+    const res = await startRun(targetId, workspaceRoot ?? "");
+    if (!res.ok) {
+      setErrorMessage(res.error);
+      return;
     }
-    const targetId = selectedId || draft.id;
-    if (targetId && onRunWorkflow) {
-      onRunWorkflow(targetId);
-    } else if (targetId && window.deyin?.botWorkflows) {
-      try {
-        await window.deyin.botWorkflows.run(targetId, workspaceRoot ?? "");
-        onBack();
-      } catch (err: any) {
-        setErrorMessage(err.message || "Failed to start workflow");
-      }
-    }
+    // The host's run events drive the strip and the Bot Flow tab; this only brings the user back to them.
+    if (onRunWorkflow) onRunWorkflow(targetId);
+    else onBack();
   };
 
   const filteredWorkflows = useMemo(() => {
@@ -272,6 +298,49 @@ export function BotWorkflowsView({
         w.stages.some((s) => s.name.toLowerCase().includes(q) || s.agentId.toLowerCase().includes(q)),
     );
   }, [workflows, searchQuery]);
+
+  // No pipelines yet and no draft in progress: lead with the chat, keep the blank form one click away.
+  if (loaded && workflows.length === 0 && selectedId === null && !dirty) {
+    return (
+      <div className="bot-workflows">
+        <section className="bot-workflows__editor">
+          <header className="bot-workflows__head">
+            <button type="button" className="icon-btn icon-btn--small" title="Back to workspace / bot mode" onClick={onBack}>
+              <Icon name="arrowLeft" size={14} />
+            </button>
+            <div className="bot-workflows__head-text">
+              <h1 className="bot-workflows__head-title">Pipelines</h1>
+            </div>
+          </header>
+          <div className="bot-workflows__body">
+            {errorMessage && (
+              <Callout tone="bad" className="bot-workflows__error-banner">
+                {errorMessage}
+              </Callout>
+            )}
+            <div className="bot-workflows__hero">
+              <Icon name="bot" size={32} />
+              <h2 className="bot-workflows__hero-title">Describe the pipeline you want</h2>
+              <p className="bot-workflows__hero-text">
+                Say what should happen and which agents should do it. You get a few quick questions, then the pipeline is built and checked for you.
+              </p>
+              <div className="bot-workflows__hero-actions">
+                {onCreateInChat && (
+                  <button type="button" className="btn btn--primary" onClick={onCreateInChat}>
+                    <Icon name="message" size={13} />
+                    <span>Describe it in chat</span>
+                  </button>
+                )}
+                <button type="button" className={onCreateInChat ? "btn btn--ghost" : "btn btn--primary"} onClick={startNew}>
+                  Start blank
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="bot-workflows">
@@ -483,35 +552,6 @@ export function BotWorkflowsView({
             </Field>
           </FormSection>
 
-          {/* Visual Stages Flow Summary */}
-          <FormSection
-            title="Visual Pipeline Flow"
-            note={`${draft.stages.length} connected ${draft.stages.length === 1 ? "stage" : "stages"}`}
-          >
-            <div className="bot-workflows__flow-summary">
-              {draft.stages.map((st, i) => (
-                <div key={st.id} className="bot-workflows__flow-step">
-                  <div className="bot-workflows__flow-node">
-                    <span className="bot-workflows__flow-num">{i + 1}</span>
-                    <span className="bot-workflows__flow-title">{st.name || `Stage ${i + 1}`}</span>
-                    <span className="bot-workflows__flow-agent">{st.agentId}</span>
-                    {st.worktree?.isolate !== false && (
-                      <span className="bot-workflows__flow-badge" title="Isolated Git Worktree">
-                        <Icon name="gitBranch" size={10} />
-                        <span>worktree</span>
-                      </span>
-                    )}
-                  </div>
-                  {i < draft.stages.length - 1 && (
-                    <span className="bot-workflows__flow-sep" aria-hidden="true">
-                      <Icon name="chevronRight" size={13} className="bot-workflows__flow-arrow" />
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </FormSection>
-
           {/* Pipeline Stages Section */}
           <FormSection
             title={`Pipeline Stages (${draft.stages.length})`}
@@ -665,68 +705,77 @@ export function BotWorkflowsView({
                       />
                     </Field>
 
-                    {/* Card Footer: Ephemeral Worktree & Watchdog Timers */}
-                    <div className="bot-stage-card__foot">
-                      <label className="bot-stage-card__toggle-label">
-                        <Toggle
-                          checked={stage.worktree?.isolate !== false}
-                          onChange={(checked) =>
-                            updateStage(idx, {
-                              worktree: { ...stage.worktree, isolate: checked },
-                            })
-                          }
-                        />
-                        <span className="bot-stage-card__toggle-text">
-                          Isolate in Ephemeral Git Worktree
+                    {/* Worktree isolation and watchdog timers: rarely changed, so folded away */}
+                    <details className="bot-stage-card__advanced">
+                      <summary className="bot-stage-card__advanced-summary">
+                        <span>Advanced</span>
+                        <span className="bot-stage-card__advanced-hint">
+                          {stage.worktree?.isolate !== false ? "isolated worktree" : "shared checkout"} ·{" "}
+                          {Math.round((stage.watchdog?.timeoutMs ?? 900_000) / 60_000)} min timeout
                         </span>
-                      </label>
+                      </summary>
+                      <div className="bot-stage-card__foot">
+                        <label className="bot-stage-card__toggle-label">
+                          <Toggle
+                            checked={stage.worktree?.isolate !== false}
+                            onChange={(checked) =>
+                              updateStage(idx, {
+                                worktree: { ...stage.worktree, isolate: checked },
+                              })
+                            }
+                          />
+                          <span className="bot-stage-card__toggle-text">
+                            Isolate in Ephemeral Git Worktree
+                          </span>
+                        </label>
 
-                      <div className="bot-stage-card__watchdogs">
-                        <div className="bot-stage-card__watchdog-group">
-                          <span className="bot-stage-card__watchdog-label">Timeout</span>
-                          <div className="bot-stage-card__input-unit">
-                            <input
-                              type="number"
-                              min={1}
-                              className="input bot-stage-card__input-mini"
-                              value={Math.round((stage.watchdog?.timeoutMs ?? 900_000) / 60_000)}
-                              onChange={(e) =>
-                                updateStage(idx, {
-                                  watchdog: {
-                                    timeoutMs: Math.max(1, Number(e.target.value)) * 60_000,
-                                    stallThresholdMs: stage.watchdog?.stallThresholdMs ?? 120_000,
-                                    onStallAction: stage.watchdog?.onStallAction ?? "alert-user",
-                                  },
-                                })
-                              }
-                            />
-                            <span className="bot-stage-card__unit">min</span>
+                        <div className="bot-stage-card__watchdogs">
+                          <div className="bot-stage-card__watchdog-group">
+                            <span className="bot-stage-card__watchdog-label">Timeout</span>
+                            <div className="bot-stage-card__input-unit">
+                              <input
+                                type="number"
+                                min={1}
+                                className="input bot-stage-card__input-mini"
+                                value={Math.round((stage.watchdog?.timeoutMs ?? 900_000) / 60_000)}
+                                onChange={(e) =>
+                                  updateStage(idx, {
+                                    watchdog: {
+                                      timeoutMs: Math.max(1, Number(e.target.value)) * 60_000,
+                                      stallThresholdMs: stage.watchdog?.stallThresholdMs ?? 120_000,
+                                      onStallAction: stage.watchdog?.onStallAction ?? "alert-user",
+                                    },
+                                  })
+                                }
+                              />
+                              <span className="bot-stage-card__unit">min</span>
+                            </div>
                           </div>
-                        </div>
 
-                        <div className="bot-stage-card__watchdog-group">
-                          <span className="bot-stage-card__watchdog-label">Stall Alert</span>
-                          <div className="bot-stage-card__input-unit">
-                            <input
-                              type="number"
-                              min={10}
-                              className="input bot-stage-card__input-mini"
-                              value={Math.round((stage.watchdog?.stallThresholdMs ?? 120_000) / 1000)}
-                              onChange={(e) =>
-                                updateStage(idx, {
-                                  watchdog: {
-                                    timeoutMs: stage.watchdog?.timeoutMs ?? 900_000,
-                                    stallThresholdMs: Math.max(10, Number(e.target.value)) * 1000,
-                                    onStallAction: stage.watchdog?.onStallAction ?? "alert-user",
-                                  },
-                                })
-                              }
-                            />
-                            <span className="bot-stage-card__unit">sec</span>
+                          <div className="bot-stage-card__watchdog-group">
+                            <span className="bot-stage-card__watchdog-label">Stall Alert</span>
+                            <div className="bot-stage-card__input-unit">
+                              <input
+                                type="number"
+                                min={10}
+                                className="input bot-stage-card__input-mini"
+                                value={Math.round((stage.watchdog?.stallThresholdMs ?? 120_000) / 1000)}
+                                onChange={(e) =>
+                                  updateStage(idx, {
+                                    watchdog: {
+                                      timeoutMs: stage.watchdog?.timeoutMs ?? 900_000,
+                                      stallThresholdMs: Math.max(10, Number(e.target.value)) * 1000,
+                                      onStallAction: stage.watchdog?.onStallAction ?? "alert-user",
+                                    },
+                                  })
+                                }
+                              />
+                              <span className="bot-stage-card__unit">sec</span>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </details>
                   </div>
                 );
               })}

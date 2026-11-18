@@ -129,12 +129,13 @@ interface RunActivityProps {
   renderDetail: (item: ActivityItem) => ReactNode;
 }
 
-/** One block of agent steps as a fold: a "Completed in …" rule, then a compact list
- *  of one-line steps (Label · detail) that each expand to their full card. */
+/** One block of agent steps as a fold: a "Completed in …" rule carrying what kinds
+ *  of work the block did, then the compact list of one-line steps (Label · detail)
+ *  that each expand to their full card. Matches the reference harness's shape —
+ *  one fold per block, not a fold inside a fold. */
 export function RunActivity(props: RunActivityProps) {
   const { items, live } = props;
   const [open, setOpen] = useState(live);
-  const [subOpen, setSubOpen] = useState(true);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
 
   // Follow the run while it streams, then fold the finished block away.
@@ -166,46 +167,39 @@ export function RunActivity(props: RunActivityProps) {
     <div className={`run${live ? " run--live" : ""}`}>
       <button type="button" className="run__head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <span className="run__head-label">{headLabel}</span>
+        <span className="run__head-work">{describeRunWork(items)}</span>
         <Icon name="chevronDown" size={12} className={`run__chev${open ? " run__chev--open" : ""}`} />
       </button>
       {open && (
-        <>
-          <button type="button" className="run__sub" aria-expanded={subOpen} onClick={() => setSubOpen((v) => !v)}>
-            <Icon name="chevronDown" size={12} className={`run__chev${subOpen ? " run__chev--open" : ""}`} />
-            <span>{describeRunWork(items)}</span>
-          </button>
-          {subOpen && (
-            <ul className="run__steps">
-              {rows.map((row, i) => {
-                const isOpen = expanded.has(i);
-                return (
-                  <li key={i} className={`run-step run-step--${row.status}`}>
-                    <button
-                      type="button"
-                      className="run-step__row"
-                      aria-expanded={isOpen}
-                      onClick={() => toggleRow(i)}
-                    >
-                      <Icon
-                        name={row.status === "running" ? "refresh" : row.icon}
-                        size={13}
-                        className={`run-step__icon${row.status === "running" ? " run-step__icon--spin" : ""}`}
-                      />
-                      <span className="run-step__label">{row.label}</span>
-                      {row.detail && (
-                        <>
-                          <span className="run-step__dot" aria-hidden />
-                          <span className="run-step__detail">{row.detail}</span>
-                        </>
-                      )}
-                    </button>
-                    {isOpen && <div className="run-step__body">{props.renderDetail(row.item)}</div>}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </>
+        <ul className="run__steps">
+          {rows.map((row, i) => {
+            const isOpen = expanded.has(i);
+            return (
+              <li key={i} className={`run-step run-step--${row.status}`}>
+                <button
+                  type="button"
+                  className="run-step__row"
+                  aria-expanded={isOpen}
+                  onClick={() => toggleRow(i)}
+                >
+                  <Icon
+                    name={row.status === "running" ? "refresh" : row.icon}
+                    size={13}
+                    className={`run-step__icon${row.status === "running" ? " run-step__icon--spin" : ""}`}
+                  />
+                  <span className="run-step__label">{row.label}</span>
+                  {row.detail && (
+                    <>
+                      <span className="run-step__dot" aria-hidden />
+                      <span className="run-step__detail">{row.detail}</span>
+                    </>
+                  )}
+                </button>
+                {isOpen && <div className="run-step__body">{props.renderDetail(row.item)}</div>}
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

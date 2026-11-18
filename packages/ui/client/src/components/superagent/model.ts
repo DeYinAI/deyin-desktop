@@ -1,6 +1,9 @@
 /** Pure helpers behind the Superagent view: labels, and the edits the settings form makes to a settings object. */
+import type { ModelInfo } from "@deyin/contract";
 import {
   ADMISSION_DEFAULTS,
+  ADMISSION_OPTIONS,
+  GITHUB_ROWS,
   type Allowed,
   type ModelRef,
   type Rule,
@@ -8,6 +11,7 @@ import {
   type SuperagentStatus,
   type TicketCardState,
 } from "@deyin/superagent/client";
+import type { MenuSelectOption } from "../MenuSelect.js";
 
 export type Tone = "muted" | "ok" | "warn" | "bad";
 export interface Label {
@@ -32,6 +36,43 @@ export function overallState(status: SuperagentStatus): Label {
       throw new Error(`Unhandled mode ${String(never)}`);
     }
   }
+}
+
+// ---- run state ------------------------------------------------------------------------------------------------------
+
+/** What the header's one control sets: the two switches it replaces, as a single choice. */
+export type RunState = "on" | "paused" | "off";
+
+export function runStateOf(settings: Pick<Settings, "enabled" | "paused">): RunState {
+  if (!settings.enabled) return "off";
+  return settings.paused ? "paused" : "on";
+}
+
+/** The settings with Superagent in `state`. Pausing needs it enabled, so Paused turns it on; On and Off clear the pause. */
+export function withRunState(settings: Settings, state: RunState): Settings {
+  switch (state) {
+    case "on":
+      return { ...settings, enabled: true, paused: false };
+    case "paused":
+      return { ...settings, enabled: true, paused: true };
+    case "off":
+      return { ...settings, enabled: false, paused: false };
+    default: {
+      const never: never = state;
+      throw new Error(`Unhandled run state ${String(never)}`);
+    }
+  }
+}
+
+const RUN_STATE_LABELS: Record<RunState, string> = { on: "On", paused: "Paused", off: "Off" };
+const RUN_STATE_ORDER: readonly RunState[] = ["on", "paused", "off"];
+
+/** The header control's choices. Until the setup is complete Superagent cannot run, so On and Paused say why they are unavailable. */
+export function runStateOptions(canRun: boolean): MenuSelectOption<RunState>[] {
+  return RUN_STATE_ORDER.map((id) => {
+    const unavailable = id !== "off" && !canRun;
+    return { id, label: RUN_STATE_LABELS[id], disabled: unavailable, hint: unavailable ? "Finish setup first" : undefined };
+  });
 }
 
 const TICKET_LABELS: Record<TicketCardState, Label> = {
@@ -61,6 +102,19 @@ export function needsPerson(state: TicketCardState): boolean {
 
 /** A select value for a model reference; the empty string is the app's default model. */
 export const modelValue = (model: ModelRef | null): string => (model ? `${model.providerId}::${model.model}` : "");
+
+/**
+ * The model choices: the app's default first, then the chat models of the selected provider. Image and video models cannot answer
+ * messages. A model already stored stays listed even when the provider no longer offers it, so opening the page never changes it.
+ */
+export function modelOptions(models: readonly ModelInfo[], providerId: string, current: ModelRef | null): MenuSelectOption[] {
+  const options = models
+    .filter((model) => model.kind !== "image" && model.kind !== "video")
+    .map((model) => ({ id: `${providerId}::${model.id}`, label: model.id }));
+  const value = modelValue(current);
+  if (value && !options.some((option) => option.id === value)) options.unshift({ id: value, label: value.replace("::", " · ") });
+  return [{ id: "", label: "The app's default model" }, ...options];
+}
 
 export function parseModelValue(value: string): ModelRef | null {
   const at = value.indexOf("::");
@@ -107,9 +161,34 @@ export function withGithubPolicy(settings: Settings, patch: Partial<SourcePolicy
 export type AdmissionRow = "issues" | "pulls" | "comments";
 export type AdmissionCell = keyof typeof ADMISSION_DEFAULTS;
 
+const ADMISSION_LABELS: Record<string, string> = {
+  explicit: "Treat as a request",
+  inferred: "Let the agent decide",
+  ignore: "Ignore",
+};
+
+/** The choices a cell allows; they differ by cell, and only one cell allows all three. */
+export const admissionOptions = (cell: AdmissionCell): MenuSelectOption[] =>
+  ADMISSION_OPTIONS[cell].map((id) => ({ id, label: ADMISSION_LABELS[id] ?? id }));
+
 /** What the table says for a row and cell; an unset cell has the default. */
 export function admissionValue(settings: Settings, row: AdmissionRow, cell: AdmissionCell): string {
   return githubPolicy(settings).admission[row]?.[cell] ?? ADMISSION_DEFAULTS[cell];
+}
+
+/**
+ * The one cell the settings page offers per row without opening Advanced policy: what happens when someone who is not on the
+ * allowed list addresses the agent. It is the only cell that allows all three choices (a request, an assessed candidate, or nothing).
+ */
+export const HEADLINE_CELL = "unlistedAddressed" satisfies AdmissionCell;
+
+/**
+ * The cells, other than the headline one, that differ from their default. They only appear in Advanced policy, so the page
+ * counts them: a policy that lets something through must not be hidden behind a closed section.
+ */
+export function changedAdvancedCells(settings: Settings): { row: AdmissionRow; cell: AdmissionCell }[] {
+  const cells = (Object.keys(ADMISSION_DEFAULTS) as AdmissionCell[]).filter((cell) => cell !== HEADLINE_CELL);
+  return GITHUB_ROWS.flatMap((row) => cells.filter((cell) => admissionValue(settings, row, cell) !== ADMISSION_DEFAULTS[cell]).map((cell) => ({ row, cell })));
 }
 
 export function withAdmission(settings: Settings, row: AdmissionRow, cell: AdmissionCell, value: string): Settings {
