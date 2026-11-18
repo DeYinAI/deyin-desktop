@@ -3,14 +3,24 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { AutomationsStore, FileStorage, plainCipher, type Automation } from "@deyin/host-core";
-import { AutomationScheduler, previousOccurrence, validateCronExpression } from "../src/main/automations/scheduler.js";
+import { AutomationsStore, FileStorage, automationStatus, plainCipher, type Automation } from "@deyin/host-core";
+import {
+  AutomationScheduler,
+  nextRunAt,
+  previousOccurrence,
+  validateCronExpression,
+} from "../src/main/automations/scheduler.js";
 
 function store(): AutomationsStore {
   return new AutomationsStore(new FileStorage(mkdtempSync(join(tmpdir(), "deyin-sched-")), plainCipher));
 }
 
 const DAILY_9AM = "0 9 * * *";
+
+/** Pretend the automation was last touched `days` ago, so its recent slots count as missed. */
+function age(s: AutomationsStore, id: string, days: number): void {
+  s.get(id)!.updatedAt = Date.now() - days * 86_400_000;
+}
 
 
 function create(s: AutomationsStore, patch: Partial<Automation> = {}): Automation {
@@ -38,6 +48,7 @@ test("validateCronExpression accepts five-field cron and rejects junk", () => {
 test("a never-run automation catches up exactly once", () => {
   const s = store();
   const automation = create(s);
+  age(s, automation.id, 2);
   const fired: string[] = [];
 
   const scheduler = new AutomationScheduler(s, {
@@ -58,6 +69,7 @@ test("a never-run automation catches up exactly once", () => {
 test("an automation that already ran its last slot does not catch up", () => {
   const s = store();
   const automation = create(s);
+  age(s, automation.id, 2);
   // Claim the slot before the scheduler ever looks.
   s.setLastScheduledAt(automation.id, Date.now());
 
@@ -74,7 +86,8 @@ test("an automation that already ran its last slot does not catch up", () => {
 
 test("catch-up is skipped when the setting is off", () => {
   const s = store();
-  create(s);
+  const automation = create(s);
+  age(s, automation.id, 2);
   const fired: string[] = [];
   const scheduler = new AutomationScheduler(s, {
     onTrigger: (id) => fired.push(id),
@@ -108,6 +121,7 @@ test("an invalid cron expression is skipped instead of crashing the scheduler", 
   const s = store();
   create(s, { trigger: { kind: "cron", expression: "totally invalid" } });
   const good = create(s, { name: "Good" });
+  age(s, good.id, 2);
 
   const fired: string[] = [];
   const scheduler = new AutomationScheduler(s, {
@@ -141,6 +155,35 @@ test("a slot missed by more than the catch-up window is discarded", () => {
   if (daysSinceJan1 > 7) assert.deepEqual(fired, []);
 });
 
+test("a freshly created automation does not run for slots from before it existed", () => {
+  const s = store();
+  create(s, { trigger: { kind: "cron", expression: "* * * * *" } });
+  const fired: string[] = [];
+  const scheduler = new AutomationScheduler(s, {
+    onTrigger: (id) => fired.push(id),
+    isCatchUpEnabled: () => true,
+  });
+  scheduler.refresh();
+  scheduler.handleResume();
+  scheduler.dispose();
+  assert.deepEqual(fired, []);
+});
+
+test("resuming a paused automation does not replay the slots missed while paused", () => {
+  const s = store();
+  const automation = create(s, { enabled: false });
+  age(s, automation.id, 3);
+  s.setEnabled(automation.id, true);
+  const fired: string[] = [];
+  const scheduler = new AutomationScheduler(s, {
+    onTrigger: (id) => fired.push(id),
+    isCatchUpEnabled: () => true,
+  });
+  scheduler.refresh();
+  scheduler.dispose();
+  assert.deepEqual(fired, []);
+});
+
 /* previousOccurrence ------------------------------------------------------- */
 
 test("previousOccurrence finds the last slot in the window", () => {
@@ -165,4 +208,80 @@ test("previousOccurrence ignores slots at or before the lower bound", () => {
 
 test("previousOccurrence survives a malformed expression", () => {
   assert.equal(previousOccurrence("not a cron", 0, Date.now()), null);
+});
+
+/* one-shot ("once") automations -------------------------------------------- */
+
+test("a one-shot that came due while closed catches up once, then ends", () => {
+  const s = store();
+  const at = Date.now() - 60 * 60_000;
+  const automation = create(s, { trigger: { kind: "once", at } });
+  const fired: Array<[string, number]> = [];
+  const scheduler = new AutomationScheduler(s, {
+    onTrigger: (id, scheduledAt) => fired.push([id, scheduledAt]),
+    isCatchUpEnabled: () => true,
+  });
+  scheduler.refresh();
+  assert.deepEqual(fired, [[automation.id, at]]);
+
+  // The runner claims the slot when it starts; after that the one-shot is ended.
+  s.setLastScheduledAt(automation.id, at);
+  assert.equal(automationStatus(s.get(automation.id)!), "ended");
+  fired.length = 0;
+  scheduler.refresh();
+  scheduler.handleResume();
+  scheduler.dispose();
+  assert.deepEqual(fired, []);
+});
+
+test("a one-shot older than the catch-up window is dropped", () => {
+  const s = store();
+  create(s, { trigger: { kind: "once", at: Date.now() - 8 * 86_400_000 } });
+  const fired: string[] = [];
+  const scheduler = new AutomationScheduler(s, {
+    onTrigger: (id) => fired.push(id),
+    isCatchUpEnabled: () => true,
+  });
+  scheduler.refresh();
+  scheduler.dispose();
+  assert.deepEqual(fired, []);
+});
+
+test("a future one-shot is armed but does not fire immediately", () => {
+  const s = store();
+  create(s, { trigger: { kind: "once", at: Date.now() + 3_600_000 } });
+  const fired: string[] = [];
+  const scheduler = new AutomationScheduler(s, {
+    onTrigger: (id) => fired.push(id),
+    isCatchUpEnabled: () => true,
+  });
+  scheduler.refresh();
+  scheduler.handleResume();
+  scheduler.dispose();
+  assert.deepEqual(fired, []);
+});
+
+test("nextRunAt: cron, once, paused, ended and manual", () => {
+  const now = Date.UTC(2026, 0, 10, 12, 0, 0);
+  const base = {
+    id: "a", name: "A", enabled: true, payload: { kind: "prompt", prompt: "x" },
+    target: { kind: "local", workspacePath: "/tmp" }, model: "m", providerId: "p", createdAt: 0, updatedAt: 0,
+  } as const;
+  const hourly = { ...base, trigger: { kind: "cron", expression: "0 * * * *" } } as Automation;
+  assert.equal(nextRunAt(hourly, now), now + 3_600_000);
+  assert.equal(nextRunAt({ ...hourly, enabled: false }, now), undefined);
+
+  const once = { ...base, trigger: { kind: "once", at: now + 5_000 } } as Automation;
+  assert.equal(nextRunAt(once, now), now + 5_000);
+  assert.equal(nextRunAt({ ...once, lastScheduledAt: now + 5_000 }, now), undefined);
+  assert.equal(nextRunAt({ ...once, trigger: { kind: "once", at: now - 1 } }, now), undefined);
+  assert.equal(nextRunAt({ ...base, trigger: { kind: "manual" } } as Automation, now), undefined);
+});
+
+test("automationStatus: active, paused, ended", () => {
+  const trigger = { kind: "once", at: 1 } as const;
+  assert.equal(automationStatus({ enabled: true, trigger: { kind: "manual" } }), "active");
+  assert.equal(automationStatus({ enabled: false, trigger: { kind: "manual" } }), "paused");
+  assert.equal(automationStatus({ enabled: true, trigger, lastScheduledAt: 1 }), "ended");
+  assert.equal(automationStatus({ enabled: true, trigger }), "active");
 });

@@ -1,6 +1,6 @@
 # Performance Report
 
-**Generated**: 2026-09-02T00:32:55.140Z
+**Generated**: 2026-11-17T22:35:35.590Z
 **Status**: ✅ All targets met
 
 ## Benchmark Results
@@ -8,12 +8,15 @@
 | Benchmark | Metric | Result | Target | Status |
 |-----------|--------|--------|--------|--------|
 | Cache | Hit rate (100 turns) | 89.6% | ≥80% | ✅ |
-| UI | 1000-turn load | 0.4ms | <2000ms | ✅ |
+| UI | 1000-turn load | 2.0ms | <2000ms | ✅ |
 | UI | Streaming FPS (p95) | 120.0 | ≥55 | ✅ |
 | Native | Module loaded | yes | — | ✅ |
 | Native | countTokens (12KB prose) | 1.0x (identical=true) | identical | ✅ |
 | Native | compressToolOutput (40KB log) | 1.0x (identical=true) | identical | ✅ |
 | Native | nativeGrep (0 hits, in-process) | 1.0x (identical=true) | identical | ✅ |
+| Native | frameAcpChunk (50 JSON-RPC messages) | 0.2x (identical=true) | identical | ✅ |
+| Native | frameNdjsonChunk (100 CLI events) | 0.2x (identical=true) | identical | ✅ |
+| Native | ringBufferAppend (200 log lines) | 0.1x (identical=true) | identical | ✅ |
 | Summary | Deterministic scenario | toolCalls=6, deniedCalls=1, failedCalls=3, duplicateResults=1, loopGuardTrips=1 | toolCalls=6, deniedCalls=1, failedCalls=3, duplicateResults=1, loopGuardTrips=1 | ✅ |
 | Compaction | prune-short-circuit (window 200000) | action=prune, prune reclaimed 62000 tok, second pass 0 | action=prune, second pass 0 | ✅ |
 | Compaction | fold-required (window 32000) | action=fold, prune reclaimed 0 tok, second pass 0 | action=fold, second pass 0 | ✅ |

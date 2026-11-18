@@ -167,8 +167,11 @@ export type ThreadEvent =
       checkpointId?: string;
     }
   | { kind: "model-switch"; from: string; to: string }
-  /** Timeline note for the /goal command; text null = goal cleared. */
-  | { kind: "goal-set"; text: string | null }
+  /** Timeline note for the /goal command; text null = goal cleared. `replaced` marks a new
+   *  objective that took over from an unfinished goal ("Goal updated"). */
+  | { kind: "goal-set"; text: string | null; replaced?: boolean }
+  /** Timeline-only readout from a bare `/goal`; never sent to the model. */
+  | { kind: "goal-status"; text: string }
   | { kind: "skill"; name: string }
   | { kind: "thought"; label: string; checkpointId?: string; revertable?: boolean }
   | { kind: "worked"; actions: number; seconds?: number }
@@ -271,15 +274,35 @@ export interface Thread {
   goal?: ThreadGoal;
 }
 
-/** Verifiable objective tracked by goal mode + report_goal_met. */
+/** Durable goal state for the reviewer-driven /goal loop. */
 export interface ThreadGoal {
+  /** Stable id for this goal instance; a new goal gets a new id. */
+  id?: string;
+  /** The objective text, as set by `/goal <objective>` (or the agent's restatement of it). */
   text: string;
-  status: "active" | "met" | "unmet";
+  /** What the user typed, when the agent restated it; lets the timeline note follow the rewrite. */
+  rewrittenFrom?: string;
+  /**
+   * active   — the loop keeps admitting continuations until a verdict ends it
+   * paused   — stopped by the user (`/goal pause`), the reviewer, or a restart
+   * done     — the reviewer confirmed the objective is met
+   * blocked  — the reviewer says it cannot proceed (missing access, hard blocker)
+   * exhausted— the round budget ran out before the objective was met
+   */
+  status: "active" | "paused" | "done" | "blocked" | "exhausted" | "met" | "unmet";
   /** ISO timestamps. */
   setAt?: string;
   reportedAt?: string;
-  /** Last report_goal_met reason. */
+  /** Last reviewer reason (or report_goal_met reason). */
   reason?: string;
+  /** Continuation rounds already admitted. */
+  rounds?: number;
+  /** Ceiling on continuation rounds; reached rounds stops the loop. */
+  maxRounds?: number;
+  /** Process boot id that armed this goal; a goal from an earlier boot is paused. */
+  boot?: string;
+  /** ISO timestamp of the last state write. */
+  updatedAt?: string;
 }
 
 /* Checkpoint revert ----------------------------------------------------------- */
@@ -511,7 +534,7 @@ export interface OnboardProgress {
 export interface DeyinSettings {
   /** Bumped when the settings shape changes; SettingsStore migrates on load. */
   schemaVersion: number;
-  theme: "dark" | "light" | "system" | "warm";
+  theme: "dark" | "light" | "system" | "warm" | "obsidian" | "reference";
   /** Interface accent id (overrides --color-accent via :root[data-accent]). */
   themeAccent: string;
   language: string;
@@ -606,6 +629,8 @@ export type AutomationTarget =
 
 export type AutomationTrigger =
   | { kind: "cron"; expression: string }
+  /** One-shot: fires once at `at` (unix ms); the automation is "ended" after that. */
+  | { kind: "once"; at: number }
   | { kind: "manual" };
 
 /**
@@ -701,6 +726,8 @@ export interface SshTestResult {
 
 export interface AutomationInfo extends Automation {
   lastRun?: AutomationRun;
+  /** Unix ms of the next scheduled run; absent for manual, paused or ended automations. */
+  nextRunAt?: number;
 }
 
 /* Capabilities (plugins / skills / subagents / MCP / commands / hooks) ----- */
@@ -1047,8 +1074,14 @@ export interface AgentStartOptions {
   history: { role: "user" | "assistant"; content: string }[];
   /** Seed the agent loop's todo list (e.g. plan todos handed to Build). */
   initialTodos?: AgentTodoItem[];
-  /** Active goal text; enables report_goal_met verification. */
+  /** Active goal text; drives the reviewer-based goal loop. */
   goalText?: string;
+  /** Goal instance id, so a continuation from a replaced goal is not applied. */
+  goalId?: string;
+  /** Round budget for the goal loop. */
+  goalMaxRounds?: number;
+  /** `goalText` is what the user typed: restate it as a checkable objective before this run starts. */
+  goalRewrite?: boolean;
   /** Images attached to this run's user message (vision). */
   images?: AgentImageInput[];
   /** Text-to-image model ids from the catalog, for the generate_image tool. */

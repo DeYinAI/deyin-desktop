@@ -154,6 +154,8 @@ export async function listModels(opts: { apiBaseUrl: string }, getToken: TokenSo
 }
 
 export const DEFAULT_MODELS: ModelInfo[] = [
+  { id: "deepseek-v41-flash", name: "DeepSeek V4.1 Flash" },
+  { id: "glm-5.3", name: "GLM 5.3" },
   { id: "GLM-5.2", name: "GLM-5.2" },
   { id: "DeepSeek-V4-Pro", name: "DeepSeek-V4-Pro" },
   { id: "Kimi-K3", name: "Kimi K3" },

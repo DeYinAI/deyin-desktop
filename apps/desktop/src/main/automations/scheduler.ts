@@ -1,5 +1,5 @@
 import { Cron } from "croner";
-import type { Automation, AutomationsStore } from "@deyin/host-core";
+import { isAutomationEnded, type Automation, type AutomationsStore } from "@deyin/host-core";
 
 export interface SchedulerCallbacks {
   onTrigger: (automationId: string, scheduledAt: number) => void;
@@ -17,6 +17,25 @@ export function validateCronExpression(expression: string): string | null {
     return null;
   } catch (err) {
     return err instanceof Error ? err.message : "Invalid cron expression.";
+  }
+}
+
+/** Unix ms of the next scheduled run, or undefined when nothing is scheduled (manual, paused, ended, past). */
+export function nextRunAt(automation: Automation, now: number = Date.now()): number | undefined {
+  if (!automation.enabled || isAutomationEnded(automation)) return undefined;
+  const trigger = automation.trigger;
+  if (trigger.kind === "once") return trigger.at > now ? trigger.at : undefined;
+  if (trigger.kind !== "cron") return undefined;
+  let job: Cron;
+  try {
+    job = new Cron(trigger.expression, { paused: true });
+  } catch {
+    return undefined;
+  }
+  try {
+    return job.nextRun(new Date(now))?.getTime();
+  } finally {
+    job.stop();
   }
 }
 
@@ -77,20 +96,26 @@ export class AutomationScheduler {
   refresh(): void {
     this.disposeJobs();
     for (const automation of this.store.list()) {
-      if (!automation.enabled || automation.trigger.kind !== "cron") continue;
+      if (!automation.enabled || isAutomationEnded(automation)) continue;
       this.schedule(automation);
     }
   }
 
   private schedule(automation: Automation): void {
-    if (automation.trigger.kind !== "cron") return;
-    const expression = automation.trigger.expression;
+    const trigger = automation.trigger;
+    if (trigger.kind === "manual") return;
     try {
-      const job = new Cron(expression, { protect: true }, () => {
-        const scheduledAt = Date.now();
-        this.callbacks.onTrigger(automation.id, scheduledAt);
-      });
-      this.jobs.set(automation.id, job);
+      if (trigger.kind === "once" && trigger.at > Date.now()) {
+        const slot = trigger.at;
+        this.jobs.set(automation.id, new Cron(new Date(slot), { protect: true }, () => {
+          this.callbacks.onTrigger(automation.id, slot);
+        }));
+      } else if (trigger.kind === "cron") {
+        this.jobs.set(automation.id, new Cron(trigger.expression, { protect: true }, () => {
+          const scheduledAt = Date.now();
+          this.callbacks.onTrigger(automation.id, scheduledAt);
+        }));
+      }
 
       if (this.callbacks.isCatchUpEnabled()) {
         this.maybeCatchUp(automation);
@@ -106,13 +131,23 @@ export class AutomationScheduler {
   /**
    * Fire at most one run for the most recently missed slot. Older misses are
    * discarded: a daily automation that missed six days runs once, not six times.
+   * Only slots after the automation's last edit or run count as missed.
    */
   private maybeCatchUp(automation: Automation): void {
-    if (automation.trigger.kind !== "cron") return;
+    const trigger = automation.trigger;
+    if (trigger.kind === "manual") return;
     const now = Date.now();
-    // Only look back as far as the window, and never re-run a claimed slot.
-    const notBefore = Math.max(automation.lastScheduledAt ?? 0, now - CATCH_UP_WINDOW_MS);
-    const scheduledAt = previousOccurrence(automation.trigger.expression, notBefore, now);
+    if (trigger.kind === "once") {
+      // A one-shot that came due while the app was closed runs once, if recent enough.
+      if (isAutomationEnded(automation) || trigger.at > now || now - trigger.at > CATCH_UP_WINDOW_MS) return;
+      this.callbacks.onTrigger(automation.id, trigger.at);
+      return;
+    }
+    // Only look back as far as the window, never re-run a claimed slot, and never replay slots from
+    // before the last edit: a task created at 20:00 for 08:00 daily must wait for tomorrow, and one
+    // resumed after a pause must not run for the days it was paused.
+    const notBefore = Math.max(automation.lastScheduledAt ?? 0, automation.updatedAt, now - CATCH_UP_WINDOW_MS);
+    const scheduledAt = previousOccurrence(trigger.expression, notBefore, now);
     if (scheduledAt === null) return;
     this.callbacks.onTrigger(automation.id, scheduledAt);
   }
@@ -125,7 +160,7 @@ export class AutomationScheduler {
   handleResume(): void {
     if (this.disposed || !this.callbacks.isCatchUpEnabled()) return;
     for (const automation of this.store.list()) {
-      if (!automation.enabled || automation.trigger.kind !== "cron") continue;
+      if (!automation.enabled || isAutomationEnded(automation)) continue;
       this.maybeCatchUp(automation);
     }
   }

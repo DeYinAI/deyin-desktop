@@ -3,6 +3,22 @@ import { pickVideoModelParamsRecord } from "./video-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
 
 /** Bump when DeyinSettings changes shape; migrateSettings upgrades older files. */
+/**
+ * Every valid theme id, as a runtime list.
+ *
+ * Typed as `readonly DeyinSettings["theme"][]` so adding a theme to the union
+ * without listing it here fails the build, and adding one here that the union
+ * does not include fails it too.
+ */
+export const THEME_IDS = [
+  "dark",
+  "light",
+  "system",
+  "warm",
+  "obsidian",
+  "reference",
+] as const satisfies readonly DeyinSettings["theme"][];
+
 export const SETTINGS_SCHEMA_VERSION = 22;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
@@ -156,7 +172,9 @@ if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration 
   if (typeof merged.autoVideoGeneration !== "boolean") merged.autoVideoGeneration = DEFAULT_SETTINGS.autoVideoGeneration;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
-  if (!["dark", "light", "system", "warm"].includes(merged.theme)) merged.theme = "dark";
+  // Theme ids must stay in sync with DeyinSettings["theme"]. A hardcoded list
+  // here silently drops any newly added style back to the default.
+  if (!(THEME_IDS as readonly string[]).includes(merged.theme)) merged.theme = "dark";
   if (typeof merged.themeAccent !== "string" || !merged.themeAccent.trim()) {
     merged.themeAccent = DEFAULT_SETTINGS.themeAccent;
   }

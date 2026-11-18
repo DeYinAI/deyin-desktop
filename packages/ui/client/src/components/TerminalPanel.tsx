@@ -31,7 +31,7 @@ interface TerminalPanelProps {
   cursorStyle: "bar" | "block" | "underline";
   copyOnSelect: boolean;
   /** Interface theme; the terminal palette follows it without restarting shells. */
-  theme: "light" | "dark";
+  theme: "light" | "dark" | "obsidian";
   /** Agent PTYs for the active thread — shown as attachable Agent tabs. */
   attachSessions?: AttachableTerminal[];
   /** When true, fills the workspace panel tab instead of bottom-docking. */
@@ -675,7 +675,7 @@ function TerminalInstance({
   scrollback: number;
   cursorStyle: "bar" | "block" | "underline";
   copyOnSelect: boolean;
-  theme: "light" | "dark";
+  theme: "light" | "dark" | "obsidian";
   registerActions: (actions: TerminalActions | null) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);

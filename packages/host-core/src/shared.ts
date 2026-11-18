@@ -6,6 +6,7 @@
  */
 export { parseSseDataLine as sseJsonLine, ssePayloads as sseJson } from "./sse-core.js";
 export * from "./types.js";
+export * from "./automation-status.js";
 export * from "./config.js";
 export * from "./defaults.js";
 export * from "./agent-run.js";

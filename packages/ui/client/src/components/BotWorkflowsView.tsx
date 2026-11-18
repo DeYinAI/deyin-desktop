@@ -622,7 +622,7 @@ export function BotWorkflowsView({
                     <Field
                       label="Prompt Template"
                       hint="Instructions passed to the external agent. Supports interpolated variables."
-                      actions={
+                      action={
                         <div className="bot-stage-card__var-chips">
                           <span className="bot-stage-card__var-label">Variables:</span>
                           <button
@@ -693,8 +693,9 @@ export function BotWorkflowsView({
                               onChange={(e) =>
                                 updateStage(idx, {
                                   watchdog: {
-                                    ...stage.watchdog,
                                     timeoutMs: Math.max(1, Number(e.target.value)) * 60_000,
+                                    stallThresholdMs: stage.watchdog?.stallThresholdMs ?? 120_000,
+                                    onStallAction: stage.watchdog?.onStallAction ?? "alert-user",
                                   },
                                 })
                               }
@@ -714,8 +715,9 @@ export function BotWorkflowsView({
                               onChange={(e) =>
                                 updateStage(idx, {
                                   watchdog: {
-                                    ...stage.watchdog,
+                                    timeoutMs: stage.watchdog?.timeoutMs ?? 900_000,
                                     stallThresholdMs: Math.max(10, Number(e.target.value)) * 1000,
+                                    onStallAction: stage.watchdog?.onStallAction ?? "alert-user",
                                   },
                                 })
                               }

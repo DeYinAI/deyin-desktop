@@ -38,7 +38,9 @@ export function BotFlowPanel({ workspaceRoot, onOpenWorkflows }: BotFlowPanelPro
         if (list.length > 0 && !selectedWorkflowId) {
           setSelectedWorkflowId(list[0]!.id);
         }
-      } catch {}
+      } catch {
+        // No workflow list available yet; the panel shows its empty state.
+      }
     }
   };
 
@@ -90,7 +92,9 @@ export function BotFlowPanel({ workspaceRoot, onOpenWorkflows }: BotFlowPanelPro
           const lines = await window.deyin.externalAgents.logs(activeRunId, 200);
           setLogs(lines);
           logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-        } catch {}
+        } catch {
+          // Logs are polled every second; a failed poll just retries on the next tick.
+        }
       }
       setTotalElapsed((prev) => prev + 1);
     }, 1000);

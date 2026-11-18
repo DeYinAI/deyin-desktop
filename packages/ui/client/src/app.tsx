@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_SETTINGS,
   buildLinkedThreadContext,
@@ -38,7 +38,7 @@ import { ComputerUseOverlay } from "./components/ComputerUseOverlay.js";
 import { ComposerDock, type ComposerHandle } from "./components/ComposerDock.js";
 import { ChatView } from "./components/ChatView.js";
 import { Sidebar } from "./components/Sidebar.js";
-import { DraftKeeper, type ComposerDraftState } from "./composer-draft.js";
+import { DraftKeeper, emptyComposerDraft, type ComposerDraftState } from "./composer-draft.js";
 import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
@@ -49,18 +49,17 @@ import {
   shouldQueueFollowUp,
   shouldShowGlobalStop,
 } from "./composerThreadState.js";
-import { applyGoalCommandText } from "./goal-command.js";
-import { applyGoalToProjects } from "./threadGoal.js";
+import { describeGoal, goalInputAction, goalPatchFromCommand, transitionGoal } from "./goal-command.js";
+import { parseModeCommand } from "./modeCommand.js";
+import { DEFAULT_MAX_GOAL_ROUNDS } from "@deyin/agent-core/goal-constants";
+import { applyGoalToProjects, isReplacingGoal, type GoalApplyOptions } from "./threadGoal.js";
 import { estimateContextFromThreadEvents } from "./contextEstimate.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
-import { AutomationsView } from "./components/AutomationsView.js";
-import { SuperagentPage } from "./components/superagent/SuperagentPage.js";
 import { BotModeView } from "./components/BotModeView.js";
-import { BotWorkflowsView } from "./components/BotWorkflowsView.js";
-import { PlansView } from "./components/PlansView.js";
-import { SettingsView } from "./components/SettingsView.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { ProjectMenu, type ProjectAction } from "./components/ProjectMenu.js";
+import { ConversationHeader } from "./components/ConversationHeader.js";
+import { SessionStatusLine } from "./components/SessionStatusLine.js";
 import { TopBar } from "./components/TopBar.js";
 import { Icon } from "./components/Icon.js";
 import { WhatsNewModal } from "./components/WhatsNewModal.js";
@@ -68,7 +67,6 @@ import { BetaFeedbackForm } from "./components/BetaFeedbackForm.js";
 import { Welcome } from "./components/Welcome.js";
 import { ProjectPicker, type ProjectPickerAction } from "./components/project-picker/ProjectPicker.js";
 import { NavRail } from "./components/NavRail.js";
-import { PanelRail } from "./components/PanelRail.js";
 import { WorkspacePanel, type PanelTab } from "./components/WorkspacePanel.js";
 import { persistChatOnlyPageFromMarkdown } from "./chatOnlyPage.js";
 import { ReviewBanner } from "./components/ReviewBanner.js";
@@ -100,11 +98,12 @@ import {
   type ThreadEvent,
 } from "./threads.js";
 import { formatFindingFixPrompt, formatAllFindingsFixPrompt } from "./securityFixPrompt.js";
-import type { SettingsPage } from "./components/SettingsView.js";
+import type { ExtensionTab as ExtensionSettingsTab, SettingsPage } from "./components/SettingsView.js";
 import type {
  AgentTodoItem,
  ApprovalMode,
  Bootstrap,
+ CapabilityKind,
  ChatMode,
  ContextUsageSnapshot,
  ContextAttachment,
@@ -140,6 +139,30 @@ const PANEL_MIN_PX = 320;
 const MemoSidebar = memo(Sidebar);
 const MemoChatView = memo(ChatView);
 const MemoWorkspacePanel = memo(WorkspacePanel);
+
+/**
+ * Secondary views (automations, superagent, bot workflows, plans, settings) are
+ * code-split: they are reachable from the sidebar but nobody opens the app to
+ * land on them, so their code must not sit in the first-load bundle.
+ */
+const LazyPluginsView = lazy(() =>
+  import("./components/PluginsView.js").then((m) => ({ default: m.PluginsView })),
+);
+const LazyAutomationsView = lazy(() =>
+  import("./components/AutomationsView.js").then((m) => ({ default: m.AutomationsView })),
+);
+const LazySuperagentPage = lazy(() =>
+  import("./components/superagent/SuperagentPage.js").then((m) => ({ default: m.SuperagentPage })),
+);
+const LazyBotWorkflowsView = lazy(() =>
+  import("./components/BotWorkflowsView.js").then((m) => ({ default: m.BotWorkflowsView })),
+);
+const LazyPlansView = lazy(() =>
+  import("./components/PlansView.js").then((m) => ({ default: m.PlansView })),
+);
+const LazySettingsView = lazy(() =>
+  import("./components/SettingsView.js").then((m) => ({ default: m.SettingsView })),
+);
 /** Stable no-op for optional handlers disabled on chat-only hosts. */
 const noop = () => {};
 /** Stable fallback so `todos ?? EMPTY_TODOS` keeps one identity. */
@@ -155,7 +178,7 @@ function clampFraction(value: number): number {
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 const CONTINUE_PROMPT = "Continue the task from where you stopped. Check the todo list and workspace state first, then finish the remaining work.";
 
-type View = "workspace" | "settings" | "upgrade" | "automations" | "superagent" | "bot" | "workflows";
+type View = "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
 
 interface PendingApproval {
   requestId: string;
@@ -196,6 +219,9 @@ export function App() {
   const [view, setView] = useState<View>("workspace");
   const [selectedWorkflowForEdit, setSelectedWorkflowForEdit] = useState<string | null>(null);
   const [settingsPage, setSettingsPage] = useState<SettingsPage>("general");
+  const [extensionTab, setExtensionTab] = useState<ExtensionSettingsTab>("mcps");
+  const [skillTab, setSkillTab] = useState<CapabilityKind>("skill");
+  const [mcpCount, setMcpCount] = useState<number>(0);
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -343,13 +369,19 @@ export function App() {
   composerModelRef.current = { providerId: selectedProviderId, modelId: selectedModel };
   const selectModeRef = useRef<(mode: ChatMode) => void>(() => undefined);
   const startAgentRunRef = useRef<(thread: Thread, text: string, mode: ChatMode) => void>(() => undefined);
-  const applyGoalToThreadRef = useRef<(thread: Thread, goal: string | null) => void>(() => undefined);
+  const applyGoalToThreadRef = useRef<(thread: Thread, goal: string | null, options?: GoalApplyOptions) => void>(() => undefined);
+  /** Runs a `/goal` line (set, replace, status, pause, resume, clear); false when the text is not one. */
+  const handleGoalInputRef = useRef<(text: string, thread: Thread, mode: ChatMode) => boolean>(() => false);
   const [browserPartition, setBrowserPartition] = useState<string | null>(null);
 
   const [panelOpen, setPanelOpen] = useState(false);
-  /** Icon rail stays visible when the panel content is collapsed. */
-  const [panelRail, setPanelRail] = useState(false);
   const [panelTab, setPanelTab] = useState<PanelTab>("plan");
+  /** Tabs open in the right panel's strip, in the order they were opened. */
+  const [panelTabs, setPanelTabs] = useState<PanelTab[]>([]);
+  /** The "+" Start page is showing instead of a tool tab. */
+  const [panelStart, setPanelStart] = useState(false);
+  /** The panel fills the whole content area (chat column hidden). */
+  const [panelFullscreen, setPanelFullscreen] = useState(false);
   /** Subagent run shown in the Agent panel; null follows the newest run. */
   const [activeSubagentId, setActiveSubagentId] = useState<string | null>(null);
   const [diffByThread, setDiffByThread] = useState<Record<string, FileDiff>>({});
@@ -372,24 +404,49 @@ export function App() {
   }, []);
 
   const openPanelTab = useCallback((tab: PanelTab) => {
+    const target = chatOnlyHosted ? "preview" : tab;
+    setPanelTabs((cur) => (cur.includes(target) ? cur : [...cur, target]));
+    setPanelTab(target);
+    setPanelStart(false);
     setPanelOpen(true);
-    setPanelRail(true);
-    setPanelTab(chatOnlyHosted ? "preview" : tab);
     setView("workspace");
   }, [chatOnlyHosted]);
 
+  const openPanelStart = useCallback(() => {
+    setPanelStart(true);
+    setPanelOpen(true);
+    setView("workspace");
+  }, []);
+
+  /** Close one tab; the neighbour takes over, and an empty strip falls back to Start. */
+  const closePanelTab = useCallback(
+    (tab: PanelTab) => {
+      const index = panelTabs.indexOf(tab);
+      if (index === -1) return;
+      const remaining = panelTabs.filter((t) => t !== tab);
+      setPanelTabs(remaining);
+      if (panelStart || tab !== panelTab) return;
+      const neighbour = remaining[index] ?? remaining[index - 1];
+      if (neighbour) setPanelTab(neighbour);
+      else setPanelStart(true);
+    },
+    [panelTabs, panelStart, panelTab],
+  );
+
   const collapsePanel = useCallback(() => {
     setPanelOpen(false);
-    setPanelRail(true);
+    setPanelFullscreen(false);
   }, []);
 
-  const dismissPanel = useCallback(() => {
-    setPanelOpen(false);
-    setPanelRail(false);
-  }, []);
+  /** Header toggle: hide the panel, or reopen the last tab (Start when none are open). */
+  const togglePanel = useCallback(() => {
+    if (panelOpen) collapsePanel();
+    else if (panelTabs.length === 0) openPanelStart();
+    else if (panelStart) openPanelStart();
+    else openPanelTab(panelTab);
+  }, [panelOpen, panelTabs.length, panelStart, panelTab, collapsePanel, openPanelStart, openPanelTab]);
 
-  const terminalVisible = panelOpen && panelTab === "terminal";
-  const panelVisible = (panelOpen || panelRail) && (!chatOnlyHosted || panelRail);
+  const terminalVisible = panelOpen && !panelStart && panelTab === "terminal";
 
   /* Panel width. The wrap (rail + panel) is laid out in pixels derived from the
      content area's measured width, so the chat column always keeps CHAT_MIN_PX
@@ -1240,9 +1297,27 @@ export function App() {
           setProjects((cur) =>
             cur.map((p) => ({
               ...p,
-              threads: p.threads.map((th) =>
-                th.id === effect.threadId ? { ...th, goal: effect.goal ?? undefined } : th,
-              ),
+              threads: p.threads.map((th) => {
+                if (th.id !== effect.threadId) return th;
+                const incoming = effect.goal ?? undefined;
+                // A stopped run can still report on a goal the user has since replaced or
+                // cleared; goals are only ever created by the user, never by a host update.
+                if (incoming && (!th.goal || (incoming.id && th.goal.id && incoming.id !== th.goal.id))) return th;
+                // Updates are partial (no id on some hosts): keep what the card already knows.
+                const goal = incoming ? { ...th.goal, ...incoming } : undefined;
+                // The agent restated the objective: the "Goal set" note follows the new wording.
+                const restated = incoming?.rewrittenFrom;
+                if (incoming && restated !== undefined && restated !== incoming.text) {
+                  const at = th.events.findLastIndex((e) => e.kind === "goal-set" && e.text === restated);
+                  const prior = at >= 0 ? th.events[at] : undefined;
+                  if (prior?.kind === "goal-set") {
+                    const events = [...th.events];
+                    events[at] = { ...prior, text: incoming.text };
+                    return { ...th, goal, events };
+                  }
+                }
+                return { ...th, goal };
+              }),
             })),
           );
           break;
@@ -1447,12 +1522,15 @@ export function App() {
             setQueuedForThread(fold.threadId, null);
             const thread =
               projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
-            if (
-              thread &&
-              !applyGoalCommandText(sendNow.text, (goal) => applyGoalToThreadRef.current(thread, goal))
-            ) {
-              // Defer so main has removed this thread from `active` before restart.
-              queueMicrotask(() => startAgentRunRef.current(thread, sendNow.text, sendNow.mode));
+            if (thread) {
+              // Defer: the store marks the run finished only after this handler returns, and
+              // main must have removed this thread from `active` before a restart. A goal
+              // command run now would still see the old run and interrupt it a second time.
+              queueMicrotask(() => {
+                if (!handleGoalInputRef.current(sendNow.text, thread, sendNow.mode)) {
+                  startAgentRunRef.current(thread, sendNow.text, sendNow.mode);
+                }
+              });
             }
             break;
           }
@@ -1462,9 +1540,11 @@ export function App() {
             const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === fold.threadId) ?? null;
             if (thread) {
               const mode = thread.mode ?? "agent";
-              if (!applyGoalCommandText(queued, (goal) => applyGoalToThreadRef.current(thread, goal))) {
-                queueMicrotask(() => startAgentRunRef.current(thread, queued, mode));
-              }
+              queueMicrotask(() => {
+                if (!handleGoalInputRef.current(queued, thread, mode)) {
+                  startAgentRunRef.current(thread, queued, mode);
+                }
+              });
             }
           }
           break;
@@ -1504,7 +1584,15 @@ export function App() {
     void window.deyin.browserControl.getPartition().then(setBrowserPartition);
   }, [boot, workspaceRoot]);
 
-  const newTask = useCallback((modeOverride?: ChatMode, viewOverride?: View) => {
+  const automationWorkspaces = useMemo(
+    () =>
+      projects.flatMap((p) =>
+        p.root && (!p.location || p.location.kind === "local") ? [{ name: p.name, root: p.root }] : [],
+      ),
+    [projects],
+  );
+
+  const newTask = useCallback((modeOverride?: ChatMode, viewOverride?: View, projectIdOverride?: string, initialDraft?: string) => {
     void (async () => {
       // No workspace yet on desktop: the folder picked here becomes the project.
       let createdProject: Project | null = null;
@@ -1526,23 +1614,26 @@ export function App() {
         const target =
           createdId && cur.some((p) => p.id === createdId)
             ? createdId
-            : cur.some((p) => p.id === activeProjectId)
-              ? activeProjectId!
-              : cur[0]!.id;
+            : projectIdOverride && cur.some((p) => p.id === projectIdOverride)
+              ? projectIdOverride
+              : cur.some((p) => p.id === activeProjectId)
+                ? activeProjectId!
+                : cur[0]!.id;
         return cur.map((p) => (p.id === target ? { ...p, threads: [thread, ...p.threads] } : p));
       });
+      if (initialDraft) draftKeeper.save(thread.id, { ...emptyComposerDraft(), input: initialDraft });
       setActiveThreadId(thread.id);
       setView(viewOverride ?? (effectiveMode === "bot" ? "bot" : "workspace"));
       if (modeOverride) setComposerMode(modeOverride);
     })();
-  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, chatOnlyHosted]);
+  }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, chatOnlyHosted, draftKeeper]);
 
   const newBotMission = useCallback(() => {
     newTask("bot", "bot");
   }, [newTask]);
 
   const applyGoalToThread = useCallback(
-    (thread: Thread, goal: string | null) => {
+    (thread: Thread, goal: string | null, options?: GoalApplyOptions) => {
       let createdProjectId: string | undefined;
       setProjects((cur) => {
         const result = applyGoalToProjects(
@@ -1551,6 +1642,7 @@ export function App() {
           goal,
           activeProjectId,
           chatOnlyHosted || boot?.platform === "web" ? "Chat" : "Workspace",
+          options,
         );
         createdProjectId = result.createdProjectId;
         return result.projects;
@@ -1561,6 +1653,36 @@ export function App() {
     [activeProjectId],
   );
   applyGoalToThreadRef.current = applyGoalToThread;
+
+  /** Pause or resume the goal loop in place, keeping the objective text. */
+  const setGoalStatus = useCallback((threadId: string, status: "active" | "paused") => {
+    setProjects((cur) =>
+      cur.map((project) => ({
+        ...project,
+        threads: project.threads.map((t) => {
+          if (t.id !== threadId || !t.goal) return t;
+          return {
+            ...t,
+            goal: transitionGoal(t.goal, status === "active" ? "resume" : "pause"),
+            updatedAt: Date.now(),
+          };
+        }),
+      })),
+    );
+  }, []);
+
+  /** Clear the goal on a thread. */
+  const clearGoal = useCallback((threadId: string) => {
+    setProjects((cur) =>
+      cur.map((project) => ({
+        ...project,
+        threads: project.threads.map((t) => {
+          if (t.id !== threadId) return t;
+          return { ...t, goal: undefined, updatedAt: Date.now() };
+        }),
+      })),
+    );
+  }, []);
 
   /** Fork a new task from the conversation prefix ending at `eventIndex`. */
   const forkThreadAtEvent = useCallback((sourceThreadId: string, eventIndex: number) => {
@@ -1719,7 +1841,7 @@ export function App() {
     [projects, activeThreadId, updateThread],
   );
 
-  // Global shortcuts: Ctrl/Cmd+K search, Ctrl/Cmd+N new task.
+  // Global shortcuts: Ctrl/Cmd+K search, Ctrl/Cmd+N new task, Ctrl/Cmd+B toggle sidebar, Ctrl+` / Ctrl/Cmd+J toggle terminal.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -1734,6 +1856,18 @@ export function App() {
         e.preventDefault();
         newTask();
       }
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        setSidebarOpen((v) => !v);
+      }
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") ||
+        (e.ctrlKey && e.key === "`")
+      ) {
+        e.preventDefault();
+        if (terminalVisible) collapsePanel();
+        else openPanelTab("terminal");
+      }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         selectMode(composerMode === "bot" ? "agent" : "bot");
@@ -1741,17 +1875,17 @@ export function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [newTask]);
+  }, [newTask, terminalVisible, collapsePanel, openPanelTab, composerMode, selectMode]);
 
   // Interface theme: apply the setting to <html data-theme>; "system" follows the OS.
-  const [themeVariant, setThemeVariant] = useState<"light" | "dark">("dark");
+  const [themeVariant, setThemeVariant] = useState<"light" | "dark" | "obsidian">("dark");
   useEffect(() => {
     const pref = settings?.theme ?? "dark";
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const resolved: "light" | "dark" | "warm" = pref === "system" ? (mql.matches ? "dark" : "light") : pref;
-      if (resolved === "warm") {
-        document.documentElement.dataset.theme = "warm";
+      const resolved: "light" | "dark" | "warm" | "obsidian" | "reference" = pref === "system" ? (mql.matches ? "dark" : "light") : pref;
+      if (resolved === "warm" || resolved === "obsidian" || resolved === "reference") {
+        document.documentElement.dataset.theme = resolved;
         setThemeVariant("dark");
         return;
       }
@@ -1776,6 +1910,16 @@ export function App() {
     document.documentElement.style.setProperty("--app-font-size", `${settings?.fontSize ?? 14}px`);
   }, [settings?.fontSize]);
 
+  // Active MCP server count: queries the daemon on mount.
+  useEffect(() => {
+    if (window.deyin?.mcp?.list) {
+      window.deyin.mcp
+        .list()
+        .then((servers) => setMcpCount(servers.filter((s) => s.enabled).length))
+        .catch(() => setMcpCount(0));
+    }
+  }, []);
+
   /** Start (or continue) the tool-calling loop for a thread in the given mode. */
   const startAgentRun = useCallback(
     async (
@@ -1793,8 +1937,10 @@ export function App() {
         imageChatModels?: string[];
         /** Model override (e.g. a vision-capable model routed at send time). */
         model?: string;
- /** Transcript text when it differs from the agent prompt (local vision). */
+        /** Transcript text when it differs from the agent prompt (local vision). */
         displayText?: string;
+        /** The prompt is a freshly typed /goal objective: the host restates it before work starts. */
+        goalRewrite?: boolean;
       },
     ) => {
       const attachments = meta?.attachments ?? [];
@@ -1838,6 +1984,9 @@ export function App() {
         history: toChatMessages(historyThread.events),
         initialTodos: thread.todos,
         goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
+        ...(thread.goal?.id ? { goalId: thread.goal.id } : {}),
+        ...(thread.goal?.maxRounds !== undefined ? { goalMaxRounds: thread.goal.maxRounds } : {}),
+        ...(meta?.goalRewrite && thread.goal?.status === "active" ? { goalRewrite: true } : {}),
         images: meta?.images,
         imageModels: meta?.imageModels,
         imageChatModels: meta?.imageChatModels,
@@ -1940,7 +2089,7 @@ export function App() {
         pendingSendNowByThreadRef.current = nextPending;
         setQueuedForThread(threadId, null);
         const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
-        if (thread && !applyGoalCommandText(sendNow.text, (goal) => applyGoalToThreadRef.current(thread, goal))) {
+        if (thread && !handleGoalInputRef.current(sendNow.text, thread, sendNow.mode)) {
           startAgentRunRef.current(thread, sendNow.text, sendNow.mode);
         }
         return;
@@ -1949,10 +2098,7 @@ export function App() {
       if (queued) {
         setQueuedForThread(threadId, null);
         const thread = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === threadId) ?? null;
-        if (
-          thread &&
-          !applyGoalCommandText(queued, (goal) => applyGoalToThreadRef.current(thread, goal))
-        ) {
+        if (thread && !handleGoalInputRef.current(queued, thread, thread.mode ?? "agent")) {
           startAgentRunRef.current(thread, queued, thread.mode ?? "agent");
         }
       }
@@ -2059,12 +2205,114 @@ const continueFromStepLimit = useCallback(() => {
     return newThread;
   }, [activeProjectId, composerMode, selectedModel, selectedProviderId]);
 
+  /**
+   * Run a `/goal` line on `thread`; returns false when `text` is not one, so the
+   * caller sends it as an ordinary message. Goal commands never reach the model
+   * as chat text:
+   *  - `/goal <objective>` arms (or replaces) the goal and starts work. The host
+   *    restates the objective as a checkable one before the first round. While a
+   *    run is active it is stopped first, so the loop never keeps working on the
+   *    goal that was just replaced.
+   *  - bare `/goal` only reports status; `/goal clear|pause|resume` act on the
+   *    goal that exists.
+   */
+  const handleGoalInput = useCallback(
+    (text: string, thread: Thread, mode: ChatMode): boolean => {
+      const action = goalInputAction(text);
+      if (action.kind === "not-goal") return false;
+      const live = projectsRef.current.flatMap((p) => p.threads).find((t) => t.id === thread.id);
+
+      switch (action.kind) {
+        case "status":
+        case "clear":
+        case "pause":
+        case "resume": {
+          const goal = live?.goal;
+          if (action.kind !== "status" && !goal) {
+            appendEvents((live ?? ensureThread()).id, [{ kind: "goal-status", text: describeGoal(undefined) }]);
+          } else if (action.kind === "status") {
+            appendEvents((live ?? ensureThread()).id, [{ kind: "goal-status", text: describeGoal(goal) }]);
+          } else if (live) {
+            if (action.kind === "clear") applyGoalToThreadRef.current(live, null);
+            else setGoalStatus(live.id, action.kind === "pause" ? "paused" : "active");
+          }
+          return true;
+        }
+        case "set": {
+          if (agentStateStore.isRunning(thread.id)) {
+            // Interrupt, then let the fold handler re-enter here once the run is idle.
+            pendingSendNowByThreadRef.current = {
+              ...pendingSendNowByThreadRef.current,
+              [thread.id]: { text, mode },
+            };
+            stopRun();
+            return true;
+          }
+          const base = live ?? thread;
+          const armed = goalPatchFromCommand(action.objective, {
+            id: newId("goal"),
+            maxRounds: DEFAULT_MAX_GOAL_ROUNDS,
+          }).goal;
+          if (!armed) return true;
+          const replaced = isReplacingGoal(base.goal);
+          applyGoalToThreadRef.current(base, action.objective, { armed, recordEvent: false });
+          const canRun = (settings?.agentMode ?? "agent") === "agent" && !!window.deyin.agent && !chatOnlyHosted;
+          if (canRun) {
+            if (base.title === DEFAULT_THREAD_TITLE && toChatMessages(base.events).length === 0) {
+              updateThread(base.id, { title: deriveTitle(action.objective) });
+            }
+            // The user bubble shows what they typed; the host sees the objective as the prompt.
+            void startAgentRun({ ...base, goal: armed }, action.objective, mode, {
+              displayText: `/goal ${action.objective}`,
+              goalRewrite: true,
+            });
+          }
+          // After the run's user bubble, so the timeline reads: typed command, then the goal note.
+          appendEvents(base.id, [
+            { kind: "goal-set", text: action.objective, ...(replaced ? { replaced: true } : {}) },
+          ]);
+          return true;
+        }
+        default: {
+          const unreachable: never = action;
+          return unreachable;
+        }
+      }
+    },
+    [appendEvents, chatOnlyHosted, ensureThread, setGoalStatus, settings?.agentMode, startAgentRun, stopRun, updateThread],
+  );
+  handleGoalInputRef.current = handleGoalInput;
+
+  /**
+   * Switch the composer/thread mode for a typed mode command. Unlike `selectMode`
+   * this never navigates: `/bot <task>` should run the task in this thread, not
+   * carry the user off to the Bot page.
+   */
+  const applyModeCommand = useCallback(
+    (mode: ChatMode) => {
+      setComposerMode(mode);
+      if (activeThreadId) updateThread(activeThreadId, { mode });
+    },
+    [activeThreadId, updateThread],
+  );
+
   const send = useCallback(async (text: string, draft: ComposerDraftState) => {
     if (!text || !boot) return;
 
-    // /goal is a client-side command: set (or clear, when no text follows) the
-    // thread goal instead of messaging the model. Runs before queueing so it
-    // also works while a run is active.
+    // /plan, /ask, /bot and /agent are client-side mode commands: a bare command
+    // switches the mode and stops there; a command with text runs that text in
+    // the new mode. Handled before queueing so it works mid-run too.
+    const modeCommand = parseModeCommand(text);
+    let runText = text;
+    if (modeCommand) {
+      applyModeCommand(modeCommand.mode);
+      if (modeCommand.prompt.length === 0) {
+        composerRef.current?.clearInput();
+        return;
+      }
+      runText = modeCommand.prompt;
+    }
+
     const draftThread =
       activeThread ??
       ({
@@ -2073,7 +2321,7 @@ const continueFromStepLimit = useCallback(() => {
         model: selectedModel,
         providerId: selectedProviderId,
       } satisfies Thread);
-    if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
+    if (handleGoalInput(runText, draftThread, modeCommand?.mode ?? composerMode)) {
       composerRef.current?.clearInput();
       return;
     }
@@ -2116,7 +2364,7 @@ const continueFromStepLimit = useCallback(() => {
         busyThreadId: thread.id,
       })
     ) {
-      setQueuedForThread(thread.id, text);
+      setQueuedForThread(thread.id, runText);
       composerRef.current?.clearInput();
       return;
     }
@@ -2153,7 +2401,7 @@ const continueFromStepLimit = useCallback(() => {
     }
 
     const isFirstMessage = toChatMessages(thread.events).length === 0;
-    const history = [...toChatMessages(thread.events), { role: "user" as const, content: text }];
+    const history = [...toChatMessages(thread.events), { role: "user" as const, content: runText }];
 
     // Models available for the selected provider, used for image + vision routing.
     const modelList =
@@ -2167,7 +2415,7 @@ const continueFromStepLimit = useCallback(() => {
     const isVideoRun = modelIsVideo(runModelId, selectedEntry?.kind);
 
     if (isFirstMessage && thread.title === DEFAULT_THREAD_TITLE) {
-      const provisional = deriveTitle(text);
+      const provisional = deriveTitle(runText);
       updateThread(thread.id, { title: provisional });
       const threadId = thread.id;
       // Skip the LLM call when the provisional title is already short enough.
@@ -2177,7 +2425,7 @@ const continueFromStepLimit = useCallback(() => {
           isImageRun || isVideoRun
             ? (modelList.find((m) => m.kind !== "image" && m.kind !== "video")?.id ?? runModelId)
             : runModelId;
-        void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: titleModel, text })
+        void generateThreadTitle({ apiBaseUrl, token: token ?? "", model: titleModel, text: runText })
           .then((generated) => {
             if (!generated) return;
             setProjects((cur) =>
@@ -2202,14 +2450,14 @@ const continueFromStepLimit = useCallback(() => {
     const autoVideoGen = settings?.autoVideoGeneration ?? true;
     const videoIntent =
       !isVideoRun && !isImageRun && autoVideoGen && draft.images.length === 0
-        ? detectVideoGenerationIntent(text)
+        ? detectVideoGenerationIntent(runText)
         : null;
     const autoVideoModel = videoIntent ? pickVideoModelForGeneration(modelList) : undefined;
     const directVideoModelId = isVideoRun ? runModelId : autoVideoModel;
-    const directVideoPrompt = isVideoRun ? text : videoIntent?.prompt;
+    const directVideoPrompt = isVideoRun ? runText : videoIntent?.prompt;
 
     if (directVideoModelId && directVideoPrompt) {
-      appendEvents(thread.id, [{ kind: "user", text }]);
+      appendEvents(thread.id, [{ kind: "user", text: runText }]);
       composerRef.current?.clearInput();
       composerRef.current?.clearImages();
       setPlainStreamForThread(thread.id, `Generating video with ${directVideoModelId}…`);
@@ -2258,13 +2506,13 @@ const continueFromStepLimit = useCallback(() => {
     // inline-image directive.
     const autoImageGen = settings?.autoImageGeneration ?? true;
     const imageIntent =
-      !isImageRun && autoImageGen && draft.images.length === 0 ? detectImageGenerationIntent(text) : null;
+      !isImageRun && autoImageGen && draft.images.length === 0 ? detectImageGenerationIntent(runText) : null;
     const autoImageModel = imageIntent ? pickImageModelForGeneration(modelList) : undefined;
     const directImageModelId = isImageRun ? runModelId : autoImageModel?.id;
-    const directImagePrompt = isImageRun ? text : imageIntent?.prompt;
+    const directImagePrompt = isImageRun ? runText : imageIntent?.prompt;
 
     if (directImageModelId && directImagePrompt) {
-      appendEvents(thread.id, [{ kind: "user", text }]);
+      appendEvents(thread.id, [{ kind: "user", text: runText }]);
       composerRef.current?.clearInput();
       composerRef.current?.clearImages();
       setPlainStreamForThread(thread.id, `Generating image with ${directImageModelId}…`);
@@ -2316,7 +2564,7 @@ const continueFromStepLimit = useCallback(() => {
         imageChatModels,
         model: runModelId,
       };
-      void startAgentRun(thread, text, composerMode, sendMeta);
+      void startAgentRun(thread, runText, modeCommand?.mode ?? composerMode, sendMeta);
       return;
     }
 
@@ -2328,8 +2576,8 @@ const continueFromStepLimit = useCallback(() => {
     }
 
     // Last-resort guard: never POST a video model to chat completions.
-    if (modelIsVideo(runModelId, selectedEntry?.kind) && text.trim()) {
-      appendEvents(thread.id, [{ kind: "user", text }]);
+    if (modelIsVideo(runModelId, selectedEntry?.kind) && runText.trim()) {
+      appendEvents(thread.id, [{ kind: "user", text: runText }]);
       composerRef.current?.clearInput();
       composerRef.current?.clearImages();
       setPlainStreamForThread(thread.id, `Generating video with ${runModelId}…`);
@@ -2340,7 +2588,7 @@ const continueFromStepLimit = useCallback(() => {
         );
         const result = await window.deyin.videos.generate({
           threadId: thread.id,
-          prompt: text,
+          prompt: runText,
           model: runModelId,
           providerId: runProviderId,
           aspectRatio: videoParams.aspectRatio,
@@ -2361,7 +2609,7 @@ const continueFromStepLimit = useCallback(() => {
       return;
     }
 
-    appendEvents(thread.id, [{ kind: "user", text }]);
+    appendEvents(thread.id, [{ kind: "user", text: runText }]);
     composerRef.current?.clearInput();
     setPlainStreamForThread(thread.id, "");
 
@@ -2416,12 +2664,24 @@ const continueFromStepLimit = useCallback(() => {
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [activeThread, boot, models, providers, settings, composerMode, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
+  }, [activeThread, boot, models, providers, settings, composerMode, applyModeCommand, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, handleGoalInput, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(
     (text: string, fromInput: boolean) => {
       if (!text) return;
+
+      // A typed mode command applies without interrupting the run.
+      const modeCommand = parseModeCommand(text);
+      if (modeCommand) {
+        applyModeCommand(modeCommand.mode);
+        if (modeCommand.prompt.length === 0) {
+          if (fromInput) composerRef.current?.clearInput();
+          else setQueuedForThread(activeThread?.id ?? "", null);
+          return;
+        }
+        text = modeCommand.prompt;
+      }
 
       const draftThread =
         activeThread ??
@@ -2433,7 +2693,7 @@ const continueFromStepLimit = useCallback(() => {
         } satisfies Thread);
 
       // /goal never reaches the model — apply it without interrupting the run.
-      if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(draftThread, goal))) {
+      if (handleGoalInput(text, draftThread, modeCommand?.mode ?? composerMode)) {
         if (fromInput) composerRef.current?.clearInput();
         else setQueuedForThread(draftThread.id, null);
         return;
@@ -2446,19 +2706,20 @@ const continueFromStepLimit = useCallback(() => {
 
     const runActive =
       agentStateStore.isRunning(activeThread.id) || plainStreamFor(activeThread.id) !== null;
+    const runMode = modeCommand?.mode ?? composerMode;
     if (!runActive) {
       if ((settings?.agentMode ?? "agent") === "agent" && window.deyin.agent && !chatOnlyHosted) {
-        startAgentRun(activeThread, text, composerMode);
+        startAgentRun(activeThread, text, runMode);
       }
       return;
     }
 
     pendingSendNowByThreadRef.current = {
       ...pendingSendNowByThreadRef.current,
-      [activeThread.id]: { text, mode: composerMode },
+      [activeThread.id]: { text, mode: runMode },
     };
     stopRun();
-  }, [activeThread, settings, boot, composerMode, selectedModel, selectedProviderId, startAgentRun, stopRun, setQueuedForThread, plainStreamFor]);
+  }, [activeThread, settings, boot, composerMode, applyModeCommand, selectedModel, selectedProviderId, startAgentRun, stopRun, handleGoalInput, setQueuedForThread, plainStreamFor]);
 
   const clearQueue = useCallback(() => {
     if (activeThreadId) setQueuedForThread(activeThreadId, null);
@@ -2466,13 +2727,20 @@ const continueFromStepLimit = useCallback(() => {
 
   /** Run the queued follow-up in a new thread while the current run continues. */
   const startMultitasking = useCallback(() => {
-    const text = queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim();
-    if (!text || !activeThread) return;
+    const raw = queuedPromptByThreadRef.current[activeThread?.id ?? ""]?.trim();
+    if (!raw || !activeThread) return;
     setQueuedForThread(activeThread.id, null);
+    const modeCommand = parseModeCommand(raw);
+    if (modeCommand && modeCommand.prompt.length === 0) {
+      applyModeCommand(modeCommand.mode);
+      return;
+    }
+    const text = modeCommand?.prompt ?? raw;
+    const mode = modeCommand?.mode ?? composerMode;
     const newThread = ensureThread();
-    if (applyGoalCommandText(text, (goal) => applyGoalToThreadRef.current(newThread, goal))) return;
-    void startAgentRun(newThread, text, composerMode);
-  }, [activeThread, composerMode, ensureThread, setQueuedForThread, startAgentRun]);
+    if (handleGoalInput(text, newThread, mode)) return;
+    void startAgentRun(newThread, text, mode);
+  }, [activeThread, composerMode, applyModeCommand, ensureThread, handleGoalInput, setQueuedForThread, startAgentRun]);
 
   const greetingName = useMemo(() => {
     const first = user?.name?.split(/\s+/)[0];
@@ -2517,7 +2785,7 @@ const continueFromStepLimit = useCallback(() => {
     () => ({
       themeLight: settings?.codeThemeLight ?? "GitHub Light",
       themeDark: settings?.codeThemeDark ?? "GitHub Dark",
-      variant: themeVariant,
+      variant: themeVariant === "light" ? ("light" as const) : ("dark" as const),
       fontSize: settings?.codeFontSize ?? 12,
       showLineNumbers: settings?.showLineNumbers ?? true,
       wrapLongLines: settings?.wrapLongLines ?? false,
@@ -2531,7 +2799,7 @@ const continueFromStepLimit = useCallback(() => {
       codeFontSize: settings?.codeFontSize ?? 12,
       themeLight: settings?.codeThemeLight ?? "GitHub Light",
       themeDark: settings?.codeThemeDark ?? "GitHub Dark",
-      variant: themeVariant,
+      variant: themeVariant === "light" ? ("light" as const) : ("dark" as const),
     }),
     [settings?.showLineNumbers, settings?.wrapLongLines, settings?.codeFontSize, settings?.codeThemeLight, settings?.codeThemeDark, themeVariant],
   );
@@ -2570,8 +2838,14 @@ const continueFromStepLimit = useCallback(() => {
   const panelPlanTodos = activeThread?.todos ?? EMPTY_TODOS;
 
   // Stable Sidebar handlers (memo boundary).
-  const sidebarCollapse = useCallback(() => setSidebarOpen(false), []);
   const sidebarNewProject = useCallback(() => void addProjectFolder(), [addProjectFolder]);
+  const sidebarNewTaskInProject = useCallback(
+    (projectId: string) => {
+      void selectProject(projectId);
+      newTask(undefined, undefined, projectId);
+    },
+    [selectProject, newTask],
+  );
   const sidebarSelectProject = useCallback(
     (projectId: string) => {
       void selectProject(projectId);
@@ -2623,6 +2897,13 @@ const continueFromStepLimit = useCallback(() => {
     setSettingsPage("general");
     setView("settings");
     window.deyin.telemetry?.record("settings-opened");
+  }, []);
+  const sidebarOpenPlugins = useCallback(() => setView("plugins"), []);
+  const openExtensionSettings = useCallback((tab: ExtensionSettingsTab, kind?: CapabilityKind) => {
+    setExtensionTab(tab);
+    if (kind) setSkillTab(kind);
+    setSettingsPage("extensions");
+    setView("settings");
   }, []);
   const sidebarOpenAutomations = useCallback(() => setView("automations"), []);
   const sidebarOpenSuperagent = useCallback(() => setView("superagent"), []);
@@ -2717,11 +2998,14 @@ const continueFromStepLimit = useCallback(() => {
     return (
       <AppProviders language={language}>
         <div className="app">
-          <SettingsView
+          <Suspense fallback={<div className="app" />}>
+          <LazySettingsView
           platform={boot?.platform === "web" ? "web" : "desktop"}
           chatOnly={boot?.chatOnly}
             key={settingsPage}
             initialPage={settingsPage}
+            initialExtensionTab={extensionTab}
+            initialSkillTab={skillTab}
             settings={settings}
             user={user}
             busy={busy}
@@ -2742,6 +3026,7 @@ const continueFromStepLimit = useCallback(() => {
               setModels(await window.deyin.models.refresh());
             }}
           />
+          </Suspense>
         </div>
       </AppProviders>
     );
@@ -2750,7 +3035,8 @@ const continueFromStepLimit = useCallback(() => {
   if (view === "upgrade" && boot) {
     return (
       <AppProviders language={language}>
-        <PlansView
+        <Suspense fallback={<div className="app" />}>
+        <LazyPlansView
           platform={boot.platform}
           oauthIssuer={boot.config.oauthIssuer}
           userPlan={user?.plan ?? null}
@@ -2760,6 +3046,7 @@ const continueFromStepLimit = useCallback(() => {
             setView("workspace");
           }}
         />
+        </Suspense>
       </AppProviders>
     );
   }
@@ -2767,10 +3054,45 @@ const continueFromStepLimit = useCallback(() => {
   const composerNode = (
     <div className="chat-column__composer">
       <PromptDockSlot />
-      {!chatOnlyHosted && activeThread?.goal?.status === "active" && (
-        <div className="goal-card">
+      {!chatOnlyHosted && activeThread?.goal && activeThread.goal.status !== "done" && activeThread.goal.status !== "met" && (
+        <div className={`goal-card goal-card--${activeThread.goal.status}`}>
           <Icon name="flag" size={14} />
-          <span>{activeThread.goal.text}</span>
+          <span className="goal-card__text">{activeThread.goal.text}</span>
+          {activeThread.goal.maxRounds !== undefined && (
+            <span className="goal-card__rounds" title="Continuation rounds used">
+              {activeThread.goal.rounds ?? 0}/{activeThread.goal.maxRounds}
+            </span>
+          )}
+          {activeThread.goal.status === "active" && activeThreadId && (
+            <button
+              type="button"
+              className="goal-card__action"
+              title="Pause the goal loop"
+              onClick={() => setGoalStatus(activeThreadId, "paused")}
+            >
+              <Icon name="pause" size={12} />
+            </button>
+          )}
+          {activeThread.goal.status === "paused" && activeThreadId && (
+            <button
+              type="button"
+              className="goal-card__action"
+              title="Resume the goal loop"
+              onClick={() => setGoalStatus(activeThreadId, "active")}
+            >
+              <Icon name="play" size={12} />
+            </button>
+          )}
+          {activeThreadId && (
+            <button
+              type="button"
+              className="goal-card__action"
+              title="Clear the goal"
+              onClick={() => clearGoal(activeThreadId)}
+            >
+              <Icon name="close" size={12} />
+            </button>
+          )}
         </div>
       )}
       {!chatOnlyHosted && (
@@ -3025,31 +3347,37 @@ const continueFromStepLimit = useCallback(() => {
     <div className="app">
       <TopBar
         platform={boot?.platform ?? "desktop"}
-        chatOnly={chatOnlyHosted}
-        mode={composerMode}
-        onModeChange={selectMode}
-        threadId={activeThreadId}
-        threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
-        threadPinned={activeThread?.pinned ?? false}
-        projectName={projectName}
-        workspaceRoot={workspaceRoot}
-        panelOpen={panelVisible}
-        terminalOpen={terminalVisible}
-        cacheHitRate={activeCacheMetrics?.hitRate ?? null}
-        sessionCacheHit={activeCacheMetrics?.sessionHit}
-        sessionCacheMiss={activeCacheMetrics?.sessionMiss}
-        tokenStats={sessionTokenStats}
-        onOpenFolder={() => setProjectPickerOpen(true)}
-        onTogglePanel={() => {
-          if (panelOpen) collapsePanel();
-          else openPanelTab(panelTab);
-          setView("workspace");
-        }}
-        onToggleTerminal={() => {
-          if (panelOpen && panelTab === "terminal") collapsePanel();
-          else openPanelTab("terminal");
-        }}
-        onThreadAction={handleThreadAction}
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen((open) => !open)}
+        canBack={threadHistory.canBack}
+        canForward={threadHistory.canForward}
+        onBack={threadHistory.back}
+        onForward={threadHistory.forward}
+        workspace={
+          <WorkspaceBar
+            platform={boot?.platform === "web" ? "web" : "desktop"}
+            projects={projects}
+            activeProjectId={activeProjectId}
+            projectName={projectName}
+            workspaceRoot={workspaceRoot}
+            homeDir={boot?.homeDir ?? null}
+            onSelectProject={(projectId) => void selectProject(projectId)}
+            onPickFolder={(startIn) => void addProjectFolder(startIn)}
+            wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
+            onOpenSshHosts={
+              boot?.platform === "desktop"
+                ? () => {
+                    setSettingsPage("sshHosts");
+                    setView("settings");
+                  }
+                : undefined
+            }
+            onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+            onOpenSourceControl={() => {
+              openPanelTab("git");
+            }}
+          />
+        }
       />
       {workspaceState?.connectionState === "error" && workspaceState.error ? (
         <div className="update-banner update-banner--error" role="alert">
@@ -3065,8 +3393,8 @@ const continueFromStepLimit = useCallback(() => {
             currentMode={composerMode}
             onSwitchMode={selectMode}
             onSelectView={handleSelectView}
-            onExpand={() => setSidebarOpen(true)}
             onNewTask={newTask}
+            onOpenPlugins={sidebarOpenPlugins}
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAutomations={() => setView("automations")}
             onOpenSuperagent={sidebarOpenSuperagent}
@@ -3097,12 +3425,8 @@ const continueFromStepLimit = useCallback(() => {
           settings={settings ?? DEFAULT_SETTINGS}
           busy={busy}
           connecting={connecting}
-          canBack={threadHistory.canBack}
-          canForward={threadHistory.canForward}
-          onBack={threadHistory.back}
-          onForward={threadHistory.forward}
-          onCollapse={sidebarCollapse}
           onNewTask={newTask}
+          onNewTaskInProject={sidebarNewTaskInProject}
           onNewProject={sidebarNewProject}
           onSelectProject={sidebarSelectProject}
           onSelectTargetRepository={handleSelectTargetRepository}
@@ -3117,6 +3441,7 @@ const continueFromStepLimit = useCallback(() => {
           onOpenUsage={sidebarOpenUsage}
           onOpenPlans={sidebarOpenPlans}
           onOpenSettings={sidebarOpenSettings}
+          onOpenPlugins={sidebarOpenPlugins}
           onOpenAutomations={sidebarOpenAutomations}
           onOpenSuperagent={sidebarOpenSuperagent}
           onOpenWorkflows={sidebarOpenWorkflows}
@@ -3126,28 +3451,34 @@ const continueFromStepLimit = useCallback(() => {
         )}
 
         <div className="app__center">
-          {view === "automations" ? (
-            <AutomationsView
+          <Suspense fallback={<div className="app__center" />}>
+          {view === "plugins" ? (
+            <LazyPluginsView
+              onOpenMcpSettings={() => openExtensionSettings("mcps")}
+              onOpenCapabilitySettings={(kind) => openExtensionSettings("skills", kind)}
+            />
+          ) : view === "automations" ? (
+            <LazyAutomationsView
               workspaceRoot={workspaceRoot}
-              providers={providers}
+              workspaces={automationWorkspaces}
               models={models}
               selectedModel={selectedModel}
               selectedProviderId={selectedProviderId}
               env={env}
-              onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
               onOpenSshSettings={() => {
                 setSettingsPage("sshHosts");
                 setView("settings");
               }}
+              onCreateInSession={(prompt) => newTask(undefined, undefined, undefined, prompt)}
             />
           ) : view === "superagent" ? (
-            <SuperagentPage
+            <LazySuperagentPage
               models={models}
               selectedProviderId={selectedProviderId}
               onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
             />
           ) : view === "workflows" ? (
-            <BotWorkflowsView
+            <LazyBotWorkflowsView
               workspaceRoot={workspaceRoot}
               initialWorkflowId={selectedWorkflowForEdit}
               onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
@@ -3191,33 +3522,55 @@ const continueFromStepLimit = useCallback(() => {
                 setView("workspace");
               }}
               onQuickPrompt={(prompt) => {
-                send(prompt);
+                void send(prompt, { ...emptyComposerDraft(), input: prompt });
               }}
               onOpenWorkflows={sidebarOpenWorkflows}
               composerNode={composerNode}
             />
           ) : (<>
-          <div className="app__columns" ref={attachColumns}>
+          <div className={`app__columns${panelOpen && panelFullscreen ? " app__columns--panel-full" : ""}`} ref={attachColumns}>
             <main className={`chat-column${isChatEmpty ? " chat-column--empty" : ""}`}>
-              <div className="chat-column__bar">
-                {!chatOnlyHosted && (
-                  <EnvironmentBadge
-                    env={env}
-                    onPickShell={() => openPanelTab("terminal")}
-                  />
-                )}
-                {boot?.platform === "web" && !chatOnlyHosted && (
-                  <RepoBar
-                    repoState={repoState}
-                    busy={repoBusy}
-                    progressLine={repoProgressLine}
-                    connectOpen={repoConnectOpen}
-                    onConnectOpenChange={setRepoConnectOpen}
-                    onConnect={connectRepo}
-                    onShip={shipRepo}
-                  />
-                )}
-              </div>
+              <ConversationHeader
+                platform={boot?.platform ?? "desktop"}
+                chatOnly={chatOnlyHosted}
+                mode={composerMode}
+                onModeChange={selectMode}
+                threadId={activeThreadId}
+                threadTitle={activeThread?.title ?? DEFAULT_THREAD_TITLE}
+                threadPinned={activeThread?.pinned ?? false}
+                workspaceRoot={workspaceRoot}
+                panelOpen={panelOpen}
+                terminalOpen={terminalVisible}
+                mcpCount={mcpCount}
+                onOpenMcp={() => {
+                  setSettingsPage("extensions");
+                  setView("settings");
+                }}
+                onTogglePanel={togglePanel}
+                onToggleTerminal={() => {
+                  if (terminalVisible) collapsePanel();
+                  else openPanelTab("terminal");
+                }}
+                onThreadAction={handleThreadAction}
+                trailing={
+                  <>
+                    {!chatOnlyHosted && (
+                      <EnvironmentBadge env={env} onPickShell={() => openPanelTab("terminal")} />
+                    )}
+                    {boot?.platform === "web" && !chatOnlyHosted && (
+                      <RepoBar
+                        repoState={repoState}
+                        busy={repoBusy}
+                        progressLine={repoProgressLine}
+                        connectOpen={repoConnectOpen}
+                        onConnectOpenChange={setRepoConnectOpen}
+                        onConnect={connectRepo}
+                        onShip={shipRepo}
+                      />
+                    )}
+                  </>
+                }
+              />
 
               <MemoChatView
                 events={chatEvents}
@@ -3268,18 +3621,27 @@ const continueFromStepLimit = useCallback(() => {
               )}
 
               {composerNode}
+              {!chatOnlyHosted && (
+                <SessionStatusLine
+                  events={chatEvents}
+                  tokenStats={sessionTokenStats}
+                  cacheHitRate={activeCacheMetrics?.hitRate ?? null}
+                />
+              )}
             </main>
 
-            {panelVisible && (
+            {panelOpen && (
               <div
                 className="wspanel-wrap"
                 style={
-                  panelOpen && panelWidthPx !== null
-                    ? { flex: `0 0 ${panelWidthPx}px`, width: panelWidthPx }
-                    : undefined
+                  panelFullscreen
+                    ? { flex: "1 1 auto", width: "auto" }
+                    : panelWidthPx !== null
+                      ? { flex: `0 0 ${panelWidthPx}px`, width: panelWidthPx }
+                      : undefined
                 }
               >
-                {panelOpen && (
+                {!panelFullscreen && (
                   <div
                     className="wspanel-wrap__resize"
                     onPointerDown={startPanelResize}
@@ -3292,22 +3654,20 @@ const continueFromStepLimit = useCallback(() => {
                     title="Drag to resize (double-click to reset)"
                   />
                 )}
-                <PanelRail
-                  activeTab={panelTab}
-                  collapsed={!panelOpen}
-                  previewOnly={chatOnlyHosted}
-                  diffDot={Boolean(activeDiff)}
-                  agentCount={subagentRuns.filter((r) => r.status === "running").length}
-                  onSelectTab={openPanelTab}
-                  onDismiss={dismissPanel}
-                />
-                {panelOpen && (
               <MemoWorkspacePanel
                 platform={boot?.platform ?? "desktop"}
                 projectName={projectName}
                 workspaceRoot={workspaceRoot}
                 filesRefreshKey={filesRefreshKey}
                 activeTab={panelTab}
+                openTabs={panelTabs}
+                startActive={panelStart}
+                previewOnly={chatOnlyHosted}
+                fullscreen={panelFullscreen}
+                onSelectTab={openPanelTab}
+                onCloseTab={closePanelTab}
+                onAddTab={openPanelStart}
+                onToggleFullscreen={() => setPanelFullscreen((v) => !v)}
                 planMarkdown={
                   livePlanStream !== null ? livePlanStream : (activeThread?.planMarkdown ?? "")
                 }
@@ -3349,11 +3709,11 @@ const continueFromStepLimit = useCallback(() => {
                 terminalAttachSessions={terminalAttachSessions}
                 panelWidth={panelWidthPx}
               />
-                )}
               </div>
             )}
           </div>
           </>)}
+          </Suspense>
         </div>
       </div>
 

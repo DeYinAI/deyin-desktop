@@ -38,15 +38,27 @@ function parseTarget(args: Record<string, unknown>): AutomationTarget {
 }
 
 function parseTrigger(args: Record<string, unknown>): AutomationTrigger {
+ const runAt = str(args, "runAt");
+ if (runAt) {
+ const at = Date.parse(runAt);
+ if (!Number.isFinite(at)) throw new Error(`runAt "${runAt}" is not a valid ISO 8601 date-time.`);
+ if (at <= Date.now()) throw new Error("runAt must be in the future.");
+ return { kind: "once", at };
+ }
  const cron = str(args, "cron");
  if (!cron) return { kind: "manual" };
  return { kind: "cron", expression: cron };
 }
 
+function describeTrigger(trigger: AutomationTrigger): string {
+ if (trigger.kind === "cron") return `cron ${trigger.expression}`;
+ if (trigger.kind === "once") return `once at ${new Date(trigger.at).toISOString()}`;
+ return "manual";
+}
+
 /** One-line human summary of an automation for tool results. */
 function describe(a: Automation): string {
- const schedule =
- a.trigger.kind === "cron" ? `cron ${a.trigger.expression}` : "manual";
+ const schedule = describeTrigger(a.trigger);
  const target =
  a.target.kind === "local"
  ? `local @ ${a.target.workspacePath}`
@@ -128,6 +140,7 @@ export function createAutomationTools(
  description: { type: "string", description: "Optional longer description." },
  prompt: { type: "string", description: "The prompt the agent runs on every scheduled execution." },
  cron: { type: "string", description: "5-field cron expression (e.g. '0 8 * * *' = daily 08:00). Omit for a manual (run-on-demand) automation." },
+ runAt: { type: "string", description: "ISO 8601 date-time (with offset) for a one-shot run, e.g. '2026-12-01T09:00:00+01:00'. Takes precedence over cron; the automation ends after it runs." },
  workspacePath: { type: "string", description: "Absolute path of the workspace the agent runs in." },
  targetKind: { type: "string", enum: ["local", "wsl"], description: "Defaults to local. wsl requires distro." },
  distro: { type: "string", description: "WSL distro name when targetKind=wsl (e.g. Ubuntu-22.04)." },
@@ -142,10 +155,12 @@ export function createAutomationTools(
       const input = buildInput(args, settings);
       const mutation = service.create(input);
       let scheduleMsg: string;
-      if (mutation.automation.trigger.kind === "cron") {
+      const trigger = mutation.automation.trigger;
+      if (trigger.kind !== "manual") {
+        const when = describeTrigger(trigger);
         scheduleMsg = mutation.automation.enabled
-          ? `Scheduled runs are active (${mutation.automation.trigger.expression}).`
-          : `Saved with schedule ${mutation.automation.trigger.expression}, but disabled — enable it before expecting scheduled runs.`;
+          ? `Scheduled runs are active (${when}).`
+          : `Saved with schedule ${when}, but disabled — enable it before expecting scheduled runs.`;
       } else {
         scheduleMsg = `Created as a manual-only (run-on-demand) automation because no cron schedule was specified. Scheduled runs are NOT active. To run it, use automation_run with id ${mutation.automation.id}, or update it with a cron schedule via automation_update.`;
       }
@@ -242,6 +257,7 @@ export function createAutomationTools(
  description: { type: "string", description: "New description." },
  prompt: { type: "string", description: "Replacement prompt." },
  cron: { type: "string", description: "New cron expression; empty string switches to manual." },
+ runAt: { type: "string", description: "ISO 8601 date-time for a one-shot run (replaces the schedule)." },
  workspacePath: { type: "string", description: "New workspace path." },
  targetKind: { type: "string", enum: ["local", "wsl"], description: "New target kind." },
  distro: { type: "string", description: "WSL distro when targetKind=wsl." },
@@ -262,7 +278,7 @@ export function createAutomationTools(
  if (args.description !== undefined) patch.description = str(args, "description");
  const prompt = str(args, "prompt");
  if (prompt) patch.payload = { kind: "prompt", prompt };
- if (args.cron !== undefined) patch.trigger = parseTrigger(args);
+ if (args.cron !== undefined || args.runAt !== undefined) patch.trigger = parseTrigger(args);
  if (args.targetKind !== undefined || args.workspacePath !== undefined || args.distro !== undefined) {
  patch.target = parseTarget({
  ...args,

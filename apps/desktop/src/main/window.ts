@@ -58,7 +58,21 @@ export function createMainWindow(): BrowserWindow {
 
   mainWindow = window;
 
-  window.once("ready-to-show", () => window.show());
+  // Show the window as soon as it is paintable, but never leave the user with a
+  // process that has no visible window: under WSLg and some remote compositors
+  // `ready-to-show` never fires, so a fallback timer and the first paint both
+  // reveal it. Showing twice is harmless.
+  let revealed = false;
+  const reveal = () => {
+    if (revealed || window.isDestroyed()) return;
+    revealed = true;
+    window.show();
+    window.focus();
+  };
+  window.once("ready-to-show", reveal);
+  window.webContents.once("did-finish-load", reveal);
+  const revealTimer = setTimeout(reveal, 3000);
+  window.once("closed", () => clearTimeout(revealTimer));
 
   window.on("close", () => {
     logShutdown("window-close", { quitting: isAppQuitting() });

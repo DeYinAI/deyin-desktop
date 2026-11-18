@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from "react";
 import type { Thread, ThreadEvent } from "@deyin/contract";
 import type { ThreadRunSnapshot } from "../hooks/useAgentState.js";
 import { Icon } from "./Icon.js";
-import { ChatView } from "./ChatView.js";
+import { ChatView, type ChatCodeDisplay } from "./ChatView.js";
 import { BotFlowPanel } from "./BotFlowPanel.js";
 
 const MemoChatView = memo(ChatView);
@@ -15,19 +15,19 @@ export interface BotModeViewProps {
   chatEvents: ThreadEvent[];
   chatStreamText: string | null;
   chatStreamReasoning?: string | null;
-  greetingName?: string;
+  greetingName: string;
   agentRunState?: ThreadRunSnapshot | null;
   activeThreadStreaming: boolean;
-  chatCodeDisplay: "preview" | "expanded";
-  onOpenFile: (path: string, diff?: any) => void;
+  chatCodeDisplay: ChatCodeDisplay;
+  onOpenFile: (path: string) => void;
   onOpenWorkspaceFile?: (path: string) => void;
   homeDir?: string | null;
-  onUndo: (path: string) => void;
+  onUndo: (path: string, checkpointId: string) => void;
   onRevertRun?: (runId: string) => void;
-  onEditMessage?: (eventIndex: number, text: string) => void;
+  onEditMessage?: (eventIndex: number) => void;
   onForkAtEvent?: (eventIndex: number) => void;
   onMessageFeedback?: (eventIndex: number, rating: "up" | "down") => void;
-  onOpenAgentTerminal?: (threadId: string) => void;
+  onOpenAgentTerminal?: () => void;
   threadTitles?: Record<string, string>;
   onNewMission: () => void;
   onSwitchToWorkspace: () => void;
@@ -40,7 +40,7 @@ const QUICK_CHIPS = [
   {
     icon: "bolt" as const,
     label: "Tri-Bot Engineering Flow",
-    prompt: "Run a 3-stage engineering pipeline: 1) Architecture Spec with Codex, 2) Implementation with Claude Code, 3) Validation with OpenCode.",
+    prompt: "Run a 3-stage engineering pipeline: 1) Architecture Spec with Codex, 2) Implementation with Claude Code, 3) Validation with Deyin Test Runner.",
   },
   {
     icon: "shield" as const,
@@ -54,8 +54,8 @@ const QUICK_CHIPS = [
   },
   {
     icon: "list" as const,
-    label: "Run Tests with OpenCode",
-    prompt: "Delegate to OpenCode: Run the test suite, report failing assertions, and recommend targeted fixes.",
+    label: "Run Tests with Deyin",
+    prompt: "Delegate to Deyin Test Runner: Run the test suite, report failing assertions, and recommend targeted fixes.",
   },
 ];
 
@@ -146,9 +146,9 @@ export function BotModeView(props: BotModeViewProps) {
           <MemoChatView
             events={props.chatEvents}
             streamText={props.chatStreamText}
-            streamReasoning={props.chatStreamReasoning}
+            streamReasoning={props.chatStreamReasoning ?? null}
             greetingName={props.greetingName}
-            threadKey={props.activeThreadId}
+            threadKey={props.activeThreadId ?? null}
             codeDisplay={props.chatCodeDisplay}
             onOpenFile={props.onOpenFile}
             onOpenWorkspaceFile={props.onOpenWorkspaceFile}

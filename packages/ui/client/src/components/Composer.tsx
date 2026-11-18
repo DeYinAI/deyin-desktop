@@ -6,6 +6,9 @@ import { ContextUsage } from "./ContextUsage.js";
 import { Icon, type IconName } from "./Icon.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PortalledPanel } from "./PortalledPanel.js";
+import { goalCommandDescription, goalComposerHint } from "../goal-command.js";
+import { MODE_COMMAND_NAMES, modeCommandHint } from "../modeCommand.js";
+import { clampSlashIndex, stepSlashIndex } from "../slashMenu.js";
 import type {
   ApprovalMode,
   ChatMode,
@@ -122,24 +125,47 @@ const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "han
 };
 
 const MODE_ORDER: ChatMode[] = ["agent", "delivery", "plan", "ask", "bot"];
-const MODE_META: Record<
-  ChatMode,
-  {
-    labelKey: "mode.agent" | "mode.delivery" | "mode.plan" | "mode.ask" | "mode.bot";
-    descKey: "mode.agentDesc" | "mode.deliveryDesc" | "mode.planDesc" | "mode.askDesc" | "mode.botDesc";
-    icon: IconName;
-  }
-> = {
-  agent: { labelKey: "mode.agent", descKey: "mode.agentDesc", icon: "bolt" },
-  delivery: { labelKey: "mode.delivery", descKey: "mode.deliveryDesc", icon: "shield" },
-  plan: { labelKey: "mode.plan", descKey: "mode.planDesc", icon: "route" },
-  ask: { labelKey: "mode.ask", descKey: "mode.askDesc", icon: "message" },
-  bot: { labelKey: "mode.bot", descKey: "mode.botDesc", icon: "bot" },
+
+/** Read-out labels for the non-default mode chip (modes are selected by typing). */
+const MODE_LABEL: Record<ChatMode, string> = {
+  agent: "Agent",
+  delivery: "Delivery",
+  plan: "Plan",
+  ask: "Ask",
+  bot: "Bot Mode",
+};
+
+const MODE_ICON: Record<ChatMode, IconName> = {
+  agent: "bolt",
+  delivery: "shield",
+  plan: "route",
+  ask: "message",
+  bot: "bot",
+};
+
+/** `/mode` command descriptions for the slash menu, one per selectable mode. */
+const MODE_COMMAND_DESC: Record<string, string> = {
+  agent: "Build mode: full tool access",
+  plan: "Plan mode: research read-only, then propose a plan",
+  ask: "Ask mode: answer questions, change nothing",
+  bot: "Bot mode: orchestrate external tools across pipelines",
 };
 
 interface SlashItem {
   name: string;
   description: string;
+}
+
+/** Compact elapsed time for the live run strip: 8s, 1m 12s, 1h 4m. */
+function formatRunTime(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) {
+    const seconds = total % 60;
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function Composer(props: ComposerProps) {
@@ -156,8 +182,12 @@ export function Composer(props: ComposerProps) {
   }, [focusSignal]);
   const [plusOpen, setPlusOpen] = useState(false);
   const [accessOpen, setAccessOpen] = useState(false);
-  const [modeOpen, setModeOpen] = useState(false);
   const [slashItems, setSlashItems] = useState<SlashItem[]>([]);
+  /** Highlighted row in the slash menu (Up/Down move it; Enter/Tab accept it). */
+  const [slashIndex, setSlashIndex] = useState(0);
+  /** Text the slash menu was dismissed for with Esc; it stays shut until the text changes. */
+  const [slashDismissedFor, setSlashDismissedFor] = useState<string | null>(null);
+  const activeSlashRef = useRef<HTMLButtonElement | null>(null);
   /** The composer holds a bare "/name" prefix, so the command menu is in play. */
   const slashOpen =
     props.value.startsWith("/") && !props.value.includes("\n") && !props.value.includes(" ");
@@ -165,6 +195,10 @@ export function Composer(props: ComposerProps) {
   const [hashHits, setHashHits] = useState<LinkedThreadRef[]>([]);
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
+  const openGoalDialog = () => {
+    setGoalDraft(props.goalText ?? "");
+    setGoalOpen(true);
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const attachments = props.attachments ?? [];
@@ -195,10 +229,10 @@ export function Composer(props: ComposerProps) {
   const closeComposerMenus = useCallback(() => {
     setPlusOpen(false);
     setAccessOpen(false);
-    setModeOpen(false);
   }, []);
 
-  // Ctrl/Cmd+. opens the mode menu from anywhere (Cursor's Mode Menu binding).
+  // Ctrl/Cmd+. focuses the composer on a "/" prefix, the mode menu's keyboard
+  // slot now that modes are typed rather than picked from a dropdown.
   useEffect(() => {
     if (!props.mode) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -206,13 +240,13 @@ export function Composer(props: ComposerProps) {
         e.preventDefault();
         setPlusOpen(false);
         setAccessOpen(false);
-        setModeOpen((v) => !v);
+        if (!props.value.startsWith("/")) props.onChange("/");
         ref.current?.focus();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [props.mode]);
+  }, [props.mode, props.value, props.onChange]);
 
   useEffect(() => {
     if (!goalOpen) return;
@@ -240,7 +274,12 @@ export function Composer(props: ComposerProps) {
         for (const s of skills.filter((s) => s.enabled)) {
           if (!byName.has(s.name)) byName.set(s.name, { name: s.name, description: `Skill · ${s.description}` });
         }
-        // Client-side command handled in App.send, not by the host.
+        // Client-side commands handled in App.send, not by the host.
+        for (const name of MODE_COMMAND_NAMES) {
+          if (!byName.has(name)) {
+            byName.set(name, { name, description: MODE_COMMAND_DESC[name] ?? "" });
+          }
+        }
         if (!byName.has("goal")) {
           byName.set("goal", { name: "goal", description: "Set the task goal; no text clears it" });
         }
@@ -257,6 +296,24 @@ export function Composer(props: ComposerProps) {
     const query = props.value.slice(1).toLowerCase();
     return slashItems.filter((i) => i.name.startsWith(query)).slice(0, 8);
   })();
+  const showSlashMenu = slashMatches.length > 0 && slashDismissedFor !== props.value;
+  const activeSlashIndex = clampSlashIndex(slashIndex, slashMatches.length);
+
+  // A new query starts at the best match again.
+  const slashQuery = slashOpen ? props.value.slice(1) : null;
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [slashQuery]);
+  useEffect(() => {
+    if (showSlashMenu) activeSlashRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [showSlashMenu, activeSlashIndex]);
+
+  /** Put "/name " in the box (the space closes the menu) so arguments can follow. */
+  const acceptSlash = (item: SlashItem) => {
+    props.onChange(`/${item.name} `);
+    setSlashDismissedFor(null);
+    ref.current?.focus();
+  };
 
   const atQuery = (() => {
     const m = props.value.match(/@([^\s@]*)$/);
@@ -387,6 +444,26 @@ export function Composer(props: ComposerProps) {
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // The command menu owns the keyboard while it is open: Enter or Tab complete
+    // the highlighted command instead of sending "/goal" as a message.
+    if (showSlashMenu) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashIndex(stepSlashIndex(activeSlashIndex, e.key === "ArrowDown" ? 1 : -1, slashMatches.length));
+        return;
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey && !e.nativeEvent.isComposing) {
+        e.preventDefault();
+        const item = slashMatches[activeSlashIndex];
+        if (item) acceptSlash(item);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashDismissedFor(props.value);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!props.canSend && !(props.streaming && props.onSendNow)) return;
@@ -429,7 +506,8 @@ export function Composer(props: ComposerProps) {
 
    const showStop = props.streaming && !!props.onStop;
   const showSend = !props.streaming || props.canSend;
-  const showSlashMenu = slashMatches.length > 0;
+  const goalHint = props.plainChat ? null : goalComposerHint(props.value, props.goalText);
+  const modeHint = props.plainChat || !props.mode ? null : modeCommandHint(props.value);
   const showAtMenu = atQuery !== null && atHits.length > 0;
   const showHashMenu = hashQuery !== null && hashHits.length > 0;
 
@@ -494,6 +572,21 @@ export function Composer(props: ComposerProps) {
           {props.compactionNotice}
         </div>
       )}
+      {/* Live run status: what the agent is doing right now, in one line. */}
+      {props.runStatus && props.streaming && (
+        <div className="composer__run-status" role="status" aria-live="polite">
+          <span className={`composer__run-dot composer__run-dot--${props.runStatus.phase}`} />
+          <span className="composer__run-label">{props.runStatus.label}</span>
+          {props.runStatus.workDurationMs > 0 && (
+            <span className="composer__run-time">{formatRunTime(props.runStatus.workDurationMs)}</span>
+          )}
+          {props.runStatus.retryCount > 0 && (
+            <span className="composer__run-retry">
+              retry {props.runStatus.retryCount}/{props.runStatus.maxRetries}
+            </span>
+          )}
+        </div>
+      )}
       {imageError && (
         <div className="composer__attach-warn" role="status">
           {imageError}
@@ -515,18 +608,19 @@ export function Composer(props: ComposerProps) {
           gap={6}
           className="slashmenu slashmenu--portalled"
         >
-          {slashMatches.map((item) => (
+          {slashMatches.map((item, i) => (
             <button
               key={item.name}
+              ref={i === activeSlashIndex ? activeSlashRef : undefined}
               type="button"
-              className="slashmenu__item"
-              onClick={() => {
-                props.onChange(`/${item.name} `);
-                ref.current?.focus();
-              }}
+              role="option"
+              aria-selected={i === activeSlashIndex}
+              className={`slashmenu__item${i === activeSlashIndex ? " slashmenu__item--active" : ""}`}
+              onMouseEnter={() => setSlashIndex(i)}
+              onClick={() => acceptSlash(item)}
             >
               <code>/{item.name}</code>
-              <span>{item.description}</span>
+              <span>{item.name === "goal" ? goalCommandDescription(props.goalText) : item.description}</span>
             </button>
           ))}
         </PortalledPanel>
@@ -616,12 +710,13 @@ export function Composer(props: ComposerProps) {
         onKeyDown={handleKeyDown}
         onPaste={onPaste}
       />
+      {goalHint && <div className="composer__hint">{goalHint}</div>}
+      {!goalHint && modeHint && <div className="composer__hint">{modeHint}</div>}
       <div className="composer__row">
         {!props.plainChat ? (
         <AnchoredMenu
           open={plusOpen}
           onToggle={() => {
-            setModeOpen(false);
             setAccessOpen(false);
             setPlusOpen((v) => !v);
           }}
@@ -653,47 +748,62 @@ export function Composer(props: ComposerProps) {
             <Icon name="slash" size={14} />
             Insert / command
           </button>
+          {props.mode && props.onSelectMode && (
+            <button
+              type="button"
+              className="menu__item"
+              onClick={() => {
+                setPlusOpen(false);
+                // Type the mode rather than opening a second menu: the slash menu
+                // then lists every mode (and its description) in one place.
+                props.onChange("/plan ");
+                ref.current?.focus();
+              }}
+            >
+              <Icon name="route" size={14} />
+              Switch mode (/plan, /ask, /bot)
+            </button>
+          )}
+          {props.onSetGoal && (
+            <button
+              type="button"
+              className="menu__item"
+              onClick={() => {
+                setPlusOpen(false);
+                // No goal yet: start a /goal command so the objective is typed in the
+                // box (and restated by the agent). An existing goal is edited verbatim.
+                if (props.goalText) {
+                  openGoalDialog();
+                } else {
+                  props.onChange("/goal ");
+                  ref.current?.focus();
+                }
+              }}
+            >
+              <Icon name="flag" size={14} />
+              {props.goalText ? "Edit goal" : "Set goal"}
+            </button>
+          )}
         </AnchoredMenu>
         ) : null}
 
-        {!props.plainChat && props.mode && props.onSelectMode && (
-          <AnchoredMenu
-            open={modeOpen}
-            onToggle={() => {
-              setPlusOpen(false);
-              setAccessOpen(false);
-              setModeOpen((v) => !v);
+        {/* Mode is chosen by typing (/plan, /ask, /bot, /agent), so this row holds
+            no mode menu. A chip appears only while the thread is outside the
+            default build mode, as the way back out. */}
+        {!props.plainChat && props.mode && props.mode !== "agent" && (
+          <button
+            type="button"
+            className="chip chip--mode"
+            title={`${MODE_LABEL[props.mode]} mode. Click to return to Agent mode, or type /agent.`}
+            onClick={() => {
+              props.onSelectMode?.("agent");
+              ref.current?.focus();
             }}
-            onClose={() => setModeOpen(false)}
-            triggerClassName={`chip ${props.mode !== "agent" ? "chip--mode" : ""}`}
-            triggerTitle={t("mode.switchHint")}
-            trigger={
-              <>
-                <Icon name={MODE_META[props.mode].icon} size={13} />
-                <span>{t(MODE_META[props.mode].labelKey)}</span>
-                <Icon name="chevronDown" size={11} />
-              </>
-            }
           >
-            {modeOrder.map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                className={`menu__item ${mode === props.mode ? "menu__item--active" : ""}`}
-                onClick={() => {
-                  props.onSelectMode?.(mode);
-                  setModeOpen(false);
-                  ref.current?.focus();
-                }}
-              >
-                <Icon name={MODE_META[mode].icon} size={14} />
-                <span className="menu__item-body">
-                  {t(MODE_META[mode].labelKey)}
-                  <span className="menu__item-desc">{t(MODE_META[mode].descKey)}</span>
-                </span>
-              </button>
-            ))}
-          </AnchoredMenu>
+            <Icon name={MODE_ICON[props.mode]} size={13} />
+            <span>{MODE_LABEL[props.mode]}</span>
+            <Icon name="close" size={11} />
+          </button>
         )}
 
         {!props.plainChat ? (
@@ -701,7 +811,6 @@ export function Composer(props: ComposerProps) {
           open={accessOpen}
           onToggle={() => {
             setPlusOpen(false);
-            setModeOpen(false);
             setAccessOpen((v) => !v);
           }}
           onClose={() => setAccessOpen(false)}
@@ -731,6 +840,18 @@ export function Composer(props: ComposerProps) {
         </AnchoredMenu>
         ) : null}
 
+        {!props.plainChat && props.onSetGoal && props.goalText && (
+          <button
+            type="button"
+            className="chip chip--mode"
+            title={`Goal: ${props.goalText}`}
+            onClick={openGoalDialog}
+          >
+            <Icon name="flag" size={12} />
+            <span>Goal</span>
+          </button>
+        )}
+
         <div className="composer__spacer" />
 
         <ContextUsage
@@ -752,33 +873,9 @@ export function Composer(props: ComposerProps) {
           modelEfforts={props.modelEfforts}
           thinkingDefault={props.thinkingDefault}
           onSetModelEffort={props.onSetModelEffort}
+          thinking={props.thinking}
+          onToggleThinking={props.onToggleThinking}
         />
-
-        {props.onToggleThinking && (
-          <button
-            className={`chip ${(props.thinking ?? props.thinkingDefault ?? true) ? "chip--on" : ""}`}
-            title={(props.thinking ?? props.thinkingDefault ?? true) ? "Thinking enabled" : "Thinking disabled"}
-            onClick={() => props.onToggleThinking?.(!(props.thinking ?? props.thinkingDefault ?? true))}
-          >
-            <Icon name="brain" size={12} />
-            <span>{(props.thinking ?? props.thinkingDefault ?? true) ? "On" : "Off"}</span>
-          </button>
-        )}
-
-        {!props.plainChat && props.onSetGoal && (
-          <button
-            type="button"
-            className={`chip ${props.goalText ? "chip--mode" : ""}`}
-            title="Set a verifiable goal for this task (/goal in the composer)"
-            onClick={() => {
-              setGoalDraft(props.goalText ?? "");
-              setGoalOpen(true);
-            }}
-          >
-            <Icon name="flag" size={12} />
-            <span>{props.goalText ? "Goal" : "Set goal"}</span>
-          </button>
-        )}
 
         <div className="composer__actions">
           {showStop && (

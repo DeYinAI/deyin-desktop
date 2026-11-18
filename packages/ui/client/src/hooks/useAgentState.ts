@@ -216,6 +216,14 @@ function newCheckpointId(): string {
   return `cp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function safeRequestAnimationFrame(cb: () => void): void {
+  if (typeof globalThis.requestAnimationFrame === "function") {
+    globalThis.requestAnimationFrame(cb);
+  } else {
+    setTimeout(cb, 16);
+  }
+}
+
 function stopThought(
   runId: string,
   runEvents: ThreadEvent[],
@@ -320,7 +328,20 @@ class AgentStateStore {
     };
   };
 
+  private structuralRafScheduled = false;
+
+  private scheduleStructuralRaf() {
+    if (this.structuralRafScheduled) return;
+    this.structuralRafScheduled = true;
+    safeRequestAnimationFrame(() => {
+      if (!this.structuralRafScheduled) return;
+      this.structuralRafScheduled = false;
+      this.notifyStructural();
+    });
+  }
+
   private notifyStructural() {
+    this.structuralRafScheduled = false;
     // Snapshots must stay referentially stable between notifications:
     // useSyncExternalStore compares by identity, so a fresh object per
     // getSnapshot() call reads as "store changed" on every check and loops
@@ -420,7 +441,7 @@ class AgentStateStore {
     const t = this.thread(threadId);
     if (t.rafScheduled) return;
     t.rafScheduled = true;
-    requestAnimationFrame(() => {
+    safeRequestAnimationFrame(() => {
       t.rafScheduled = false;
       t.streamText = t.textBuffer;
       t.streamReasoning = t.reasoningBuffer;
@@ -517,7 +538,7 @@ class AgentStateStore {
         const next = [...t.runEvents];
         next[index] = { ...prev, result };
         t.runEvents = next;
-        this.notifyStructural();
+        this.scheduleStructuralRaf();
         break;
       }
       case "tool-end": {
@@ -861,7 +882,7 @@ class AgentStateStore {
         const lines = [...(prev.lines ?? []), event.line].slice(-SUBAGENT_LOG_CAP);
         next[index] = { ...prev, line: event.line, lines };
         t.runEvents = next;
-        this.notifyStructural();
+        this.scheduleStructuralRaf();
         break;
       }
       case "subagent-end": {

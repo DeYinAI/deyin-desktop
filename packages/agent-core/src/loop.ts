@@ -43,6 +43,13 @@ import {
 } from "./continuation.js";
 import { streamChatEvents } from "./stream.js";
 import {
+  DEFAULT_MAX_GOAL_ROUNDS,
+  goalContinuation,
+  reviewGoal,
+  type GoalReviewResult,
+  type GoalVerdict,
+} from "./goal-reviewer.js";
+import {
   classifyTransientFailure,
   DEFAULT_STREAM_RETRY_POLICY,
   sleepUnlessAborted,
@@ -167,6 +174,8 @@ export type AgentEvent =
   | { type: "loop-guard"; code: GuardIntervention["code"]; message: string; detail: string }
   | { type: "run-summary"; summary: RunSummary }
   | { type: "model-routed"; step: number; role: ModelRole; model: string; providerId?: string }
+  /** The goal reviewer's verdict for the round that just ended. */
+  | { type: "goal-verdict"; verdict: GoalVerdict; reason: string }
   | { type: "done"; reason: AgentRunResult["reason"] };
 
 /**
@@ -197,6 +206,8 @@ export interface RunSummary {
   streamRetries?: number;
   /** Times the loop nudged the model to carry on after an empty, announce-only or truncated turn. Omitted when zero. */
   continuationNudges?: number;
+  /** Continuation rounds the reviewer-driven goal loop spent. Omitted when zero. */
+  goalRounds?: number;
   promptTokens: number;
   cachedPromptTokens: number;
   /** cachedPromptTokens / promptTokens, 0 when nothing was sent. */
@@ -255,6 +266,34 @@ maxSteps?: number | null;
    * before completing (default true). Off for hosts/tests that script exact steps.
    */
   goalReconcile?: boolean;
+  /**
+   * Reviewer-driven goal loop. When `goalText` is set on the tool context and
+   * this is not `false`, the loop reviews the transcript with an independent
+   * model call at every turn end and admits a continuation while the verdict is
+   * `continue`. Round budget comes from `goalMaxRounds`.
+   */
+  goalLoop?: boolean;
+  /** Ceiling on continuation rounds for this goal (default DEFAULT_MAX_GOAL_ROUNDS). */
+  goalMaxRounds?: number;
+  /**
+   * Read the goal as it stands right now. Called before each continuation so a
+   * `/goal pause` or `/goal clear` sent mid-review wins over the loop's own view.
+   */
+  readGoal?: () => { text: string; status: string; rounds?: number; maxRounds?: number; id?: string } | null | undefined;
+  /**
+   * Persist a goal transition (round spent, verdict reached). The host writes
+   * the thread's goal field; `undefined` clears it.
+   */
+  applyGoal?: (patch: {
+    rounds?: number;
+    status?: "active" | "paused" | "done" | "blocked" | "exhausted";
+    reason?: string;
+    reportedAt?: string;
+  }) => void;
+  /** Background commands still running, surfaced to the reviewer so a server cannot stall the goal. */
+  backgroundShells?: () => string[];
+  /** True while a background subagent of this session still runs; the reviewer then waits. */
+  backgroundSubagentRunning?: () => boolean;
   /**
    * Keep going when a turn ends without a tool call but has plainly not
    * finished: an empty reply, text that ends by announcing an action ("Let me
@@ -415,12 +454,15 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     foldFailures: 0,
     streamRetries: 0,
     continuationNudges: 0,
+    goalRounds: 0,
   };
 
   const mutatedPaths: string[] = [];
   let goalReported = false;
   let goalReconcileNudges = 0;
   let todoReconcileNudges = 0;
+  /** Continuation rounds spent by the reviewer-driven goal loop. */
+  let goalRounds = 0;
 
   // Keep-going state. Every counter here bounds a recovery so a misbehaving
   // provider or model can be helped along, but never wedge the run.
@@ -1073,6 +1115,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       // the model may be stopping prematurely without verifying the objective. Nudge a bounded number
       // of times per run so it reports verification or explains blockers.
       if (
+        opts.goalLoop === false &&
         opts.goalReconcile !== false &&
         ctx.goalText &&
         ctx.goalText.trim().length > 0 &&
@@ -1091,6 +1134,151 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
             `[goal check] Active goal for this thread: "${ctx.goalText.trim()}". Your response appears final, but you have not reported whether the goal was verifiably met. Call report_goal_met with met=true if the goal is verifiably completed, or keep working toward it; call report_goal_met with met=false only to report a blocker or that you cannot verify it.`,
         });
         continue;
+      }
+
+      // Reviewer-driven goal loop. A separate model call judges the transcript,
+      // and its verdict decides whether this run continues. This is what keeps a
+      // goal session working turn after turn instead of trusting the worker's own
+      // claim that it finished. Off when the host runs the classic nudge path.
+      if (
+        opts.goalLoop !== false &&
+        opts.goalReconcile !== false &&
+        ctx.goalText &&
+        ctx.goalText.trim().length > 0
+      ) {
+        // Re-read the goal first: a `/goal pause` or `/goal clear` issued while
+        // the last step was streaming must win over this loop's own view.
+        const liveGoal = opts.readGoal?.();
+        if (liveGoal && liveGoal.status !== "active") {
+          emit({
+            type: "goal-verdict",
+            verdict: liveGoal.status === "paused" ? "paused" : "done",
+            reason: `Goal is ${liveGoal.status}; the loop stopped.`,
+          });
+          await maybeCompact("pressure", stepWindow);
+          return finish("completed", step);
+        }
+
+        const maxGoalRounds = opts.goalMaxRounds ?? DEFAULT_MAX_GOAL_ROUNDS;
+        const usedRounds = liveGoal?.rounds ?? goalRounds;
+        if (usedRounds >= maxGoalRounds) {
+          opts.applyGoal?.({
+            rounds: usedRounds,
+            status: "exhausted",
+            reason: `The goal used all ${maxGoalRounds} rounds without being verified as met.`,
+            reportedAt: new Date().toISOString(),
+          });
+          emit({
+            type: "goal-verdict",
+            verdict: "continue",
+            reason: `Round budget exhausted (${maxGoalRounds}); stopping the goal loop.`,
+          });
+          await maybeCompact("pressure", stepWindow);
+          return finish("completed", step);
+        }
+
+        // A background subagent keeps the answer open: its report arrives later,
+        // so asking the reviewer now would judge an unfinished transcript.
+        if (opts.backgroundSubagentRunning?.()) {
+          emit({
+            type: "goal-verdict",
+            verdict: "wait",
+            reason: "A background subagent is still running; deferring the review.",
+          });
+          await maybeCompact("pressure", stepWindow);
+          return finish("completed", step);
+        }
+
+        let review: GoalReviewResult | null = null;
+        try {
+          const reviewerToken = await (routed?.getToken ?? opts.getToken)();
+          if (reviewerToken !== null && reviewerToken !== undefined) {
+            review = await reviewGoal({
+              apiBaseUrl: routed?.apiBaseUrl ?? opts.apiBaseUrl,
+              token: reviewerToken,
+              model: stepModel,
+              apiFormat: routed?.apiFormat ?? opts.apiFormat,
+              authHeader: routed?.authHeader ?? opts.authHeader,
+              signal: opts.signal,
+              objective: ctx.goalText,
+              messages: opts.messages,
+              rounds: usedRounds,
+              maxRounds: maxGoalRounds,
+              ...(opts.backgroundShells ? { backgroundShells: opts.backgroundShells() } : {}),
+              effort: opts.effort,
+            });
+          }
+        } catch (err) {
+          // A failed review must not fail the run: keep the goal armed and let
+          // the caller's next turn pick it up.
+          if (isAbortError(err)) return finish("aborted", step);
+          emit({
+            type: "goal-verdict",
+            verdict: "continue",
+            reason: `The goal reviewer could not run: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+
+        if (review) {
+          emit({ type: "goal-verdict", verdict: review.verdict, reason: review.reason });
+          if (review.usage) {
+            usage.promptTokens += review.usage.promptTokens;
+            usage.completionTokens += review.usage.completionTokens;
+            usage.totalTokens += review.usage.totalTokens;
+          }
+
+          if (review.verdict === "done") {
+            opts.applyGoal?.({
+              rounds: usedRounds,
+              status: "done",
+              reason: review.reason,
+              reportedAt: new Date().toISOString(),
+            });
+            await maybeCompact("pressure", stepWindow);
+            return finish("completed", step);
+          }
+          if (review.verdict === "blocked") {
+            opts.applyGoal?.({
+              rounds: usedRounds,
+              status: "blocked",
+              reason: review.reason,
+              reportedAt: new Date().toISOString(),
+            });
+            await maybeCompact("pressure", stepWindow);
+            return finish("completed", step);
+          }
+          if (review.verdict === "paused") {
+            opts.applyGoal?.({
+              rounds: usedRounds,
+              status: "paused",
+              reason: review.reason,
+              reportedAt: new Date().toISOString(),
+            });
+            await maybeCompact("pressure", stepWindow);
+            return finish("completed", step);
+          }
+          if (review.verdict === "wait") {
+            await maybeCompact("pressure", stepWindow);
+            return finish("completed", step);
+          }
+
+          // continue: spend a round and inject the continuation.
+          if (step >= maxSteps) break;
+          goalRounds = usedRounds + 1;
+          opts.applyGoal?.({ rounds: goalRounds, status: "active", reason: review.reason });
+          counters.goalRounds = goalRounds;
+          append({
+            role: "user",
+            content: goalContinuation({
+              objective: ctx.goalText,
+              reason: review.reason,
+              ...(review.next ? { next: review.next } : {}),
+              rounds: goalRounds,
+              maxRounds: maxGoalRounds,
+            }),
+          });
+          continue;
+        }
       }
 
       // Turn end: the natural cache-reset boundary. Compacting here rather than
@@ -1192,6 +1380,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       foldFailures: counters.foldFailures,
       ...(counters.streamRetries > 0 ? { streamRetries: counters.streamRetries } : {}),
       ...(counters.continuationNudges > 0 ? { continuationNudges: counters.continuationNudges } : {}),
+      ...(counters.goalRounds > 0 ? { goalRounds: counters.goalRounds } : {}),
       promptTokens: usage.promptTokens,
       cachedPromptTokens: cached,
       cacheHitRate: usage.promptTokens > 0 ? cached / usage.promptTokens : 0,

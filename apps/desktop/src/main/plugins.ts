@@ -138,6 +138,8 @@ export class PluginService {
   async uninstall(name: string): Promise<void> {
     await uninstallPlugin(this.pluginsDir, name);
     this.agents.removePluginSecrets(name);
+    // A plugin switched off before removal must not come back switched off on reinstall.
+    this.agents.setCapEnabled(`plugin:${name}`, true);
     this.capabilities.invalidate();
   }
 

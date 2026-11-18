@@ -350,7 +350,7 @@ function componentSummary(plugin: PluginInfo): string {
 }
 
 /** Secret variables a plugin declares; values are stored encrypted, write-only. */
-function PluginVariables({ plugin, names }: { plugin: string; names: string[] }) {
+export function PluginVariables({ plugin, names }: { plugin: string; names: string[] }) {
   const [state, setState] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 

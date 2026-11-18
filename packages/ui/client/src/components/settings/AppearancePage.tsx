@@ -35,6 +35,8 @@ export function AppearancePage({ settings, onChange }: Props) {
         >
           <option value="dark">{t("appearance.dark")}</option>
           <option value="warm">{t("appearance.warm")}</option>
+          <option value="obsidian">{t("appearance.obsidian")}</option>
+          <option value="reference">{t("appearance.reference")}</option>
           <option value="light">{t("appearance.light")}</option>
           <option value="system">{t("appearance.system")}</option>
         </select>

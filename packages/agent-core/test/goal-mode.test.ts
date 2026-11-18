@@ -116,6 +116,9 @@ test("active goal completion gate nudges unverified goal completion", async () =
       permissions: new PermissionEngine({ skipAll: true }),
       resolvePermission: async () => "allow",
       cwd,
+      // This test covers the legacy nudge path specifically; the reviewer-driven
+      // loop is the default and is exercised in goal-loop.test.ts.
+      goalLoop: false,
       toolContext: {
         goalText: "verify test suite",
         onGoalReport: (report) => reports.push(report),
@@ -160,6 +163,8 @@ test("active goal completion gate respects budget when model refuses report_goal
       permissions: new PermissionEngine({ skipAll: true }),
       resolvePermission: async () => "allow",
       cwd,
+      // Legacy nudge-path budget test; see goal-loop.test.ts for the reviewer loop.
+      goalLoop: false,
       toolContext: {
         goalText: "verify test suite",
       },

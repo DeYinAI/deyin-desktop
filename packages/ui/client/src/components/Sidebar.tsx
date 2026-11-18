@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n.js";
+import { AnchoredMenu } from "./AnchoredMenu.js";
 import { Icon, type IconName } from "./Icon.js";
+import { Logo } from "./Logo.js";
 import { ProfileMenu } from "./ProfileMenu.js";
 import { UpdateBanner } from "./UpdateBanner.js";
 import { formatThreadAge, type Project, type Thread } from "../threads.js";
@@ -9,7 +11,7 @@ import type { BotWorkflowDefinition, DeyinSettings, ExternalAgentDescriptor, Use
 interface SidebarProps {
   platform: "desktop" | "web";
   /** Which top-level view is showing, so its nav row reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "superagent" | "bot" | "workflows";
+  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
   projects: Project[];
   activeProjectId: string | null;
   activeThreadId: string | null;
@@ -18,15 +20,11 @@ interface SidebarProps {
   settings: DeyinSettings;
   busy: boolean;
   connecting: boolean;
-  /** Thread history arrows, mirroring the browser-style back/forward pair. */
-  canBack: boolean;
-  canForward: boolean;
-  onBack: () => void;
-  onForward: () => void;
-  onCollapse: () => void;
   onNewTask: () => void;
   onNewMission?: () => void;
   onNewProject: () => void;
+  /** Start a session inside a specific workspace folder. */
+  onNewTaskInProject?: (projectId: string) => void;
   onSelectProject: (projectId: string) => void;
   /** Select target repository specifically for bot delegations in Bot Mode. */
   onSelectTargetRepository?: (projectId: string) => void;
@@ -41,6 +39,8 @@ interface SidebarProps {
   onOpenUsage: () => void;
   onOpenPlans: () => void;
   onOpenSettings: () => void;
+  /** Open the Plugins page (built-in plugins, MCP servers, skills). */
+  onOpenPlugins: () => void;
   /** Open the Automations view (scheduled agent runs). */
   onOpenAutomations: () => void;
   /** Open the Superagent view (a proactive agent for one GitHub repository). */
@@ -86,6 +86,41 @@ function projectThreads(threads: Thread[]): Thread[] {
 /** How many chats each project shows before a "Show N more" expander. */
 const THREAD_PREVIEW_LIMIT = 5;
 
+const SORT_KEY = "deyin.sidebar.sort";
+
+/** How the workspace folders are ordered in the list. */
+type WorkspaceSort = "default" | "recent" | "name";
+
+const SORT_OPTIONS: { id: WorkspaceSort; label: string }[] = [
+  { id: "default", label: "Default order" },
+  { id: "recent", label: "Recent activity" },
+  { id: "name", label: "Name" },
+];
+
+function loadSort(): WorkspaceSort {
+  const raw = localStorage.getItem(SORT_KEY);
+  return SORT_OPTIONS.some((o) => o.id === raw) ? (raw as WorkspaceSort) : "default";
+}
+
+function latestActivity(project: Project): number {
+  return project.threads.reduce((max, t) => Math.max(max, t.updatedAt), 0);
+}
+
+function sortProjects(projects: Project[], sort: WorkspaceSort): Project[] {
+  switch (sort) {
+    case "default":
+      return projects;
+    case "recent":
+      return [...projects].sort((a, b) => latestActivity(b) - latestActivity(a));
+    case "name":
+      return [...projects].sort((a, b) => a.name.localeCompare(b.name));
+    default: {
+      const unreachable: never = sort;
+      return unreachable;
+    }
+  }
+}
+
 const COLLAPSED_PROJECTS_KEY = "deyin.sidebar.collapsedProjects";
 const EXPANDED_LISTS_KEY = "deyin.sidebar.expandedLists";
 
@@ -129,6 +164,9 @@ export function Sidebar(props: SidebarProps) {
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [sort, setSort] = useState<WorkspaceSort>(loadSort);
   const [collapsedProjects, setCollapsedProjects] = useState(loadCollapsedProjects);
   const [expandedLists, setExpandedLists] = useState(loadExpandedLists);
   const now = useNow(30_000);
@@ -154,7 +192,9 @@ export function Sidebar(props: SidebarProps) {
       try {
         const list = await window.deyin.botWorkflows.list();
         setWorkflows(list);
-      } catch {}
+      } catch {
+        // The workflow list is optional chrome; keep whatever was loaded last.
+      }
     }
   }, []);
 
@@ -234,15 +274,16 @@ export function Sidebar(props: SidebarProps) {
   // matching project are all kept, otherwise only matching threads show.
   const visibleProjects = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return props.projects;
-    return props.projects
+    const ordered = sortProjects(props.projects, sort);
+    if (!q) return ordered;
+    return ordered
       .map((project) => {
         if (project.name.toLowerCase().includes(q)) return project;
         const threads = project.threads.filter((t) => t.title.toLowerCase().includes(q));
         return threads.length > 0 ? { ...project, threads } : null;
       })
       .filter((p): p is Project => p !== null);
-  }, [props.projects, filter]);
+  }, [props.projects, filter, sort]);
 
   // Pinned threads float to a section of their own, newest first, across projects.
   const pinned = useMemo<PinnedEntry[]>(() => {
@@ -255,17 +296,13 @@ export function Sidebar(props: SidebarProps) {
       .sort((a, b) => b.thread.updatedAt - a.thread.updatedAt);
   }, [props.projects]);
 
-  const renderThread = (projectId: string, thread: Thread, indented: boolean) =>
+  const renderThread = (projectId: string, thread: Thread) =>
     thread.id === props.renamingThreadId ? (
-      <RenameRow key={thread.id} thread={thread} indented={indented} onSubmit={props.onRenameSubmit} />
+      <RenameRow key={thread.id} thread={thread} onSubmit={props.onRenameSubmit} />
     ) : (
       <button
         key={thread.id}
-        className={[
-          "thread-row",
-          indented ? "" : "thread-row--flush",
-          thread.id === props.activeThreadId ? "thread-row--active" : "",
-        ]
+        className={["thread-row", thread.id === props.activeThreadId ? "thread-row--active" : ""]
           .filter(Boolean)
           .join(" ")}
         aria-current={thread.id === props.activeThreadId ? "page" : undefined}
@@ -275,7 +312,9 @@ export function Sidebar(props: SidebarProps) {
           props.onThreadContext(thread.id, e.clientX, e.clientY);
         }}
       >
-        {thread.unread && <span className="thread-row__unread" aria-hidden />}
+        <span className="sb-slot">
+          {thread.unread && <span className="thread-row__unread" aria-hidden />}
+        </span>
         <span className="thread-row__title">{thread.title}</span>
         <ThreadPendingBadge count={props.pendingByThread?.[thread.id] ?? 0} />
         <ThreadMark thread={thread} />
@@ -285,123 +324,141 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <aside className="sidebar">
-      <div className="sidebar__head">
-        <button className="icon-btn" title={t("nav.collapseSidebar")} onClick={props.onCollapse}>
-          <Icon name="panelLeft" size={15} />
-        </button>
-        {/* Project actions stay out of the way until the sidebar is hovered. */}
-        <div className="sidebar__head-actions">
-          <button
-            className={`icon-btn icon-btn--small ${filterOpen ? "icon-btn--active" : ""}`}
-            title="Search projects"
-            onClick={() => {
-              setFilterOpen((v) => !v);
-              setFilter("");
-            }}
-          >
-            <Icon name="filter" size={13} />
-          </button>
-          <button
-            className="icon-btn icon-btn--small"
-            title={
-              props.platform === "desktop"
-                ? "New project — pick a folder as your workspace"
-                : "Folder workspaces are available in the desktop app"
-            }
-            disabled={props.platform !== "desktop"}
-            onClick={props.onNewProject}
-          >
-            <Icon name="folderPlus" size={14} />
-          </button>
-        </div>
-        <div className="sidebar__head-spacer" />
-        <button className="icon-btn" title={t("nav.back")} disabled={!props.canBack} onClick={props.onBack}>
-          <Icon name="arrowLeft" size={14} />
-        </button>
-        <button className="icon-btn" title={t("nav.forward")} disabled={!props.canForward} onClick={props.onForward}>
-          <Icon name="arrowRight" size={14} />
+      <div className="sidebar__brand-row">
+        <button type="button" className="sidebar__brand" title={t("nav.newTask")} onClick={() => props.onNewTask()}>
+          <Logo size={22} />
+          <span className="sidebar__brand-name">Deyin</span>
         </button>
       </div>
 
-      <nav className="sidebar__nav">
-        <button className="nav-item nav-item--warm" onClick={props.onNewTask}>
-          <Icon name="sparkles" size={14} />
-          <span>{isBotView ? "New Mission" : t("nav.newTask")}</span>
-          <span className="kbd">Ctrl+N</span>
+      <nav className="sidebar__panels" aria-label="Navigation">
+        <button type="button" className="sb-row sidebar__new-session" onClick={() => props.onNewTask()}>
+          <span className="sb-row__glyph"><Icon name="sparkles" size={15} /></span>
+          <span className="sidebar__new-label">{isBotView ? "New mission" : "New session"}</span>
+          <span className="sidebar__new-kbd">Ctrl+N</span>
         </button>
-        <button className="nav-item" onClick={props.onOpenSearch}>
-          <Icon name="search" size={14} />
-          <span>{t("nav.search")}</span>
-          <span className="kbd">Ctrl+K</span>
+        <button
+          type="button"
+          className={`sb-row${props.activeView === "plugins" ? " sb-row--active" : ""}`}
+          onClick={props.onOpenPlugins}
+        >
+          <span className="sb-row__glyph"><Icon name="puzzle" size={16} /></span>
+          <span className="sb-row__label">Plugins</span>
         </button>
         {props.platform !== "web" && (
-        <button
-          className={`nav-item nav-item--feature${props.activeView === "automations" ? " nav-item--active" : ""}`}
-          onClick={props.onOpenAutomations}
-        >
-          <Icon name="automation" size={14} />
-          <span>{t("nav.automations")}</span>
-        </button>
-        )}
-        {props.platform !== "web" && (
-        <button
-          className={`nav-item nav-item--feature${props.activeView === "superagent" ? " nav-item--active" : ""}`}
-          onClick={props.onOpenSuperagent}
-        >
-          <Icon name="rocket" size={14} />
-          <span>{t("nav.superagent")}</span>
-        </button>
-        )}
-        {isBotView && props.onOpenWorkflows && (
           <button
-            className={`nav-item nav-item--feature${props.activeView === "workflows" ? " nav-item--active" : ""}`}
-            onClick={() => props.onOpenWorkflows?.(null)}
-            title="Multi-bot workflows & pipelines — create and edit stage flows"
+            type="button"
+            className={`sb-row${props.activeView === "automations" ? " sb-row--active" : ""}`}
+            onClick={props.onOpenAutomations}
           >
-            <Icon name="bolt" size={14} />
-            <span>Workflows</span>
+            <span className="sb-row__glyph"><Icon name="clock" size={16} /></span>
+            <span className="sb-row__label">Automation tasks</span>
           </button>
         )}
-        <button className="nav-item nav-item--feature" onClick={props.onOpenCustomize}>
-          <Icon name="customize" size={14} />
-          <span>{t("nav.customize")}</span>
-        </button>
+        <AnchoredMenu
+          open={moreOpen}
+          onToggle={() => setMoreOpen((v) => !v)}
+          onClose={() => setMoreOpen(false)}
+          triggerClassName="sb-row"
+          triggerTitle="More"
+          trigger={
+            <>
+              <span className="sb-row__glyph"><Icon name="grid" size={16} /></span>
+              <span className="sb-row__label">More</span>
+            </>
+          }
+          panelClassName="sb-menu"
+        >
+          <MoreItem icon="search" label={t("nav.search")} hint="Ctrl+K" onClick={() => { setMoreOpen(false); props.onOpenSearch(); }} />
+          {props.platform !== "web" && (
+            <MoreItem
+              icon="rocket"
+              label={t("nav.superagent")}
+              active={props.activeView === "superagent"}
+              onClick={() => { setMoreOpen(false); props.onOpenSuperagent(); }}
+            />
+          )}
+          {isBotView && props.onOpenWorkflows && (
+            <MoreItem
+              icon="bolt"
+              label="Workflows"
+              active={props.activeView === "workflows"}
+              onClick={() => { setMoreOpen(false); props.onOpenWorkflows?.(null); }}
+            />
+          )}
+          {(props.onSelectView || props.onSwitchMode) && (
+            <MoreItem
+              icon={isBotView ? "layout" : "bot"}
+              label={isBotView ? "Switch to Workspace" : "Switch to Bot mode"}
+              onClick={() => {
+                setMoreOpen(false);
+                const next = isBotView ? "workspace" : "bot";
+                props.onSelectView?.(next);
+                props.onSwitchMode?.(next === "bot" ? "bot" : "agent");
+              }}
+            />
+          )}
+          <MoreItem icon="palette" label={t("nav.customize")} onClick={() => { setMoreOpen(false); props.onOpenCustomize(); }} />
+        </AnchoredMenu>
+      </nav>
 
-        {(props.onSelectView || props.onSwitchMode) && (
-          <div className="sidebar__mode-switcher">
-            <div className="sidebar__mode-tabs" role="tablist" aria-label="Operating Mode">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={!isBotView}
-                className={`sidebar__mode-tab${!isBotView ? " sidebar__mode-tab--active" : ""}`}
-                onClick={() => {
-                  props.onSelectView?.("workspace");
-                  props.onSwitchMode?.("agent");
-                }}
-                title="Workspace: Code, terminal, and agent tools"
-              >
-                <Icon name="layout" size={13} />
-                <span>Workspace</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={isBotView}
-                className={`sidebar__mode-tab${isBotView ? " sidebar__mode-tab--active" : ""}`}
-                onClick={() => {
-                  props.onSelectView?.("bot");
-                  props.onSwitchMode?.("bot");
-                }}
-                title="Bot Mode: Multi-agent orchestrator & external delegation"
-              >
-                <Icon name="bot" size={13} />
-                <span>Bot Mode</span>
-              </button>
-            </div>
+      <div className="sidebar__ws-head">
+        <span className="sidebar__ws-title">{isBotView ? "Missions" : "Workspaces"}</span>
+        {!isBotView && (
+          <div className="sidebar__ws-actions">
+            <button
+              type="button"
+              className={`sb-icon${filterOpen ? " sb-icon--active" : ""}`}
+              title="Search workspaces"
+              onClick={() => {
+                setFilterOpen((v) => !v);
+                setFilter("");
+              }}
+            >
+              <Icon name="search" size={15} />
+            </button>
+            <AnchoredMenu
+              open={sortOpen}
+              onToggle={() => setSortOpen((v) => !v)}
+              onClose={() => setSortOpen(false)}
+              triggerClassName={`sb-icon${sort !== "default" ? " sb-icon--active" : ""}`}
+              triggerTitle="Organize workspaces"
+              trigger={<Icon name="sliders" size={15} />}
+              panelClassName="sb-menu"
+            >
+              <div className="sb-menu__label">Sort workspaces by</div>
+              {SORT_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="menu__item"
+                  onClick={() => {
+                    setSort(option.id);
+                    localStorage.setItem(SORT_KEY, option.id);
+                    setSortOpen(false);
+                  }}
+                >
+                  <span className="sb-menu__check">{sort === option.id ? <Icon name="check" size={13} /> : null}</span>
+                  <span>{option.label}</span>
+                </button>
+              ))}
+            </AnchoredMenu>
+            <button
+              type="button"
+              className="sb-icon"
+              title={
+                props.platform === "desktop"
+                  ? "Add workspace folder"
+                  : "Folder workspaces are available in the desktop app"
+              }
+              disabled={props.platform !== "desktop"}
+              onClick={props.onNewProject}
+            >
+              <Icon name="folderPlus" size={15} />
+            </button>
           </div>
         )}
-      </nav>
+      </div>
 
       <div className="sidebar__scroll">
         {isBotView ? (
@@ -439,7 +496,7 @@ export function Sidebar(props: SidebarProps) {
 
             {botMissions.length > 0 ? (
               <div className="sidebar__bot-missions">
-                {botMissions.map(({ projectId, thread }) => renderThread(projectId, thread, false))}
+                {botMissions.map(({ projectId, thread }) => renderThread(projectId, thread))}
               </div>
             ) : (
               <div className="sidebar__empty">
@@ -498,7 +555,7 @@ export function Sidebar(props: SidebarProps) {
               <>
                 <div className="sidebar__section">{t("nav.pinned")}</div>
                 <div className="sidebar__pinned">
-                  {pinned.map((entry) => renderThread(entry.projectId, entry.thread, false))}
+                  {pinned.map((entry) => renderThread(entry.projectId, entry.thread))}
                 </div>
               </>
             )}
@@ -516,8 +573,6 @@ export function Sidebar(props: SidebarProps) {
             {visibleProjects.map((project) => {
               const active = project.id === props.activeProjectId;
               const expanded = isProjectExpanded(project.id);
-              const folderIcon: IconName =
-                project.root === null ? "home" : expanded ? "folderOpen" : "folder";
               // Search shows everything; otherwise cap the list with a "Show N more" expander.
               const filtering = filter.trim().length > 0;
               const threads = projectThreads(project.threads);
@@ -535,33 +590,60 @@ export function Sidebar(props: SidebarProps) {
                   >
                     <button
                       type="button"
-                      className="project__toggle"
-                      aria-expanded={expanded}
-                      aria-label={expanded ? "Collapse project" : "Expand project"}
-                      title={expanded ? "Collapse" : "Expand"}
-                      onClick={() => toggleProjectExpanded(project.id)}
-                    >
-                      {/* Chevron only expands/collapses threads; selection is on project__select. */}
-                      <Icon name={expanded ? "chevronDown" : "chevronRight"} size={11} />
-                    </button>
-                    <button
-                      type="button"
                       className="project__select"
+                      aria-expanded={expanded}
                       onClick={() => {
+                        if (active && expanded && !filtering) {
+                          toggleProjectExpanded(project.id);
+                          return;
+                        }
                         props.onSelectProject(project.id);
                         expandProject(project.id);
                       }}
                       title={project.root ?? project.name}
                     >
-                      <Icon name={folderIcon} size={14} />
+                      <span className="sb-slot project__lead">
+                        <Icon
+                          name={active ? "folderOpen" : "folder"}
+                          size={16}
+                          className={`project__folder${active ? " project__folder--active" : ""}`}
+                        />
+                        <Icon
+                          name={expanded ? "chevronDown" : "chevronRight"}
+                          size={13}
+                          className="project__chevron"
+                        />
+                      </span>
                       <span className="project__name">{project.name}</span>
                     </button>
+                    <span className="project__actions">
+                      <button
+                        type="button"
+                        className="sb-icon sb-icon--small"
+                        title="Workspace actions"
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          props.onProjectContext(project.id, rect.left, rect.bottom + 4);
+                        }}
+                      >
+                        <Icon name="dots" size={14} />
+                      </button>
+                      {props.onNewTaskInProject && (
+                        <button
+                          type="button"
+                          className="sb-icon sb-icon--small"
+                          title={`New session in ${project.name}`}
+                          onClick={() => props.onNewTaskInProject?.(project.id)}
+                        >
+                          <Icon name="pencil" size={14} />
+                        </button>
+                      )}
+                    </span>
                   </div>
                   {expanded &&
-                    visibleThreads.map((thread) => renderThread(project.id, thread, true))}
+                    visibleThreads.map((thread) => renderThread(project.id, thread))}
                   {expanded && !filtering && threads.length > THREAD_PREVIEW_LIMIT && (
                     <button type="button" className="sidebar__more" onClick={() => toggleProjectList(project.id)}>
-                      <Icon name={showAll ? "chevronDown" : "chevronRight"} size={11} />
                       <span>
                         {showAll
                           ? t("nav.showLessThreads")
@@ -612,7 +694,7 @@ export function Sidebar(props: SidebarProps) {
                 <span
                   className={`sidebar__agent-dot sidebar__agent-dot--${
                     agent.installed
-                      ? agent.authStatus === "authenticated" || agent.authStatus === "ok"
+                      ? agent.authStatus === "authenticated" || (agent.authStatus as string) === "ok"
                         ? "ready"
                         : "auth"
                       : "missing"
@@ -653,6 +735,26 @@ export function Sidebar(props: SidebarProps) {
         </button>
       </div>
     </aside>
+  );
+}
+
+function MoreItem(props: {
+  icon: IconName;
+  label: string;
+  hint?: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`menu__item${props.active ? " menu__item--active" : ""}`}
+      onClick={props.onClick}
+    >
+      <Icon name={props.icon} size={15} />
+      <span>{props.label}</span>
+      {props.hint && <span className="menu__item-note">{props.hint}</span>}
+    </button>
   );
 }
 
@@ -699,11 +801,9 @@ function ThreadAge({ updatedAt, now }: { updatedAt: number; now: number }) {
 
 function RenameRow({
   thread,
-  indented,
   onSubmit,
 }: {
   thread: Thread;
-  indented: boolean;
   onSubmit: (threadId: string, title: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -719,7 +819,7 @@ function RenameRow({
   };
 
   return (
-    <div className={`thread-row thread-row--rename ${indented ? "" : "thread-row--flush"}`}>
+    <div className="thread-row thread-row--rename">
       <input
         ref={inputRef}
         className="input input--inline"

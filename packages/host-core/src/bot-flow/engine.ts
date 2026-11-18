@@ -37,6 +37,10 @@ export type ExternalAgentRunner = (options: {
   prompt: string;
   cwd: string;
   model?: string;
+  /** Run identifier supplied by the workflow, so logs and watchdogs can be scoped to it. */
+  runId?: string;
+  /** Workflow stage this run belongs to. */
+  stageId?: string;
   timeoutMs?: number;
   stallThresholdMs?: number;
   onRawLine?: (line: string) => void;
@@ -189,6 +193,8 @@ export class BotWorkflowEngine {
           prompt: fullPrompt,
           cwd: executionCwd,
           model: stage.modelOverride,
+          runId: `${runId}-${stage.id}`,
+          stageId: stage.id,
           timeoutMs: stage.watchdog?.timeoutMs,
           stallThresholdMs: stage.watchdog?.stallThresholdMs,
           onRawLine: () => {
