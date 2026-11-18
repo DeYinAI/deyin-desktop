@@ -49,3 +49,31 @@ export declare function grep(
   maxResults?: number,
   ignoreCase?: boolean,
 ): GrepResult | null;
+
+export interface AcpChunkResult {
+  messages: string[];
+  rest: string;
+}
+
+export interface NdjsonChunkResult {
+  lines: string[];
+  rest: string;
+}
+
+export declare function frameAcpChunk(buffer: string, chunk: string): AcpChunkResult | null;
+export declare function isJsonRpc(line: string): boolean | null;
+export declare function frameNdjsonChunk(buffer: string, chunk: string): NdjsonChunkResult | null;
+export declare function ringBufferAppend(bufferId: string, line: string, capacity?: number): number | null;
+export declare function ringBufferGetLines(bufferId: string, maxLines?: number): string[] | null;
+export declare function ringBufferClear(bufferId: string): boolean | null;
+export declare function ringBufferRemove(bufferId: string): boolean | null;
+export declare function watchdogRegister(
+  id: string,
+  pid: number,
+  timeoutMs: number,
+  stallThresholdMs: number,
+  nowMs?: number,
+): boolean | null;
+export declare function watchdogHeartbeat(id: string, nowMs?: number): boolean | null;
+export declare function watchdogCheck(id: string, nowMs?: number): string | null;
+export declare function watchdogUnregister(id: string): boolean | null;

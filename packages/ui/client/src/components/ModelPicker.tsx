@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import {
   getModelReasoningMode,
@@ -9,6 +9,7 @@ import {
 } from "@deyin/host-core/shared";
 import { useAnchoredMenuPosition } from "../hooks/useAnchoredMenuPosition.js";
 import { Icon } from "./Icon.js";
+import { Toggle } from "./settings/controls.js";
 import type { ModelInfo, ProviderInfo, ProviderModel } from "@deyin/contract";
 
 interface ModelPickerProps {
@@ -25,6 +26,9 @@ interface ModelPickerProps {
   /** Global thinking default when a model has no explicit mode. */
   thinkingDefault?: boolean;
   onSetModelEffort?: (providerId: string, modelId: string, mode: ModelReasoningMode | undefined) => void;
+  /** This task's thinking switch (falls back to `thinkingDefault`). */
+  thinking?: boolean;
+  onToggleThinking?: (enabled: boolean) => void;
 }
 
 export function formatContext(n?: number): string | null {
@@ -34,275 +38,288 @@ export function formatContext(n?: number): string | null {
   return String(n);
 }
 
-/** Two-level picker: click a provider on the left, pick a model on the right. */
+interface PickRow {
+  providerId: string | undefined;
+  model: ProviderModel;
+}
+
+interface PickGroup {
+  id: string;
+  /** Provider name, shown as a heading only when more than one provider is enabled. */
+  title: string | null;
+  rows: PickRow[];
+}
+
+type View = "models" | "reasoning";
+
+/** One-line detail beside a model name: its kind, or its context window. */
+function modelDetail(model: ProviderModel): string | null {
+  if (model.kind === "image") return "Image";
+  if (modelIsVideo(model.id, model.kind)) return "Video";
+  const context = formatContext(model.contextLength);
+  return model.imageOutput ? (context ? `Draws · ${context}` : "Draws") : context;
+}
+
+/**
+ * Compact model menu: search, an optional Reasoning row, models grouped by
+ * provider (selected one carries a check), and a link to Manage models.
+ */
 export function ModelPicker(props: ModelPickerProps) {
   const [open, setOpen] = useState(false);
-  const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
-  const [modePanelOpen, setModePanelOpen] = useState(false);
+  const [view, setView] = useState<View>("models");
+  const [query, setQuery] = useState("");
+  const [cursor, setCursor] = useState(0);
   const anchorRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const pos = useAnchoredMenuPosition(open, anchorRef, panelRef);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const pos = useAnchoredMenuPosition(open, anchorRef, panelRef, { align: "end" });
+
+  const close = () => {
+    setOpen(false);
+    setView("models");
+    setQuery("");
+  };
 
   useEffect(() => {
     if (!open) return;
-    const close = (e: MouseEvent) => {
+    const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (!anchorRef.current?.contains(target) && !panelRef.current?.contains(target)) {
         setOpen(false);
-        setModePanelOpen(false);
+        setView("models");
+        setQuery("");
       }
     };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (modePanelOpen) setModePanelOpen(false);
-        else {
-          setOpen(false);
-          setModePanelOpen(false);
-        }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (view === "reasoning") setView("models");
+      else {
+        setOpen(false);
+        setQuery("");
       }
     };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", esc);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
     return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", esc);
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
     };
-  }, [open, modePanelOpen]);
+  }, [open, view]);
 
   useEffect(() => {
-    if (!open) {
-      setModePanelOpen(false);
-      return;
-    }
-    const fallback = props.selectedProviderId ?? props.providers?.find((p) => p.enabled)?.id ?? null;
-    setActiveProviderId(fallback);
-  }, [open, props.selectedProviderId, props.providers]);
+    if (open && view === "models") searchRef.current?.focus();
+  }, [open, view]);
 
-  const providers = (props.providers ?? []).filter((p) => p.enabled);
+  const providers = useMemo(() => (props.providers ?? []).filter((p) => p.enabled), [props.providers]);
   const sessionProviderId = props.selectedProviderId ?? providers[0]?.id;
-  const shownProviderId = activeProviderId ?? sessionProviderId;
-  const shownProvider = providers.find((p) => p.id === shownProviderId);
 
-  const modelsOf = (provider: ProviderInfo | undefined): ProviderModel[] => {
-    const primaryModels = () => props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength, kind: m.kind }));
-    if (!provider) return primaryModels();
-    const list = provider.kind === "primary" ? primaryModels() : provider.models;
-    const disabled = new Set(provider.disabledModels);
-    return list.filter((m) => !disabled.has(m.id));
-  };
+  const groups = useMemo<PickGroup[]>(() => {
+    const needle = query.trim().toLowerCase();
+    const matches = (model: ProviderModel) =>
+      !needle || model.name.toLowerCase().includes(needle) || model.id.toLowerCase().includes(needle);
+    const primary = (): ProviderModel[] =>
+      props.models.map((m) => ({ id: m.id, name: m.name, contextLength: m.contextLength, kind: m.kind }));
+    if (providers.length === 0) {
+      return [{ id: "all", title: null, rows: primary().filter(matches).map((model) => ({ providerId: undefined, model })) }];
+    }
+    return providers
+      .map((provider) => {
+        const list = provider.kind === "primary" ? primary() : provider.models;
+        const disabled = new Set(provider.disabledModels);
+        return {
+          id: provider.id,
+          title: providers.length > 1 ? provider.name : null,
+          rows: list
+            .filter((m) => !disabled.has(m.id) && matches(m))
+            .map((model) => ({ providerId: provider.id, model })),
+        };
+      })
+      .filter((group) => group.rows.length > 0);
+  }, [providers, props.models, query]);
+
+  const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
+
+  const selectedIndex = flat.findIndex(
+    (row) => row.model.id === props.selected && (!row.providerId || row.providerId === sessionProviderId),
+  );
+
+  // Start on the current model; once searching, start on the best match.
+  useEffect(() => {
+    setCursor(query.trim() ? 0 : Math.max(0, selectedIndex));
+  }, [query, open, selectedIndex]);
 
   const effortSettings = {
     modelEfforts: props.modelEfforts ?? {},
     thinking: props.thinkingDefault ?? true,
   };
 
-  const currentLabel =
-    props.models.find((m) => m.id === props.selected)?.name ??
-    providers.flatMap((p) => p.models).find((m) => m.id === props.selected)?.name ??
-    props.selected ??
-    "Select model";
-
-  const currentModeLabel =
-    sessionProviderId && props.selected
-      ? reasoningModeLabel(effortSettings, sessionProviderId, props.selected)
-      : null;
-
-  const pick = (providerId: string | undefined, modelId: string) => {
-    if (providerId && props.onSelectProviderModel) props.onSelectProviderModel(providerId, modelId);
-    else props.onSelect(modelId);
-    setOpen(false);
-    setModePanelOpen(false);
-  };
-
-  const setMode = (providerId: string, modelId: string, mode: ModelReasoningMode | undefined) => {
-    props.onSetModelEffort?.(providerId, modelId, mode);
-  };
-
-  const shownModels = modelsOf(shownProvider);
-  const showProviderRail = providers.length > 1;
-
   const selectedModelInfo =
     props.models.find((m) => m.id === props.selected) ??
     providers.flatMap((p) => p.models).find((m) => m.id === props.selected);
+  const currentLabel = selectedModelInfo?.name ?? (props.selected || "Select model");
+
+  const sessionThinking = props.thinking ?? props.thinkingDefault ?? true;
+  const currentModeLabel =
+    sessionProviderId && props.selected ? reasoningModeLabel(effortSettings, sessionProviderId, props.selected) : null;
+  // What sits beside the model name: an explicit reasoning level, or that thinking is off.
+  const triggerNote = !sessionThinking ? "Off" : currentModeLabel && currentModeLabel !== "Auto" ? currentModeLabel : null;
+
+  const pick = (row: PickRow) => {
+    if (row.providerId && props.onSelectProviderModel) props.onSelectProviderModel(row.providerId, row.model.id);
+    else props.onSelect(row.model.id);
+    close();
+  };
+
+  const nonReasoningKind = modelIsVideo(props.selected, selectedModelInfo?.kind) || selectedModelInfo?.kind === "image";
   const canEditReasoning =
-    Boolean(props.onSetModelEffort) &&
-    Boolean(sessionProviderId && props.selected) &&
-    !modelIsVideo(props.selected, selectedModelInfo?.kind) &&
-    selectedModelInfo?.kind !== "image";
-  const sessionSavedMode =
+    Boolean(props.onSetModelEffort) && Boolean(sessionProviderId && props.selected) && !nonReasoningKind;
+  const savedMode =
     sessionProviderId && props.selected
       ? getModelReasoningMode(effortSettings, sessionProviderId, props.selected)
       : undefined;
-  const sessionEffectiveMode =
-    sessionSavedMode ?? (effortSettings.thinking ? ("auto" as const) : ("off" as const));
+  const effectiveMode = savedMode ?? (effortSettings.thinking ? ("auto" as const) : ("off" as const));
   const reasoningOptions = getModelReasoningOptions(selectedModelInfo);
   const showAutoOption = !selectedModelInfo?.reasoning?.mandatory;
 
-  const toggleOpen = () => {
-    setOpen((v) => !v);
+  const setMode = (mode: ModelReasoningMode | undefined) => {
+    if (sessionProviderId) props.onSetModelEffort?.(sessionProviderId, props.selected, mode);
   };
 
+  const onSearchKey = (e: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setCursor((c) => Math.min(flat.length - 1, c + 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setCursor((c) => Math.max(0, c - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const row = flat[cursor];
+      if (row) pick(row);
+    }
+  };
+
+  const manage = () => {
+    close();
+    props.onManageModels?.();
+  };
+
+  let rowIndex = -1;
   const panel = open ? (
     <div
       ref={panelRef}
-      className={`anchored-menu__panel modelmenu ${showProviderRail ? "" : "modelmenu--single"} ${modePanelOpen ? "modelmenu--mode-open" : ""}`}
+      className="anchored-menu__panel modelmenu"
       style={{ top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? "visible" : "hidden" }}
     >
-      {showProviderRail && (
-        <div className="modelmenu__providers">
-          {providers.map((provider) => (
-            <button
-              key={provider.id}
-              type="button"
-              className={`menu__item modelmenu__provider ${provider.id === shownProviderId ? "menu__item--active" : ""}`}
-              onClick={() => {
-                setActiveProviderId(provider.id);
-                setModePanelOpen(false);
-              }}
-            >
-              <span
-                className={`provider-row__status ${provider.status === "connected" ? "provider-row__status--on" : ""}`}
-              />
-              <span className="modelmenu__name">{provider.name}</span>
-              {provider.id === sessionProviderId && <Icon name="check" size={12} />}
-              <Icon name="chevronRight" size={11} />
-            </button>
-          ))}
-          <div className="modelmenu__rule" />
-          <button
-            type="button"
-            className="menu__item"
-            onClick={() => {
-              setOpen(false);
-              props.onManageModels?.();
-            }}
-          >
-            Manage models
+      {view === "reasoning" ? (
+        <div className="modelmenu__list" role="menu" aria-label="Reasoning">
+          <button type="button" className="modelmenu__back" onClick={() => setView("models")}>
+            <Icon name="chevronLeft" size={12} />
+            Reasoning
           </button>
-        </div>
-      )}
-
-      <div className="modelmenu__models">
-        <div className="modelmenu__models-scroll">
-          {showProviderRail && shownProvider && <div className="modelmenu__header">{shownProvider.name}</div>}
-          {shownModels.map((model) => {
-            const providerId = shownProvider?.id ?? sessionProviderId ?? "openference";
-            const isSelected = model.id === props.selected && providerId === sessionProviderId;
-
+          {showAutoOption && (
+            <button type="button" role="menuitemradio" aria-checked={!savedMode} className="modelmenu__pick" onClick={() => setMode(undefined)}>
+              <span className="modelmenu__name">Auto</span>
+              <span className="modelmenu__check-slot">{!savedMode && <Icon name="check" size={13} />}</span>
+            </button>
+          )}
+          {reasoningOptions.map((mode) => {
+            const active = savedMode === mode.id || (!savedMode && mode.id === "off" && effectiveMode === "off");
             return (
               <button
-                key={model.id}
+                key={mode.id}
                 type="button"
-                className={`modelmenu__pick ${isSelected ? "modelmenu__pick--active" : ""}`}
-                title={model.name}
-                onClick={() => pick(shownProvider?.id, model.id)}
+                role="menuitemradio"
+                aria-checked={active}
+                className="modelmenu__pick"
+                onClick={() => setMode(mode.id)}
               >
-                <span className="modelmenu__name">{model.name}</span>
-                <span className="modelmenu__meta">
-                  {model.kind === "image" ? (
-                    <span className="badge badge--muted" title="Text-to-image model">
-                      Image
-                    </span>
-                  ) : modelIsVideo(model.id, model.kind) ? (
-                    <span className="badge badge--muted" title="Text-to-video model">
-                      Video
-                    </span>
-                  ) : (
-                    <>
-                      {model.imageOutput && (
-                        <span className="badge badge--muted" title="Chat model that can draw pictures">
-                          Draws
-                        </span>
-                      )}
-                      {formatContext(model.contextLength) && (
-                        <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
-                      )}
-                    </>
-                  )}
-                  <span className="modelmenu__check-slot" aria-hidden={!isSelected}>
-                    {isSelected && <Icon name="check" size={12} />}
-                  </span>
-                </span>
+                <span className="modelmenu__name">{mode.label}</span>
+                <span className="modelmenu__check-slot">{active && <Icon name="check" size={13} />}</span>
               </button>
             );
           })}
-        {shownModels.length === 0 && (
-          <div className="menu__item hint">
-            {shownProvider && shownProvider.disabledModels.length > 0
-              ? "All models are switched off - enable some under Manage models"
-              : shownProvider?.kind === "custom"
-                ? "No models added yet"
-                : "No models available"}
-          </div>
-        )}
-        {!showProviderRail && (
-          <>
-            <div className="modelmenu__rule" />
-            <button
-              type="button"
-              className="menu__item"
-              onClick={() => {
-                setOpen(false);
-                props.onManageModels?.();
-              }}
-            >
-              Manage models
-            </button>
-          </>
-        )}
         </div>
+      ) : (
+        <>
+          <label className="modelmenu__search">
+            <Icon name="search" size={13} />
+            <input
+              ref={searchRef}
+              type="text"
+              placeholder="Search models"
+              aria-label="Search models"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onSearchKey}
+            />
+          </label>
 
-        {canEditReasoning && currentModeLabel && (
-          <div className="modelmenu__footer">
-            <span className="modelmenu__footer-label">Reasoning</span>
-            <span className="modelmenu__footer-value">{currentModeLabel}</span>
-            <button
-              type="button"
-              className="modelmenu__edit"
-              aria-label="Edit reasoning mode"
-              aria-expanded={modePanelOpen}
-              onClick={() => setModePanelOpen((v) => !v)}
-            >
-              <Icon name="pencil" size={11} />
-              Edit
-            </button>
-          </div>
-        )}
-      </div>
-
-      {modePanelOpen && canEditReasoning && sessionProviderId && (
-        <div className="modelmenu__mode-col">
-          <div className="modelmenu__header">Reasoning mode</div>
-          {showAutoOption && (
-            <button
-              type="button"
-              className={`menu__item ${!sessionSavedMode ? "menu__item--active" : ""}`}
-              onClick={() => setMode(sessionProviderId, props.selected, undefined)}
-            >
-              Auto
-              {!sessionSavedMode && <Icon name="check" size={12} />}
-            </button>
-          )}
-          {reasoningOptions.map((mode) => (
-            <button
-              key={mode.id}
-              type="button"
-              className={`menu__item ${
-                sessionSavedMode === mode.id ||
-                (!sessionSavedMode && mode.id === "off" && sessionEffectiveMode === "off")
-                  ? "menu__item--active"
-                  : ""
-              }`}
-              onClick={() => setMode(sessionProviderId, props.selected, mode.id)}
-            >
-              {mode.label}
-              {(sessionSavedMode === mode.id ||
-                (!sessionSavedMode && mode.id === "off" && sessionEffectiveMode === "off")) && (
-                <Icon name="check" size={12} />
+          {(canEditReasoning || (props.onToggleThinking && !nonReasoningKind)) && (
+            <div className="modelmenu__settings">
+              {canEditReasoning && (
+                <button type="button" className="modelmenu__setting" onClick={() => setView("reasoning")}>
+                  <span className="modelmenu__setting-label">Reasoning</span>
+                  <span className="modelmenu__setting-value">{currentModeLabel ?? "Auto"}</span>
+                  <Icon name="chevronRight" size={12} />
+                </button>
               )}
-            </button>
-          ))}
-        </div>
+              {props.onToggleThinking && !nonReasoningKind && (
+                <div className="modelmenu__setting modelmenu__setting--static">
+                  <span className="modelmenu__setting-label">Thinking</span>
+                  <Toggle checked={sessionThinking} label="Thinking" onChange={(v) => props.onToggleThinking?.(v)} />
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="modelmenu__list" role="listbox" aria-label="Models">
+            {groups.map((group) => (
+              <div key={group.id} className="modelmenu__group">
+                {group.title && <div className="modelmenu__header">{group.title}</div>}
+                {group.rows.map((row) => {
+                  rowIndex += 1;
+                  const index = rowIndex;
+                  const providerId = row.providerId ?? sessionProviderId;
+                  const selected = row.model.id === props.selected && (!row.providerId || providerId === sessionProviderId);
+                  const detail = modelDetail(row.model);
+                  return (
+                    <button
+                      key={`${row.providerId ?? "primary"}:${row.model.id}`}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={`modelmenu__pick${index === cursor ? " modelmenu__pick--cursor" : ""}`}
+                      title={row.model.name}
+                      onMouseEnter={() => setCursor(index)}
+                      onClick={() => pick(row)}
+                    >
+                      <span className="modelmenu__name">{row.model.name}</span>
+                      {detail && <span className="modelmenu__detail">{detail}</span>}
+                      <span className="modelmenu__check-slot" aria-hidden={!selected}>
+                        {selected && <Icon name="check" size={13} />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+            {flat.length === 0 && (
+              <div className="modelmenu__empty">
+                {query.trim() ? "No models match" : "No models available. Add a provider in Manage models."}
+              </div>
+            )}
+          </div>
+
+          {props.onManageModels && (
+            <div className="modelmenu__footer">
+              <button type="button" className="modelmenu__manage" onClick={manage}>
+                <Icon name="sliders" size={13} />
+                Manage models
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   ) : null;
@@ -311,20 +328,16 @@ export function ModelPicker(props: ModelPickerProps) {
     <div className="menu">
       <button
         ref={anchorRef}
-        className="chip chip--model"
-        onClick={toggleOpen}
+        type="button"
+        className="model-trigger"
+        onClick={() => (open ? close() : setOpen(true))}
         title={currentLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className="chip__dot" />
-        <span className="chip--model__label">
-          {currentLabel}
-          {currentModeLabel && currentModeLabel !== "Auto" && (
-            <span className="chip--model__mode">{currentModeLabel}</span>
-          )}
-        </span>
-        <Icon name="chevronDown" size={11} />
+        <span className="model-trigger__label">{currentLabel}</span>
+        {triggerNote && <span className="model-trigger__note">{triggerNote}</span>}
+        <Icon name="chevronDown" size={11} className="model-trigger__chevron" />
       </button>
 
       {panel && createPortal(panel, document.body)}

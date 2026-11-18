@@ -5,13 +5,13 @@ import { UpdateBanner } from "./UpdateBanner.js";
 
 interface NavRailProps {
   /** Which top-level view is showing, so its rail button reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "superagent" | "bot" | "workflows";
+  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
   platform?: "desktop" | "web";
   currentMode?: ChatMode;
   onSwitchMode?: (mode: ChatMode) => void;
   onSelectView?: (view: "workspace" | "bot") => void;
-  onExpand: () => void;
   onNewTask: () => void;
+  onOpenPlugins: () => void;
   onOpenSearch: () => void;
   onOpenAutomations: () => void;
   onOpenSuperagent: () => void;
@@ -22,7 +22,7 @@ interface NavRailProps {
 
 /** Collapsed-sidebar stand-in: the sidebar's nav actions as a narrow icon strip,
  *  mirroring the workspace panel's rail on the opposite edge. The expand control
- *  lives here rather than in the title bar, so the sidebar owns its own toggle. */
+ *  is the title bar's sidebar toggle. */
 export function NavRail(props: NavRailProps) {
   const t = useT();
   const isBot =
@@ -31,8 +31,9 @@ export function NavRail(props: NavRailProps) {
     (props.activeView !== "workspace" && props.currentMode === "bot");
 
   const items: { icon: IconName; label: string; onClick: () => void; active?: boolean }[] = [
-    { icon: "sparkles", label: isBot ? "New Mission" : t("nav.newTask"), onClick: props.onNewTask },
+    { icon: "plusCircle", label: isBot ? "New mission" : "New session", onClick: () => props.onNewTask() },
     { icon: "search", label: t("nav.search"), onClick: props.onOpenSearch },
+    { icon: "puzzle", label: "Plugins", onClick: props.onOpenPlugins, active: props.activeView === "plugins" },
     ...(isBot && props.onOpenWorkflows
       ? [{
           icon: "bolt" as IconName,
@@ -43,8 +44,8 @@ export function NavRail(props: NavRailProps) {
       : []),
     ...(props.platform !== "web"
       ? [{
-          icon: "automation" as IconName,
-          label: t("nav.automations"),
+          icon: "clock" as IconName,
+          label: "Automation tasks",
           onClick: props.onOpenAutomations,
           active: props.activeView === "automations",
         }]
@@ -57,7 +58,7 @@ export function NavRail(props: NavRailProps) {
           active: props.activeView === "superagent",
         }]
       : []),
-    { icon: "customize", label: t("nav.customize"), onClick: props.onOpenCustomize },
+    { icon: "palette", label: t("nav.customize"), onClick: props.onOpenCustomize },
     ...(props.onSelectView || props.onSwitchMode
       ? [
           {
@@ -84,16 +85,6 @@ export function NavRail(props: NavRailProps) {
 
   return (
     <nav className="nav-rail" aria-label="Navigation">
-      <button
-        type="button"
-        className="nav-rail__btn"
-        title={t("nav.expandSidebar")}
-        aria-label={t("nav.expandSidebar")}
-        onClick={props.onExpand}
-      >
-        <Icon name="panelLeft" size={14} />
-      </button>
-
       <div className="nav-rail__items">
         {items.map((item) => (
           <button

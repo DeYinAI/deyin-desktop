@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useConfirm } from "../ConfirmDialog.js";
 import { Icon } from "../Icon.js";
 import { formatContext } from "../ModelPicker.js";
-import { PageHeader, Toggle } from "./controls.js";
+import { modelLogoFor, ProviderLogo, ProviderMark } from "../ProviderLogo.js";
+import { PageHeader, Tag, Toggle } from "./controls.js";
 import { fmtUsage } from "./AccountUsagePanel.js";
 import type {
   AccountUsage,
@@ -39,8 +41,9 @@ export function ModelSettingsPage(props: Props) {
   
   const adding = selectedId === DRAFT_ID;
   const selected = adding ? null : (props.providers.find((p) => p.id === selectedId) ?? props.providers[0] ?? null);
-  const primaries = props.providers.filter((p) => p.kind === "primary");
-  const customs = props.providers.filter((p) => p.kind === "custom");
+  // Built-in entries (Openference plus the seeded presets) vs endpoints the user added.
+  const primaries = props.providers.filter((p) => p.kind === "primary" || p.preset);
+  const customs = props.providers.filter((p) => p.kind === "custom" && !p.preset);
 
  /** Re-pull provider status + a fresh account snapshot (e.g. after sign-in). */
  const refreshAccountState = useCallback(async () => {
@@ -86,21 +89,22 @@ export function ModelSettingsPage(props: Props) {
 
       <div className="providers">
         <div className="providers__list">
-          <div className="providers__group">Providers</div>
-          {primaries.map((p) => (
-            <ProviderRow key={p.id} provider={p} active={selected?.id === p.id} onClick={() => setSelectedId(p.id)} />
-          ))}
-          <div className="providers__group">Custom providers</div>
-          {customs.map((p) => (
-            <ProviderRow key={p.id} provider={p} active={selected?.id === p.id} onClick={() => setSelectedId(p.id)} />
-          ))}
           <button
-            className={`providers__add ${adding ? "providers__add--active" : ""}`}
+            type="button"
+            className={`providers__new${adding ? " providers__new--active" : ""}`}
             onClick={() => setSelectedId(DRAFT_ID)}
           >
             <Icon name="plus" size={13} />
             Add provider
           </button>
+          <div className="providers__group">Providers</div>
+          {primaries.map((p) => (
+            <ProviderRow key={p.id} provider={p} active={selected?.id === p.id} onClick={() => setSelectedId(p.id)} />
+          ))}
+          {customs.length > 0 && <div className="providers__group">Custom providers</div>}
+          {customs.map((p) => (
+            <ProviderRow key={p.id} provider={p} active={selected?.id === p.id} onClick={() => setSelectedId(p.id)} />
+          ))}
         </div>
 
         {adding && (
@@ -142,17 +146,55 @@ export function ModelSettingsPage(props: Props) {
   );
 }
 
+/** The lab's logo beside a model, or an empty slot so names stay aligned. */
+function ModelFamilyLogo({ id, name }: { id: string; name: string }) {
+  const logo = modelLogoFor(id, name);
+  return <span className="modellist__logo">{logo && <ProviderLogo logo={logo} size={16} />}</span>;
+}
+
+function providerStatus(provider: ProviderInfo): { label: string; tone: "ok" | "muted" | "warn" } {
+  if (!provider.enabled) return { label: "Off", tone: "muted" };
+  if (provider.status === "connected") return { label: "Connected", tone: "ok" };
+  if (provider.local || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(provider.baseUrl ?? "")) {
+    return { label: "Local", tone: "muted" };
+  }
+  return { label: provider.kind === "primary" ? "Not connected" : "No key", tone: "warn" };
+}
+
 function ProviderRow({ provider, active, onClick }: { provider: ProviderInfo; active: boolean; onClick: () => void }) {
   return (
     <button className={`provider-row ${active ? "provider-row--active" : ""}`} onClick={onClick}>
+      <ProviderMark id={provider.id} name={provider.name} size={18} />
       <span className="provider-row__name">{provider.name}</span>
-      {provider.local && <span className="badge badge--muted">local</span>}
-      <span className={`provider-row__status ${provider.status === "connected" ? "provider-row__status--on" : ""}`} />
+      <span
+        className={`provider-row__status ${provider.status === "connected" && provider.enabled ? "provider-row__status--on" : ""}`}
+        title={providerStatus(provider).label}
+      />
     </button>
   );
 }
 
 /* New provider draft (unsaved until Save) -------------------------------------- */
+
+interface EndpointPreset {
+  name: string;
+  baseUrl: string;
+  apiFormat: ProviderInfo["apiFormat"];
+  /** Runs on this machine: no API key needed. */
+  local?: boolean;
+}
+
+/** One-click fills for common OpenAI-compatible endpoints that are not seeded as providers. */
+const ENDPOINT_PRESETS: readonly EndpointPreset[] = [
+  { name: "LM Studio", baseUrl: "http://localhost:1234/v1", apiFormat: "chat-completions", local: true },
+  { name: "Together AI", baseUrl: "https://api.together.xyz/v1", apiFormat: "chat-completions" },
+  { name: "Fireworks", baseUrl: "https://api.fireworks.ai/inference/v1", apiFormat: "chat-completions" },
+  { name: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", apiFormat: "chat-completions" },
+  { name: "Moonshot", baseUrl: "https://api.moonshot.ai/v1", apiFormat: "chat-completions" },
+  { name: "Zhipu GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", apiFormat: "chat-completions" },
+  { name: "SiliconFlow", baseUrl: "https://api.siliconflow.cn/v1", apiFormat: "chat-completions" },
+  { name: "Perplexity", baseUrl: "https://api.perplexity.ai", apiFormat: "chat-completions" },
+];
 
 /** Curated presets (DeepSeek, OpenAI, ...) live in DEFAULT_PROVIDERS and are
  *  seeded into the store automatically — this draft is for custom endpoints. */
@@ -170,6 +212,16 @@ function ProviderDraft({
   const [key, setKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [preset, setPreset] = useState<EndpointPreset | null>(null);
+
+  const applyPreset = (next: EndpointPreset) => {
+    setPreset(next);
+    setName(next.name);
+    setBaseUrl(next.baseUrl);
+    setApiFormat(next.apiFormat);
+    setAuthHeader(false);
+    setError(null);
+  };
 
   const save = async () => {
     if (!name.trim() || !baseUrl.trim()) {
@@ -214,18 +266,41 @@ function ProviderDraft({
   return (
     <div className="providers__detail">
       <div className="providers__detail-head">
-        <span className="providers__detail-name">New provider</span>
-        <span className="badge badge--muted">Unsaved</span>
-        <div className="providers__detail-spacer" />
+        <span className="providers__detail-name">Add a provider</span>
+      </div>
+      <p className="providers__lead">
+        Connect any OpenAI-compatible endpoint. Pick a starting point or fill it in yourself.
+      </p>
+
+      <div className="providers__presets" role="group" aria-label="Starting points">
+        {ENDPOINT_PRESETS.map((entry) => (
+          <button
+            key={entry.name}
+            type="button"
+            className={`providers__preset${preset?.name === entry.name ? " providers__preset--active" : ""}`}
+            onClick={() => applyPreset(entry)}
+          >
+            <ProviderMark id="" name={entry.name} size={16} />
+            {entry.name}
+          </button>
+        ))}
       </div>
 
       <div className="field">
-        <label className="field__label">Name</label>
-        <input className="input" placeholder="My provider" value={name} autoFocus onChange={(e) => setName(e.target.value)} />
+        <label className="field__label" htmlFor="provider-name">Name</label>
+        <input
+          id="provider-name"
+          className="input"
+          placeholder="My provider"
+          value={name}
+          autoFocus
+          onChange={(e) => setName(e.target.value)}
+        />
       </div>
       <div className="field">
-        <label className="field__label">Base URL</label>
+        <label className="field__label" htmlFor="provider-url">Base URL</label>
         <input
+          id="provider-url"
           className="input"
           placeholder="https://api.example.com/v1"
           value={baseUrl}
@@ -233,33 +308,46 @@ function ProviderDraft({
         />
       </div>
       <div className="field">
-        <label className="field__label">API format</label>
-        <select
-          className="select"
-          style={{ width: "100%" }}
-          value={apiFormat}
-          onChange={(e) => setApiFormat(e.target.value as ProviderInfo["apiFormat"])}
-        >
-          <option value="chat-completions">Chat completions (/chat/completions)</option>
-          <option value="responses">Responses (/responses)</option>
-          <option value="anthropic">Anthropic (/v1/messages)</option>
-        </select>
-      </div>
-      {apiFormat === "anthropic" && (
-        <label className="field__row" style={{ gap: 8, cursor: "pointer" }}>
-          <input type="checkbox" checked={authHeader} onChange={(e) => setAuthHeader(e.target.checked)} />
-          <span>Use Authorization: Bearer instead of x-api-key (Anthropic-compatible gateways)</span>
+        <label className="field__label" htmlFor="provider-key">
+          API key{preset?.local ? " (not needed for a local server)" : " (optional, can be added later)"}
         </label>
-      )}
-      <div className="field">
-        <label className="field__label">API key (optional)</label>
-        <input className="input" type="password" placeholder="sk-..." value={key} onChange={(e) => setKey(e.target.value)} />
+        <input
+          id="provider-key"
+          className="input"
+          type="password"
+          placeholder="sk-..."
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+        />
       </div>
+      <details className="providers__advanced">
+        <summary>Advanced</summary>
+        <div className="field">
+          <label className="field__label" htmlFor="provider-format">API format</label>
+          <select
+            id="provider-format"
+            className="select"
+            style={{ width: "100%" }}
+            value={apiFormat}
+            onChange={(e) => setApiFormat(e.target.value as ProviderInfo["apiFormat"])}
+          >
+            <option value="chat-completions">Chat completions (/chat/completions)</option>
+            <option value="responses">Responses (/responses)</option>
+            <option value="anthropic">Anthropic (/v1/messages)</option>
+          </select>
+        </div>
+        {apiFormat === "anthropic" && (
+          <label className="field__row" style={{ gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={authHeader} onChange={(e) => setAuthHeader(e.target.checked)} />
+            <span>Use Authorization: Bearer instead of x-api-key (Anthropic-compatible gateways)</span>
+          </label>
+        )}
+      </details>
       {error && <div className="hint hint--bad">{error}</div>}
       <div className="providers__add-actions">
-        <button className="chip chip--small" onClick={onCancel}>Cancel</button>
-        <button className="chip chip--small chip--active" disabled={saving} onClick={() => void save()}>
-          {saving ? "Saving…" : "Save provider"}
+        <button className="btn btn--outline" onClick={onCancel}>Cancel</button>
+        <button className="btn providers__save" disabled={saving} onClick={() => void save()}>
+          {saving ? "Saving…" : "Add provider"}
         </button>
       </div>
     </div>
@@ -333,6 +421,7 @@ function QuotaMeter({
 }
 
 function ProviderDetail({ provider, liveModels, planName, account, busy, onConnect, onOpenPlans, onProvidersChanged, onRefreshLiveModels }: DetailProps) {
+  const { confirm } = useConfirm();
   const isCustom = provider.kind === "custom";
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(provider.name);
@@ -360,7 +449,13 @@ function ProviderDetail({ provider, liveModels, planName, account, busy, onConne
   };
 
   const removeProvider = async () => {
-    onProvidersChanged(await window.deyin.providers.remove(provider.id));
+    const ok = await confirm({
+      title: `Delete ${provider.name}?`,
+      message: "Its saved API key and model list are removed.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (ok) onProvidersChanged(await window.deyin.providers.remove(provider.id));
   };
 
   const test = async () => {
@@ -427,6 +522,7 @@ function ProviderDetail({ provider, liveModels, planName, account, busy, onConne
   return (
     <div className="providers__detail">
       <div className="providers__detail-head">
+        <ProviderMark id={provider.id} name={provider.name} size={28} />
         {renaming ? (
           <input
             className="input"
@@ -450,16 +546,18 @@ function ProviderDetail({ provider, liveModels, planName, account, busy, onConne
             <Icon name="pencil" size={12} />
           </button>
         )}
-        {provider.enabled ? <span className="badge badge--ok">Enabled</span> : <span className="badge badge--muted">Disabled</span>}
-        <button className="chip chip--small" onClick={() => void apply({ enabled: !provider.enabled })}>
-          {provider.enabled ? "Disable" : "Enable"}
-        </button>
+        <Tag tone={providerStatus(provider).tone}>{providerStatus(provider).label}</Tag>
         <div className="providers__detail-spacer" />
         {isCustom && (
           <button className="icon-btn icon-btn--small" title="Delete provider" onClick={() => void removeProvider()}>
             <Icon name="trash" size={13} />
           </button>
         )}
+        <Toggle
+          checked={provider.enabled}
+          label={`${provider.enabled ? "Disable" : "Enable"} ${provider.name}`}
+          onChange={(enabled) => void apply({ enabled })}
+        />
       </div>
 
       {provider.kind === "primary" && (
@@ -625,16 +723,17 @@ function ProviderDetail({ provider, liveModels, planName, account, busy, onConne
       </div>
 
       <div className="field">
-        <label className="field__label">Model list</label>
+        <label className="field__label">Models</label>
         {cachedAgo && <div className="hint" style={{ marginBottom: 6 }}>{cachedAgo}</div>}
         <div className="modellist">
           {shownModels.map((model) => {
             const modelEnabled = !provider.disabledModels.includes(model.id);
             return (
               <div className={`modellist__row ${modelEnabled ? "" : "modellist__row--off"}`} key={model.id}>
-                <code className="modellist__id">{model.name}</code>
+                <ModelFamilyLogo id={model.id} name={model.name} />
+                <span className="modellist__id">{model.name}</span>
                 {formatContext(model.contextLength) && (
-                  <span className="badge badge--muted">{formatContext(model.contextLength)}</span>
+                  <span className="modellist__ctx">{formatContext(model.contextLength)}</span>
                 )}
                 <div className="modellist__spacer" />
                 {isCustom && (

@@ -34,6 +34,9 @@ import {
   matchCommand,
   modeReminder,
   runAgent,
+  DEFAULT_MAX_GOAL_ROUNDS,
+  goalKickoff,
+  rewriteGoalObjective,
   runHooks,
   Semaphore,
   agentForMode,
@@ -707,13 +710,52 @@ export class DesktopAgentHost {
       getContextLength: (providerId, model) => this.opts.getContextLength(providerId, model),
     });
 
-    // Command / skill expansion (/name args).
+    // Goal for this run. A freshly typed `/goal` objective is restated as a checkable one
+    // first (best effort: any failure keeps the typed text), and from here on the reviewer,
+    // `report_goal_met` and the system reminder all use that single `goalText`.
+    let goalText = options.goalText;
     let prompt = options.prompt;
+    if (options.goalRewrite && goalText && goalText.trim().length > 0) {
+      const typed = goalText.trim();
+      const token = await getToken().catch(() => null);
+      const restated =
+        token === null || token === undefined
+          ? undefined
+          : await rewriteGoalObjective({
+              apiBaseUrl,
+              token,
+              model: options.model,
+              apiFormat: provider?.apiFormat ?? "chat-completions",
+              authHeader: provider?.authHeader,
+              signal,
+              objective: typed,
+              effort: options.effort,
+            });
+      // Stopped while waiting: stop() already emitted `done`.
+      if (signal.aborted) return;
+      goalText = restated?.rewritten ? restated.objective : typed;
+      if (restated?.rewritten) {
+        this.send(options.threadId, {
+          type: "goal-updated",
+          goal: {
+            ...(options.goalId ? { id: options.goalId } : {}),
+            text: goalText,
+            rewrittenFrom: typed,
+            status: "active",
+            rounds: 0,
+            ...(options.goalMaxRounds !== undefined ? { maxRounds: options.goalMaxRounds } : {}),
+          },
+        });
+      }
+      prompt = goalKickoff(goalText);
+    }
+
+    // Command / skill expansion (/name args).
     const invocation = matchCommand(prompt);
     if (invocation?.name === "goal") {
       // Client-side /goal; if it reaches the host, treat the args as the task prompt.
       const args = invocation.args.trim();
-      prompt = args || options.goalText?.trim() || "What should I work on next?";
+      prompt = args || goalText?.trim() || "What should I work on next?";
     } else {
       const resolved = resolveCommandInvocation(prompt, caps);
       if (resolved.kind === "unknown") {
@@ -876,11 +918,11 @@ export class DesktopAgentHost {
 
       // Goal mode: the model must be told the objective or report_goal_met can
       // never fire. Injected as the last pre-request message for salience.
-      if (options.goalText && options.goalText.trim().length > 0) {
+      if (goalText && goalText.trim().length > 0) {
         const goalMsg: AgentMessage = {
           role: "system",
           content:
-            `<system_reminder>\nActive goal for this task: ${options.goalText.trim()}\n` +
+            `<system_reminder>\nActive goal for this task: ${goalText.trim()}\n` +
             `Work toward this goal and nothing else. When — and only when — the objective is verifiably satisfied, ` +
             `call report_goal_met with met=true and a short reason. If it is not yet satisfied, keep working; ` +
             `call report_goal_met with met=false only to report a blocker or that you cannot verify it.\n</system_reminder>`,
@@ -1099,22 +1141,50 @@ export class DesktopAgentHost {
         systemSections: session.systemSections,
         memory: settings.memoryEnabled ? this.opts.memory : undefined,
         evidenceGatesEnabled: options.mode === "delivery",
+        // Reviewer-driven goal loop: a separate model call judges the transcript
+        // after every round and its verdict decides whether this run continues.
+        ...(goalText && goalText.trim().length > 0
+          ? {
+              goalMaxRounds: options.goalMaxRounds ?? DEFAULT_MAX_GOAL_ROUNDS,
+              applyGoal: (patch: {
+                rounds?: number;
+                status?: "active" | "paused" | "done" | "blocked" | "exhausted";
+                reason?: string;
+                reportedAt?: string;
+              }) => {
+                const status =
+                  patch.status === "done" ? ("met" as const) : patch.status === "blocked" ? ("unmet" as const) : patch.status;
+                this.send(options.threadId, {
+                  type: "goal-updated",
+                  goal: {
+                    text: goalText ?? "",
+                    status: status ?? "active",
+                    ...(options.goalId ? { id: options.goalId } : {}),
+                    ...(patch.rounds !== undefined ? { rounds: patch.rounds } : {}),
+                    ...(options.goalMaxRounds !== undefined ? { maxRounds: options.goalMaxRounds } : {}),
+                    ...(patch.reason ? { reason: patch.reason } : {}),
+                    ...(patch.reportedAt ? { reportedAt: patch.reportedAt } : {}),
+                  },
+                });
+              },
+            }
+          : {}),
         toolContext: {
           skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
           imageGen: this.imageGenBridge(options, apiBaseUrl, getToken, cwd, signal),
           sessionMeta: liveMeta,
           memory: settings.memoryEnabled ? this.opts.memory : undefined,
           applyFileChange,
-          goalText: options.goalText,
+          goalText,
           onGoalReport: (report) => {
+            const goalId = options.goalId ? { id: options.goalId } : {};
             this.send(options.threadId, {
               type: "goal-updated",
               goal: report.met
-                ? { text: options.goalText ?? "", status: "met", reportedAt: new Date().toISOString(), reason: report.reason }
-                : { text: options.goalText ?? "", status: "active", reportedAt: new Date().toISOString(), reason: report.reason },
+                ? { ...goalId, text: goalText ?? "", status: "met", reportedAt: new Date().toISOString(), reason: report.reason }
+                : { ...goalId, text: goalText ?? "", status: "active", reportedAt: new Date().toISOString(), reason: report.reason },
             });
-          },
-          onEvidenceSignOff: (signOff) => {
+          },          onEvidenceSignOff: (signOff) => {
             this.send(options.threadId, {
               type: "evidence-sign-off",
               stepId: signOff.stepId,

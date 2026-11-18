@@ -12,7 +12,9 @@ import {
   executeShellCommand,
   getSessionJobsManager,
   loadContextFiles,
-  applyGoalCommandText,
+  DEFAULT_MAX_GOAL_ROUNDS,
+  describeGoal,
+  parseGoalCommand,
   matchCommand,
   repoMapTool,
   resolveAgent,
@@ -136,6 +138,10 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
   const toolsRef = useRef<ToolRegistry>(createBuiltinRegistry());
   const abortRef = useRef<AbortController | null>(null);
   const goalTextRef = useRef<string | undefined>(undefined);
+  /** Goal lifecycle for the loop: `active` runs rounds, `paused` stops at the next boundary. */
+  const goalStatusRef = useRef<"active" | "paused">("active");
+  /** Continuation rounds spent by this goal. */
+  const goalRoundsRef = useRef<number>(0);
   const historyRef = useRef<string[]>([]);
   const contextFilesRef = useRef<ContextFile[]>([]);
   const projectToolchainRef = useRef<ProjectToolchainInfo | null>(null);
@@ -560,7 +566,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
                 error: j.error,
               }));
             },
-            goalText: goalTextRef.current,
+            goalText: goalStatusRef.current === "active" ? goalTextRef.current : undefined,
             onGoalReport: (report) => {
               if (report.met) notice(`Goal met: ${report.reason}`);
               else notice(`Goal not met: ${report.reason}`, "warn");
@@ -603,6 +609,30 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           signal: controller.signal,
           // The wire and prompt cache settings above keep TUI transcripts aligned
           // with Desktop, web, and headless runs.
+          // Reviewer-driven goal loop: the goal keeps the session working round
+          // after round until the reviewer says the objective is met. Status is
+          // re-read from a ref so `/goal pause` takes effect at the next boundary.
+          ...(goalTextRef.current
+            ? {
+                goalMaxRounds: ctx.config.goalMaxRounds ?? DEFAULT_MAX_GOAL_ROUNDS,
+                readGoal: () =>
+                  goalTextRef.current
+                    ? {
+                        text: goalTextRef.current,
+                        status: goalStatusRef.current,
+                        rounds: goalRoundsRef.current,
+                      }
+                    : undefined,
+                applyGoal: (patch: { rounds?: number; status?: string; reason?: string }) => {
+                  if (patch.rounds !== undefined) goalRoundsRef.current = patch.rounds;
+                  if (patch.status === "done" || patch.status === "blocked" || patch.status === "exhausted") {
+                    goalTextRef.current = undefined;
+                  }
+                  if (patch.status === "paused") goalStatusRef.current = "paused";
+                  if (patch.reason) notice(`Goal ${patch.status ?? "update"}: ${patch.reason}`, patch.status === "active" ? "info" : "warn");
+                },
+              }
+            : {}),
         });
         await checkpointWrites;
         const tokens = result.usage.totalTokens || estimateTokens(messagesRef.current.slice(before));
@@ -980,15 +1010,54 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           break;
         }
         case "/goal": {
-          if (
-            applyGoalCommandText(text, (goal) => {
-              goalTextRef.current = goal ?? undefined;
-              notice(goal ? `Goal set: ${goal}` : "Goal cleared.");
-            })
-          ) {
+          const parsed = parseGoalCommand(text);
+          if (!parsed) {
+            notice("Usage: /goal <objective> — send /goal alone for status", "warn");
             break;
           }
-          notice("Usage: /goal <objective> — send /goal alone to clear", "warn");
+          if (parsed.kind === "status") {
+            notice(
+              describeGoal(
+                goalTextRef.current
+                  ? { text: goalTextRef.current, status: goalStatusRef.current, rounds: goalRoundsRef.current }
+                  : undefined,
+              ),
+            );
+            break;
+          }
+          if (parsed.kind === "pause") {
+            if (!goalTextRef.current) {
+              notice("No goal is set.", "warn");
+              break;
+            }
+            // The running loop re-reads this before each review, so a pause
+            // issued mid-run takes effect at the next round boundary.
+            goalStatusRef.current = "paused";
+            notice("Goal paused. Send /goal resume to continue.");
+            break;
+          }
+          if (parsed.kind === "resume") {
+            if (!goalTextRef.current) {
+              notice("No goal is set.", "warn");
+              break;
+            }
+            goalStatusRef.current = "active";
+            goalRoundsRef.current = 1;
+            notice("Goal resumed.");
+            break;
+          }
+          // set / clear
+          if (parsed.kind === "clear") {
+            goalTextRef.current = undefined;
+            goalStatusRef.current = "active";
+            goalRoundsRef.current = 0;
+            notice("Goal cleared.");
+            break;
+          }
+          goalTextRef.current = parsed.objective;
+          goalStatusRef.current = "active";
+          goalRoundsRef.current = 0;
+          notice(`Goal set: ${parsed.objective}`);
           break;
         }
         default:

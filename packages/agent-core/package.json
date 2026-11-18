@@ -17,10 +17,14 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./goal-command": {
-      "types": "./dist/capabilities/goal-command.d.ts",
-      "import": "./dist/capabilities/goal-command.js"
-    }
+  "./goal-command": {
+    "types": "./dist/capabilities/goal-command.d.ts",
+    "import": "./dist/capabilities/goal-command.js"
+  },
+  "./goal-constants": {
+    "types": "./dist/goal-constants.d.ts",
+    "import": "./dist/goal-constants.js"
+  }
   },
   "files": [
     "dist"

@@ -309,8 +309,8 @@ export function Row(props: {
   );
 }
 
-const TILE_GLYPH_SIZE = { sm: 13, md: 16, lg: 19 } as const;
-const TILE_MARK_SIZE = { sm: 14, md: 17, lg: 21 } as const;
+const TILE_GLYPH_SIZE = { sm: 13, md: 16, lg: 22 } as const;
+const TILE_MARK_SIZE = { sm: 14, md: 17, lg: 24 } as const;
 
 /**
  * Rounded app-icon tile. Resolves a vendor logo from `id` where one exists — so

@@ -351,6 +351,13 @@ const MARKS: Record<string, BrandId | Glyph> = {
   "crystal dba": glyph("cpu", 199),
   community: glyph("plug", 220, 30),
 
+  // Catalog plugins that are not tied to one vendor.
+  "starter-pack": glyph("sparkles", 262),
+  "conventional-commits": "git",
+  "docs-lookup": glyph("book", 162),
+  "local-vision": glyph("eye", 28),
+  "threat-model": glyph("flag", 350, 70),
+
   // Bundled plugins and built-in servers, keyed by plugin name or host module.
   browser: glyph("globe", 217),
   "computer-use": glyph("cpu", 265),

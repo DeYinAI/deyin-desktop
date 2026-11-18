@@ -145,7 +145,7 @@ export class AutomationRunner {
 
     // Claim cron slot as soon as execution begins (before auth/host checks) so
     // failures do not retry-loop, but queued-then-crash still catch-up.
-    if (automation.trigger.kind === "cron") {
+    if (automation.trigger.kind === "cron" || automation.trigger.kind === "once") {
       this.automations.setLastScheduledAt(automation.id, scheduledAt);
     }
 

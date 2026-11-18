@@ -107,6 +107,42 @@ test("useAgentState: tool events preserve ordering", () => {
   }
 });
 
+test("useAgentState: tool-delta batches structural updates via requestAnimationFrame", async () => {
+  __testResetAgentStore();
+  const threadId = "tool-delta-batch";
+  agentStateStore.startRun(threadId, "agent");
+
+  let notifyCount = 0;
+  const unsub = agentStateStore.subscribe(() => {
+    notifyCount++;
+  });
+
+  __testDispatch({
+    threadId,
+    event: { type: "tool-start", callId: "t-stream", name: "bash", summary: "cargo build" },
+  });
+  const notifyAfterStart = notifyCount;
+
+  // Stream multiple rapid chunks
+  __testDispatch({ threadId, event: { type: "tool-delta", callId: "t-stream", delta: "Compiling..." } });
+  __testDispatch({ threadId, event: { type: "tool-delta", callId: "t-stream", delta: "\nFinished" } });
+
+  // Before RAF flush, structural listeners have not been bombarded
+  assert.equal(notifyCount, notifyAfterStart);
+
+  await __testFlushRaf();
+  assert.ok(notifyCount > notifyAfterStart, "structural listeners notified after RAF flush");
+
+  // tool-end immediately notifies
+  __testDispatch({
+    threadId,
+    event: { type: "tool-end", callId: "t-stream", name: "bash", summary: "cargo build", result: "Compiling...\nFinished", ok: true },
+  });
+  assert.ok(notifyCount > notifyAfterStart + 1, "tool-end immediately notifies without waiting");
+
+  unsub();
+});
+
 
 test("useAgentState: tool events carry duration and subagent cards progress", async () => {
   __testResetAgentStore();

@@ -2,6 +2,12 @@
 
 const PATHS: Record<string, JSX.Element> = {
   plus: <path d="M8 3v10M3 8h10" />,
+  plusCircle: (
+    <>
+      <circle cx="8" cy="8" r="5.6" />
+      <path d="M8 5.6v4.8M5.6 8h4.8" />
+    </>
+  ),
   search: (
     <>
       <circle cx="7" cy="7" r="4.5" />
@@ -104,6 +110,12 @@ const PATHS: Record<string, JSX.Element> = {
   ),
   swap: <path d="M4.5 6H13l-2.5-2.5M11.5 10H3l2.5 2.5" />,
   play: <path d="M5 3.5l7 4.5-7 4.5z" />,
+  pause: (
+    <>
+      <rect x="4.5" y="3.5" width="2.5" height="9" rx="0.8" />
+      <rect x="9" y="3.5" width="2.5" height="9" rx="0.8" />
+    </>
+  ),
   undo: <path d="M3.5 6.5H10a3.5 3.5 0 010 7H6M3.5 6.5L6 4M3.5 6.5L6 9" />,
   panel: (
     <>

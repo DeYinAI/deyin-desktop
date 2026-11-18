@@ -57,8 +57,14 @@ export type ClientMessage =
       roleProviders?: Record<string, WebAgentProviderRouting>;
       /** Seed the loop's todo list (plan todos handed to Build). */
       initialTodos?: AgentTodoItem[];
-      /** Active goal text; enables report_goal_met verification. */
+      /** Active goal text; enables the reviewer-driven goal loop. */
       goalText?: string;
+      /** Round budget for the goal loop (defaults to the core constant). */
+      goalMaxRounds?: number;
+      /** Goal instance id, so a stale continuation from a replaced goal is ignored. */
+      goalId?: string;
+      /** `goalText` is what the user typed and should be restated first; hosts that cannot do so ignore it. */
+      goalRewrite?: boolean;
       /** Images attached to this run's user message (vision). */
       images?: AgentImageInput[];
       /** Text-to-image model ids from the client's catalog (generate_image). */

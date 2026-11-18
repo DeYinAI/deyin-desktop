@@ -36,6 +36,7 @@ export type SettingsPage =
   | "appearance"
   | "models"
   | "modelRoles"
+  | "extensions"
   | "integrations"
   | "skills"
   | "workspace"
@@ -50,13 +51,13 @@ const LEGACY_PAGE_ROUTES: Partial<Record<string, SettingsPage>> = {
   terminal: "workspace",
   chrome: "workspace",
   computerUse: "workspace",
-  capabilities: "integrations",
-  plugins: "integrations",
-  mcp: "integrations",
-  skills: "skills",
-  subagents: "skills",
-  commands: "skills",
-  hooks: "skills",
+  capabilities: "extensions",
+  plugins: "extensions",
+  mcp: "extensions",
+  skills: "extensions",
+  subagents: "extensions",
+  commands: "extensions",
+  hooks: "extensions",
   indexing: "indexing",
   usage: "data",
   optimization: "data",
@@ -69,11 +70,12 @@ const LEGACY_PAGE_ROUTES: Partial<Record<string, SettingsPage>> = {
   evidence: "data",
 };
 
-type IntegrationTab = "mcp" | "plugins";
+export type ExtensionTab = "mcps" | "plugins" | "skills";
 
-const INTEGRATION_TABS: { id: IntegrationTab; labelKey: MessageKey; icon: IconName }[] = [
-  { id: "mcp", labelKey: "settings.nav.mcp", icon: "plug" },
+const EXTENSION_TABS: { id: ExtensionTab; labelKey: MessageKey; icon: IconName }[] = [
+  { id: "mcps", labelKey: "settings.nav.mcp", icon: "plug" },
   { id: "plugins", labelKey: "settings.nav.plugins", icon: "grid" },
+  { id: "skills", labelKey: "settings.nav.skillsAgents", icon: "sparkles" },
 ];
 
 const SKILL_TABS: { id: CapabilityKind; labelKey: MessageKey; icon: IconName }[] = [
@@ -89,29 +91,44 @@ interface NavEntry {
   icon: IconName;
 }
 
+/**
+ * Settings navigation, grouped the way a desktop client reads: what the app
+ * looks like, which models it talks to, what can extend it, where it works, and
+ * what it remembers. Two groups keep the list short enough to scan without a
+ * search field.
+ */
 const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
   {
-    sectionKey: "settings.section.basics",
+    sectionKey: "settings.section.desktop",
     entries: [
       { page: "general", labelKey: "settings.nav.general", icon: "gear" },
       { page: "appearance", labelKey: "settings.nav.appearance", icon: "customize" },
+    ],
+  },
+  {
+    sectionKey: "settings.section.models",
+    entries: [
       { page: "models", labelKey: "settings.nav.models", icon: "cpu" },
       { page: "modelRoles", labelKey: "settings.nav.modelRoles", icon: "brain" },
     ],
   },
   {
-    sectionKey: "settings.section.capabilities",
+    sectionKey: "settings.section.extensions",
     entries: [
-      { page: "integrations", labelKey: "settings.nav.integrations", icon: "plug" },
-      { page: "skills", labelKey: "settings.nav.skillsAgents", icon: "sparkles" },
+      { page: "extensions", labelKey: "settings.nav.extensions", icon: "grid" },
+    ],
+  },
+  {
+    sectionKey: "settings.section.workspace",
+    entries: [
+      { page: "workspace", labelKey: "settings.nav.workspace", icon: "terminal" },
+      { page: "indexing", labelKey: "settings.nav.indexing", icon: "zoom" },
     ],
   },
   {
     sectionKey: "settings.section.data",
     entries: [
       { page: "data", labelKey: "settings.nav.agentData", icon: "chart" },
-      { page: "indexing", labelKey: "settings.nav.indexing", icon: "zoom" },
-      { page: "workspace", labelKey: "settings.nav.workspace", icon: "terminal" },
     ],
   },
   {
@@ -125,6 +142,10 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
 
 interface SettingsViewProps {
   initialPage: SettingsPage;
+  /** Extensions page: which tab to open on (MCP servers, plugins, skills & agents). */
+  initialExtensionTab?: ExtensionTab;
+  /** Skills & agents tab: which capability list to open on. */
+  initialSkillTab?: CapabilityKind;
   settings: DeyinSettings;
   user: UserProfile | null;
   busy: boolean;
@@ -152,8 +173,8 @@ export function SettingsView(props: SettingsViewProps) {
   const [page, setPage] = useState<SettingsPage>(
     LEGACY_PAGE_ROUTES[props.initialPage] ?? props.initialPage,
   );
-  const [integrationTab, setIntegrationTab] = useState<IntegrationTab>("mcp");
-  const [skillTab, setSkillTab] = useState<CapabilityKind>("skill");
+  const [extensionTab, setExtensionTab] = useState<ExtensionTab>(props.initialExtensionTab ?? "mcps");
+  const [skillTab, setSkillTab] = useState<CapabilityKind>(props.initialSkillTab ?? "skill");
   const [caps, setCaps] = useState<CapabilityItem[]>([]);
   const providers = props.providers;
   const [usage, setUsage] = useState<UsageStats | null>(null);
@@ -209,11 +230,11 @@ export function SettingsView(props: SettingsViewProps) {
     props.onChangeSettings({ subagentEfforts: next });
   };
 
-  const integrationTabs = (
+  const extensionTabs = (
     <TabBar
-      tabs={INTEGRATION_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
-      value={integrationTab}
-      onChange={setIntegrationTab}
+      tabs={EXTENSION_TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey), icon: tab.icon }))}
+      value={extensionTab}
+      onChange={setExtensionTab}
     />
   );
 
@@ -228,7 +249,7 @@ export function SettingsView(props: SettingsViewProps) {
   // Integrations, Skills, Workspace and SSH hosts manage desktop-local
   // resources, so the web build hides them entry by entry (a group can mix
   // shared and desktop-only pages, as Account and SSH hosts do).
-  const DESKTOP_ONLY: SettingsPage[] = ["integrations", "skills", "workspace", "sshHosts"];
+  const DESKTOP_ONLY: SettingsPage[] = ["extensions", "workspace", "sshHosts"];
   const CHAT_ONLY_HIDDEN: SettingsPage[] = ["modelRoles", "data", "indexing"];
   const hiddenPages = new Set<SettingsPage>([
     ...(isWeb ? DESKTOP_ONLY : []),
@@ -312,25 +333,25 @@ export function SettingsView(props: SettingsViewProps) {
             onSetSubagentModel={setSubagentModel}
           />
         )}
-        {page === "integrations" && (
+        {page === "extensions" && (
           <>
-            {integrationTab === "mcp" && <McpPage onToggle={toggleCap} tabs={integrationTabs} platform={props.platform} />}
-            {integrationTab === "plugins" && <PluginsPage onToggle={toggleCap} tabs={integrationTabs} />}
+            {extensionTab === "mcps" && <McpPage onToggle={toggleCap} tabs={extensionTabs} platform={props.platform} />}
+            {extensionTab === "plugins" && <PluginsPage onToggle={toggleCap} tabs={extensionTabs} />}
+            {extensionTab === "skills" && (
+              <CapabilityPage
+                kind={skillTab}
+                items={caps.filter((c) => c.kind === skillTab)}
+                onToggle={toggleCap}
+                tabs={skillTabs}
+                providers={providers}
+                liveModels={props.liveModels}
+                subagentModels={props.settings.subagentModels ?? {}}
+                subagentEfforts={props.settings.subagentEfforts ?? {}}
+                onSetSubagentModel={skillTab === "subagent" ? setSubagentModel : undefined}
+                onSetSubagentEffort={skillTab === "subagent" ? setSubagentEffort : undefined}
+              />
+            )}
           </>
-        )}
-        {page === "skills" && (
-          <CapabilityPage
-            kind={skillTab}
-            items={caps.filter((c) => c.kind === skillTab)}
-            onToggle={toggleCap}
-            tabs={skillTabs}
-            providers={providers}
-            liveModels={props.liveModels}
-            subagentModels={props.settings.subagentModels ?? {}}
-            subagentEfforts={props.settings.subagentEfforts ?? {}}
-            onSetSubagentModel={skillTab === "subagent" ? setSubagentModel : undefined}
-            onSetSubagentEffort={skillTab === "subagent" ? setSubagentEffort : undefined}
-          />
         )}
         {page === "workspace" && (
           <div className="settings-page">

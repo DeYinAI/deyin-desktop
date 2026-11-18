@@ -134,8 +134,10 @@ export function ProfileMenu({
 
   const closeSubmenu = (id: SubmenuId) => setSubmenu((cur) => (cur === id ? null : cur));
 
-  const themeOptions: { value: DeyinSettings["theme"]; labelKey: "appearance.dark" | "appearance.light" | "appearance.system" }[] = [
+  const themeOptions: { value: DeyinSettings["theme"]; labelKey: "appearance.dark" | "appearance.light" | "appearance.system" | "appearance.obsidian" | "appearance.reference" }[] = [
     { value: "dark", labelKey: "appearance.dark" },
+    { value: "obsidian", labelKey: "appearance.obsidian" },
+    { value: "reference", labelKey: "appearance.reference" },
     { value: "light", labelKey: "appearance.light" },
     { value: "system", labelKey: "appearance.system" },
   ];

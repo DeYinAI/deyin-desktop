@@ -607,7 +607,7 @@ function rowsToRecord(rows: Array<{ key: string; value: string }>): Record<strin
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function AddServerForm({ onDone }: { onDone: (servers: McpServerEntry[] | null) => void }) {
+export function AddServerForm({ onDone }: { onDone: (servers: McpServerEntry[] | null) => void }) {
   const [name, setName] = useState("");
   const [transport, setTransport] = useState<McpTransport>("stdio");
   const [command, setCommand] = useState("");

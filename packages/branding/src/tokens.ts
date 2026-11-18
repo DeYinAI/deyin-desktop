@@ -1,46 +1,58 @@
 /** Deyin design tokens. Original values; a soft, rounded, card-based aesthetic
  * with dark and light interface themes. */
 
+import {
+  refAgentColors,
+  refAvatars,
+  refElevation,
+  refLineHeights,
+  refStyleDark,
+  terminalRefStyle,
+} from "./ref-style.js";
+
+export * from "./ref-style.js";
+
 export const brand = {
   name: "Deyin",
   tagline: "Agentic development, with Openference.",
 } as const;
 
-/** Dark theme palette (default). Tailwind v4 neutrals for surfaces and text, sky
- * for the accent, alpha-based borders. */
+/** Dark theme palette (default). Bluish neutral ramp measured from the
+ * DeepSeek Harness desktop client: the window/sidebar ground (#1b1b1c) sits one
+ * step above the conversation surface (#151517), cards and the composer use the
+ * next step (#2c2c2e), and the accent is the soft DeepSeek blue. */
 export const colors = {
-  // Surfaces. Flat editor-grade greys: the window/sidebar ground sits a shade
-  // below the content card, so the card reads as raised without a hard border.
-  bg: "#181818",
-  surface: "#1f1f1f",
-  surfaceRaised: "#2a2a2a",
-  surfaceOverlay: "#252525",
-  border: "rgba(255, 255, 255, 0.075)",
-  borderStrong: "rgba(255, 255, 255, 0.22)",
+  // Surfaces. Ground = sidebar + window chrome, surface = conversation/panels.
+  bg: "#1b1b1c",
+  surface: "#151517",
+  surfaceRaised: "#2c2c2e",
+  surfaceOverlay: "#303136",
+  border: "rgba(255, 255, 255, 0.12)",
+  borderStrong: "rgba(255, 255, 255, 0.2)",
   /** Ultra-subtle internal separator (rows inside cards). */
-  hairline: "rgba(255, 255, 255, 0.05)",
+  hairline: "rgba(255, 255, 255, 0.06)",
 
-  // Text (neutral-200, alpha steps for muted/faint)
-  text: "#e0e0e0",
-  textMuted: "rgba(224, 224, 224, 0.62)",
-  textFaint: "rgba(224, 224, 224, 0.34)",
+  // Text: primary / tertiary / caption steps of the bluish neutral ramp.
+  text: "#f9fafb",
+  textMuted: "#adb2b8",
+  textFaint: "#81858c",
 
-  // Accent (sky-500/sky-400, soft fill from sky-950)
-  accent: "#00a5ea",
-  accentHover: "#00bbfd",
-  accentSoft: "#052f4a80",
+  // Accent (deepseek-400 on dark)
+  accent: "#7aaaff",
+  accentHover: "#93b8ff",
+  accentSoft: "rgba(122, 170, 255, 0.16)",
   /** Warm counter-accent: the "new chat" mark and other create affordances. */
   accentWarm: "#e2a45c",
 
-  // Send button (neutral-50 fill, neutral-950 text)
-  sendBg: "#fafafa",
-  sendFg: "#0a0a0a",
+  // Send button (info fill, white arrow)
+  sendBg: "#7aaaff",
+  sendFg: "#ffffff",
 
   // Status
-  success: "#00c65a",
-  warning: "#eab300",
-  danger: "#fb2c36",
-  running: "#00a5ea",
+  success: "#22c55e",
+  warning: "#f59e0b",
+  danger: "#f25a5a",
+  running: "#7aaaff",
 } as const;
 
 /** Warm theme palette (HYRAX-inspired): charcoal-brown surfaces, cream text,
@@ -68,32 +80,61 @@ export const colorsWarm = {
   running: "#c4a072",
 } as const;
 
-/** Light theme palette. */
+/** Light theme palette (DeepSeek Harness light ramp). */
 export const colorsLight = {
-  bg: "#f4f4f3",
+  bg: "#f9fafb",
   surface: "#ffffff",
-  surfaceRaised: "#f0f0ef",
+  surfaceRaised: "#f1f3f5",
   surfaceOverlay: "#ffffff",
-  border: "#e5e5e3",
-  borderStrong: "#d4d4d1",
-  hairline: "rgba(0, 0, 0, 0.065)",
+  border: "rgba(0, 0, 0, 0.12)",
+  borderStrong: "rgba(0, 0, 0, 0.2)",
+  hairline: "rgba(0, 0, 0, 0.06)",
 
-  text: "#1e1e1d",
-  textMuted: "#6a6a67",
-  textFaint: "#9a9a96",
+  text: "#0f1115",
+  textMuted: "#81858c",
+  textFaint: "#adb2b8",
 
-  accent: "#3f66e0",
-  accentHover: "#2f55d4",
-  accentSoft: "rgba(63, 102, 224, 0.12)",
+  accent: "#4176e6",
+  accentHover: "#5686fe",
+  accentSoft: "rgba(65, 118, 230, 0.12)",
   accentWarm: "#b4690e",
 
-  sendBg: "#1f1f1e",
+  sendBg: "#4176e6",
   sendFg: "#ffffff",
 
   success: "#1a7f37",
   warning: "#9a6700",
   danger: "#cf222e",
-  running: "#3f66e0",
+  running: "#4176e6",
+} as const;
+
+/** Obsidian theme palette: deep obsidian slate surfaces, crisp micro-borders,
+ * low-glare high-readability text, modern cyan/sky accent. */
+export const colorsObsidian = {
+  bg: "#0d0e11",
+  surface: "#14151a",
+  surfaceRaised: "#1c1d24",
+  surfaceOverlay: "#22232c",
+  border: "rgba(255, 255, 255, 0.08)",
+  borderStrong: "rgba(255, 255, 255, 0.18)",
+  hairline: "rgba(255, 255, 255, 0.04)",
+
+  text: "#eeeeee",
+  textMuted: "rgba(238, 238, 238, 0.62)",
+  textFaint: "rgba(238, 238, 238, 0.35)",
+
+  accent: "#38bdf8",
+  accentHover: "#60a5fa",
+  accentSoft: "rgba(56, 189, 248, 0.14)",
+  accentWarm: "#fbbf24",
+
+  sendBg: "#f8fafc",
+  sendFg: "#020617",
+
+  success: "#10b981",
+  warning: "#f59e0b",
+  danger: "#ef4444",
+  running: "#38bdf8",
 } as const;
 
 export interface AccentTokens {
@@ -103,7 +144,7 @@ export interface AccentTokens {
 }
 
 export const ACCENTS: Record<string, AccentTokens> = {
-  blue: { accent: "#00a5ea", accentHover: "#00bbfd", accentSoft: "#052f4a80" },
+  blue: { accent: "#7aaaff", accentHover: "#93b8ff", accentSoft: "rgba(122, 170, 255, 0.16)" },
   violet: { accent: "#8b5cf6", accentHover: "#a78bfa", accentSoft: "rgba(139, 92, 246, 0.16)" },
   green: { accent: "#00c65a", accentHover: "#34d87a", accentSoft: "rgba(0, 198, 90, 0.16)" },
   amber: { accent: "#eab300", accentHover: "#f5c842", accentSoft: "rgba(234, 179, 0, 0.16)" },
@@ -120,8 +161,8 @@ export const ACCENT_IDS = Object.keys(ACCENTS);
 
 export const radii = {
   sm: "8px",
-  md: "10px",
-  lg: "14px",
+  md: "12px",
+  lg: "16px",
   xl: "20px",
   pill: "999px",
 } as const;
@@ -189,6 +230,47 @@ export function cssVariables(): string {
   lines.push(...terminalLines(terminalDark));
   lines.push("}");
 
+  lines.push(':root[data-theme="obsidian"] {');
+  lines.push("  color-scheme: dark;");
+  lines.push(...colorLines(colorsObsidian));
+  lines.push(...terminalLines(terminalObsidian));
+  lines.push("}");
+
+  // Reference style family: a reverse-engineered design language (neutral ramp,
+  // blue-400 accent, alpha-light borders, stacked-ring elevation). Opt-in only;
+  // Deyin's own palettes above stay the default.
+  lines.push(':root[data-theme="reference"], :root[data-color-scheme="reference"] {');
+  lines.push("  color-scheme: dark;");
+  lines.push(...colorLines(refStyleDark));
+  lines.push(...terminalLines(terminalRefStyle));
+  lines.push(`  --elevation-raised: ${refElevation.raised};`);
+  lines.push(`  --elevation-floating: ${refElevation.floating};`);
+  lines.push(`  --elevation-overlay: ${refElevation.overlay};`);
+  lines.push(`  --elevation-input: ${refElevation.input};`);
+  lines.push(`  --line-height-tight: ${refLineHeights.tight};`);
+  lines.push(`  --line-height-compact: ${refLineHeights.compact};`);
+  lines.push(`  --line-height-base: ${refLineHeights.base};`);
+  lines.push("}");
+  for (const [hue, pair] of Object.entries(refAvatars)) {
+    lines.push(`:root[data-theme="reference"], :root[data-color-scheme="reference"] {`);
+    lines.push(`  --avatar-bg-${hue}: ${pair.bg};`);
+    lines.push(`  --avatar-border-${hue}: ${pair.border};`);
+    lines.push("}");
+  }
+  lines.push(':root[data-theme="reference"], :root[data-color-scheme="reference"] {');
+  lines.push(`  --agent-plan: ${refAgentColors.plan};`);
+  lines.push(`  --agent-plan-border: ${refAgentColors.planBorder};`);
+  lines.push(`  --agent-plan-bg: ${refAgentColors.planBackground};`);
+  lines.push(`  --agent-build: ${refAgentColors.build};`);
+  lines.push(`  --agent-build-border: ${refAgentColors.buildBorder};`);
+  lines.push(`  --agent-build-bg: ${refAgentColors.buildBackground};`);
+  lines.push(`  --agent-explore: ${refAgentColors.explore};`);
+  lines.push(`  --agent-explore-border: ${refAgentColors.exploreBorder};`);
+  lines.push(`  --agent-explore-bg: ${refAgentColors.exploreBackground};`);
+  lines.push(`  --agent-review: ${refAgentColors.review};`);
+  lines.push(`  --agent-writer: ${refAgentColors.writer};`);
+  lines.push("}");
+
   for (const [id, tokens] of Object.entries(ACCENTS)) {
     lines.push(`:root[data-accent="${id}"] {`);
     lines.push(`  --color-accent: ${tokens.accent};`);
@@ -196,6 +278,13 @@ export function cssVariables(): string {
     lines.push(`  --color-accent-soft: ${tokens.accentSoft};`);
     lines.push("}");
   }
+  // The default blue accent is the DeepSeek blue, which needs its darker step
+  // on the light interface to keep contrast.
+  lines.push(':root[data-theme="light"][data-accent="blue"] {');
+  lines.push(`  --color-accent: ${colorsLight.accent};`);
+  lines.push(`  --color-accent-hover: ${colorsLight.accentHover};`);
+  lines.push(`  --color-accent-soft: ${colorsLight.accentSoft};`);
+  lines.push("}");
 
   return lines.join("\n");
 }
@@ -213,11 +302,11 @@ function kebab(s: string): string {
  * prompts, `ls` output and diffs stay legible without turning neon.
  */
 export const terminalDark = {
-  background: "#141414",
+  background: "#151517",
   foreground: "#dcdcdc",
   cursor: colors.accent,
-  cursorAccent: "#141414",
-  selectionBackground: "rgba(0, 165, 234, 0.30)",
+  cursorAccent: "#151517",
+  selectionBackground: "rgba(122, 170, 255, 0.30)",
   selectionInactiveBackground: "rgba(255, 255, 255, 0.10)",
 
   black: "#3a3a3a",
@@ -267,7 +356,36 @@ export const terminalLight = {
   brightWhite: "#3a3a3e",
 } as const;
 
+export const terminalObsidian = {
+  background: "#0d0e11",
+  foreground: "#e2e8f0",
+  cursor: "#38bdf8",
+  cursorAccent: "#0d0e11",
+  selectionBackground: "rgba(56, 189, 248, 0.28)",
+  selectionInactiveBackground: "rgba(255, 255, 255, 0.08)",
+
+  black: "#1e293b",
+  red: "#f87171",
+  green: "#34d399",
+  yellow: "#fbbf24",
+  blue: "#60a5fa",
+  magenta: "#c084fc",
+  cyan: "#38bdf8",
+  white: "#e2e8f0",
+
+  brightBlack: "#475569",
+  brightRed: "#fca5a5",
+  brightGreen: "#6ee7b7",
+  brightYellow: "#fde047",
+  brightBlue: "#93c5fd",
+  brightMagenta: "#e9d5ff",
+  brightCyan: "#7dd3fc",
+  brightWhite: "#f8fafc",
+} as const;
+
 /** Terminal colors for an interface theme variant. */
-export function terminalTheme(variant: "light" | "dark") {
-  return variant === "light" ? terminalLight : terminalDark;
+export function terminalTheme(variant: "light" | "dark" | "obsidian") {
+  if (variant === "light") return terminalLight;
+  if (variant === "obsidian") return terminalObsidian;
+  return terminalDark;
 }

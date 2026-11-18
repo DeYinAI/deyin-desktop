@@ -10,6 +10,7 @@ import {
   fastFrameAcpChunk,
   fastFrameNdjsonChunk,
   fastRingBufferAppend,
+  fastRingBufferClear,
   fastRingBufferGetLines,
   fastWatchdogCheck,
   fastWatchdogHeartbeat,
@@ -21,6 +22,8 @@ import { killProcessTree } from "./tree-kill.js";
 
 export interface ExternalRunOptions {
   runId?: string;
+  /** Workflow stage this run belongs to, when it was dispatched by a bot pipeline. */
+  stageId?: string;
   agentId: string;
   prompt: string;
   cwd: string;
@@ -223,7 +226,7 @@ export class ExternalAgentService {
           timedOut = true;
           onTimeout?.();
         }
-      } else if (check.status === "ok") {
+      } else if (check.status === "running") {
         isStalled = false;
       }
     }, 5000);
@@ -336,7 +339,7 @@ export class ExternalAgentService {
             const parsed = JSON.parse(line);
             const { delta, finalText, toolInfo, error: eventErr } = parseCliEvent(parsed);
             if (eventErr) {
-              options.onEvent?.({ type: "error", text: eventErr });
+              options.onEvent?.({ type: "error", message: eventErr });
               collectedOutput += `\nError: ${eventErr}`;
             }
             if (toolInfo) {
@@ -495,7 +498,7 @@ export class ExternalAgentService {
             // Handle errors from server immediately to prevent hangs
             if (msg.error) {
               const errMsg = msg.error.message || `ACP JSON-RPC error (${msg.error.code ?? "unknown"})`;
-              options.onEvent?.({ type: "error", text: errMsg });
+              options.onEvent?.({ type: "error", message: errMsg });
               if (child.pid) killProcessTree(child.pid);
               return settle({ ok: false, error: errMsg, outputText: collectedOutput, runId });
             }

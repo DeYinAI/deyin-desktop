@@ -18,7 +18,7 @@ import { CH, type AutomationMutationResult } from "@deyin/contract";
 import type { AuthManager } from "../auth.js";
 import type { AgentRunContextDeps } from "./agent-run-context.js";
 import { AutomationRunner } from "./runner.js";
-import { AutomationScheduler, validateCronExpression } from "./scheduler.js";
+import { AutomationScheduler, nextRunAt, validateCronExpression } from "./scheduler.js";
 import { testSshHost } from "./ssh-client.js";
 
 export interface AutomationServiceOptions {
@@ -83,6 +83,9 @@ function validateAutomationInput(input: Partial<Automation>): void {
     const err = validateCronExpression(input.trigger.expression);
     if (err) throw new Error(err);
   }
+  if (input.trigger?.kind === "once" && !Number.isFinite(input.trigger.at)) {
+    throw new Error("Pick a date and time for the run.");
+  }
 }
 
 export class AutomationService {
@@ -130,7 +133,10 @@ export class AutomationService {
   }
 
   list(): AutomationInfo[] {
-    return enrichAutomations(this.automations.list(), this.runs);
+    return enrichAutomations(this.automations.list(), this.runs).map((info) => ({
+      ...info,
+      nextRunAt: nextRunAt(info),
+    }));
   }
 
   create(input: Omit<Automation, "id" | "createdAt" | "updatedAt">): AutomationMutationResult {
@@ -145,8 +151,10 @@ export class AutomationService {
     const existing = this.automations.get(id);
     if (!existing) throw new Error("Automation not found.");
     const mergedTarget = patch.target ?? existing.target;
-    const coerced = coerceRemoteProvider({ ...patch, target: mergedTarget });
+    const coerced: Partial<Automation> = coerceRemoteProvider({ ...patch, target: mergedTarget });
     validateAutomationInput(coerced);
+    // Re-dating a one-shot re-arms it, even if the previous date already ran.
+    if (patch.trigger?.kind === "once") coerced.lastScheduledAt = undefined;
     const automation = this.automations.update(id, coerced);
     if (!automation) throw new Error("Automation not found.");
     this.scheduler.notifyAutomationChanged();

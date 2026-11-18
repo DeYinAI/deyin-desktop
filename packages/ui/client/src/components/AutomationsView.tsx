@@ -1,220 +1,108 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useConfirm } from "./ConfirmDialog.js";
-import { useT } from "../i18n.js";
-import { Icon } from "./Icon.js";
-import {
-  EmptyState,
-  Field,
-  FormSection,
-  RowMenu,
-  SearchField,
-  SettingCard,
-  Toggle,
-} from "./settings/controls.js";
-import { Callout } from "./ui/index.js";
 import type {
-  Automation,
   AutomationInfo,
-  AutomationPayload,
   AutomationRun,
-  AutomationTarget,
-  AutomationTrigger,
   CapabilityItem,
   EnvInfo,
   ModelInfo,
-  ProviderInfo,
   SshHostInfo,
 } from "@deyin/contract";
+import { automationStatus, type AutomationStatus } from "@deyin/host-core/shared";
+import { useT } from "../i18n.js";
+import { draftToAutomationInput, type AutomationDraft } from "../automationDraft.js";
+import { describeSchedule, formatNextRun } from "../automationFormat.js";
+import { AnchoredMenu } from "./AnchoredMenu.js";
+import { AutomationDetail, type WorkspaceChoice } from "./AutomationDetail.js";
+import { useConfirm } from "./ConfirmDialog.js";
+import { Icon } from "./Icon.js";
 
-type TriggerPreset = "manual" | "hourly" | "daily" | "weekdays" | "custom";
-type PayloadKind = AutomationPayload["kind"];
-type TargetKind = AutomationTarget["kind"];
-/** Which draft field a validation message belongs to, so it renders in place. */
-type FieldKey = "prompt" | "skill" | "subagent" | "workspacePath" | "hostId" | "distro";
+type StatusFilter = AutomationStatus | "all";
 
-const CRON_PRESETS: Record<Exclude<TriggerPreset, "manual" | "custom">, string> = {
-  hourly: "0 * * * *",
-  daily: "0 9 * * *",
-  weekdays: "0 9 * * 1-5",
-};
+const FILTERS: readonly StatusFilter[] = ["active", "paused", "ended", "all"];
 
-function triggerPreset(trigger: AutomationTrigger): TriggerPreset {
-  if (trigger.kind === "manual") return "manual";
-  if (trigger.expression === CRON_PRESETS.hourly) return "hourly";
-  if (trigger.expression === CRON_PRESETS.daily) return "daily";
-  if (trigger.expression === CRON_PRESETS.weekdays) return "weekdays";
-  return "custom";
-}
-
-type T = ReturnType<typeof useT>;
-
-function triggerLabel(trigger: AutomationTrigger, t: T): string {
-  const preset = triggerPreset(trigger);
-  if (preset === "manual") return t("automations.trigger.manual");
-  if (preset === "hourly") return t("automations.trigger.hourly");
-  if (preset === "daily") return t("automations.trigger.daily");
-  if (preset === "weekdays") return t("automations.trigger.weekdays");
-  return trigger.kind === "cron" ? trigger.expression : t("automations.trigger.manual");
-}
-
-function targetLabel(target: AutomationTarget, hosts: SshHostInfo[]): string {
-  if (target.kind === "local") return shortPath(target.workspacePath);
-  if (target.kind === "wsl") return `${target.distro}:${shortPath(target.workspacePath)}`;
-  const host = hosts.find((h) => h.id === target.hostId);
-  return host ? `${host.username}@${host.host}` : shortPath(target.workspacePath);
-}
-
-/** Last two segments of a path — list rows have no room for the whole thing. */
-function shortPath(path: string): string {
-  const segments = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  return segments.slice(-2).join("/") || path;
-}
-
-function statusKey(status: AutomationRun["status"]) {
-  switch (status) {
-    case "queued":
-      return "automations.status.queued" as const;
-    case "running":
-      return "automations.status.running" as const;
-    case "completed":
-      return "automations.status.completed" as const;
-    case "failed":
-      return "automations.status.failed" as const;
-    case "aborted":
-      return "automations.status.aborted" as const;
+function filterLabelKey(filter: StatusFilter) {
+  switch (filter) {
+    case "active":
+      return "automations.filter.active" as const;
+    case "paused":
+      return "automations.filter.paused" as const;
+    case "ended":
+      return "automations.filter.ended" as const;
+    case "all":
+      return "automations.filter.all" as const;
+    default: {
+      const unreachable: never = filter;
+      return unreachable;
+    }
   }
 }
 
-function StatusPill({ status, t }: { status: AutomationRun["status"]; t: T }) {
-  return (
-    <span className={`run-pill run-pill--${status}`}>
-      <span className="run-pill__dot" />
-      {t(statusKey(status))}
-    </span>
-  );
+function emptyTitleKey(filter: StatusFilter) {
+  switch (filter) {
+    case "active":
+      return "automations.empty.active" as const;
+    case "paused":
+      return "automations.empty.paused" as const;
+    case "ended":
+      return "automations.empty.ended" as const;
+    case "all":
+      return "automations.empty.all" as const;
+    default: {
+      const unreachable: never = filter;
+      return unreachable;
+    }
+  }
 }
 
-/** One-line summary of what a saved automation actually runs. */
-function payloadSummary(payload: AutomationPayload): string {
-  if (payload.kind === "skill") return `/${payload.skill}`;
-  if (payload.kind === "subagent") return `@${payload.subagent}`;
-  return payload.prompt.slice(0, 80);
+function statusWordKey(status: Exclude<AutomationStatus, "active">) {
+  return status === "paused" ? ("automations.status.paused" as const) : ("automations.status.ended" as const);
 }
 
-/**
- * A flat editing shape. The three payload fields are kept side by side rather
- * than in a union so switching kind back and forth does not lose what the user
- * already typed.
- */
-interface Draft {
-  name: string;
-  description: string;
-  payloadKind: PayloadKind;
-  prompt: string;
-  skill: string;
-  subagent: string;
-  capabilityInput: string;
-  triggerPreset: TriggerPreset;
-  cronExpression: string;
-  targetKind: TargetKind;
-  workspacePath: string;
-  hostId: string;
-  distro: string;
-  model: string;
-  providerId: string;
-  enabled: boolean;
+function payloadSummary(a: AutomationInfo): string {
+  if (a.payload.kind === "skill") return `/${a.payload.skill}`;
+  if (a.payload.kind === "subagent") return `@${a.payload.subagent}`;
+  return a.payload.prompt;
 }
 
-function emptyDraft(workspaceRoot: string | null, model: string, providerId: string): Draft {
-  return {
-    name: "",
-    description: "",
-    payloadKind: "prompt",
-    prompt: "",
-    skill: "",
-    subagent: "",
-    capabilityInput: "",
-    triggerPreset: "daily",
-    cronExpression: CRON_PRESETS.daily,
-    targetKind: "local",
-    workspacePath: workspaceRoot ?? "",
-    hostId: "",
-    distro: "",
-    model,
-    providerId,
-    enabled: true,
-  };
-}
-
-function draftFromAutomation(a: Automation): Draft {
-  return {
-    name: a.name,
-    description: a.description ?? "",
-    payloadKind: a.payload.kind,
-    prompt: a.payload.kind === "prompt" ? a.payload.prompt : "",
-    skill: a.payload.kind === "skill" ? a.payload.skill : "",
-    subagent: a.payload.kind === "subagent" ? a.payload.subagent : "",
-    capabilityInput: a.payload.kind === "prompt" ? "" : (a.payload.input ?? ""),
-    triggerPreset: triggerPreset(a.trigger),
-    cronExpression: a.trigger.kind === "cron" ? a.trigger.expression : CRON_PRESETS.daily,
-    targetKind: a.target.kind,
-    workspacePath: a.target.workspacePath,
-    hostId: a.target.kind === "ssh" ? a.target.hostId : "",
-    distro: a.target.kind === "wsl" ? a.target.distro : "",
-    model: a.model,
-    providerId: a.providerId,
-    enabled: a.enabled,
-  };
-}
-
-function draftPayload(draft: Draft): AutomationPayload {
-  const input = draft.capabilityInput.trim() || undefined;
-  if (draft.payloadKind === "skill") return { kind: "skill", skill: draft.skill, input };
-  if (draft.payloadKind === "subagent") return { kind: "subagent", subagent: draft.subagent, input };
-  return { kind: "prompt", prompt: draft.prompt };
-}
-
-function draftToAutomationInput(draft: Draft): Omit<Automation, "id" | "createdAt" | "updatedAt"> {
-  const trigger: AutomationTrigger =
-    draft.triggerPreset === "manual"
-      ? { kind: "manual" }
-      : {
-          kind: "cron",
-          expression:
-            draft.triggerPreset === "custom"
-              ? draft.cronExpression.trim()
-              : CRON_PRESETS[draft.triggerPreset as Exclude<TriggerPreset, "manual" | "custom">],
-        };
-  const target: AutomationTarget =
-    draft.targetKind === "ssh"
-      ? { kind: "ssh", hostId: draft.hostId, workspacePath: draft.workspacePath }
-      : draft.targetKind === "wsl"
-        ? { kind: "wsl", distro: draft.distro, workspacePath: draft.workspacePath }
-        : { kind: "local", workspacePath: draft.workspacePath };
-  // Out-of-process targets drive the deyin CLI, which only speaks Openference.
-  const providerId = draft.targetKind === "local" ? draft.providerId : "openference";
-  return {
-    name: draft.name.trim() || "Untitled automation",
-    description: draft.description.trim() || undefined,
-    payload: draftPayload(draft),
-    trigger,
-    target,
-    model: draft.model,
-    providerId,
-    enabled: draft.enabled,
-  };
+/** Soonest first; tasks without a next run (manual, paused, ended) follow, newest edit first. */
+function compareTasks(a: AutomationInfo, b: AutomationInfo): number {
+  if (a.nextRunAt !== undefined && b.nextRunAt !== undefined) return a.nextRunAt - b.nextRunAt;
+  if (a.nextRunAt !== undefined) return -1;
+  if (b.nextRunAt !== undefined) return 1;
+  return b.updatedAt - a.updatedAt;
 }
 
 interface Props {
   workspaceRoot: string | null;
-  providers: ProviderInfo[];
+  /** Folder-backed workspaces a task can run in. */
+  workspaces: readonly WorkspaceChoice[];
   models: ModelInfo[];
   selectedModel: string;
   selectedProviderId: string;
   env: EnvInfo | null;
-  /** Renders a back control in the header; omitted when the app shell already has nav. */
-  onBack?: () => void;
   onOpenSshSettings: () => void;
+  /** Starts a new conversation with `prompt` in the composer, asking the agent to set the task up. */
+  onCreateInSession: (prompt: string) => void;
+}
+
+function ScheduleIllustration() {
+  return (
+    <svg className="autos__illustration" width="110" height="110" viewBox="0 0 170 170" fill="none" aria-hidden="true" focusable="false">
+      <path d="M163.819 97.9382C163.819 126.572 144.48 135.329 115.847 135.329C87.2129 135.329 60.1276 126.572 60.1276 97.9382C60.1276 69.3047 101.003 46.0927 129.637 46.0927C158.27 46.0927 163.819 69.3047 163.819 97.9382Z" className="autos__ill-bg" />
+      <path d="M9.49521 88.6735C20.8278 111.218 39.5801 110.429 62.2137 99.0519C84.8474 87.6748 102.791 70.018 91.4589 47.4731C80.1263 24.9282 38.6291 22.8935 15.9955 34.2706C-6.63818 45.6478 -1.83735 66.1286 9.49521 88.6735Z" className="autos__ill-bg" />
+      <path d="M25.2636 34.442C24.727 29.8132 28.0445 25.6258 32.6733 25.0893L101.373 17.126C106.002 16.5895 110.189 19.9069 110.726 24.5358L120.107 105.466C120.643 110.095 117.326 114.282 112.697 114.818L43.9972 122.782C39.3684 123.318 35.181 120.001 34.6445 115.372L25.2636 34.442Z" className="autos__ill-backing" />
+      <path d="M40.169 25.1368C40.169 20.477 43.9466 16.6995 48.6064 16.6995H117.766C122.426 16.6995 126.204 20.477 126.204 25.1368V106.609C126.204 111.268 122.426 115.046 117.766 115.046H48.6064C43.9466 115.046 40.169 111.268 40.169 106.609V25.1368Z" className="autos__ill-surface" />
+      <path d="M110.258 44.9883V50.3516H72.0831V44.9883H110.258Z" className="autos__ill-detail" />
+      <path d="M110.258 63.2803V68.6436H72.0831V63.2803H110.258Z" className="autos__ill-detail" />
+      <path d="M91.171 81.5713V86.9346H72.0831V81.5713H91.171Z" className="autos__ill-detail" />
+      <path d="M56.1124 43.4998H64.0964V51.4838H56.1124V43.4998Z" className="autos__ill-detail" />
+      <path d="M56.1124 61.97H64.0964V69.954H56.1124V61.97Z" className="autos__ill-detail" />
+      <path d="M56.1124 80.2607H64.0964V88.2448H56.1124V80.2607Z" className="autos__ill-detail" />
+      <path d="M149.05 98.8527C149.05 112.66 137.857 123.853 124.05 123.853C110.242 123.853 99.0496 112.66 99.0496 98.8527C99.0496 85.0455 110.242 73.8527 124.05 73.8527C137.857 73.8527 149.05 85.0455 149.05 98.8527Z" className="autos__ill-detail" />
+      <path d="M144.192 98.8529C144.192 109.978 135.174 118.997 124.049 118.997C112.923 118.997 103.905 109.978 103.905 98.8529C103.905 87.7278 112.923 78.709 124.049 78.709C135.174 78.709 144.192 87.7278 144.192 98.8529Z" className="autos__ill-inset" />
+      <path d="M125.124 86.7281L125.123 99.2824L134.923 104.132L132.824 108.375L122.76 103.395C121.309 102.677 120.39 101.197 120.39 99.5782L120.389 86.7275L125.124 86.7281Z" className="autos__ill-detail" />
+    </svg>
+  );
 }
 
 export function AutomationsView(props: Props) {
@@ -224,35 +112,28 @@ export function AutomationsView(props: Props) {
   const sshApi = window.deyin.sshHosts;
 
   const [items, setItems] = useState<AutomationInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [hosts, setHosts] = useState<SshHostInfo[]>([]);
   const [skills, setSkills] = useState<CapabilityItem[]>([]);
   const [subagents, setSubagents] = useState<CapabilityItem[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<StatusFilter>("active");
   const [query, setQuery] = useState("");
-  const [draft, setDraft] = useState<Draft>(() =>
-    emptyDraft(props.workspaceRoot, props.selectedModel, props.selectedProviderId),
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [runs, setRuns] = useState<AutomationRun[]>([]);
   /** automationId → active runId (supports concurrent runs without clobbering Stop). */
   const [activeByAutomation, setActiveByAutomation] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
-  const [wslProbe, setWslProbe] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const [notice, setNotice] = useState<string | null>(null);
 
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
-  const dirtyRef = useRef(false);
-  dirtyRef.current = dirty;
-
-  const selectedActiveRunId = selectedId ? (activeByAutomation[selectedId] ?? null) : null;
-  const wslDistros = props.env?.wslDistros ?? [];
 
   const refresh = useCallback(async () => {
     if (!api) return;
     setItems(await api.list());
+    setLoaded(true);
     if (sshApi) setHosts(await sshApi.list());
   }, [api, sshApi]);
 
@@ -260,10 +141,15 @@ export function AutomationsView(props: Props) {
     void refresh();
   }, [refresh]);
 
-  // Skills and subagents back the capability payload pickers.
   useEffect(() => {
     void window.deyin.caps.list("skill").then(setSkills);
     void window.deyin.caps.list("subagent").then(setSubagents);
+  }, []);
+
+  // The relative "in 3 hours" wording has to age while the page stays open.
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -280,24 +166,12 @@ export function AutomationsView(props: Props) {
       setRuns((prev) => {
         const existing = prev.find((r) => r.id === runId);
         if (existing) {
-          return prev.map((r) =>
-            r.id === runId ? { ...r, status: liveStatus(event), events: [...r.events, event] } : r,
-          );
+          return prev.map((r) => (r.id === runId ? { ...r, status: liveStatus(event), events: [...r.events, event] } : r));
         }
-        // Cron / background run: prepend a stub so history is visible immediately,
-        // but only when the user is actually looking at that automation.
+        // Cron / background run: show it at once, but only in the task being looked at.
         const viewing = selectedIdRef.current;
-        if (viewing && automationId && viewing !== automationId) return prev;
-        return [
-          {
-            id: runId,
-            automationId: automationId || viewing || "",
-            status: liveStatus(event),
-            startedAt: Date.now(),
-            events: [event],
-          },
-          ...prev,
-        ];
+        if (!viewing || !automationId || viewing !== automationId) return prev;
+        return [{ id: runId, automationId, status: liveStatus(event), startedAt: Date.now(), events: [event] }, ...prev];
       });
     });
 
@@ -310,7 +184,7 @@ export function AutomationsView(props: Props) {
       });
       setRuns((prev) => {
         const without = prev.filter((r) => r.id !== run.id);
-        if (selectedIdRef.current && run.automationId !== selectedIdRef.current) return without;
+        if (selectedIdRef.current !== run.automationId) return without;
         return [run, ...without];
       });
       void refresh();
@@ -322,463 +196,332 @@ export function AutomationsView(props: Props) {
     };
   }, [api, refresh]);
 
-  // Load the draft only when selection changes — not on every list refresh, or
-  // an in-flight run finishing would discard the user's unsaved edits.
   useEffect(() => {
     if (!selectedId || !api) {
       setRuns([]);
       return;
     }
-    const found = items.find((i) => i.id === selectedId);
-    if (found) setDraft(draftFromAutomation(found));
-    setDirty(false);
-    setError(null);
-    setFieldErrors({});
-    setSavedAt(null);
     void api.runs(selectedId).then(setRuns);
-    // items is deliberately omitted: see comment above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, api]);
 
-  const patchDraft = (patch: Partial<Draft>) => {
-    setDirty(true);
-    setSavedAt(null);
-    setDraft((prev) => ({ ...prev, ...patch }));
-    // Clear the messages for the fields being edited, so errors don't linger
-    // on a field the user has already fixed.
-    setFieldErrors((prev) => {
-      const next = { ...prev };
-      for (const key of Object.keys(patch)) delete next[key as FieldKey];
-      return next;
-    });
-  };
-
-  const startNew = () => {
-    setSelectedId(null);
-    setDirty(false);
-    setDraft(emptyDraft(props.workspaceRoot, props.selectedModel, props.selectedProviderId));
-    setError(null);
-    setFieldErrors({});
-    setSavedAt(null);
-    setRuns([]);
-  };
-
-  const validate = (): Partial<Record<FieldKey, string>> => {
-    const errors: Partial<Record<FieldKey, string>> = {};
-    if (draft.payloadKind === "prompt" && !draft.prompt.trim()) errors.prompt = t("automations.err.prompt");
-    if (draft.payloadKind === "skill" && !draft.skill) errors.skill = t("automations.err.skill");
-    if (draft.payloadKind === "subagent" && !draft.subagent) errors.subagent = t("automations.err.subagent");
-    if (!draft.workspacePath.trim()) errors.workspacePath = t("automations.err.workspace");
-    if (draft.targetKind === "ssh" && !draft.hostId) errors.hostId = t("automations.err.host");
-    if (draft.targetKind === "wsl" && !draft.distro) errors.distro = t("automations.err.distro");
-    return errors;
-  };
-
-  /** Returns the saved automation's id, or null when validation/saving failed. */
-  const save = async (): Promise<string | null> => {
-    if (!api) return null;
-    const invalid = validate();
-    setFieldErrors(invalid);
-    if (Object.keys(invalid).length > 0) return null;
-    setSaving(true);
-    setError(null);
-    try {
-      const input = draftToAutomationInput(draft);
-      const result = selectedId ? await api.update(selectedId, input) : await api.create(input);
-      setItems(result.list);
-      setSelectedId(result.automation.id);
-      selectedIdRef.current = result.automation.id;
-      setDirty(false);
-      setSavedAt(Date.now());
-      return result.automation.id;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      return null;
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const runNow = async () => {
-    if (!api) return;
-    // An unsaved draft has nothing on disk to run, so save first — Run now on a
-    // clean, already-saved automation skips straight to the run.
-    const id = dirty || !selectedId ? await save() : selectedId;
-    if (!id) return;
-    try {
-      const run = await api.run(id);
-      setActiveByAutomation((prev) => ({ ...prev, [id]: run.id }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const probeWsl = async () => {
-    if (!api || !draft.distro) return;
-    setWslProbe("…");
-    const result = await api.testWsl(draft.distro);
-    setWslProbe(
-      result.ok ? `${result.message} (node ${result.nodeVersion}, deyin ${result.deyinVersion})` : result.message,
-    );
-  };
-
-  const remove = async () => {
-    if (!api || !selectedId) return;
-    const ok = await confirm({ message: t("automations.deleteConfirm"), destructive: true });
-    if (!ok) return;
-    setItems(await api.remove(selectedId));
-    startNew();
-  };
-
   const selected = useMemo(() => items.find((i) => i.id === selectedId) ?? null, [items, selectedId]);
-  const availableModels = props.models.filter((m) => m.kind !== "image" && m.kind !== "video");
-  const visibleItems = useMemo(() => {
+
+  const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter((i) =>
-      [i.name, i.description ?? "", payloadSummary(i.payload)].some((s) => s.toLowerCase().includes(q)),
-    );
-  }, [items, query]);
+    return items
+      .filter((item) => filter === "all" || automationStatus(item) === filter)
+      .filter((item) => !q || [item.name, item.description ?? "", payloadSummary(item)].some((s) => s.toLowerCase().includes(q)))
+      .sort(compareTasks);
+  }, [items, filter, query]);
+
+  const endedCount = useMemo(() => items.filter((i) => automationStatus(i) === "ended").length, [items]);
+
+  const closeDetail = useCallback(() => {
+    setSelectedId(null);
+    setCreating(false);
+  }, []);
+
+  const openCreate = useCallback(() => {
+    setSelectedId(null);
+    setCreating(true);
+  }, []);
+
+  const save = useCallback(
+    async (draft: AutomationDraft) => {
+      if (!api) return;
+      const input = draftToAutomationInput(draft);
+      if (creating || !selected) {
+        const result = await api.create(input);
+        setItems(result.list);
+        setCreating(false);
+        setQuery("");
+        setFilter("all");
+        setSelectedId(result.automation.id);
+        return;
+      }
+      // Re-sending an unchanged one-shot trigger would re-arm a task that already ran.
+      const { trigger, ...rest } = input;
+      const sameTrigger = JSON.stringify(trigger) === JSON.stringify(selected.trigger);
+      const result = await api.update(selected.id, sameTrigger ? rest : input);
+      setItems(result.list);
+    },
+    [api, creating, selected],
+  );
+
+  const flash = useCallback((message: string) => {
+    setNotice(message);
+    window.setTimeout(() => setNotice((current) => (current === message ? null : current)), 6000);
+  }, []);
+
+  const toggle = useCallback(
+    async (task: AutomationInfo) => {
+      if (!api) return;
+      try {
+        setItems(await api.toggle(task.id, !task.enabled));
+      } catch (err) {
+        flash(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [api, flash],
+  );
+
+  const runNow = useCallback(
+    async (task: AutomationInfo) => {
+      if (!api) return;
+      try {
+        const run = await api.run(task.id);
+        setActiveByAutomation((prev) => ({ ...prev, [task.id]: run.id }));
+      } catch (err) {
+        flash(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [api, flash],
+  );
+
+  const remove = useCallback(
+    async (task: AutomationInfo) => {
+      if (!api) return;
+      const ok = await confirm({
+        title: t("automations.deleteTitle"),
+        message: task.name,
+        confirmLabel: t("automations.delete"),
+        destructive: true,
+      });
+      if (!ok) return;
+      setItems(await api.remove(task.id));
+      closeDetail();
+    },
+    [api, confirm, t, closeDetail],
+  );
 
   if (!api) {
     return (
-      <div className="automations automations--empty">
-        <EmptyState icon="automation" title={t("automations.title")} hint={t("automations.desktopOnly")} />
-      </div>
+      <section className="autos">
+        <div className="autos__list-pane">
+          <div className="autos__scroll">
+            <div className="autos__content">
+              <div className="autos__empty">
+                <Icon name="automation" size={24} className="autos__empty-glyph" />
+                <h2>{t("automations.title")}</h2>
+                <p>{t("automations.desktopOnly")}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     );
   }
 
-  const headTitle = selected ? selected.name : t("automations.new");
-  const headMeta = selected
-    ? `${triggerLabel(selected.trigger, t)} · ${targetLabel(selected.target, hosts)}`
-    : t("automations.subtitle");
+  const detailOpen = creating || selected !== null;
+  const emptyKey = query.trim() && items.length > 0 ? "automations.empty.noMatches" : emptyTitleKey(filter);
 
   return (
-    <div className="automations">
-      <aside className="automations__list">
-        <div className="automations__list-head">
-          <span className="automations__list-title">{t("automations.title")}</span>
-          <button className="icon-btn icon-btn--small" title={t("automations.new")} onClick={startNew}>
-            <Icon name="plus" size={14} />
-          </button>
-        </div>
-        {items.length > 3 && (
-          <div className="automations__search">
-            <SearchField value={query} onChange={setQuery} placeholder={t("automations.searchPlaceholder")} />
-          </div>
-        )}
-        <div className="automations__items">
-          {visibleItems.map((item) => {
-            const running = Boolean(activeByAutomation[item.id]);
-            return (
-              <button
-                key={item.id}
-                className={`automations__item${selectedId === item.id ? " automations__item--active" : ""}`}
-                onClick={() => setSelectedId(item.id)}
-              >
-                <div className="automations__item-top">
-                  <span className={`automations__dot${item.enabled ? " automations__dot--on" : ""}`} />
-                  <span className="automations__item-title">{item.name}</span>
-                  {running && <Icon name="refresh" size={12} className="automations__spin" />}
-                </div>
-                <div className="automations__item-meta automations__item-summary">{payloadSummary(item.payload)}</div>
-                <div className="automations__item-foot">
-                  <span className="automations__item-meta">
-                    <Icon name="clock" size={11} /> {triggerLabel(item.trigger, t)}
-                  </span>
-                  {item.lastRun && <StatusPill status={item.lastRun.status} t={t} />}
-                </div>
-              </button>
-            );
-          })}
-          {items.length === 0 && (
-            <EmptyState icon="automation" title={t("automations.empty")} hint={t("automations.emptyHint")} />
-          )}
-          {items.length > 0 && visibleItems.length === 0 && (
-            <EmptyState icon="search" title={t("automations.searchPlaceholder")} />
-          )}
-        </div>
-        {items.length === 0 && (
-          <button className="btn btn--primary automations__new" onClick={startNew}>
-            <Icon name="plus" size={13} />
-            {t("automations.new")}
-          </button>
-        )}
-      </aside>
-
-      <section className="automations__editor">
-        <header className="automations__head">
-          {props.onBack && (
-            <button className="icon-btn icon-btn--small" title={t("nav.backToWorkspace")} onClick={props.onBack}>
-              <Icon name="arrowLeft" size={14} />
-            </button>
-          )}
-          <div className="automations__head-text">
-            <h1 className="automations__head-title">{headTitle}</h1>
-            <div className="automations__head-meta">{headMeta}</div>
-          </div>
-          <div className="automations__head-actions">
-            <span className="automations__state">
-              {dirty
-                ? t("automations.unsaved")
-                : savedAt
-                  ? t("automations.savedJustNow")
-                  : ""}
-            </span>
-            <button className="btn btn--ghost" disabled={saving || !dirty} onClick={() => void save()}>
-              {t("automations.save")}
-            </button>
-            {selectedActiveRunId ? (
-              <button className="btn btn--ghost" onClick={() => api.stop(selectedActiveRunId)}>
-                <Icon name="close" size={13} />
-                {t("automations.stop")}
-              </button>
-            ) : (
-              <button className="btn btn--primary" disabled={saving} onClick={() => void runNow()}>
-                <Icon name="play" size={13} />
-                {t("automations.runNow")}
-              </button>
-            )}
-            {selectedId && (
-              <RowMenu items={[{ label: t("automations.delete"), icon: "trash", danger: true, onSelect: () => void remove() }]} />
-            )}
-          </div>
-        </header>
-
-        <div className="automations__body">
-          {error && <Callout tone="bad" className="automations__error">{error}</Callout>}
-
-          <FormSection title={t("automations.section.basics")}>
-            <Field label={t("automations.name")} hint={t("automations.nameDesc")}>
-              <input
-                className="input"
-                value={draft.name}
-                placeholder={t("automations.namePlaceholder")}
-                onChange={(e) => patchDraft({ name: e.target.value })}
-              />
-            </Field>
-            <Field label={t("automations.description")} hint={t("automations.descriptionDesc")}>
-              <input
-                className="input"
-                value={draft.description}
-                placeholder={t("automations.descriptionPlaceholder")}
-                onChange={(e) => patchDraft({ description: e.target.value })}
-              />
-            </Field>
-            <SettingCard title={t("automations.enabled")} description={t("automations.enabledDesc")}>
-              <Toggle checked={draft.enabled} onChange={(enabled) => patchDraft({ enabled })} />
-            </SettingCard>
-          </FormSection>
-
-          <FormSection title={t("automations.section.prompt")}>
-            <SettingCard title={t("automations.payloadKind")} description={t("automations.payloadKindDesc")}>
-              <select
-                className="select"
-                value={draft.payloadKind}
-                onChange={(e) => patchDraft({ payloadKind: e.target.value as PayloadKind })}
-              >
-                <option value="prompt">{t("automations.payload.prompt")}</option>
-                <option value="skill">{t("automations.payload.skill")}</option>
-                <option value="subagent">{t("automations.payload.subagent")}</option>
-              </select>
-            </SettingCard>
-
-            {draft.payloadKind === "prompt" ? (
-              <Field label={t("automations.promptLabel")} error={fieldErrors.prompt}>
-                <textarea
-                  className="input automations__prompt"
-                  rows={7}
-                  value={draft.prompt}
-                  onChange={(e) => patchDraft({ prompt: e.target.value })}
-                  placeholder={t("automations.promptPlaceholder")}
-                />
-              </Field>
-            ) : (
-              <>
-                <Field
-                  label={draft.payloadKind === "skill" ? t("automations.skill") : t("automations.subagent")}
-                  hint={t("automations.capabilityDesc")}
-                  error={draft.payloadKind === "skill" ? fieldErrors.skill : fieldErrors.subagent}
+    <section
+      className={`autos${detailOpen ? " autos--has-detail" : ""}`}
+      aria-label={t("automations.page.title")}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented || !detailOpen) return;
+        event.preventDefault();
+        closeDetail();
+      }}
+    >
+      <div className="autos__list-pane">
+        <div className="autos__scroll">
+          <div className="autos__content">
+            <div className="autos__heading">
+              <h1>{t("automations.page.title")}</h1>
+              <span className="autos__create" role="group" aria-label={t("automations.page.new")}>
+                <button type="button" className="autos__create-main" onClick={() => props.onCreateInSession(t("automations.page.sessionPrompt"))}>
+                  <Icon name="plus" size={13} />
+                  {t("automations.page.new")}
+                </button>
+                <AnchoredMenu
+                  open={createMenuOpen}
+                  onToggle={() => setCreateMenuOpen((v) => !v)}
+                  onClose={() => setCreateMenuOpen(false)}
+                  triggerClassName="autos__create-more"
+                  triggerTitle={t("automations.page.createMethod")}
+                  panelClassName="rule-menu"
+                  trigger={<Icon name="chevronDown" size={12} />}
                 >
-                  <select
-                    className="select"
-                    value={draft.payloadKind === "skill" ? draft.skill : draft.subagent}
-                    onChange={(e) =>
-                      patchDraft(
-                        draft.payloadKind === "skill" ? { skill: e.target.value } : { subagent: e.target.value },
-                      )
-                    }
+                  <button
+                    type="button"
+                    className="rule-menu__item"
+                    onClick={() => {
+                      setCreateMenuOpen(false);
+                      props.onCreateInSession(t("automations.page.sessionPrompt"));
+                    }}
                   >
-                    <option value="">{t("automations.selectCapability")}</option>
-                    {(draft.payloadKind === "skill" ? skills : subagents).map((c) => (
-                      <option key={c.id} value={c.name}>
-                        {c.name}
-                        {c.enabled ? "" : ` (${t("automations.disabled")})`}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label={t("automations.capabilityInput")} hint={t("automations.capabilityInputDesc")}>
-                  <input
-                    className="input"
-                    value={draft.capabilityInput}
-                    onChange={(e) => patchDraft({ capabilityInput: e.target.value })}
-                  />
-                </Field>
-              </>
-            )}
-          </FormSection>
-
-          <FormSection title={t("automations.section.trigger")}>
-            <SettingCard title={t("automations.schedule")}>
-              <select
-                className="select"
-                value={draft.triggerPreset}
-                onChange={(e) => {
-                  const preset = e.target.value as TriggerPreset;
-                  patchDraft({
-                    triggerPreset: preset,
-                    cronExpression:
-                      preset !== "manual" && preset !== "custom" ? CRON_PRESETS[preset] : draft.cronExpression,
-                  });
-                }}
-              >
-                <option value="manual">{t("automations.trigger.manual")}</option>
-                <option value="hourly">{t("automations.trigger.hourly")}</option>
-                <option value="daily">{t("automations.trigger.daily")}</option>
-                <option value="weekdays">{t("automations.trigger.weekdays")}</option>
-                <option value="custom">{t("automations.trigger.custom")}</option>
-              </select>
-            </SettingCard>
-            {draft.triggerPreset === "custom" && (
-              <Field label={t("automations.cron")} hint={t("automations.cronDesc")}>
-                <input
-                  className="input input-mono"
-                  value={draft.cronExpression}
-                  onChange={(e) => patchDraft({ cronExpression: e.target.value })}
-                />
-              </Field>
-            )}
-            {draft.triggerPreset !== "manual" && <Callout tone="muted">{t("automations.scheduleCaveat")}</Callout>}
-          </FormSection>
-
-          <FormSection title={t("automations.section.target")}>
-            <SettingCard title={t("automations.targetKind")}>
-              <select
-                className="select"
-                value={draft.targetKind}
-                onChange={(e) => patchDraft({ targetKind: e.target.value as TargetKind })}
-              >
-                <option value="local">{t("automations.target.local")}</option>
-                {wslDistros.length > 0 && <option value="wsl">{t("automations.target.wsl")}</option>}
-                <option value="ssh">{t("automations.target.ssh")}</option>
-              </select>
-            </SettingCard>
-
-            {draft.targetKind === "wsl" && (
-              <Field
-                label={t("automations.distro")}
-                hint={wslProbe ?? t("automations.distroDesc")}
-                error={fieldErrors.distro}
-                action={
-                  <button className="btn btn--ghost btn--small" disabled={!draft.distro} onClick={() => void probeWsl()}>
-                    {t("automations.test")}
+                    <Icon name="message" size={14} />
+                    <span className="rule-menu__label">{t("automations.page.createInSession")}</span>
                   </button>
-                }
-              >
-                <select
-                  className="select"
-                  value={draft.distro}
-                  onChange={(e) => {
-                    setWslProbe(null);
-                    patchDraft({ distro: e.target.value });
-                  }}
+                  <button
+                    type="button"
+                    className="rule-menu__item"
+                    onClick={() => {
+                      setCreateMenuOpen(false);
+                      openCreate();
+                    }}
+                  >
+                    <Icon name="pencil" size={14} />
+                    <span className="rule-menu__label">{t("automations.page.createManually")}</span>
+                  </button>
+                </AnchoredMenu>
+              </span>
+            </div>
+
+            <div className="autos__filters" role="group" aria-label={t("automations.page.title")}>
+              {FILTERS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`autos__filter${filter === value ? " autos__filter--active" : ""}`}
+                  aria-pressed={filter === value}
+                  onClick={() => setFilter(value)}
                 >
-                  <option value="">{t("automations.selectDistro")}</option>
-                  {wslDistros.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
+                  {t(filterLabelKey(value))}
+                </button>
+              ))}
+            </div>
 
-            {draft.targetKind === "ssh" && (
-              <Field
-                label={t("automations.sshHost")}
-                error={fieldErrors.hostId}
-                action={
-                  <button className="btn btn--ghost btn--small" onClick={props.onOpenSshSettings}>
-                    {t("automations.manageHosts")}
-                  </button>
-                }
-              >
-                <select className="select" value={draft.hostId} onChange={(e) => patchDraft({ hostId: e.target.value })}>
-                  <option value="">{t("automations.selectHost")}</option>
-                  {hosts.map((h) => (
-                    <option key={h.id} value={h.id}>
-                      {h.label} ({h.username}@{h.host})
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
-
-            <Field
-              label={t("automations.workspacePath")}
-              hint={draft.targetKind === "wsl" ? t("automations.wslPathHint") : t("automations.workspacePathDesc")}
-              error={fieldErrors.workspacePath}
-            >
+            <div className="autos__search">
+              <Icon name="search" size={14} />
               <input
-                className="input input-mono"
-                value={draft.workspacePath}
-                onChange={(e) => patchDraft({ workspacePath: e.target.value })}
+                type="search"
+                aria-label={t("automations.search.placeholder")}
+                placeholder={t("automations.search.placeholder")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
               />
-            </Field>
+              {query !== "" && (
+                <button
+                  type="button"
+                  className="icon-btn icon-btn--small"
+                  aria-label={t("automations.search.clear")}
+                  onClick={() => setQuery("")}
+                >
+                  <Icon name="close" size={14} />
+                </button>
+              )}
+            </div>
 
-            {draft.targetKind !== "local" && <Callout tone="muted">{t("automations.sshOpenferenceOnly")}</Callout>}
-          </FormSection>
-
-          <FormSection title={t("automations.section.model")}>
-            <SettingCard title={t("automations.model")}>
-              <select className="select" value={draft.model} onChange={(e) => patchDraft({ model: e.target.value })}>
-                {availableModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}
-                  </option>
-                ))}
-              </select>
-            </SettingCard>
-          </FormSection>
-
-          <FormSection
-            title={t("automations.section.history")}
-            note={runs.length > 0 ? `${runs.length} ${t("automations.runsCount")}` : undefined}
-          >
-            {runs.length === 0 && (
-              <p className="field__hint automations__no-runs">
-                {selectedId ? t("automations.noRuns") : t("automations.noSelection")}
+            {notice && (
+              <p className="autos__notice" role="alert">
+                {notice}
               </p>
             )}
-            {runs.map((run) => (
-              <div key={run.id} className="automations__run">
-                <div className="automations__run-head">
-                  <StatusPill status={run.status} t={t} />
-                  <span className="automations__run-time">{new Date(run.startedAt).toLocaleString()}</span>
-                </div>
-                {run.reason && <div className="automations__run-reason">{run.reason}</div>}
-                {run.finalText && (
-                  <details className="automations__run-details">
-                    <summary>{t("automations.viewOutput")}</summary>
-                    <pre className="automations__run-text">{run.finalText.slice(0, 4000)}</pre>
-                  </details>
+
+            {loaded && rows.length === 0 && (
+              <div className="autos__empty" role="status">
+                <ScheduleIllustration />
+                <h2>{t(emptyKey)}</h2>
+                {items.length === 0 && (
+                  <button type="button" className="btn btn--outline autos__empty-action" onClick={openCreate}>
+                    {t("automations.empty.action")}
+                  </button>
                 )}
               </div>
-            ))}
-          </FormSection>
+            )}
+
+            <ul className="autos__rows" aria-label={t("automations.page.title")}>
+              {rows.map((item) => {
+                const status = automationStatus(item);
+                const running = activeByAutomation[item.id] !== undefined;
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className={`autos__row${selectedId === item.id ? " autos__row--selected" : ""}${status !== "active" ? " autos__row--inactive" : ""}`}
+                      aria-expanded={selectedId === item.id}
+                      onClick={() => {
+                        setCreating(false);
+                        setSelectedId(item.id);
+                      }}
+                    >
+                      <Icon name="clock" size={16} className="autos__row-glyph" />
+                      <span className="autos__row-content">
+                        <span className="autos__row-title">{item.name}</span>
+                        <span className="autos__row-summary">
+                          {running && <span className="autos__meta">{t("automations.runningNow")}</span>}
+                          {status !== "active" && <span className="autos__meta">{t(statusWordKey(status))}</span>}
+                          <span className="autos__meta">
+                            {item.trigger.kind === "once" && status === "active"
+                              ? t("automations.repeat.once")
+                              : describeSchedule(item.trigger, t)}
+                          </span>
+                          {status === "active" && item.nextRunAt !== undefined && (
+                            <span className="autos__meta">
+                              {t("automations.nextPrefix")} {formatNextRun(item.nextRunAt, now)}
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            {filter !== "active" && endedCount > 0 && (
+              <p className="autos__footnote">
+                <button
+                  type="button"
+                  className="autos__link"
+                  onClick={() => {
+                    void (async () => {
+                      const ok = await confirm({
+                        title: t("automations.clearEnded.title"),
+                        message: t("automations.clearEnded.description"),
+                        confirmLabel: t("automations.clearEnded.action"),
+                        destructive: true,
+                      });
+                      if (!ok) return;
+                      const ended = items.filter((i) => automationStatus(i) === "ended");
+                      let list = items;
+                      for (const task of ended) list = await api.remove(task.id);
+                      setItems(list);
+                      if (selectedId && ended.some((i) => i.id === selectedId)) closeDetail();
+                    })();
+                  }}
+                >
+                  {t("automations.clearEnded.action")}
+                </button>
+              </p>
+            )}
+          </div>
         </div>
-      </section>
-    </div>
+      </div>
+
+      {detailOpen && (
+        <AutomationDetail
+          key={creating ? "new" : selected?.id}
+          task={creating ? null : selected}
+          workspaces={props.workspaces}
+          defaultWorkspace={props.workspaceRoot ?? props.workspaces[0]?.root ?? ""}
+          models={props.models}
+          selectedModel={props.selectedModel}
+          selectedProviderId={props.selectedProviderId}
+          env={props.env}
+          hosts={hosts}
+          skills={skills}
+          subagents={subagents}
+          runs={runs}
+          activeRunId={selected ? (activeByAutomation[selected.id] ?? null) : null}
+          now={now}
+          onSave={save}
+          onClose={closeDetail}
+          onToggle={(task) => void toggle(task)}
+          onRun={(task) => void runNow(task)}
+          onStop={(runId) => api.stop(runId)}
+          onDelete={(task) => void remove(task)}
+          onOpenSshSettings={props.onOpenSshSettings}
+          onProbeWsl={async (distro) => {
+            const result = await api.testWsl(distro);
+            return result.ok
+              ? `${result.message} (node ${result.nodeVersion}, deyin ${result.deyinVersion})`
+              : result.message;
+          }}
+        />
+      )}
+    </section>
   );
 }

@@ -27,6 +27,8 @@ import type { AttachableTerminal } from "./TerminalPanel.js";
 const TerminalPanel = lazy(() => import("./TerminalPanel.js").then((m) => ({ default: m.TerminalPanel })));
 import { Icon } from "./Icon.js";
 import { panelTabDef } from "./panelTabs.js";
+import { PanelStart } from "./PanelStart.js";
+import { PanelTabStrip, type StripTab } from "./PanelTabStrip.js";
 import { Markdown } from "./Markdown.js";
 import { TodoRows, countVisibleTodos, todosToDisplay } from "./TodoChecklist.js";
 import type { CodeDisplaySettings, PanelTab } from "./panelTypes.js";
@@ -41,6 +43,17 @@ interface WorkspacePanelProps {
   /** Bumped when the sandbox content changes outside root switches (repo connect). */
   filesRefreshKey?: number;
   activeTab: PanelTab;
+  /** Tabs currently open in the strip, in order. */
+  openTabs: PanelTab[];
+  /** True while the Start page (the "+" tab) is showing instead of a tool. */
+  startActive: boolean;
+  /** Chat-only web: the Start page offers only Preview. */
+  previewOnly?: boolean;
+  fullscreen: boolean;
+  onSelectTab: (tab: PanelTab) => void;
+  onCloseTab: (tab: PanelTab) => void;
+  onAddTab: () => void;
+  onToggleFullscreen: () => void;
   /** Active chat thread (drives the Security tab). */
   threadId?: string | null;
   /** Pending change-review queue for the active thread (Diff tab banner). */
@@ -92,7 +105,7 @@ interface WorkspacePanelProps {
   terminalScrollback?: number;
   terminalCursorStyle?: "bar" | "block" | "underline";
   terminalCopyOnSelect?: boolean;
-  terminalTheme?: "light" | "dark";
+  terminalTheme?: "light" | "dark" | "obsidian";
   terminalAttachSessions?: AttachableTerminal[];
   /** Right panel width in px (terminal refit on drag). */
   panelWidth?: number | null;
@@ -104,36 +117,47 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
   const runningSubagents = subagentRuns.filter((r) => r.status === "running").length;
   // The icon rail to the left is the tab switcher; the header only names the
   // view that rail selected, so the tab list is not drawn twice.
-  const tab = panelTabDef(props.activeTab);
-  const title =
-    props.activeTab === "diff" && props.diff
-      ? props.diff.fileName
-      : props.activeTab === "preview" && props.pageTitle?.trim()
-        ? props.pageTitle.trim()
-        : tab.label;
+  // While the Start page shows, no tool pane is the active one.
+  const current: PanelTab | null = props.startActive ? null : props.activeTab;
+  const stripTabs: StripTab[] = props.openTabs.map((id) => {
+    const def = panelTabDef(id);
+    const label =
+      id === "diff" && props.diff
+        ? props.diff.fileName
+        : id === "preview" && props.pageTitle?.trim()
+          ? props.pageTitle.trim()
+          : def.label;
+    return {
+      id,
+      label,
+      icon: def.icon,
+      badge: id === "agent" && runningSubagents > 0 ? runningSubagents : undefined,
+    };
+  });
   return (
     <section className="wspanel">
-      <div className="wspanel__tabs">
-        <button className="icon-btn icon-btn--small" title="Collapse panel" onClick={props.onCollapse}>
-          <Icon name="chevronsRight" size={13} />
-        </button>
-        <div className="wspanel__title">
-          <Icon name={tab.icon} size={13} className="wspanel__title-icon" />
-          <span className="wspanel__title-text" title={title}>
-            {title}
-          </span>
-          {props.activeTab === "diff" && props.diff && <span className="wstab__badge">Diff</span>}
-          {props.activeTab === "agent" && runningSubagents > 0 && (
-            <span className="wstab__badge">{runningSubagents}</span>
-          )}
+      <PanelTabStrip
+        tabs={stripTabs}
+        activeId={current}
+        fullscreen={props.fullscreen}
+        onSelect={props.onSelectTab}
+        onClose={props.onCloseTab}
+        onAdd={props.onAddTab}
+        onToggleFullscreen={props.onToggleFullscreen}
+        onClosePanel={props.onCollapse}
+      />
+
+      {props.startActive && (
+        <div className="wspanel__pane wspanel__pane--start">
+          <PanelStart previewOnly={props.previewOnly} onOpen={props.onSelectTab} />
         </div>
-      </div>
+      )}
 
       {/* Keep tab bodies mounted so FilesTab (and others) retain editor/view state across switches. */}
-      <div className="wspanel__pane" hidden={props.activeTab !== "files"}>
+      <div className="wspanel__pane" hidden={current !== "files"}>
         <FilesTab
           platform={props.platform}
-          active={props.activeTab === "files"}
+          active={current === "files"}
           workspaceRoot={props.workspaceRoot}
           refreshKey={props.filesRefreshKey}
           openRequest={props.filesOpenRequest}
@@ -141,11 +165,11 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onOpenFolder={props.onOpenFolder}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "terminal"}>
+      <div className="wspanel__pane" hidden={current !== "terminal"}>
         <Suspense fallback={null}>
         <TerminalPanel
           embedded
-          active={props.activeTab === "terminal"}
+          active={current === "terminal"}
           panelWidth={props.panelWidth}
           cwd={props.workspaceRoot}
           env={props.terminalEnv ?? null}
@@ -159,9 +183,9 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
         />
         </Suspense>
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "plan"}>
+      <div className="wspanel__pane" hidden={current !== "plan"}>
         <PlanTab
-          active={props.activeTab === "plan"}
+          active={current === "plan"}
           markdown={props.planMarkdown}
           display={props.codeDisplay}
           todos={props.planTodos ?? []}
@@ -171,25 +195,25 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onTodosChange={props.onPlanTodosChange}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "preview"}>
+      <div className="wspanel__pane" hidden={current !== "preview"}>
         <PreviewTab
-          active={props.activeTab === "preview"}
+          active={current === "preview"}
           threadId={props.threadId ?? null}
           title={props.pageTitle}
           fileName={props.pageFileName}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "diff"}>
+      <div className="wspanel__pane" hidden={current !== "diff"}>
         <DiffTab projectName={props.projectName} diff={props.diff} display={props.codeDisplay} />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "git"}>
+      <div className="wspanel__pane" hidden={current !== "git"}>
         <GitTab
-          active={props.activeTab === "git"}
+          active={current === "git"}
           workspaceRoot={props.workspaceRoot}
           onOpenDiff={(d) => props.onOpenGitDiff?.(d)}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "browser"}>
+      <div className="wspanel__pane" hidden={current !== "browser"}>
         <BrowserTab
           platform={props.platform}
           url={props.browserUrl}
@@ -199,9 +223,9 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onOpenBrowserSettings={props.onOpenBrowserSettings}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "security"}>
+      <div className="wspanel__pane" hidden={current !== "security"}>
         <SecurityFindingsPanel
-          active={props.activeTab === "security"}
+          active={current === "security"}
           threadId={props.threadId ?? null}
           workspaceRoot={props.workspaceRoot}
           onOpenFile={props.onOpenFile ? (path: string) => props.onOpenFile?.(path) : undefined}
@@ -209,9 +233,9 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           onFixAllFindings={props.onFixAllSecurityFindings}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "agent"}>
+      <div className="wspanel__pane" hidden={current !== "agent"}>
         <SubagentPanel
-          active={props.activeTab === "agent"}
+          active={current === "agent"}
           runs={subagentRuns}
           selectedId={props.selectedSubagentId ?? null}
           onSelect={(id) => props.onSelectSubagent?.(id)}
@@ -219,7 +243,7 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           threadId={props.threadId ?? null}
         />
       </div>
-      <div className="wspanel__pane" hidden={props.activeTab !== "botflow"}>
+      <div className="wspanel__pane" hidden={current !== "botflow"}>
         <BotFlowPanel workspaceRoot={props.workspaceRoot} />
       </div>
     </section>

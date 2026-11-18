@@ -30,6 +30,7 @@ import {
   modeReminder,
   rulesForApprovalMode,
   runAgent,
+  DEFAULT_MAX_GOAL_ROUNDS,
   runSubagent,
   skipPromptsForApproval,
   subagentReadonlyRules,
@@ -87,8 +88,12 @@ export interface WebAgentStartOptions {
   roleProviders?: Record<string, WebAgentProviderRouting>;
   /** Seed the loop's todo list (plan todos handed to Build). */
   initialTodos?: AgentTodoItem[];
-  /** Active goal text; enables report_goal_met verification. */
+  /** Active goal text; drives the reviewer-based goal loop. */
   goalText?: string;
+  /** Goal instance id, so a continuation from a replaced goal is not applied. */
+  goalId?: string;
+  /** Round budget for the goal loop. */
+  goalMaxRounds?: number;
   /** Images attached to this run's user message (vision). */
   images?: AgentImageInput[];
   /** Text-to-image model ids from the client's catalog (generate_image). */
@@ -571,6 +576,37 @@ export class WebAgentHost {
       lookupToolCache: cacheHooks?.lookupToolCache,
       storeToolCache: cacheHooks?.storeToolCache,
       imageOutput: (options.imageChatModels ?? []).includes(options.model),
+      // Reviewer-driven goal loop, same contract as desktop and CLI: a separate
+      // model call judges the transcript and its verdict decides continuations.
+      ...(options.goalText && options.goalText.trim().length > 0
+        ? {
+            goalMaxRounds: options.goalMaxRounds ?? DEFAULT_MAX_GOAL_ROUNDS,
+            applyGoal: (patch: {
+              rounds?: number;
+              status?: "active" | "paused" | "done" | "blocked" | "exhausted";
+              reason?: string;
+              reportedAt?: string;
+            }) => {
+              this.emit(options.threadId, {
+                type: "goal-updated",
+                goal: {
+                  text: options.goalText ?? "",
+                  status:
+                    patch.status === "done"
+                      ? ("met" as const)
+                      : patch.status === "blocked"
+                        ? ("unmet" as const)
+                        : (patch.status ?? "active"),
+                  ...(options.goalId ? { id: options.goalId } : {}),
+                  ...(patch.rounds !== undefined ? { rounds: patch.rounds } : {}),
+                  ...(options.goalMaxRounds !== undefined ? { maxRounds: options.goalMaxRounds } : {}),
+                  ...(patch.reason ? { reason: patch.reason } : {}),
+                  ...(patch.reportedAt ? { reportedAt: patch.reportedAt } : {}),
+                },
+              });
+            },
+          }
+        : {}),
       toolContext: {
         skills: skillSummaries.map((s) => ({ name: s.name, path: s.path, description: s.description })),
         sessionMeta,

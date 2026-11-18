@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG, DEFAULT_MODELS } from "@deyin/host-core";
 import { BUILTIN_AGENTS, type AgentDefinition } from "./agents.js";
+import { DEFAULT_MAX_GOAL_ROUNDS } from "./goal-constants.js";
 import type { PermissionRule } from "./permissions.js";
 
 export interface McpServerConfig {
@@ -32,6 +33,8 @@ export interface DeyinCliConfigFile {
   thinking?: boolean;
   /** Step cap; null = unlimited. */
   maxSteps?: number | null;
+  /** Round budget for the `/goal` loop (defaults to DEFAULT_MAX_GOAL_ROUNDS). */
+  goalMaxRounds?: number;
   permissions?: PermissionRule[];
   /**
    * Per-phase model overrides: role -> model id. Roles are "implement", "plan",
@@ -58,6 +61,8 @@ export interface ResolvedCliConfig {
   thinking: boolean;
   /** Step cap; null = unlimited. */
   maxSteps: number | null;
+  /** Round budget for the `/goal` loop. */
+  goalMaxRounds: number;
   permissions: PermissionRule[];
   roleModels: Record<string, string>;
   subagentModels: Record<string, string>;
@@ -107,6 +112,7 @@ function mergeLayer(base: ResolvedCliConfig, layer: DeyinCliConfigFile, source: 
   if (layer.clientId !== undefined) base.clientId = layer.clientId;
   if (layer.thinking !== undefined) base.thinking = layer.thinking;
   if (layer.maxSteps !== undefined) base.maxSteps = layer.maxSteps;
+  if (layer.goalMaxRounds !== undefined) base.goalMaxRounds = layer.goalMaxRounds;
   if (layer.permissions) base.permissions = [...base.permissions, ...layer.permissions];
   if (layer.roleModels) base.roleModels = { ...base.roleModels, ...layer.roleModels };
   if (layer.subagentModels) base.subagentModels = { ...base.subagentModels, ...layer.subagentModels };
@@ -139,6 +145,7 @@ export function loadCliConfig(opts: {
     clientId: DEFAULT_CONFIG.clientId,
     thinking: true,
     maxSteps: 100,
+    goalMaxRounds: DEFAULT_MAX_GOAL_ROUNDS,
     permissions: [],
     roleModels: {},
     subagentModels: {},
