@@ -79,13 +79,13 @@ export function MessageActions({
     });
   }, [copied, copyText]);
 
-  const forkDisabled = Boolean(onFork) && forkUnavailableReason !== undefined;
+  const forkDisabled = onFork !== undefined && forkUnavailableReason !== undefined;
   const upActive = feedback === "up";
   const downActive = feedback === "down";
   const copyLabel = copied ? t("chat.copied") : t("chat.copyMessage");
   const likeLabel = t(upActive ? "chat.feedbackUpActive" : "chat.feedbackUp");
   const dislikeLabel = t(downActive ? "chat.feedbackDownActive" : "chat.feedbackDown");
-  const forkLabel = forkDisabled ? forkUnavailableReason! : t("chat.forkHere");
+  const forkLabel = forkDisabled ? forkUnavailableReason : t("chat.forkHere");
 
   return (
     <div className={className ? `message-actions ${className}` : "message-actions"}>
