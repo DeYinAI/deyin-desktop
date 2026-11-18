@@ -85,8 +85,8 @@ interface ChatViewProps {
   onContinue?: () => void;
   /** Fork the thread at a timeline event index (assistant messages). */
   onForkAtEvent?: (eventIndex: number) => void;
-  /** Optional message feedback (telemetry / analytics). */
-  onMessageFeedback?: (eventIndex: number, rating: "up" | "down") => void;
+  /** Optional message feedback (telemetry / analytics). `removed` marks a retraction. */
+  onMessageFeedback?: (eventIndex: number, rating: "up" | "down", removed?: boolean) => void;
 }
 
 /** The session timeline: chat bubbles interleaved with agent activity cards. */
@@ -278,15 +278,13 @@ export function ChatView(props: ChatViewProps) {
               onMessageFeedback={(rating) => {
                 // A second click on the same rating retracts it, so the row
                 // toggles like the harness rather than locking a choice in.
-                if (messageFeedback[group.eventIndex] === rating) {
-                  setMessageFeedback((cur) => {
-                    const { [group.eventIndex]: _retracted, ...rest } = cur;
-                    return rest;
-                  });
-                  return;
-                }
-                setMessageFeedback((cur) => ({ ...cur, [group.eventIndex]: rating }));
-                props.onMessageFeedback?.(group.eventIndex, rating);
+                const removed = messageFeedback[group.eventIndex] === rating;
+                setMessageFeedback((cur) => {
+                  if (!removed) return { ...cur, [group.eventIndex]: rating };
+                  const { [group.eventIndex]: _retracted, ...rest } = cur;
+                  return rest;
+                });
+                props.onMessageFeedback?.(group.eventIndex, rating, removed);
               }}
             />
           ),
@@ -569,7 +567,7 @@ function EventRow({
           onOpenPreview={onOpenPreview}
           feedback={messageFeedback}
           onFork={onForkAtEvent ? () => onForkAtEvent(eventIndex) : undefined}
-          forkUnavailable={forkUnavailableReason}
+          forkUnavailableReason={forkUnavailableReason}
           onFeedback={onMessageFeedback}
         />
       );
@@ -842,7 +840,7 @@ function AssistantMessage({
   streaming = false,
   feedback,
   onFork,
-  forkUnavailable,
+  forkUnavailableReason,
   onFeedback,
 }: {
   text: string;
@@ -857,7 +855,7 @@ function AssistantMessage({
   feedback?: "up" | "down";
   onFork?: () => void;
   /** Why Branch cannot run here; keeps the control visible but inert. */
-  forkUnavailable?: string;
+  forkUnavailableReason?: string;
   onFeedback?: (rating: "up" | "down") => void;
 }) {
   const showActions = !streaming && text.trim().length > 0;
@@ -884,7 +882,7 @@ function AssistantMessage({
           feedback={feedback}
           onFeedback={onFeedback}
           onFork={onFork}
-          forkUnavailableReason={forkUnavailable}
+          forkUnavailableReason={forkUnavailableReason}
         />
       )}
     </div>

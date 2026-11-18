@@ -2154,9 +2154,10 @@ padding/colors without losing the chevron to the shorthand above. */
   align-items: center;
   gap: 2px;
   margin-top: 6px;
-  /* Keep the first glyph on the message's text axis: the button's own padding
-     would otherwise hang it left of the paragraph. */
-  margin-left: -6px;
+  /* Pull the row in by the button's own optical inset (6px padding + the 1px
+     flex centering slack in the 28px hit target) so the first glyph sits on the
+     message's text axis instead of hanging left of the paragraph. */
+  margin-left: -7px;
 }
 .message-actions__action {
   display: inline-flex;
@@ -2375,8 +2376,10 @@ padding/colors without losing the chevron to the shorthand above. */
 }
 .bubble-row--user .message-actions {
   margin-top: 0;
-  /* Right-aligned under the bubble: mirror the assistant row's optical inset. */
-  margin-right: -6px;
+  /* Right-aligned under the bubble: the row's box ends where the bubble's does,
+     the same relationship the assistant row has with its text column. */
+  margin-left: 0;
+  margin-right: 0;
 }
 
 /* File card — clean row: icon, path, diff stats, Review ---------------------- */

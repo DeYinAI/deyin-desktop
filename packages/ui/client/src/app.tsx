@@ -2823,10 +2823,11 @@ const continueFromStepLimit = useCallback(() => {
     [activeThreadId, forkThreadAtEvent],
   );
   const messageFeedback = useCallback(
-    (eventIndex: number, rating: "up" | "down") => {
+    (eventIndex: number, rating: "up" | "down", removed = false) => {
       if (!activeThreadId) return;
       window.deyin.telemetry.record("message-feedback", {
         rating,
+        removed,
         threadId: activeThreadId,
         eventIndex,
       });
