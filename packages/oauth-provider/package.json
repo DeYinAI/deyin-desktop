@@ -25,8 +25,8 @@
     "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.1",
-    "hono": "^4.13.4",
+    "@hono/node-server": "^2.1.9",
+    "hono": "^4.13.19",
     "jose": "^5.9.6"
   },
   "devDependencies": {
