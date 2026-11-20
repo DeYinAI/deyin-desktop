@@ -1,0 +1,10 @@
+<svg width="96" height="96" viewBox="17 13 70 70" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Deyin mark, flat: same geometry as logo-mark.svg with solid colours instead of the
+       gradient. Used where a gradient would look noisy or band (the Windows installer). -->
+  <!-- bowl of the "d" -->
+  <circle cx="44" cy="57" r="15" stroke="#4f7cff" stroke-width="8" fill="none"/>
+  <!-- ascender of the "d" -->
+  <path d="M59 22V72" stroke="#4f7cff" stroke-width="8" stroke-linecap="round"/>
+  <!-- orbit dot -->
+  <circle cx="74" cy="27" r="5" fill="#8fb4ff"/>
+</svg>
