@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ProviderInfo } from "@deyin/host-core";
-import { LOCAL_ENDPOINT_NO_KEY, credentialProbe } from "../src/main/automations/agent-run-context.js";
+import { LOCAL_ENDPOINT_NO_KEY, credentialProbe, resolveProviderRouting } from "../src/main/automations/agent-run-context.js";
 import { preflight } from "../src/main/automations/health.js";
 
 function provider(over: Partial<ProviderInfo> & { id: string }): ProviderInfo {
@@ -79,4 +79,38 @@ test("runs on WSL or an SSH host carry the Openference token, so they keep the s
 test("a provider id nobody knows falls back to the Openference sign-in", async () => {
   const { deps: d } = deps([], {}, "account-token");
   assert.deepEqual(await preflight(preflightTarget, probes(credentialProbe(d, run("gone")))), { ok: true, token: "account-token" });
+});
+
+/* The token the run itself uses ---------------------------------------------------------- */
+
+function routing(providers: ProviderInfo[], keys: Record<string, string>, account: string | null, providerId: string) {
+  const d = {
+    ...deps(providers, keys, account).deps,
+    config: { apiBaseUrl: "https://api.openference.test/v1" },
+  } as unknown as Parameters<typeof resolveProviderRouting>[0];
+  return resolveProviderRouting(d, providerId);
+}
+
+test("a local endpoint that takes no key is reached with an empty token, so the run does not read it as signed out", async () => {
+  const { apiBaseUrl, getToken } = routing([provider({ id: "ollama", local: true, hasKey: false, baseUrl: "http://localhost:11434/v1" })], {}, null, "ollama");
+  assert.equal(apiBaseUrl, "http://localhost:11434/v1");
+  assert.equal(await getToken(), "", "an empty string is no credentials; null would be signed out");
+});
+
+test("a provider that needs a key still has none when none is saved, and uses the saved one when there is", async () => {
+  const none = routing([provider({ id: "mine", hasKey: false })], {}, "account-token", "mine");
+  assert.equal(await none.getToken(), null);
+  const saved = routing([provider({ id: "mine" })], { mine: "sk-mine" }, "account-token", "mine");
+  assert.equal(await saved.getToken(), "sk-mine");
+});
+
+test("a local endpoint's own key is used when the person saved one", async () => {
+  const { getToken } = routing([provider({ id: "ollama", local: true })], { ollama: "sk-local" }, null, "ollama");
+  assert.equal(await getToken(), "sk-local");
+});
+
+test("an Openference run still uses the account token", async () => {
+  const { apiBaseUrl, getToken } = routing([provider({ id: "openference", kind: "primary" })], {}, "account-token", "openference");
+  assert.equal(apiBaseUrl, "https://api.openference.test/v1");
+  assert.equal(await getToken(), "account-token");
 });
