@@ -119,7 +119,8 @@ export function resolveProviderRouting(
   const provider = deps.agents.listProviders(true).find((p) => p.id === providerId);
   if (provider && provider.kind === "custom") {
     apiBaseUrl = provider.baseUrl ?? apiBaseUrl;
-    getToken = () => Promise.resolve(deps.agents.getKey(provider.id));
+    // A local endpoint that takes no key is reached with an empty token, as in a chat: `null` would read as signed out.
+    getToken = () => Promise.resolve(deps.agents.getKey(provider.id) ?? (provider.local ? "" : null));
   }
   return { apiBaseUrl, getToken };
 }
