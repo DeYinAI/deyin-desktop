@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useConfirm } from "../ConfirmDialog.js";
 import { Icon } from "../Icon.js";
 import { formatContext } from "../ModelPicker.js";
+import { OpenferenceLogo } from "../OpenferenceLogo.js";
 import { modelLogoFor, ProviderLogo, ProviderMark } from "../ProviderLogo.js";
 import { PageHeader, Tag, Toggle } from "./controls.js";
 import { fmtUsage } from "./AccountUsagePanel.js";
@@ -146,10 +147,16 @@ export function ModelSettingsPage(props: Props) {
   );
 }
 
-/** The lab's logo beside a model, or an empty slot so names stay aligned. */
+/**
+ * The lab's logo beside a model, or an empty slot so names stay aligned.
+ * Openference's own `Auto` router belongs to no third-party lab, so it carries
+ * the Openference mark instead of leaving the column blank.
+ */
 function ModelFamilyLogo({ id, name }: { id: string; name: string }) {
   const logo = modelLogoFor(id, name);
-  return <span className="modellist__logo">{logo && <ProviderLogo logo={logo} size={16} />}</span>;
+  if (logo) return <span className="modellist__logo"><ProviderLogo logo={logo} size={16} /></span>;
+  const isRouter = id.trim().toLowerCase() === "auto";
+  return <span className="modellist__logo">{isRouter && <OpenferenceLogo size={16} />}</span>;
 }
 
 function providerStatus(provider: ProviderInfo): { label: string; tone: "ok" | "muted" | "warn" } {

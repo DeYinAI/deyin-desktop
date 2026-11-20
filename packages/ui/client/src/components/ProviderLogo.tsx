@@ -49,6 +49,16 @@ const PROVIDER_ALIASES: Readonly<Record<string, ProviderLogoId>> = {
   cohere: "cohere",
   azure: "azure",
   vllm: "vllm",
+  ernie: "ernie",
+  wenxin: "ernie",
+  baidu: "baidu",
+  hunyuan: "hunyuan",
+  tencent: "tencent",
+  mimo: "mimo",
+  xiaomi: "mimo",
+  stepfun: "stepfun",
+  agnes: "agnes",
+  agnesai: "agnes",
 };
 
 const ALIASES_LONGEST_FIRST = Object.keys(PROVIDER_ALIASES).sort((a, b) => b.length - a.length);
@@ -88,6 +98,11 @@ const MODEL_FAMILIES: readonly (readonly [RegExp, ProviderLogoId])[] = [
   [/command|cohere/, "cohere"],
   [/nemotron/, "nvidia"],
   [/sonar|perplexity/, "perplexity"],
+  [/ernie|wenxin/, "ernie"],
+  [/hunyuan|hy\d/, "hunyuan"],
+  [/mimo/, "mimo"],
+  [/stepfun|step[- ]?\d/, "stepfun"],
+  [/agnes/, "agnes"],
 ];
 
 /** Logo for the lab that made a model, from its id or display name. */
