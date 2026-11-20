@@ -36,7 +36,7 @@ function parseTarget(args: Record<string, unknown>): AutomationTarget {
  return { kind: "wsl", distro, workspacePath };
 }
 
-function parseTrigger(args: Record<string, unknown>): AutomationTrigger {
+export function parseTrigger(args: Record<string, unknown>): AutomationTrigger {
  const runAt = str(args, "runAt");
  if (runAt) {
  const at = Date.parse(runAt);
@@ -49,7 +49,7 @@ function parseTrigger(args: Record<string, unknown>): AutomationTrigger {
  return { kind: "cron", expression: cron };
 }
 
-function describeTrigger(trigger: AutomationTrigger): string {
+export function describeTrigger(trigger: AutomationTrigger): string {
  if (trigger.kind === "cron") return `cron ${trigger.expression}`;
  if (trigger.kind === "once") return `once at ${new Date(trigger.at).toISOString()}`;
  return "manual";
@@ -200,8 +200,8 @@ function findRun(service: AutomationService, args: Record<string, unknown>): Aut
 }
 
 /** Poll a freshly started run briefly so the agent sees the outcome in-turn. */
-async function waitForRun(
- service: AutomationService,
+export async function waitForRun(
+ service: Pick<AutomationService, "listRuns">,
  automationId: string,
  runId: string,
  timeoutMs: number,

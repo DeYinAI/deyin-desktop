@@ -1,4 +1,4 @@
-import { isReadOnlyTool, resolveToolPermission, type BotPermissionSettings } from "./permissions.js";
+import { LOCAL_SCOPE, isReadOnlyTool, resolveToolPermission, splitToolName, type BotPermissionSettings } from "./permissions.js";
 import type { BotApprovalMode } from "./types.js";
 
 /**
@@ -10,13 +10,14 @@ import type { BotApprovalMode } from "./types.js";
  *   2. read-only mode and the tool can change things  -> deny
  *   3. the tool is explicitly `needs_approval`        -> ask a person, in every mode ("ask first always wins")
  *   4. run-everything mode                            -> allow
- *   5. the tool only reads                            -> allow
- *   6. a write under auto review                      -> the reviewer applies the plain-English
+ *   5. the Bot's own notes, while a person is watching -> allow (see `isOwnNote`)
+ *   6. the tool only reads                            -> allow
+ *   7. a write under auto review                      -> the reviewer applies the plain-English
  *      instructions: block beats allow; anything it is unsure of, or fails on, asks a person.
  */
 
 export type ReviewAction = "allow" | "ask" | "deny";
-export type ReviewLayer = "tool-blocked" | "read-only-mode" | "tool-permission" | "run-everything" | "read" | "auto-review" | "default";
+export type ReviewLayer = "tool-blocked" | "read-only-mode" | "tool-permission" | "run-everything" | "own-notes" | "read" | "auto-review" | "default";
 
 export interface ReviewedCall {
   name: string;
@@ -75,15 +76,32 @@ async function review(classify: ReviewClassifier | undefined, request: ReviewReq
   }
 }
 
+/**
+ * What a Bot saves about the person it works for: a rule they told it, a preference. It lands in that Bot's own memory,
+ * where the person can read it and make the Bot forget it, so there is nothing to approve before it is saved.
+ * Making other Bots, scheduling routines and running them are not notes: they add something that acts, and still ask.
+ */
+const OWN_NOTE_TOOLS: ReadonlySet<string> = new Set(["remember"]);
+
+function isOwnNote(call: ReviewedCall): boolean {
+  const { scope, tool } = splitToolName(call.name);
+  return scope === LOCAL_SCOPE && OWN_NOTE_TOOLS.has(tool);
+}
+
 export interface DecideInput {
   settings: BotPermissionSettings;
   /** The Bot's own approval mode. */
   mode: BotApprovalMode;
   call: ReviewedCall;
   classify?: ReviewClassifier;
+  /**
+   * A person is there to see what happens. A run nobody watches never gets the free pass for notes: whatever it read
+   * could have told it what to write down, and nobody would see it saved.
+   */
+  attended?: boolean;
 }
 
-export async function decideToolUse({ settings, mode, call, classify }: DecideInput): Promise<ReviewDecision> {
+export async function decideToolUse({ settings, mode, call, classify, attended = false }: DecideInput): Promise<ReviewDecision> {
   const read = isReadOnlyTool(call);
   const { permission, explicit } = resolveToolPermission(settings, call);
   const what = describe(call);
@@ -92,9 +110,13 @@ export async function decideToolUse({ settings, mode, call, classify }: DecideIn
   if (mode === "read_only" && !read) return deny("read-only-mode", `This Bot is read-only, so it cannot do this: ${what}.`);
   if (permission === "needs_approval" && explicit) return ask("tool-permission", `You asked to be asked first before: ${what}.`);
   if (mode === "run_everything") return allow("run-everything", `This Bot runs everything: ${what}.`);
-  if (read) return allow("read", `Only reads: ${what}.`);
 
   const { enabled, allowInstructions, blockInstructions } = settings.autoReview;
+  // A person who wrote a block instruction wants every change looked at, so notes go through the review below too.
+  const blockRules = enabled && blockInstructions.length > 0;
+  if (attended && isOwnNote(call) && !blockRules) return allow("own-notes", `A note in this Bot's own memory, which you can read and clear: ${what}.`);
+  if (read) return allow("read", `Only reads: ${what}.`);
+
   const explicitlyAllowed = permission === "always_allow";
   // An always-allowed tool is only looked at when something could veto it; an unset write is looked at whenever there are instructions.
   const worthReviewing = enabled && (blockInstructions.length > 0 || (!explicitlyAllowed && allowInstructions.length > 0));
@@ -145,7 +167,7 @@ export type ToolGate = (call: ReviewedCall) => Promise<GateOutcome>;
 
 export function createToolGate(deps: ToolGateDeps): ToolGate {
   return async (call) => {
-    const decision = await decideToolUse({ settings: deps.settings(), mode: deps.mode(), call, classify: deps.classify });
+    const decision = await decideToolUse({ settings: deps.settings(), mode: deps.mode(), call, classify: deps.classify, attended: deps.ask !== undefined });
     if (decision.action === "allow") return { allow: true, decision };
     if (decision.action === "deny") return { allow: false, reason: decision.reason, decision };
     if (!deps.ask) {

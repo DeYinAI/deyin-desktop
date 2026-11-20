@@ -168,3 +168,23 @@ test("the same Bots always give the same list, and the catalog itself is never r
   assert.equal(forYou(BOT_CATALOG, signals).length, BOT_CATALOG.length, "nothing is dropped");
   assert.deepEqual(forYou([], signals), []);
 });
+
+/* Team Builder ------------------------------------------------------------------------- */
+
+test("Team Builder interviews first, proposes, waits for a yes, and creates only what was approved", () => {
+  const entry = catalogEntry("team-builder");
+  assert.ok(entry);
+  assert.equal(entry.template.name, "Team Builder");
+  assert.equal(entry.derivedFrom, undefined, "it is Deyin's own, not adapted from an example");
+  const { purpose, skills } = entry.template;
+  assert.match(purpose, /short interview/);
+  assert.match(purpose, /wait for a yes/);
+  assert.match(purpose, /Create only the Bots they approve, with bot_create/);
+  assert.match(purpose, /one job each/);
+  const steps = skills[0]!.body;
+  assert.match(steps, /bot_list/, "it checks what exists before proposing");
+  assert.match(steps, /Wait for a yes/);
+  assert.match(steps, /Do not set it up until they agree on the time/, "a routine needs the person's time, not the Bot's guess");
+  assert.ok(steps.indexOf("Wait for a yes") < steps.indexOf("with bot_create"), "approval comes before creating");
+  assert.deepEqual(entry.template.routines, [], "it sets nothing up on a schedule by itself");
+});

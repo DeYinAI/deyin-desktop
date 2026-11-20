@@ -393,3 +393,75 @@ test("always-allow from a card then applies to the next call", async () => {
   assert.equal((await gate(SEND)).allow, true);
   assert.deepEqual(asked, [SEND.name], "asked once; the second call was already allowed");
 });
+
+/* A Bot's own notes ---------------------------------------------------------------------- */
+
+const REMEMBER: ReviewedCall = { name: "remember", tier: "execute", summary: "remember: always ask before sending" };
+const attendedDecide = (s: BotPermissionSettings, call: ReviewedCall, classify?: ReviewClassifier) =>
+  decideToolUse({ settings: s, mode: modeOf(s), call, classify, attended: true });
+
+test("while a person is watching, a Bot's own note is saved without asking", async () => {
+  const decision = await attendedDecide(EMPTY_PERMISSIONS, REMEMBER);
+  assert.equal(decision.action, "allow");
+  assert.equal(decision.layer, "own-notes");
+  assert.match(decision.reason, /remember: always ask before sending/);
+});
+
+test("a run nobody watches never gets the free pass for notes", async () => {
+  const unwatched = await decide(EMPTY_PERMISSIONS, REMEMBER);
+  assert.equal(unwatched.action, "ask");
+  assert.equal(unwatched.layer, "default");
+  const gate = createToolGate({ mode: () => "auto_review", settings: () => EMPTY_PERMISSIONS });
+  const outcome = await gate(REMEMBER);
+  assert.equal(outcome.allow, false, "no one to ask, so it is not saved");
+});
+
+test("making Bots, routines and skills still asks, however it is watched", async () => {
+  for (const name of ["bot_create", "routine_create", "routine_run", "skill_save"]) {
+    const decision = await attendedDecide(EMPTY_PERMISSIONS, { name, tier: name === "routine_run" ? "execute" : "write", summary: name });
+    assert.equal(decision.action, "ask", name);
+    assert.equal(decision.layer, "default", name);
+  }
+});
+
+test("a note from a connector that happens to be called remember is not the Bot's own", async () => {
+  const decision = await attendedDecide(EMPTY_PERMISSIONS, { name: "mcp__notes__remember", tier: "execute", summary: "Save a note in Notes" });
+  assert.equal(decision.action, "ask");
+});
+
+test("what the person decided about notes still wins", async () => {
+  const blocked = settings({ tool: { scope: "local", tool: "remember", permission: "blocked" } });
+  assert.equal((await attendedDecide(blocked, REMEMBER)).action, "deny");
+  const askFirst = settings({ tool: { scope: "local", tool: "remember", permission: "needs_approval" } });
+  const asked = await attendedDecide(askFirst, REMEMBER);
+  assert.equal(asked.action, "ask");
+  assert.equal(asked.layer, "tool-permission");
+  const readOnly = settings({}, "read_only");
+  assert.equal((await attendedDecide(readOnly, REMEMBER)).action, "deny", "a read-only Bot changes nothing, notes included");
+});
+
+test("a person with a block instruction has notes looked at like any other change", async () => {
+  const s = settings(blockRules);
+  const r = reviewer({ verdict: "ask", reason: "Not sure about this one." });
+  const decision = await attendedDecide(s, REMEMBER, r.classify);
+  assert.equal(decision.action, "ask");
+  assert.equal(r.seen.length, 1, "the reviewer was asked");
+  const blocking = reviewer({ verdict: "block", reason: "Matches your block instruction." });
+  assert.equal((await attendedDecide(s, REMEMBER, blocking.classify)).action, "deny");
+});
+
+test("the gate saves a note without showing a card, and still shows one for a Bot", async () => {
+  const cards: string[] = [];
+  const gate = createToolGate({
+    mode: () => "auto_review",
+    settings: () => EMPTY_PERMISSIONS,
+    ask: async (call) => {
+      cards.push(call.name);
+      return "allow";
+    },
+  });
+  assert.equal((await gate(REMEMBER)).allow, true);
+  assert.deepEqual(cards, [], "no card for a note");
+  assert.equal((await gate({ name: "bot_create", tier: "write", summary: "create Bot Ada" })).allow, true);
+  assert.deepEqual(cards, ["bot_create"], "a card for a new Bot");
+});

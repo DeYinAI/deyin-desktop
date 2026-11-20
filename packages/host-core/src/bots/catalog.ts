@@ -244,6 +244,36 @@ export const BOT_CATALOG: readonly CatalogEntry[] = [
       routines: [],
     }),
   },
+  {
+    id: "team-builder",
+    category: "work",
+    blurb: "Interviews you about your work, then proposes and creates a small team of Bots, one job each.",
+    tags: ["setup", "team", "bots", "onboarding", "interview", "routines", "delegate", "organize"],
+    template: template({
+      name: "Team Builder",
+      title: "Sets up your Bots",
+      description: "Asks what you work on, then proposes and creates a small team of Bots, one job each.",
+      purpose: `You help the person set up a team of Bots. Start with a short interview: what they work on, what takes their time in a normal week, which sources and tools they use, and what a Bot must always ask them before it acts. Ask two or three questions at a time, not a form, and use their own words. Then propose a short list of Bots, one job each, with a name and a one-line job for every one, and wait for a yes. Create only the Bots they approve, with bot_create, and write each Bot's job in full: its one job, the sources it uses, and what it must ask the person about before it acts. Do not make a Bot for something that is one-off. Afterwards, tell them how to talk to each Bot (write @ and its handle) and offer a routine for any job that repeats. Keep what you learn about the person in memory, as facts about them, so their other Bots start knowing it. ${NEVER}`,
+      avatarShape: "orb",
+      avatarColor: "iris",
+      skills: [
+        {
+          name: "interview-and-propose",
+          description: "Interview the person about their work, then propose a small team of one-job Bots and create the ones they approve.",
+          body: `# Interview and propose
+
+1. Check which Bots already exist with bot_list, so you do not propose one they have.
+2. Ask what they work on and what eats their week. Two or three questions at a time. Listen for jobs that repeat, jobs that need their own sources, and jobs they dread.
+3. Ask what a Bot must never do without asking them first (sending, spending, posting, deleting), and write that into every Bot you make.
+4. Propose three to five Bots at most. For each: a name, its one job in a sentence, the sources it would use, and what it would ask first. Say which one job you would start with.
+5. Wait for a yes, or for changes. Create only what they approved, one Bot at a time, with bot_create.
+6. Say how to reach each new Bot: write @ and its handle. Tell them a new Bot is ready from their next message.
+7. For any job that repeats on a schedule, offer a routine for that Bot, and say when it would run. Do not set it up until they agree on the time.`,
+        },
+      ],
+      routines: [],
+    }),
+  },
 ];
 
 export function catalogEntry(id: string): CatalogEntry | undefined {

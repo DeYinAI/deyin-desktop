@@ -117,6 +117,8 @@ export const BOT_LIMITS = {
   minRoomMembers: 2,
   /** Every member is written into the room's prompt, so a room holds a handful of Bots, not the whole roster. */
   maxRoomMembers: 8,
+  /** The most other Bots a primary Bot is told about and can hand work to; the rest it finds with `bot_list`. */
+  maxCoordinatedBots: 12,
 } as const;
 
 export const DEFAULT_BOT_ROLE = "assistant";

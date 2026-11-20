@@ -13,10 +13,12 @@ interface BotCreateDialogProps {
   onCancel: () => void;
   /** Seeds the starting avatar. Injected so a test can pin it; the app passes a fresh random seed. */
   seed?: string;
+  /** The Bot is being made as the person's primary Bot: the dialog says so. */
+  primary?: boolean;
 }
 
 /** The "New Bot" dialog: a name, a label, and an avatar. Everything else is edited later on the Bot's page. */
-export function BotCreateDialog({ onCreate, onCreated, onCancel, seed }: BotCreateDialogProps) {
+export function BotCreateDialog({ onCreate, onCreated, onCancel, seed, primary = false }: BotCreateDialogProps) {
   const t = useT();
   const initialSeed = useMemo(() => seed ?? `new-${Math.random().toString(36).slice(2)}`, [seed]);
   const [form, setForm] = useState<BotForm>(() => newBotForm(initialSeed));
@@ -61,7 +63,7 @@ export function BotCreateDialog({ onCreate, onCreated, onCancel, seed }: BotCrea
     >
       <form className="modal bot-create" onSubmit={submit}>
         <h2 id="bot-create-title" className="bot-create__title">
-          {t("bot.create.title")}
+          {t(primary ? "bot.primary.createTitle" : "bot.create.title")}
         </h2>
         <div className="bot-create__preview">
           <BotAvatar bot={{ name: form.name || t("bot.create.namePlaceholder"), avatarShape: form.avatarShape, avatarColor: form.avatarColor }} size={72} decorative />

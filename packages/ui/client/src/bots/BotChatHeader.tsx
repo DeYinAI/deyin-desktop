@@ -7,7 +7,7 @@ interface BotChatHeaderProps {
   bot: DeyinBot;
   onDetails: () => void;
   onNewConversation: () => void;
-  /** For a room: the Bots that can answer in it, shown as chips that mention them. */
+  /** The Bots shown as chips that mention them: a room's members, or the primary Bot's other Bots. */
   members?: readonly DeyinBot[];
   /** Add `@handle` to what is being written. */
   onMention?: (handle: string) => void;
@@ -23,8 +23,8 @@ export function BotChatHeader({ bot, onDetails, onNewConversation, members = [],
         <span className="bot-chat-header__name">{bot.name}</span>
         {bot.title ? <span className="bot-chat-header__title">{bot.title}</span> : null}
       </div>
-      {bot.kind === "room" && members.length > 0 ? (
-        <ul className="bot-chat-header__members" aria-label={t("bot.room.membersTitle")} title={t("bot.room.mentionHint")}>
+      {(bot.kind === "room" || bot.isPrimary) && members.length > 0 ? (
+        <ul className="bot-chat-header__members" aria-label={t(bot.kind === "room" ? "bot.room.membersTitle" : "bot.primary.othersTitle")} title={t("bot.room.mentionHint")}>
           {members.map((member) => (
             <li key={member.id}>
               <button

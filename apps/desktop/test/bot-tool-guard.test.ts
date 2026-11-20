@@ -227,3 +227,18 @@ test("the verdict tool refuses a malformed verdict and does not record it", asyn
   assert.equal(recorded.length, 1);
   assert.equal(tool.tier, "read");
 });
+
+test("a Bot's own note goes ahead with no card in a chat, and is refused in a run nobody watches", async () => {
+  const tiers = { ...TIERS, remember: "execute" };
+  const chat = createBotToolGuard({
+    mode: () => "auto_review",
+    permissions: memoryPermissions(),
+    tierOf: (name) => tiers[name],
+    ask: async () => "deny",
+  });
+  assert.equal(await chat({ name: "remember" }, { title: "Rule" }, "remember: Rule"), undefined);
+
+  const unwatched = createBotToolGuard({ mode: () => "auto_review", permissions: memoryPermissions(), tierOf: (name) => tiers[name] });
+  const refused = await unwatched({ name: "remember" }, { title: "Rule" }, "remember: Rule");
+  assert.match(refused?.block ?? "", /Nobody is here to approve it/);
+});

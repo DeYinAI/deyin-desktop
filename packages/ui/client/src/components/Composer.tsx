@@ -8,6 +8,7 @@ import { ModelPicker } from "./ModelPicker.js";
 import { PortalledPanel } from "./PortalledPanel.js";
 import { goalCommandDescription, goalComposerHint } from "../goal-command.js";
 import { MODE_MENU_COMMAND_NAMES, modeCommandHint } from "../modeCommand.js";
+import type { BotComposerChrome } from "../bots/botComposer.js";
 import { clampSlashIndex, stepSlashIndex } from "../slashMenu.js";
 import type {
   ApprovalMode,
@@ -114,6 +115,8 @@ export interface ComposerProps {
   focusSignal?: number;
   /** Hosted web chat-only: plain messages, no agent controls. */
   plainChat?: boolean;
+  /** A Bot's conversation: its own placeholder, and its own approval mode in place of the coding access setting. */
+  botChat?: BotComposerChrome;
   /**
    * Conductor needs a local shell and git for its pipelines and external agent
    * CLIs, so a chat-only host does not offer `/conductor`. Absent means available.
@@ -670,17 +673,19 @@ export function Composer(props: ComposerProps) {
         className="composer__input"
         rows={1}
         placeholder={
-          props.plainChat
-            ? t("composer.placeholderPlainChat")
-            : props.mode === "plan"
-              ? t("composer.placeholderPlan")
-              : props.mode === "ask"
-                ? t("composer.placeholderAsk")
-                : props.mode === "delivery"
-                  ? t("composer.placeholderDelivery")
-                  : props.hasEvents
-                    ? t("composer.placeholderFollowUp")
-                    : t("composer.placeholder")
+          props.botChat
+            ? props.botChat.placeholder
+            : props.plainChat
+              ? t("composer.placeholderPlainChat")
+              : props.mode === "plan"
+                ? t("composer.placeholderPlan")
+                : props.mode === "ask"
+                  ? t("composer.placeholderAsk")
+                  : props.mode === "delivery"
+                    ? t("composer.placeholderDelivery")
+                    : props.hasEvents
+                      ? t("composer.placeholderFollowUp")
+                      : t("composer.placeholder")
         }
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}
@@ -785,7 +790,17 @@ export function Composer(props: ComposerProps) {
           </button>
         )}
 
-        {!props.plainChat ? (
+        {props.botChat ? (
+          <button
+            type="button"
+            className={`chip ${props.botChat.approvalWarn ? "chip--warn" : ""}`}
+            title={props.botChat.approvalTitle}
+            onClick={props.botChat.onOpenApproval}
+          >
+            <Icon name={props.botChat.approvalIcon} size={13} />
+            <span>{props.botChat.approvalLabel}</span>
+          </button>
+        ) : !props.plainChat ? (
         <AnchoredMenu
           open={accessOpen}
           onToggle={() => {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { BotMemory, BotSkillStore, BotStore, FileStorage } from "@deyin/host-core";
 import type { SubagentDefinition } from "@deyin/agent-core";
-import { ROOM_MEMBER_SOURCE, allowRoomDelegation, roomSubagents, withRoomMembers } from "../src/main/bots/room-run.js";
+import { DELEGATE_LEAD, ROOM_MEMBER_SOURCE, allowRoomDelegation, primaryDelegation, roomSubagents, withBotDelegates, withRoomMembers } from "../src/main/bots/room-run.js";
 import type { ToolGuard } from "../src/main/bots/tool-guard.js";
 
 const dirs: string[] = [];
@@ -139,4 +139,45 @@ test("the host asks a member without being stopped, and anything else is still t
 test("a room with no members lets nothing through", async () => {
   const { guard } = recordingGuard();
   assert.deepEqual(await allowRoomDelegation(guard, [])({ name: "task" }, { subagent: "" }, "x"), { block: "needs approval" });
+});
+
+test("a Bot handed work by the primary is told who is asking, not that it is in a room", async () => {
+  const { source, ada } = setup();
+  const [s] = await roomSubagents(source, [ada], { memoryEnabled: true, lead: DELEGATE_LEAD });
+  assert.match(s!.prompt, /primary Bot is passing you something the person asked/);
+  assert.doesNotMatch(s!.prompt, /answering in a room/);
+  assert.ok(s!.prompt.trimEnd().endsWith("not the rest of their conversation."));
+});
+
+test("the primary keeps the run's own subagents and adds its Bots; a Bot's handle wins a clash", () => {
+  const explore: SubagentDefinition = { name: "explore", description: "d", prompt: "p", readonly: true, isBackground: false, source: "builtin" };
+  const review: SubagentDefinition = { name: "review", description: "d", prompt: "p", readonly: true, isBackground: false, source: "user" };
+  const bot = (name: string): SubagentDefinition => ({ name, description: "Bot", prompt: "bot", readonly: false, isBackground: false, source: ROOM_MEMBER_SOURCE });
+  const caps = { subagents: [explore, review], skills: ["kept"] };
+  const next = withBotDelegates(caps, [bot("ada"), bot("Explore")]);
+  assert.deepEqual(next.subagents.map((s) => `${s.name}:${s.source}`), ["ada:room", "Explore:room", "review:user"]);
+  assert.deepEqual(next.skills, ["kept"]);
+  assert.deepEqual(caps.subagents, [explore, review], "the original is not changed");
+});
+
+test("a run hands work to the primary Bot's team only when the Bot is the primary one and has a team", async () => {
+  const { source, store, ada, bo } = setup();
+  const room = store.create({ name: "Standup", kind: "room", memberBotIds: [ada.id, bo.id] });
+  const lead = store.create({ name: "Lead" });
+  assert.equal(await primaryDelegation(store.get(lead.id)!, source, { memoryEnabled: true }), undefined, "not the primary");
+  store.setPrimary(lead.id);
+  const delegation = await primaryDelegation(store.get(lead.id)!, source, { memoryEnabled: true });
+  assert.deepEqual(delegation?.team.bots.map((b) => b.handle).sort(), ["ada", "bo"], "not itself, not the room");
+  assert.deepEqual(delegation?.delegates.map((d) => d.name).sort(), ["ada", "bo"]);
+  for (const delegate of delegation!.delegates) assert.ok(delegate.prompt.trimEnd().endsWith("not the rest of their conversation."), "each answers as itself, to the person");
+  assert.equal(await primaryDelegation(room, source, { memoryEnabled: true }), undefined, "a room is never the primary");
+});
+
+test("a primary Bot with no other active Bots has nobody to hand work to", async () => {
+  const { source, store, ada, bo } = setup();
+  store.archive(ada.id);
+  store.archive(bo.id);
+  const solo = store.create({ name: "Solo" });
+  store.setPrimary(solo.id);
+  assert.equal(await primaryDelegation(store.get(solo.id)!, source, { memoryEnabled: true }), undefined);
 });

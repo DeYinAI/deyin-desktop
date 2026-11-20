@@ -1,7 +1,7 @@
 import { SessionStore } from "@deyin/agent-core";
 import { join } from "node:path";
 import { app } from "electron";
-import { runAgent, runHooks, runSubagent, subagentEffort } from "@deyin/agent-core";
+import { createTaskTool, runAgent, runHooks, runSubagent, subagentEffort } from "@deyin/agent-core";
 import type { AgentMessage, ToolRegistry } from "@deyin/agent-core";
 import type { Automation, AutomationLimits } from "@deyin/host-core";
 import type { SubagentDefinition } from "@deyin/agent-core";
@@ -14,7 +14,8 @@ import {
   type AgentRunContextDeps,
 } from "./agent-run-context.js";
 import { automationRequiresExtraConfirmation } from "../permission-policy.js";
-import { withBotPersona, type BotRunContext, type BotRunSource } from "../bots/run.js";
+import { chatPersona, withBotPersona, type BotRunContext, type BotRunSource } from "../bots/run.js";
+import { allowRoomDelegation, primaryDelegation } from "../bots/room-run.js";
 import { createBotRunGuard } from "../bots/run-guard.js";
 import { createVaultRun, type VaultRun } from "../bots/vault-run.js";
 import { browserPageSource } from "../bots/vault-pages.js";
@@ -89,6 +90,14 @@ export async function runLocalAutomation(
         })
       : undefined;
 
+  // The person's primary Bot hands work to the Bots it coordinates in a routine as it does in a chat: each answers
+  // as itself, held to the same guard. Nobody is there to approve anything, so whatever would need a person is refused.
+  const delegation =
+    opts.bot && opts.botSource && !opts.subagent
+      ? await primaryDelegation(opts.bot.bot, opts.botSource, { memoryEnabled: settings.memoryEnabled })
+      : undefined;
+  const parentGuard = botGuard && delegation ? allowRoomDelegation(botGuard, delegation.team.bots) : botGuard;
+
   // A Bot's routine can fill saved logins, cards and contacts too, but nobody is here to agree to anything new: it
   // only uses what a person already agreed to, and anything it reads is scrubbed of what the Vault holds.
   const vaultRun: VaultRun | undefined =
@@ -118,16 +127,70 @@ export async function runLocalAutomation(
     }
   }
 
+  // How a child run (the subagent a payload names, or a Bot the primary hands work to) is set up. A delegate's words
+  // are its own report, not the routine's text, so only a payload's subagent streams them.
+  const childRequest = (def: SubagentDefinition, streamText: boolean): Parameters<typeof runSubagent>[2] => ({
+    cwd,
+    parent: { model: automation.model, providerId: automation.providerId, thinking: settings.thinking },
+    modelOverride: settings.subagentModels[def.name],
+    effortOverride: subagentEffort(settings.subagentEfforts[def.name], def.effort),
+    maxStepsDefault: Math.min(limits.maxSteps, settings.subagentMaxSteps),
+    parentRouting: { apiBaseUrl: env.provider.apiBaseUrl, getToken: env.provider.getToken },
+    permissionEngine: automationPermissions(),
+    resolvePermission: async (req) => {
+      if (automationRequiresExtraConfirmation(req.toolName, req.args)) return "deny";
+      return "allow";
+    },
+    ...(botGuard ? { beforeTool: botGuard } : {}),
+    // A routine's subagent has no browser, so no Vault tools either; what it reads is still scrubbed.
+    ...(vaultRun ? { prepareRegistry: (registry: ToolRegistry) => vaultRun.protect(registry) } : {}),
+    signal,
+    onEvent: (event) => {
+      opts.onActivity?.();
+      if (event.type === "text-delta") {
+        if (streamText) onEvent({ type: "text-delta", delta: event.delta });
+      } else if (event.type === "tool-start") {
+        onEvent({ type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
+      } else if (event.type === "tool-end") {
+        onEvent({
+          type: "tool-end",
+          callId: event.call.id,
+          name: event.call.name,
+          summary: "",
+          result: event.result.length > 8_000 ? `${event.result.slice(0, 8_000)}\n… (truncated)` : event.result,
+          ok: event.ok,
+          denied: event.denied,
+        });
+      } else if (event.type === "file-change") {
+        onEvent({
+          type: "file-change",
+          path: event.change.path,
+          before: event.change.before,
+          after: event.change.after,
+        });
+      }
+    },
+  });
+
   let steps = 0;
   const runTools = createRunTools({ startedAt: opts.startedAt, limits, steps: () => steps }, opts.state);
   for (const tool of runTools.tools) env.registry.register(tool);
+  if (delegation) {
+    env.registry.register(
+      createTaskTool({
+        subagents: delegation.delegates,
+        runSubagent: (def, subPrompt, overrides) => runSubagent(overrides.readonly ? { ...def, readonly: true } : def, subPrompt, childRequest(def, false)),
+      }),
+    );
+  }
   vaultRun?.protect(env.registry);
   const system = await buildAutomationSystemPrompt(
     deps,
     cwd,
     withBotPersona(
       buildRunPrompt({ startedAt: opts.startedAt, limits, browserOrigins, learnedRules: automation.learnedRules, ...(opts.state ? { state: opts.state.get() ?? null } : {}) }),
-      opts.bot?.persona,
+      // A routine starts from what the Bot was told: its job and its rules are in front of it, as in a chat.
+      opts.bot ? chatPersona(opts.bot.persona, { ...(delegation ? { team: delegation.team } : {}), facts: settings.memoryEnabled ? opts.bot.memory.list() : [], unattended: true }) : undefined,
     ),
     { excludeWorkspaceCaps: opts.bot !== undefined, ...(opts.bot ? { botSkillsDir: opts.bot.skills.root } : {}) },
   );
@@ -136,52 +199,12 @@ export async function runLocalAutomation(
     { role: "user", content: prompt },
   ];
 
-  // A subagent payload delegates directly rather than asking the model to call
-  // the task tool — the automation registry has no task tool, and runSubagent
-  // already gives the child a clean context and its own toolset.
+  // A subagent payload delegates directly rather than asking the model to call the task tool (only a primary
+  // Bot's routine has one, for the Bots it coordinates), and runSubagent already gives the child a clean context
+  // and its own toolset.
   if (opts.subagent) {
     const def = opts.subagent;
-    const result = await runSubagent(def, prompt, {
-      cwd,
-      parent: { model: automation.model, providerId: automation.providerId, thinking: settings.thinking },
-      modelOverride: settings.subagentModels[def.name],
-      effortOverride: subagentEffort(settings.subagentEfforts[def.name], def.effort),
-      maxStepsDefault: Math.min(limits.maxSteps, settings.subagentMaxSteps),
-      parentRouting: { apiBaseUrl: env.provider.apiBaseUrl, getToken: env.provider.getToken },
-      permissionEngine: automationPermissions(),
-      resolvePermission: async (req) => {
-        if (automationRequiresExtraConfirmation(req.toolName, req.args)) return "deny";
-        return "allow";
-      },
-      ...(botGuard ? { beforeTool: botGuard } : {}),
-      // A routine's subagent has no browser, so no Vault tools either; what it reads is still scrubbed.
-      ...(vaultRun ? { prepareRegistry: (registry: ToolRegistry) => vaultRun.protect(registry) } : {}),
-      signal,
-      onEvent: (event) => {
-        opts.onActivity?.();
-        if (event.type === "text-delta") onEvent({ type: "text-delta", delta: event.delta });
-        else if (event.type === "tool-start") {
-          onEvent({ type: "tool-start", callId: event.call.id, name: event.call.name, summary: event.summary });
-        } else if (event.type === "tool-end") {
-          onEvent({
-            type: "tool-end",
-            callId: event.call.id,
-            name: event.call.name,
-            summary: "",
-            result: event.result.length > 8_000 ? `${event.result.slice(0, 8_000)}\n… (truncated)` : event.result,
-            ok: event.ok,
-            denied: event.denied,
-          });
-        } else if (event.type === "file-change") {
-          onEvent({
-            type: "file-change",
-            path: event.change.path,
-            before: event.change.before,
-            after: event.change.after,
-          });
-        }
-      },
-    });
+    const result = await runSubagent(def, prompt, childRequest(def, true));
     await closeMcp(env.mcpConnections);
     if (!result.ok) onEvent({ type: "error", message: result.report });
     onEvent({ type: "done", reason: result.ok ? "completed" : "aborted", finalText: result.report });
@@ -242,7 +265,7 @@ export async function runLocalAutomation(
           if (shellHook.blocked) return { block: shellHook.reason ?? "beforeShellExecution hook" };
         }
         // Last, after the run's own rails and hooks.
-        if (botGuard) return botGuard(call, args, summary);
+        if (parentGuard) return parentGuard(call, args, summary);
         return undefined;
       },
       afterTool: async (call, resultText, ok) => {

@@ -187,7 +187,32 @@ test("only the newest few conversations are listed", () => {
 test("the open conversation is marked current", () => {
   const html = render({ bots: [bot("Ada")], activeBotId: "Ada", conversations: convos(3), activeThreadId: "t1" });
   assert.equal(html.match(/aria-current="true"/g)?.length, 1);
-  assert.match(html, /sb-row--active"[^>]*aria-current="true"[^>]*><span class="bot-row__thread-title">Chat 1</);
+  assert.match(html, /sb-row--active"[^>]*aria-current="true"[^>]*><span class="bot-row__thread-dot"[^>]*><\/span><span class="bot-row__thread-title">Chat 1</);
+});
+
+test("every listed conversation has a dot to the left of its title", () => {
+  const html = render({ bots: [bot("Ada")], activeBotId: "Ada", conversations: convos(3) });
+  assert.equal(html.match(/<span class="bot-row__thread-dot" aria-hidden="true"><\/span><span class="bot-row__thread-title">/g)?.length, 3);
+});
+
+test("the open Bot's row is selected until one of its conversations is open, then that conversation is", () => {
+  const closed = render({ bots: [bot("Ada")], activeBotId: "Ada", conversations: convos(3), activeThreadId: null });
+  assert.equal(closed.match(/bot-row--active/g)?.length, 1, "no conversation open: the Bot's row carries the selection");
+
+  const open = render({ bots: [bot("Ada")], activeBotId: "Ada", conversations: convos(3), activeThreadId: "t1" });
+  assert.equal(open.match(/bot-row--active/g)?.length ?? 0, 0, "a conversation is open: the Bot's row steps back");
+  assert.equal(open.match(/sb-row--active/g)?.length, 1, "and that conversation is the one filled row");
+});
+
+test("a conversation open but not listed leaves the selection on the Bot's row", () => {
+  const html = render({
+    bots: [bot("Ada")],
+    activeBotId: "Ada",
+    conversations: convos(ROSTER_CONVERSATION_LIMIT + 2),
+    activeThreadId: `t${ROSTER_CONVERSATION_LIMIT + 1}`,
+  });
+  assert.equal(html.match(/sb-row--active/g)?.length ?? 0, 0, "the open conversation is past the listed few");
+  assert.equal(html.match(/bot-row--active/g)?.length, 1, "so the Bot's row still shows where you are");
 });
 
 test("a conversation title is escaped", () => {

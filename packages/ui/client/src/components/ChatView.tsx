@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { themeByName, type CodeTheme } from "../code.js";
 import { writeClipboardText } from "../clipboard.js";
 import { useT } from "../i18n.js";
@@ -16,6 +16,7 @@ import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
 import { describeEvidenceGate, describeRunStats } from "@deyin/host-core/shared";
 import { formatTokens } from "../formatTokens.js";
+import { readPin } from "../chatPin.js";
 export {
   ConductorWorkflowCard,
   ConductorStageProgressCard,
@@ -23,9 +24,6 @@ export {
   ConductorReviewMergeCard,
 } from "./ConductorModeCards.js";
 import { ConductorReviewMergeCard, ConductorStageProgressCard } from "./ConductorModeCards.js";
-
-/** Distance from the bottom (px) within which we consider the view "pinned". */
-const PIN_THRESHOLD = 64;
 
 
 export interface ChatCodeDisplay {
@@ -52,6 +50,8 @@ interface ChatViewProps {
   /** Model reasoning streamed for the in-flight step (rendered above the text). */
   streamReasoning: string | null;
   greetingName: string;
+  /** What an empty conversation shows in place of the project hero (a Bot's, for instance). */
+  emptyState?: ReactNode;
   codeDisplay: ChatCodeDisplay;
   onOpenFile: (path: string) => void;
   /** Open a workspace path in the right-hand Files panel (markdown file refs). */
@@ -95,6 +95,8 @@ export function ChatView(props: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
+  /** `scrollTop` at the last scroll, so a scroll event can tell the person moving up from the layout changing. */
+  const lastTopRef = useRef(0);
   const [showJump, setShowJump] = useState(false);
   const [messageFeedback, setMessageFeedback] = useState<Record<number, "up" | "down">>({});
   const t = useT();
@@ -106,8 +108,8 @@ export function ChatView(props: ChatViewProps) {
   const syncPinFromScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const pinned = dist <= PIN_THRESHOLD;
+    const pinned = readPin(pinnedRef.current, lastTopRef.current, { top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight });
+    lastTopRef.current = el.scrollTop;
     pinnedRef.current = pinned;
     setShowJump(!pinned);
   }, []);
@@ -119,6 +121,7 @@ export function ChatView(props: ChatViewProps) {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     } else {
       el.scrollTop = el.scrollHeight;
+      lastTopRef.current = el.scrollTop;
     }
   }, []);
 
@@ -128,14 +131,17 @@ export function ChatView(props: ChatViewProps) {
     if (pinnedRef.current) scrollToBottom("auto");
   }, [props.events, props.streamText, props.streamReasoning, props.planArtifact, scrollToBottom]);
 
-  // Stay pinned across async reflows (code highlight, expanding cards, images).
+  // Stay pinned across async reflows (code highlight, expanding cards, images) and when the viewport itself gets
+  // shorter or taller (a permission card above the composer): the newest message must stay in view.
   useLayoutEffect(() => {
     const timeline = timelineRef.current;
+    const viewport = scrollRef.current;
     if (!timeline) return;
     const observer = new ResizeObserver(() => {
       if (pinnedRef.current) scrollToBottom("auto");
     });
     observer.observe(timeline);
+    if (viewport) observer.observe(viewport);
     return () => observer.disconnect();
   }, [scrollToBottom]);
 
@@ -181,46 +187,48 @@ export function ChatView(props: ChatViewProps) {
   if (props.events.length === 0 && props.streamText === null) {
     return (
       <div className="chat chat--empty" ref={scrollRef}>
-        <div className="empty-hero">
-          <span className="empty-hero__logo" aria-hidden>
-            <Logo size={44} />
-          </span>
-          <div className="greeting">
-            <span className="muted">{props.greetingName}, </span>what are we building?
+        {props.emptyState ?? (
+          <div className="empty-hero">
+            <span className="empty-hero__logo" aria-hidden>
+              <Logo size={44} />
+            </span>
+            <div className="greeting">
+              <span className="muted">{props.greetingName}, </span>what are we building?
+            </div>
+            <div className="empty-hero__quick-actions">
+              {props.onBuild && (
+                <button
+                  type="button"
+                  className="empty-hero__chip"
+                  onClick={props.onBuild}
+                >
+                  <Icon name="bolt" size={13} />
+                  <span>Build mode</span>
+                </button>
+              )}
+              {props.onOpenPlan && (
+                <button
+                  type="button"
+                  className="empty-hero__chip"
+                  onClick={props.onOpenPlan}
+                >
+                  <Icon name="route" size={13} />
+                  <span>Plan mode</span>
+                </button>
+              )}
+              {props.onOpenAgentTerminal && (
+                <button
+                  type="button"
+                  className="empty-hero__chip"
+                  onClick={props.onOpenAgentTerminal}
+                >
+                  <Icon name="terminal" size={13} />
+                  <span>Terminal</span>
+                </button>
+              )}
+            </div>
           </div>
-          <div className="empty-hero__quick-actions">
-            {props.onBuild && (
-              <button
-                type="button"
-                className="empty-hero__chip"
-                onClick={props.onBuild}
-              >
-                <Icon name="bolt" size={13} />
-                <span>Build mode</span>
-              </button>
-            )}
-            {props.onOpenPlan && (
-              <button
-                type="button"
-                className="empty-hero__chip"
-                onClick={props.onOpenPlan}
-              >
-                <Icon name="route" size={13} />
-                <span>Plan mode</span>
-              </button>
-            )}
-            {props.onOpenAgentTerminal && (
-              <button
-                type="button"
-                className="empty-hero__chip"
-                onClick={props.onOpenAgentTerminal}
-              >
-                <Icon name="terminal" size={13} />
-                <span>Terminal</span>
-              </button>
-            )}
-          </div>
-        </div>
+        )}
       </div>
     );
   }

@@ -2,8 +2,9 @@ import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { withBotSkills } from "./bots/skills-run.js";
-import { resolveBotRun, runScope, withBotPersona, withoutWorkspaceCaps, type BotRunContext, type BotRunSource } from "./bots/run.js";
-import { allowRoomDelegation, roomSubagents, withRoomMembers } from "./bots/room-run.js";
+import { createBotTools } from "./bots/bot-tools.js";
+import { chatPersona, primaryTeam, resolveBotRun, runScope, withBotPersona, withoutWorkspaceCaps, type BotRunContext, type BotRunSource } from "./bots/run.js";
+import { DELEGATE_LEAD, allowRoomDelegation, roomSubagents, withBotDelegates, withRoomMembers } from "./bots/room-run.js";
 import { createBotRunGuard } from "./bots/run-guard.js";
 import { runServerBotTurn, type ServerBotPort } from "./bots/engine/server-chat.js";
 import type { ToolGuard } from "./bots/tool-guard.js";
@@ -772,6 +773,17 @@ export class DesktopAgentHost {
     if (botRun && botRun.bot.kind === "room" && this.opts.bots) {
       caps = withRoomMembers(caps, await roomSubagents(this.opts.bots, botRun.members, { memoryEnabled: settings.memoryEnabled }));
     }
+    // The person's primary Bot is their point of contact: it is told about their other Bots and can hand work to
+    // them, each answering as itself. Any other Bot works alone.
+    const team = botRun && this.opts.bots ? primaryTeam(botRun.bot, this.opts.bots.store) : undefined;
+    if (team && team.bots.length > 0 && this.opts.bots) {
+      caps = withBotDelegates(caps, await roomSubagents(this.opts.bots, team.bots, { memoryEnabled: settings.memoryEnabled, lead: DELEGATE_LEAD }));
+    }
+    // What a Bot was told in earlier conversations (its job, its rules) is in front of it from the first message.
+    // A room is not a Bot with a job of its own, so it has none.
+    if (botRun && botRun.bot.kind === "agent") {
+      botRun = { ...botRun, persona: chatPersona(botRun.persona, { ...(team ? { team } : {}), facts: settings.memoryEnabled ? botRun.memory.list() : [] }) };
+    }
 
     // Workspace trust gate: a cloned repo's hooks.json / mcp.json define shell
     // commands. They run only after a one-time explicit trust decision; an
@@ -890,7 +902,8 @@ export class DesktopAgentHost {
  // Automations tool family: create/run scheduled automations via the same
  // AutomationService the Automations UI uses. Optional: the web host has no
  // scheduler, so it omits the service.
- if (this.opts.automations) {
+ // A Bot sets up routines through its own tools instead (see below): these would put one in a workspace that is not the Bot's.
+ if (this.opts.automations && !botRun) {
  for (const tool of createAutomationTools(this.opts.automations, this.opts.settings)) {
  registry.register(tool);
  }
@@ -1003,7 +1016,9 @@ export class DesktopAgentHost {
     const botGuard = botGuardFor
       ? botRun?.bot.kind === "room"
         ? allowRoomDelegation(botGuardFor(), botRun.members)
-        : botGuardFor()
+        : team && team.bots.length > 0
+          ? allowRoomDelegation(botGuardFor(), team.bots)
+          : botGuardFor()
       : undefined;
     const approvalMode: ApprovalMode = botGuard ? "full-access" : options.approvalMode;
 
@@ -1031,6 +1046,20 @@ export class DesktopAgentHost {
           })
         : undefined;
     if (vaultRun) for (const tool of vaultRun.tools()) registry.register(tool);
+
+    // A Bot is set up by talking to it, so it can see the person's Bots, make a new one, set up and run its own
+    // routines, and save what it was taught as a skill. These act for this Bot alone, and each change goes through
+    // the Bot's guard like any other tool call.
+    if (botRun && botRun.bot.kind === "agent" && botSource) {
+      const tools = createBotTools({
+        botId: botRun.bot.id,
+        store: botSource.store,
+        skills: botRun.skills,
+        ...(this.opts.automations ? { routines: this.opts.automations } : {}),
+        model: { model: options.model, providerId: options.providerId },
+      });
+      for (const tool of tools) registry.register(tool);
+    }
 
     let parentMcpTools: ToolDefinition[] = [];
 

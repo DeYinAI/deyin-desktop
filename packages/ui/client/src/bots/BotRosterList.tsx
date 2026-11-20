@@ -146,8 +146,12 @@ export function BotRosterList(props: BotRosterListProps) {
     if (sectionId) await settle(actions.moveToSection(current.botId, sectionId));
   };
 
+  /** The conversations listed under a Bot's row: only the open Bot has any, newest first, and only the newest few. */
+  const shownConversations = (bot: DeyinBot): readonly BotConversation[] =>
+    bot.id === props.activeBotId ? (props.conversations ?? []).slice(0, ROSTER_CONVERSATION_LIMIT) : [];
+
   const conversationList = (bot: DeyinBot) => {
-    const shown = bot.id === props.activeBotId ? (props.conversations ?? []).slice(0, ROSTER_CONVERSATION_LIMIT) : [];
+    const shown = shownConversations(bot);
     if (shown.length === 0) return null;
     return (
       <ul className="bot-row__threads" aria-label={`${t("bot.chat.conversations")}: ${bot.name}`}>
@@ -159,6 +163,7 @@ export function BotRosterList(props: BotRosterListProps) {
               aria-current={conversation.id === props.activeThreadId ? "true" : undefined}
               onClick={() => props.onSelectConversation?.(conversation.id)}
             >
+              <span className="bot-row__thread-dot" aria-hidden="true" />
               <span className="bot-row__thread-title">{conversation.title}</span>
             </button>
           </li>
@@ -167,9 +172,16 @@ export function BotRosterList(props: BotRosterListProps) {
     );
   };
 
+  /**
+   * The open Bot's row is the selected row only while none of its listed conversations is open. Once one is, that
+   * conversation carries the selection, so two stacked fills do not compete for it.
+   */
+  const botRowSelected = (bot: DeyinBot): boolean =>
+    bot.id === props.activeBotId && !shownConversations(bot).some((conversation) => conversation.id === props.activeThreadId);
+
   const row = (bot: DeyinBot) => (
     <div key={bot.id} className="bot-row-group">
-      <div className={`bot-row${bot.id === props.activeBotId ? " bot-row--active" : ""}${bot.archived ? " bot-row--archived" : ""}`}>
+      <div className={`bot-row${botRowSelected(bot) ? " bot-row--active" : ""}${bot.archived ? " bot-row--archived" : ""}`}>
         <button type="button" className="sb-row bot-row__main" onClick={() => props.onSelect(bot.id)} disabled={bot.archived}>
           <BotAvatar bot={bot} size={26} decorative />
           <span className="bot-row__text">
