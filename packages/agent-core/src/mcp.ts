@@ -5,6 +5,7 @@ import {
   type OAuthClientProvider,
 } from "@modelcontextprotocol/client";
 import { StdioClientTransport, getDefaultEnvironment } from "@modelcontextprotocol/client/stdio";
+import { fetchWithUserAgent } from "@deyin/host-core";
 import type { McpServerDefinition } from "./capabilities/mcp-config.js";
 import type { McpServerConfig } from "./config.js";
 import type { ToolRegistry } from "./tools/registry.js";
@@ -143,8 +144,11 @@ function transportFor(def: McpServerDefinition, authProvider?: OAuthClientProvid
   if (!def.url) throw new Error(`MCP server ${def.name} has no url.`);
   const url = new URL(def.url);
   const requestInit = def.headers ? { headers: def.headers } : undefined;
-  if (def.transport === "sse") return new SSEClientTransport(url, { requestInit, authProvider });
-  return new StreamableHTTPClientTransport(url, { requestInit, authProvider });
+  // The MCP SDK sets no User-Agent of its own (so Node would send bare `node`);
+  // `fetchWithUserAgent` fills it in for the transport and its OAuth requests while
+  // still honouring a User-Agent the server definition sets explicitly.
+  if (def.transport === "sse") return new SSEClientTransport(url, { requestInit, authProvider, fetch: fetchWithUserAgent });
+  return new StreamableHTTPClientTransport(url, { requestInit, authProvider, fetch: fetchWithUserAgent });
 }
 
 /** Connect one MCP server and return the live client plus its tool list. */

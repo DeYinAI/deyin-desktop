@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { GitHubAuthState, GitHubRepoEntry } from "@deyin/contract";
+import { deyinUserAgent } from "@deyin/host-core";
 
 const GITHUB_CLIENT_ID = process.env.DEYIN_GITHUB_CLIENT_ID ?? "Ov23liPLACEHOLDER";
 const TOKEN_PATH = join(homedir(), ".deyin", "github-token.json");
@@ -61,7 +62,7 @@ export class GitHubService {
   async connect(): Promise<GitHubAuthState> {
     const deviceRes = await fetch("https://github.com/login/device/code", {
       method: "POST",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": deyinUserAgent() },
       body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, scope: "repo read:user" }),
     });
     if (!deviceRes.ok) throw new Error("Failed to start GitHub authorization.");
@@ -77,7 +78,7 @@ export class GitHubService {
       await sleep(device.interval * 1000);
       const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
         method: "POST",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        headers: { Accept: "application/json", "Content-Type": "application/json", "User-Agent": deyinUserAgent() },
         body: JSON.stringify({
           client_id: GITHUB_CLIENT_ID,
           device_code: device.device_code,
@@ -125,6 +126,7 @@ export class GitHubService {
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${this.token}`,
+        "User-Agent": deyinUserAgent(),
         "X-GitHub-Api-Version": "2022-11-28",
       },
     });

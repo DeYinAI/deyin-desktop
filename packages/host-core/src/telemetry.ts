@@ -5,6 +5,8 @@
  * drop): telemetry must never queue up or block the app.
  */
 
+import { deyinUserAgent } from "./user-agent.js";
+
 export interface TelemetryEventProps {
   [key: string]: string | number | boolean;
 }
@@ -58,7 +60,7 @@ export class TelemetryReporter {
     try {
       await this.fetchImpl(this.opts.endpoint, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "user-agent": deyinUserAgent() },
         body: JSON.stringify({
           installId: this.opts.installId,
           appVersion: this.opts.appVersion,

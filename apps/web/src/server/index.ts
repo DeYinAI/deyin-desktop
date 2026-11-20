@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
-import { initUserAgent, webSearch } from "@deyin/host-core";
+import { deyinUserAgent, initUserAgent, webSearch } from "@deyin/host-core";
 import { WebSocketServer } from "ws";
 import { Session } from "./session.js";
 
@@ -85,6 +85,7 @@ async function proxyPublicPlans(req: IncomingMessage, res: ServerResponse): Prom
   const search = new URL(req.url ?? "", "http://localhost").search;
   const upstream = await fetch(`${OAUTH_ISSUER.replace(/\/$/, "")}/api/public/plans${search}`, {
     method: req.method,
+    headers: { "user-agent": deyinUserAgent() },
   });
 
   res.writeHead(upstream.status, {
@@ -119,6 +120,7 @@ async function proxyToOpenference(req: IncomingMessage, res: ServerResponse): Pr
     headers: {
       authorization: auth,
       "content-type": req.headers["content-type"] ?? "application/json",
+      "user-agent": deyinUserAgent(),
     },
     body: req.method === "GET" || req.method === "HEAD" ? undefined : body,
   });

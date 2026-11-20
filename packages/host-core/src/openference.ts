@@ -1,7 +1,7 @@
 import type { ChatMessage, ProviderApiFormat } from "./types.js";
 import type { ReasoningEffort } from "./model-reasoning.js";
 import { ssePayloads } from "./sse-core.js";
-import { deyinUserAgent } from "./user-agent.js";
+import { deyinUserAgent, withUserAgent } from "./user-agent.js";
 
 /** Token usage reported by the provider on the final stream frame. */
 export interface StreamUsage {
@@ -128,12 +128,17 @@ export async function retryBackoff(res: Response, signal?: AbortSignal, attempt 
  * A single flat retry meant one unlucky 429 during a long run threw the whole
  * turn away — and the turn's cost is the full prompt, so throwing it away is
  * expensive as well as annoying.
+ *
+ * Every provider request in the app (host-core and agent-core transports) goes
+ * through here, so this is also where the Deyin User-Agent is defaulted: a caller
+ * that forgets the header would otherwise send undici's bare `node`.
  */
 export async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
-  let res = await fetch(url, init);
+  const request = withUserAgent(init);
+  let res = await fetch(url, request);
   for (let attempt = 0; attempt < MAX_TRANSIENT_RETRIES && !res.ok && isTransientStatus(res.status); attempt++) {
     await retryBackoff(res, init.signal ?? undefined, attempt);
-    res = await fetch(url, init);
+    res = await fetch(url, request);
   }
   return res;
 }

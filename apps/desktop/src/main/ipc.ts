@@ -26,6 +26,7 @@ import {
   videoDataUrl,
   type GitResult,
   webSearch,
+  deyinUserAgent,
 } from "@deyin/host-core";
 import { fetchPublicPlans, fetchReleaseStatus, projectLocation } from "@deyin/host-core/shared";
 import {
@@ -887,6 +888,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
           signal: AbortSignal.timeout(10_000),
           headers: {
             "content-type": "application/json",
+            "user-agent": deyinUserAgent(),
             ...(token ? { authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
