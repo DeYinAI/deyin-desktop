@@ -3,9 +3,11 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.32`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.33`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
 
-## 1.0.32 — 2026-11-20
+## 1.0.33 — 2026-11-20
+
+Includes everything in 1.0.32 below.
 
 ### Highlights
 
@@ -32,6 +34,18 @@ All notable **public** releases of Deyin are documented here.
     installer from `cdn.deyin.ai`, which must be live first. Not built: a mailbox for the Bot, texting and phone
     calls, payments, teams, and mobile. [`docs/PARITY-GROK-BOT.md`](./PARITY-GROK-BOT.md) lists every surface and its
     status.
+
+### Changed
+
+- Conductor's internal ids moved from `bot` to `conductor` so that "Bot" means only Deyin Bot. Saved threads, projects
+  and web-client state are upgraded on load (mode `bot` becomes `conductor`, and the tools `bot_workflow_validate`,
+  `bot_workflow_run`, `inspect_bot_run` and `merge_bot_diff` become `conductor_workflow_validate`,
+  `conductor_workflow_run`, `inspect_conductor_run` and `merge_conductor_diff`).
+
+## 1.0.32 — 2026-11-20
+
+### Highlights
+
 - **Conductor Orchestration and Pipeline Validation:** Full multi-agent pipeline validation
   (`validateConductorWorkflow`) detecting missing or uninstalled agents, cyclical execution dependencies, and
   unreachable stages before any workflow runs. New agent-facing tools (`conductor-workflow-tools.ts`) let the
@@ -90,10 +104,6 @@ All notable **public** releases of Deyin are documented here.
 
 ### Changed
 
-- Conductor's internal ids moved from `bot` to `conductor` so that "Bot" means only Deyin Bot. Saved threads, projects
-  and web-client state are upgraded on load (mode `bot` becomes `conductor`, and the tools `bot_workflow_validate`,
-  `bot_workflow_run`, `inspect_bot_run` and `merge_bot_diff` become `conductor_workflow_validate`,
-  `conductor_workflow_run`, `inspect_conductor_run` and `merge_conductor_diff`).
 - Computer use no longer registers Esc as a global shortcut; stopping is the **Ctrl+Alt+Shift+Esc** chord, which is
   registered only while computer use is running.
 - `computer_*` actions are now confirmed by their risk: launching an app, destructive chords (Alt+F4, Ctrl+W, anything
