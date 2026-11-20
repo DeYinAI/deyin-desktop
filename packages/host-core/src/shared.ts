@@ -4,7 +4,11 @@
  * and the web client. Node-only pieces (storage, stores, host services) live in the
  * package root export.
  */
-export { parseSseDataLine as sseJsonLine, ssePayloads as sseJson } from "./sse-core.js";
+export {
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
+  parseSseDataLine as sseJsonLine,
+  ssePayloads as sseJson,
+} from "./sse-core.js";
 export * from "./types.js";
 export * from "./automation-status.js";
 export * from "./automation-run-view.js";

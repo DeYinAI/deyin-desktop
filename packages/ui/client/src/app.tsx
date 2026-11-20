@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_SETTINGS,
+  DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   buildLinkedThreadContext,
   dedupeContextRefs,
   formatStoredModelRef,
@@ -170,6 +171,16 @@ import type {
 const PANEL_FRACTION_KEY = "deyin.panelWidthFraction.v2";
 const PANEL_DEFAULT_FRACTION = 0.5;
 const PANEL_MIN_PX = 320;
+
+/**
+ * How long a plain-chat reply may stay silent before the run is aborted so the
+ * composer is not wedged. This must not be tighter than the transport's own
+ * idle guard (host-core `readWithIdleTimeout`, same constant): a reasoning
+ * model on a long conversation can think for minutes before its first visible
+ * token, and a shorter UI timer reported those healthy requests as failures
+ * (it was 45s). The user can always press Stop sooner.
+ */
+const PLAIN_CHAT_STALL_MS = DEFAULT_STREAM_IDLE_TIMEOUT_MS;
 
 /**
  * Memo boundaries for the heavy leaves. During an agent run the root
@@ -3008,7 +3019,7 @@ const continueFromStepLimit = useCallback(() => {
       setTimeout(() => {
         timedOut = true;
         abort.abort();
-      }, 45_000);
+      }, PLAIN_CHAT_STALL_MS);
     let watchdog = armWatchdog();
 
     let acc = "";
@@ -3036,7 +3047,7 @@ const continueFromStepLimit = useCallback(() => {
       if (acc.trim()) void registerChatOnlyPage(thread.id, acc);
     } catch (err) {
       const msg = timedOut
-        ? "Request timed out — no data from the model for 45s. Try again."
+        ? `Request timed out — no data from the model for ${Math.round(PLAIN_CHAT_STALL_MS / 1000)}s. Try again.`
         : err instanceof Error
           ? err.message
           : String(err);
