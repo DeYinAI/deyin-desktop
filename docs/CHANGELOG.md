@@ -3,7 +3,43 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.34`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.35`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.35 — 2026-11-20
+
+### Highlights
+
+- **A Primary Bot That Sets Things Up From Chat:** Your first Bot is your primary Bot: the one you talk to first. Say
+  what you work on and it suggests Bots with one job each, creates them when you agree, and hands work on when you
+  write a Bot's `@handle`. It can also save a skill, set up a routine and run a stand-up by asking each Bot in turn what
+  it did and what it needs. Anything you tell a Bot to do from now on is saved as a rule in that Bot's own memory, where
+  Details shows it and **Forget** removes it. A weekday-morning check-in is offered once and only set up after you agree
+  to the time. A new **Team Builder** starter in Discover Bots interviews you and sets Bots up. A routine's result is
+  posted into the Bot's conversation, and the primary Bot's header lists your other Bots as `@` chips.
+- **Notes Without A Click, New Bots And Routines With One:** While you are watching a chat, a Bot saves what it should
+  remember without an approval card. Making a Bot, scheduling a routine and running one still ask first, and each card
+  says what will be made. A run nobody is watching never gets the free pass, and neither does a Bot where you wrote a
+  block rule; a tool you blocked or set to ask first still does.
+- **A Bot's Chat Says What Is True:** The box used to show a coding session's orange **Full access** and **No workspace**
+  while the Bot was really on its own approval mode. It now shows that mode (click it to open the Bot's details), asks
+  you to message the Bot by name, and no longer offers a workspace, since a Bot works in its own folder.
+
+### Fixed
+
+- A routine on a local model that takes no key (Ollama, LM Studio) failed with "Not signed in" even though the same
+  Bot chatted fine. The run now reaches the local endpoint the way a chat does.
+- The chat stopped following new messages once a permission card or a hand-off card appeared, leaving the newest
+  reply below the fold. It now stays at the bottom until you scroll up, and scrolling up still holds your place.
+- A gateway that refuses the `prompt_cache_options` hint (some ChatGPT-backed gateways answer every request with a 400)
+  failed every turn. The hint is now dropped and the request retried once, and the run stops sending it.
+- The first Bot's dialog said "New Bot" although it becomes your primary Bot. It now says **New primary Bot**.
+
+### Changed
+
+- The home's "Choose an existing Bot" list is gone: it could never show, because the oldest Bot is always the primary
+  one. To change your primary Bot, open another Bot's details and choose **Make primary**.
+- Honest about limits: this was tested end to end in the real app against a scripted local model. How well a particular
+  real model coordinates a team of Bots is not measured yet.
 
 ## 1.0.34 — 2026-11-20
 
