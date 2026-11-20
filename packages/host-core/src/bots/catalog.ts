@@ -1,10 +1,8 @@
 /**
- * Starter Bots that ship with Deyin: a place to begin, in the shape of the recovered marketplace's Browse and For You.
+ * Starter Bots that ship with Deyin: a place to begin.
  *
- * Grok Bot's marketplace is a hosted service of listings made by creators; Deyin has none, so these are templates
- * that travel inside the app and import exactly like one someone shared (see `template.ts`). Four of them are
- * the example Bots the recovered build ships (Overheard, Tradbot, Meeting Recap Deck, Pitch Deck Coach), rewritten as
- * what each is useful for in Deyin. None of them can spend money, send anything out or log in anywhere by itself.
+ * Deyin has no hosted marketplace, so these are templates that travel inside the app and import exactly like one
+ * someone shared (see `template.ts`). None of them can spend money, send anything out or log in anywhere by itself.
  * Everything here is browser-safe.
  */
 import type { BotTemplate } from "./template.js";
@@ -21,7 +19,7 @@ export interface CatalogEntry {
   blurb: string;
   /** Words people look for, for search and for matching what a person already does. */
   tags: readonly string[];
-  /** The recovered example this is rewritten from, when it is one. */
+  /** The name of the example this starter was adapted from, when it is one. */
   derivedFrom?: string;
   template: BotTemplate;
 }

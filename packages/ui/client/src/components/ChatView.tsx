@@ -168,8 +168,7 @@ export function ChatView(props: ChatViewProps) {
   const groups = useMemo(() => groupTimelineEvents(props.events), [props.events]);
 
   // Branch forks the chat below a settled answer, so only the newest assistant
-  // text in a closed turn can own it — the same rule the DeepSeek harness
-  // applies to its turn tail. Older answers keep the control, dimmed, so the
+  // text in a closed turn can own it. Older answers keep the control, dimmed, so the
   // row's shape stays stable while the reason explains itself.
   const lastAssistantIndex = useMemo(() => {
     for (let i = props.events.length - 1; i >= 0; i--) {

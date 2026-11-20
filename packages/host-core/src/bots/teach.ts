@@ -4,8 +4,7 @@
  * that the Bot should not have: what is typed into a password, card or code field is never kept, and a page address
  * is kept without the part after the `?`, which is where tokens live.
  *
- * Maps the recovered `teach-recording-controls` surface and `GrokBotUserMessageInitiator.TEACH_RECORDING`. Grok Bot
- * records a screen; Deyin records the browser, the one place it can see clearly, in bounds the person can see.
+ * Deyin records the browser, the one place it can see clearly, in bounds the person can see.
  * Everything here is browser-safe: the page script sends raw events, and this decides what is kept.
  */
 import { SKILL_LIMITS, skillNameFrom, type BotSkillInput } from "./skills.js";

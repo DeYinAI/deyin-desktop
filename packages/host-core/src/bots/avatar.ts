@@ -3,9 +3,8 @@
  * (a core, a ring, and a dot that travels the ring), echoing the orbit dot in the Deyin logo. What the dot and core
  * are doing shows what the Bot is doing.
  *
- * The forms, the colors and the mark are original to Deyin and share no names or values with the Grok Bot's
- * avatars; a test keeps it that way. A Bot that has not been given an avatar gets a stable default derived from its
- * id, so it looks the same on every launch and across machines without storing anything.
+ * The forms, the colors and the mark are original to Deyin. A Bot that has not been given an avatar gets a stable
+ * default derived from its id, so it looks the same on every launch and across machines without storing anything.
  */
 
 /**

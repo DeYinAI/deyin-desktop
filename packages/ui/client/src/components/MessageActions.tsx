@@ -25,7 +25,7 @@ export interface MessageActionsProps {
 
 /**
  * Message action row shared by user and assistant bubbles: copy, like/dislike,
- * edit, and branch — the same set the DeepSeek harness puts under an answer.
+ * edit, and branch.
  * Icons stay visible at rest (muted, readable on every theme) and brighten on
  * hover, so the row reads as part of the message instead of appearing only
  * under the pointer.

@@ -93,8 +93,8 @@ code {
   --ui-text-2: color-mix(in srgb, var(--color-text) 55%, var(--color-text-muted));
   --ui-elevated: color-mix(in srgb, var(--color-text) 18%, var(--color-bg));
   /* Separation is carried by weight, not ink: a hairline marks a boundary, a
-     line marks a control. Matches the DeepSeek Harness border ramp (l2 12% for
-     dividers, l4 20% for controls), so a list of rows reads as one object
+     line marks a control. The border ramp is 12% for dividers and 20% for
+     controls, so a list of rows reads as one object
      rather than a stack of framed boxes. */
   --ui-line: color-mix(in srgb, var(--color-text) 12%, transparent);
   --ui-line-strong: color-mix(in srgb, var(--color-text) 20%, transparent);

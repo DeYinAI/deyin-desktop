@@ -1,7 +1,7 @@
 import { BotError, type BotApprovalMode } from "./types.js";
 
 /**
- * What a Bot may do with a tool, in three layers (the Grok Bot model):
+ * What a Bot may do with a tool, in three layers:
  *   1. a per-tool permission inside a scope (`always_allow | needs_approval | blocked`), with `reads` and
  *      `writes` defaults for tools that have none of their own;
  *   2. an approval mode (`auto_review | read_only | run_everything`), which each Bot carries on its own record;
@@ -79,7 +79,7 @@ function cleanKey(value: unknown, what: string): string {
 /* Which tools only read -------------------------------------------------- */
 
 /**
- * Tools the REA found to be read-only for the connectors Grok Bot ships with (Gmail, Google Calendar, Google
+ * Tools that are read-only for the common connectors (Gmail, Google Calendar, Google
  * Drive). They apply to an MCP server whose name says which connector it is; any other server's tools are
  * treated as able to change something until its `reads` default or a per-tool permission says otherwise.
  */
@@ -102,7 +102,7 @@ const READONLY_CONNECTOR_TOOLS: ReadonlyArray<{ keyword: string; tools: Readonly
   },
 ];
 
-/** Whether a tool can only read. Built-in tools say so through their tier; connector tools through the recovered lists. */
+/** Whether a tool can only read. Built-in tools say so through their tier; connector tools through the lists above. */
 export function isReadOnlyTool(tool: { name: string; tier?: string }): boolean {
   const { scope, tool: bare } = splitToolName(tool.name);
   if (scope === LOCAL_SCOPE) return tool.tier === "read" || tool.tier === "interaction";

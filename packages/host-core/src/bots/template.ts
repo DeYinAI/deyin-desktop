@@ -4,9 +4,8 @@
  * files, what it remembers, its logins, its conversations, the permissions it was given, where it runs, or the model
  * and account a routine uses. Whoever imports one chooses all of those themselves.
  *
- * Maps the recovered `GrokBotTemplate` (name, avatar, description) with `Create a copy` and `Import Bot`. Grok Bot
- * keeps a template on its own service and shares a link to it; Deyin has no such service, so the template is the text
- * itself, and a link is that text carried inside it when it is short enough. Everything here is browser-safe.
+ * Deyin has no hosted template service, so the template is the text itself, and a link is that text carried inside it
+ * when it is short enough. Everything here is browser-safe.
  */
 import { isBotAvatarColor, isBotAvatarShape, type BotAvatarColor, type BotAvatarShape } from "./avatar.js";
 import { checkSkillInput, type BotSkillInput } from "./skills.js";

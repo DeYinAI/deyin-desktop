@@ -2,10 +2,9 @@
  * A Bot's own skills: reusable instructions for one kind of task, kept with the Bot and nowhere else, so what one Bot
  * learned is not something every other Bot, or Deyin Code, suddenly follows.
  *
- * Maps the recovered `GrokBotAgentSkill { id, name, description, body, source }` and `GrokBotSkillRevision { author
- * BOT | PERSON, content, description, result_version, created, rolled_back }`. A skill is a `SKILL.md` in the same
- * format Deyin's other skills use, so what the agent reads is the file itself. Everything here is browser-safe: the
- * renderer checks a skill with the same code the store enforces.
+ * A skill is a `SKILL.md` in the same format Deyin's other skills use, so what the agent reads is the file itself.
+ * Each change is kept as a revision made by the Bot or the person, so it can be put back. Everything here is
+ * browser-safe: the renderer checks a skill with the same code the store enforces.
  */
 import { BotError, cleanBotLine, cleanBotText } from "./types.js";
 
@@ -13,7 +12,7 @@ export const SKILL_LIMITS = {
   name: 64,
   description: 1_024,
   body: 100_000,
-  /** A guard against runaway creation, not a recovered product limit. */
+  /** A guard against runaway creation. */
   perBot: 100,
   /** Revisions kept per skill; the oldest go first. */
   revisions: 50,
@@ -30,7 +29,7 @@ export const SKILL_LIMITS = {
 export const SKILL_ORIGINS = ["person", "bot", "template", "recording"] as const;
 export type SkillOrigin = (typeof SKILL_ORIGINS)[number];
 
-/** Who made a change, as the recovered `GrokBotSkillRevisionAuthor`: the Bot or the person. */
+/** Who made a change: the Bot or the person. */
 export const SKILL_AUTHORS = ["bot", "person"] as const;
 export type SkillAuthor = (typeof SKILL_AUTHORS)[number];
 
