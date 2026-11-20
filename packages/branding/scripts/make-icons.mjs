@@ -1,7 +1,8 @@
 // Generate the desktop app icons from the deyin mark SVG.
 //
 // Writes apps/desktop/build/{icon.png (Linux, 512px), icon.ico (Windows,
-// multi-size), icon.icns (macOS)}. The build/ dir is gitignored, so CI runs
+// multi-size), icon.icns (macOS), installer-mark.ico (flat logo for the NSIS
+// installer window)}. The build/ dir is gitignored, so CI runs
 // this before packaging — keep it the single source of truth for both local
 // and CI icon generation.
 //
@@ -12,11 +13,16 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const svgPath = join(here, "..", "assets", "logo-mark.svg");
+const flatSvgPath = join(here, "..", "assets", "logo-mark-flat.svg");
 const buildDir = join(here, "..", "..", "..", "apps", "desktop", "build");
 
 // Windows .ico bundles these sizes; 512 is the primary app icon.
 const ICO_SIZES = [16, 32, 64, 128, 256];
 const PNG_SIZE = 512;
+// Installer logo (flat colours, no gradient). The NSIS window draws it at 72 logical px, so
+// ship that exact size plus 2x; LoadImage picks the closest match. Kept small on purpose:
+// png-to-ico stores uncompressed bitmaps and this is embedded in every installer.
+const INSTALLER_MARK_SIZES = [72, 144];
 // macOS .icns needs a large square source; 1024 is the standard master size.
 const ICNS_SIZE = 1024;
 
@@ -46,13 +52,21 @@ async function main() {
   const icoBuffers = await Promise.all(ICO_SIZES.map(render));
   await writeFile(join(buildDir, "icon.ico"), await pngToIco(icoBuffers));
 
+  // Flat logo for the Windows installer window (apps/desktop/build/installer.nsh).
+  const flatSvg = await readFile(flatSvgPath);
+  const renderFlat = (size) => sharp(flatSvg, { density: 384 }).resize(size, size).png().toBuffer();
+  const installerBuffers = await Promise.all(INSTALLER_MARK_SIZES.map(renderFlat));
+  await writeFile(join(buildDir, "installer-mark.ico"), await pngToIco(installerBuffers));
+
   // macOS .icns from a 1024px master (BILINEAR resize inside png2icons).
   const master = await render(ICNS_SIZE);
   const icns = png2icons.createICNS(master, png2icons.BILINEAR, 0);
   if (!icns) throw new Error("Failed to generate icon.icns");
   await writeFile(join(buildDir, "icon.icns"), icns);
 
-  console.log(`Wrote icon.png (${PNG_SIZE}px), icon.ico [${ICO_SIZES.join(", ")}], icon.icns (${ICNS_SIZE}px) to ${buildDir}`);
+  console.log(
+    `Wrote icon.png (${PNG_SIZE}px), icon.ico [${ICO_SIZES.join(", ")}], installer-mark.ico [${INSTALLER_MARK_SIZES.join(", ")}], icon.icns (${ICNS_SIZE}px) to ${buildDir}`,
+  );
 }
 
 main().catch((err) => {
