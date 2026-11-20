@@ -138,6 +138,14 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
   // with image parts stripped rather than failing the turn - and, because the
   // image lives on the persisted user message, every later request too.
   let strippedImages = false;
+  // One-shot degradation: `prompt_cache_options` is not part of the OpenAI chat
+  // schema. ChatGPT-backed gateways reject it with a terminal 400 on EVERY model
+  // ("prompt_cache_options is not supported on this model"), and the body is
+  // rebuilt for every continuation round — so a plain retry would burn one 400
+  // per round. Latch it: once a gateway has refused the field, this run stops
+  // sending it. It is an optimisation hint only; `prompt_cache_key`, which is
+  // OpenAI-native and accepted there, is unaffected.
+  let promptCacheOptionsRejected = false;
   let content = "";
   let reasoning = "";
   let usage: TokenUsage | null = null;
@@ -175,7 +183,9 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
     // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
     if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
-    if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
+    if (opts.promptCacheOptions && !promptCacheOptionsRejected) {
+      body.prompt_cache_options = opts.promptCacheOptions;
+    }
 
     const endpoint = isContinuation ? `${base}/beta/chat/completions` : `${base}/chat/completions`;
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -200,6 +210,18 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       // retry once: losing the usage anchor is far better than losing the turn.
       if (res.status === 400 && /stream[_ ]?options/i.test(detail)) {
         delete body.stream_options;
+        res = await post();
+        if (!res.ok) detail = await res.text().catch(() => "");
+      }
+      // `prompt_cache_options` is not part of the OpenAI chat schema; only some
+      // gateways understand it. ChatGPT-backed gateways answer a terminal
+      // 400 ("prompt_cache_options is not supported on this model") on EVERY
+      // model, which made every turn fail. Drop it and retry once: the field is
+      // an optimisation hint, so losing it costs cache hits, not the turn.
+      // `prompt_cache_key` is OpenAI-native and stays — it is accepted there.
+      if (res.status === 400 && body.prompt_cache_options !== undefined && /prompt_cache_options/i.test(detail)) {
+        delete body.prompt_cache_options;
+        promptCacheOptionsRejected = true;
         res = await post();
         if (!res.ok) detail = await res.text().catch(() => "");
       }

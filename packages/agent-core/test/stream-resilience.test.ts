@@ -368,3 +368,98 @@ test("sleepUnlessAborted waits, wakes early on abort, and never throws", async (
 
   await sleepUnlessAborted(10_000, controller.signal); // already aborted: returns at once
 });
+/* Gateway field compatibility ------------------------------------------------ */
+
+/**
+ * `prompt_cache_options` is not part of the OpenAI chat schema. Gateways backed
+ * by a ChatGPT subscription reject it with a terminal 400 on every model
+ * ("prompt_cache_options is not supported on this model"), which took down every
+ * turn from this client. The transport drops it and retries, then stops sending
+ * it for the rest of the run: the body is rebuilt for each continuation round,
+ * so without the latch every round would pay the same 400.
+ */
+const okStream = () => eventStream(sse(chatDelta, "[DONE]"));
+const cacheOptionsRejection = () =>
+  new Response(
+    JSON.stringify({
+      error: {
+        message: "prompt_cache_options is not supported on this model",
+        type: "invalid_request_error",
+      },
+    }),
+    { status: 400, headers: { "content-type": "application/json" } },
+  );
+
+async function withRecordingFetch<T>(
+  respond: (call: number, body: Record<string, unknown>) => Response | Promise<Response>,
+  run: () => Promise<T>,
+): Promise<{ result: T; bodies: Record<string, unknown>[] }> {
+  const original = globalThis.fetch;
+  const bodies: Record<string, unknown>[] = [];
+  let call = 0;
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    bodies.push(body);
+    return respond(++call, body);
+  }) as typeof fetch;
+  try {
+    return { result: await run(), bodies };
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+test("chat: a gateway that rejects prompt_cache_options is retried without it", async () => {
+  const { result, bodies } = await withRecordingFetch(
+    (call) => (call === 1 ? cacheOptionsRejection() : okStream()),
+    () =>
+      collect(
+        streamChatEvents({
+          ...base,
+          promptCacheKey: "sess-1",
+          promptCacheOptions: { mode: "implicit" },
+        }),
+      ),
+  );
+
+  assert.equal(bodies.length, 2, "one rejected attempt, one retry");
+  assert.deepEqual(bodies[0]?.prompt_cache_options, { mode: "implicit" });
+  assert.equal(bodies[1]?.prompt_cache_options, undefined, "the field is gone on retry");
+  // prompt_cache_key is OpenAI-native and accepted there: it must survive.
+  assert.equal(bodies[1]?.prompt_cache_key, "sess-1");
+  assert.equal(doneOf(result).content, "partial");
+});
+
+test("chat: a later continuation round does not re-send the rejected field", async () => {
+  // Continuation rounds only happen on DeepSeek endpoints (prefix mode), and they
+  // rebuild the body each time — so this is exactly where a plain retry would pay
+  // the same 400 again. Round 1 400s on the field, then succeeds truncated; the
+  // continuation must go out clean on its FIRST attempt.
+  const { result, bodies } = await withRecordingFetch(
+    (call) => {
+      if (call === 1) return cacheOptionsRejection();
+      // The retry that closes round 1 is truncated, which asks for a continuation.
+      if (call === 2) {
+        return eventStream(sse(chatDelta, { choices: [{ delta: {}, finish_reason: "length" }] }));
+      }
+      return eventStream(sse(chatDelta, { choices: [{ delta: {}, finish_reason: "stop" }] }));
+    },
+    () =>
+      collect(
+        streamChatEvents({
+          ...base,
+          apiBaseUrl: "https://api.deepseek.example",
+          model: "deepseek-v4",
+          promptCacheOptions: { mode: "implicit" },
+          maxContinuations: 1,
+        }),
+      ),
+  );
+
+  assert.ok(bodies.length >= 3, `expected a continuation round, got ${bodies.length} calls`);
+  assert.deepEqual(bodies[0]?.prompt_cache_options, { mode: "implicit" });
+  for (const body of bodies.slice(1)) {
+    assert.equal(body.prompt_cache_options, undefined, "no round after the refusal resends it");
+  }
+  assert.equal(doneOf(result).content.length > 0, true);
+});
