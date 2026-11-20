@@ -31,12 +31,17 @@ import {
   canSitInRoom,
   insertMention,
   roomMembers,
+  translate,
 } from "@deyin/host-core/shared";
 import type { ModelReasoningMode, ProductId, SecureFormRequest, WorkspaceLocation, ImageModelParams, VideoModelParams } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
 import { readClipboardText, showContextMenu, writeClipboardText } from "./clipboard.js";
 import { AppProviders } from "./providers.js";
 import { BotChatHeader } from "./bots/BotChatHeader.js";
+import { BotEmptyState } from "./bots/BotEmptyState.js";
+import { botComposerChrome } from "./bots/botComposer.js";
+import { headerChips, withStarter } from "./bots/botStarters.js";
+import { deliverRoutineResult } from "./bots/routineDelivery.js";
 import { avatarModelChoices } from "./bots/botAvatarMaker.js";
 import { BotCreateDialog } from "./bots/BotCreateDialog.js";
 import { BotRoomDialog } from "./bots/BotRoomDialog.js";
@@ -344,6 +349,11 @@ export function App() {
   /** Add `@handle` to the message being written, and put the cursor back in the box. */
   const mentionInComposer = useCallback((handle: string) => {
     composerRef.current?.updateInput((current) => insertMention(current, handle));
+    setComposerFocus((n) => n + 1);
+  }, []);
+  /** Put a starter from a Bot's empty conversation in the box, and the cursor after it. */
+  const startFromStarter = useCallback((text: string) => {
+    composerRef.current?.updateInput((current) => withStarter(current, text));
     setComposerFocus((n) => n + 1);
   }, []);
   const sessionTokenStats = useSessionTokenStats();
@@ -842,6 +852,15 @@ export function App() {
   }, [view]);
   const shellProducts = useMemo(() => availableProducts(chatOnlyHosted), [chatOnlyHosted]);
   const activeBot = product === "bot" ? botOfThread(activeThread, bots) : null;
+  /** The other Bots shown as chips above a primary Bot's or a room's chat: the ones `@` reaches from there. */
+  const botChips = useMemo(
+    () => (activeBot ? headerChips(activeBot, activeBot.kind === "room" ? roomMembers(activeBot, new Map(bots.map((b) => [b.id, b]))) : [], bots) : []),
+    [activeBot, bots],
+  );
+  /** The Bot the person talks to first, when they have one. */
+  const primaryBot = useMemo(() => bots.find((b) => b.isPrimary && !b.archived && b.kind === "agent"), [bots]);
+  /** With no primary Bot, the next one made is it: the store promotes the oldest active Bot, so the dialog says so. */
+  const nextBotIsPrimary = primaryBot === undefined;
   /** Where the user last was in each product, kept so switching back lands there. */
   const placesRef = useRef<ProductPlaces | null>(null);
   const getPlaces = useCallback((): ProductPlaces => (placesRef.current ??= loadProductPlaces(localStorage)), []);
@@ -3174,8 +3193,45 @@ const continueFromStepLimit = useCallback(() => {
     busyThreadId: activeThreadId,
   });
   const isChatEmpty = chatEvents.length === 0 && chatStreamText === null;
+  // A Bot's empty conversation says how to set it up, not what to build. Memoized for the same reason as above.
+  const botEmptyState = useMemo(
+    () => (activeBot ? <BotEmptyState bot={activeBot} onStarter={startFromStarter} /> : undefined),
+    [activeBot, startFromStarter],
+  );
 
   const language = settings?.language ?? "en";
+
+  // A Bot's routine runs with nobody in the chat, so its result is put in the Bot's conversation when it finishes.
+  // Each run is posted once, even if the host reports it again.
+  const postedRuns = useRef(new Set<string>());
+  useEffect(() => {
+    const api = window.deyin?.automations;
+    if (!api) return;
+    let live = true;
+    const stop = api.onRunFinished(({ run }) => {
+      if (postedRuns.current.has(run.id)) return;
+      void api
+        .list()
+        .then((list) => {
+          const routine = list.find((automation) => automation.id === run.automationId);
+          if (!live || !routine?.botId || postedRuns.current.has(run.id)) return;
+          const botId = routine.botId;
+          const words = {
+            posted: translate(language, "bot.routine.posted"),
+            failed: translate(language, "bot.routine.failed"),
+            noReason: translate(language, "bot.routine.noReason"),
+          };
+          const delivery = { botId, name: routine.name, run, words, activeThreadId: activeThreadIdRef.current, now: Date.now() };
+          postedRuns.current.add(run.id);
+          setProjects((cur) => deliverRoutineResult(cur, delivery) ?? cur);
+        })
+        .catch(() => undefined);
+    });
+    return () => {
+      live = false;
+      stop();
+    };
+  }, [language]);
 
   // Referentially stable props for the memoized leaves below: inline arrows
   // and object literals would defeat the memo boundaries on every root render.
@@ -3627,6 +3683,7 @@ const continueFromStepLimit = useCallback(() => {
         onStartMultitasking={startMultitasking}
         onClearQueue={clearQueue}
         plainChat={chatOnlyHosted}
+        botChat={activeBot ? botComposerChrome(activeBot, botChips.length > 0, (key) => translate(language, key), () => openBotDetails(activeBot.id)) : undefined}
         conductorModeAvailable={!chatOnlyHosted && product !== "bot"}
         focusSignal={composerFocus}
         models={models}
@@ -3736,29 +3793,32 @@ const continueFromStepLimit = useCallback(() => {
               }
         }
       >
-        <WorkspaceBar
-          platform={boot?.platform === "web" ? "web" : "desktop"}
-          projects={workspaceProjects}
-          activeProjectId={activeProjectId}
-          projectName={projectName}
-          workspaceRoot={workspaceRoot}
-          homeDir={boot?.homeDir ?? null}
-          onSelectProject={(projectId) => void selectProject(projectId)}
-          onPickFolder={(startIn) => void addProjectFolder(startIn)}
-          wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
-          onOpenSshHosts={
-            boot?.platform === "desktop"
-              ? () => {
-                  setSettingsPage("sshHosts");
-                  setView("settings");
-                }
-              : undefined
-          }
-          onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
-          onOpenSourceControl={() => {
-            openPanelTab("git");
-          }}
-        />
+        {/* A Bot works in its own folder, so a coding session's workspace is not the Bot's to pick. */}
+        {activeBot ? null : (
+          <WorkspaceBar
+            platform={boot?.platform === "web" ? "web" : "desktop"}
+            projects={workspaceProjects}
+            activeProjectId={activeProjectId}
+            projectName={projectName}
+            workspaceRoot={workspaceRoot}
+            homeDir={boot?.homeDir ?? null}
+            onSelectProject={(projectId) => void selectProject(projectId)}
+            onPickFolder={(startIn) => void addProjectFolder(startIn)}
+            wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
+            onOpenSshHosts={
+              boot?.platform === "desktop"
+                ? () => {
+                    setSettingsPage("sshHosts");
+                    setView("settings");
+                  }
+                : undefined
+            }
+            onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+            onOpenSourceControl={() => {
+              openPanelTab("git");
+            }}
+          />
+        )}
       </ComposerDock>
     </div>
   );
@@ -3913,7 +3973,7 @@ const continueFromStepLimit = useCallback(() => {
       bot={activeBot}
       onDetails={() => openBotDetails(activeBot.id)}
       onNewConversation={() => createBotConversation(activeBot.id)}
-      members={activeBot.kind === "room" ? roomMembers(activeBot, new Map(bots.map((b) => [b.id, b]))) : []}
+      members={botChips}
       onMention={mentionInComposer}
     />
   ) : null;
@@ -4093,6 +4153,7 @@ const continueFromStepLimit = useCallback(() => {
               <BotHome
                 activeCount={bots.filter((b) => !b.archived).length}
                 onCreate={() => setBotCreateOpen(true)}
+                {...(primaryBot ? { primary: primaryBot, onOpenPrimary: () => openBot(primaryBot.id) } : { onCreatePrimary: () => setBotCreateOpen(true) })}
                 {...(bots.filter(canSitInRoom).length >= BOT_LIMITS.minRoomMembers ? { onCreateRoom: () => setBotRoomOpen(true) } : {})}
                 {...(window.deyin.botTemplates ? { onBrowse: () => setView("botMarket"), onImport: () => setBotImport({}) } : {})}
               />
@@ -4142,6 +4203,7 @@ const continueFromStepLimit = useCallback(() => {
                 streamText={chatStreamText}
                 streamReasoning={chatOnlyHosted ? null : (agentRunState?.streamReasoning ?? null)}
                 greetingName={greetingName}
+                emptyState={botEmptyState}
                 threadKey={activeThreadId}
                 codeDisplay={chatCodeDisplay}
                 onOpenFile={chatOnlyHosted ? noop : openFileDiff}
@@ -4237,6 +4299,7 @@ const continueFromStepLimit = useCallback(() => {
 
       {botCreateOpen && (
         <BotCreateDialog
+          primary={nextBotIsPrimary}
           onCreate={botActions.create}
           onCreated={(bot) => {
             setBotCreateOpen(false);

@@ -19,6 +19,18 @@ function block(value: unknown): string {
 }
 
 /**
+ * How a Bot comes to know its job. There is no settings page for it: the person tells the Bot in conversation,
+ * and the Bot writes what should last into its own memory, which every later conversation starts from.
+ */
+const LEARN_FROM_CHAT =
+  "You learn your job from the person, in conversation. When they tell you what you are for, which sources to use, " +
+  'a rule, or what to ask them about first ("always...", "never...", "from now on...", "check with me before..."), ' +
+  "save it straight away with `remember` and say in one line that you did. Save what you are for as type `project`, " +
+  "and rules and preferences as type `feedback`. Do not save a one-off task, only what should still hold next time. " +
+  "If neither this nor what you remember says what your job is, ask the person what it is, which sources you may use, " +
+  "and what you must ask them about before you act.";
+
+/**
  * The standing instructions a Bot adds to its system prompt: who it is, what it is for, and where it keeps
  * things. Pure, so the same text can be previewed in the UI and sent to the model.
  *
@@ -43,11 +55,16 @@ export function buildBotPersona(bot: DeyinBot, options: { memoryTools?: boolean 
   if (description) lines.push(`About you:\n${description}`);
   if (purpose) lines.push(`What you are for:\n${purpose}`);
   lines.push("Your working directory belongs to you: files you create there are still there in later conversations.");
-  lines.push(
-    options.memoryTools === false
-      ? "You cannot save new memories in this conversation. What you already remember is listed below; keep anything worth remembering in a file in your working directory."
-      : "Your memory is yours. When you save a fact, scope `project` keeps it private to you; " +
-          "scope `global` shares it with all of the user's other Bots, so use it only for facts about the user.",
-  );
+  if (options.memoryTools === false) {
+    lines.push(
+      "You cannot save new memories in this conversation. What you already remember is listed below; keep anything worth remembering in a file in your working directory.",
+    );
+  } else {
+    lines.push(
+      "Your memory is yours. When you save a fact, scope `project` keeps it private to you; " +
+        "scope `global` shares it with all of the user's other Bots, so use it only for facts about the user.",
+      LEARN_FROM_CHAT,
+    );
+  }
   return `<${BOT_PERSONA_TAG}>\n${lines.join("\n")}\n</${BOT_PERSONA_TAG}>`;
 }

@@ -23,6 +23,7 @@ export * from "./bots/avatar-image.js";
 export * from "./bots/types.js";
 export * from "./bots/layout.js";
 export * from "./bots/persona.js";
+export * from "./bots/primary.js";
 export * from "./bots/room.js";
 export * from "./bots/threads.js";
 export * from "./bots/state.js";

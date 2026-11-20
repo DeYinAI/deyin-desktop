@@ -6,18 +6,22 @@ import {
   BotSkillStore,
   botResult,
   buildBotPersona,
+  buildPrimaryPersona,
   buildRoomPersona,
+  coordinatedBots,
   roomMembers,
   type BotResult,
   type BotStore,
+  type CoordinatedBots,
   type DeyinBot,
 } from "@deyin/host-core";
+import { renderMemory } from "./engine/server-prompt.js";
 import type { GuardPermissions } from "./tool-guard.js";
 import type { VaultRunStore } from "./vault-run.js";
 
 /** What the agent host needs to run as a Bot. `botsDir` is `<userData>/bots`. */
 export interface BotRunSource {
-  store: Pick<BotStore, "get" | "dataDir">;
+  store: Pick<BotStore, "get" | "list" | "create" | "dataDir">;
   botsDir: string;
   /** The saved tool permissions every Bot run is held to. Left out, a Bot is held to the defaults. */
   permissions?: GuardPermissions;
@@ -128,6 +132,37 @@ export interface RunScope {
 export function runScope(bot: Pick<BotRunContext, "cwd"> | null, workspaceRoot: string | null, fallbackCwd: string): RunScope {
   if (bot) return { cwd: bot.cwd, trustRoot: null };
   return { cwd: workspaceRoot ?? fallbackCwd, trustRoot: workspaceRoot };
+}
+
+type RememberedFacts = Parameters<typeof renderMemory>[0];
+
+/**
+ * A Bot's persona with what it remembers written under it. A Bot is told its job and its rules in conversation
+ * and saves them to memory, so they have to be in front of it at the start of every later conversation, not
+ * only when the words of a message happen to match them. Nothing is added when it remembers nothing.
+ */
+export function withStandingMemory(persona: string, facts: RememberedFacts): string {
+  const memory = renderMemory(facts);
+  return memory ? `${persona}\n\n${memory}` : persona;
+}
+
+/**
+ * The Bots a primary Bot coordinates in this chat: the other active agent Bots, when this Bot is the primary one.
+ * Undefined for any other Bot, so it neither hears of them nor can hand work to them.
+ */
+export function primaryTeam(bot: DeyinBot, store: Pick<BotStore, "list">): CoordinatedBots | undefined {
+  if (!bot.isPrimary || bot.kind !== "agent") return undefined;
+  return coordinatedBots(bot, store.list());
+}
+
+/**
+ * What a Bot is told in a run: its own persona, then (for the primary Bot) who it coordinates, then what it
+ * remembers, last, nearest to what the person says. In a routine (`unattended`) the primary is told that nobody is
+ * there to answer, and is not offered the chat's Bot-making tools.
+ */
+export function chatPersona(persona: string, parts: { team?: CoordinatedBots; facts: RememberedFacts; unattended?: boolean }): string {
+  const withTeam = parts.team ? `${persona}\n\n${buildPrimaryPersona(parts.team.bots, parts.team.more, { unattended: parts.unattended === true })}` : persona;
+  return withStandingMemory(withTeam, parts.facts);
 }
 
 /** Append a Bot's standing instructions after the agent's own prompt; without a persona the prompt is unchanged. */

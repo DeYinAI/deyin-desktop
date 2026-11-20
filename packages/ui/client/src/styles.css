@@ -14453,7 +14453,7 @@ details[open] > .superagent__log-head::before,
   cursor: pointer;
 }
 .bot-picker__shape:hover:not(:disabled) {
-  background: var(--color-surface-hover);
+  background: var(--ui-hover);
 }
 .bot-picker__shape--on {
   border-color: var(--color-accent);
@@ -14560,20 +14560,24 @@ details[open] > .superagent__log-head::before,
   padding: 4px 8px;
 }
 
+/* The row paints its own fill (it holds the name button and the menu), so it takes the same 3px paint inset every
+   other sidebar row gets from its transparent border: the fills of every row line up, and the content stays put. */
 .bot-row {
   display: flex;
   align-items: center;
   gap: 2px;
+  margin-inline: var(--sb-inset);
   border-radius: var(--radius-md);
 }
 .bot-row:hover,
 .bot-row:focus-within,
 .bot-row--active {
-  background: var(--color-surface-hover);
+  background: var(--ui-hover);
 }
 .bot-row__main {
   flex: 1;
   min-width: 0;
+  border-inline-width: 0;
   background: transparent;
 }
 .bot-row__main:disabled {
@@ -14628,18 +14632,40 @@ details[open] > .superagent__log-head::before,
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin: 0 0 4px 22px;
+  margin: 0 0 4px;
   padding: 0;
   list-style: none;
 }
 .bot-row__thread {
-  min-height: 26px;
+  min-height: 28px;
   padding-block: 2px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-muted);
 }
 .bot-row__thread.sb-row--active {
   color: var(--color-text);
+}
+/* The dot sits in a slot as wide as a Bot's avatar, so it hangs centred under the avatar and the title starts
+   where the Bot's name does. */
+.bot-row__thread-dot {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+}
+.bot-row__thread-dot::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+}
+.bot-row__thread:hover .bot-row__thread-dot::before {
+  background: var(--color-text-muted);
+}
+.bot-row__thread.sb-row--active .bot-row__thread-dot::before {
+  background: var(--color-accent);
 }
 .bot-row__thread-title {
   overflow: hidden;
@@ -14772,6 +14798,55 @@ details[open] > .superagent__log-head::before,
   max-width: 360px;
   margin: 0 0 8px;
   color: var(--color-text-muted);
+}
+
+/* The introduction to a primary Bot, shown on the home until the person has one. */
+.bot-home__intro {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(420px, 100%);
+  margin: 8px 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+}
+.bot-home__intro-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.bot-home__intro-body {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+/* A Bot's empty conversation: who it is and how to set it up, in the project hero's place. */
+.bot-empty {
+  gap: 10px;
+  text-align: center;
+}
+.bot-empty__title {
+  margin: 6px 0 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--color-text);
+}
+.bot-empty__body {
+  max-width: 440px;
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+.bot-empty .empty-hero__chip:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .bot-detail {
