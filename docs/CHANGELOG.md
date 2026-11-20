@@ -3,7 +3,28 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.33`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.34`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.34 — 2026-11-20
+
+### Highlights
+
+- **Every Model in the Catalog Has Its Logo:** The model list looks up each model's lab in a fixed table, so models
+  from a lab that was not in it showed an empty slot — which read as a missing logo rather than an unknown vendor.
+  ERNIE, Hunyuan, MiMo, StepFun and Agnes AI are now drawn, along with Baidu and Tencent for provider entries, and
+  Openference's own **Auto** router carries the Openference mark. The two marks whose artwork is a dark navy block
+  (ERNIE, Hunyuan) use the single-color form, so they stay visible on the dark theme. A test now pins the whole live
+  catalog: adding a lab without a mark fails the build instead of rendering blank.
+- **A Restyled Installer:** The one-click installer shown on install and auto-update has no title bar, flat brand
+  colours, a branded title and subtitle, and a thicker accent bar that tracks real progress. Silent installs are
+  unchanged.
+
+### Fixed
+
+- A reasoning model on a long conversation could think past 45 seconds before its first visible token, and the chat
+  window aborted the run as "Request timed out — no data from the model for 45s" even though the transport allows up
+  to five minutes. Plain chat now waits as long as the transport does, and the message reports the real limit. Stop
+  still cancels immediately.
 
 ## 1.0.33 — 2026-11-20
 

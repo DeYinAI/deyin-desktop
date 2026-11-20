@@ -10,6 +10,12 @@ export interface ChangelogRelease {
 
 export const CHANGELOG_RELEASES: readonly ChangelogRelease[] = [
   {
+    "version": "1.0.34",
+    "date": "2026-11-20",
+    "title": "v1.0.34 (2026-11-20)",
+    "content": "### Highlights\n\n- **Every Model in the Catalog Has Its Logo:** The model list looks up each model's lab in a fixed table, so models\n  from a lab that was not in it showed an empty slot — which read as a missing logo rather than an unknown vendor.\n  ERNIE, Hunyuan, MiMo, StepFun and Agnes AI are now drawn, along with Baidu and Tencent for provider entries, and\n  Openference's own **Auto** router carries the Openference mark. The two marks whose artwork is a dark navy block\n  (ERNIE, Hunyuan) use the single-color form, so they stay visible on the dark theme. A test now pins the whole live\n  catalog: adding a lab without a mark fails the build instead of rendering blank.\n- **A Restyled Installer:** The one-click installer shown on install and auto-update has no title bar, flat brand\n  colours, a branded title and subtitle, and a thicker accent bar that tracks real progress. Silent installs are\n  unchanged.\n\n### Fixed\n\n- A reasoning model on a long conversation could think past 45 seconds before its first visible token, and the chat\n  window aborted the run as \"Request timed out — no data from the model for 45s\" even though the transport allows up\n  to five minutes. Plain chat now waits as long as the transport does, and the message reports the real limit. Stop\n  still cancels immediately."
+  },
+  {
     "version": "1.0.33",
     "date": "2026-11-20",
     "title": "v1.0.33 (2026-11-20)",
