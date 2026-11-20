@@ -1,0 +1,42 @@
+{
+  "gmail": [
+    "get_me",
+    "list_labels",
+    "list_send_as",
+    "search_emails",
+    "read_email",
+    "get_thread",
+    "list_drafts",
+    "get_draft",
+    "list_filters"
+  ],
+  "googleCalendar": [
+    "list_calendars",
+    "list_events",
+    "search_events",
+    "get_event",
+    "list_event_instances",
+    "check_availability",
+    "suggest_time"
+  ],
+  "googleDrive": [
+    "search",
+    "list_folder",
+    "list_recent_files",
+    "read_file",
+    "export_file",
+    "download_file",
+    "get_file_metadata",
+    "get_file_permissions",
+    "list_comments",
+    "docs_read_document",
+    "docs_find_text",
+    "sheets_get_spreadsheet",
+    "sheets_read_range",
+    "slides_read_presentation",
+    "slides_read_slide",
+    "slides_get_slide_thumbnail",
+    "slides_read_slide_layout",
+    "slides_check_contrast"
+  ]
+}

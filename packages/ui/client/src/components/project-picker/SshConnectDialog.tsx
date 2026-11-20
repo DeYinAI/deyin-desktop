@@ -94,7 +94,7 @@ export function SshConnectDialog(props: SshConnectDialogProps) {
           <label className="repo-form__label">
             SSH host
             <select
-              className="repo-form__input"
+              className="repo-form__input repo-form__select"
               value={hostId ?? ""}
               onChange={(e) => setHostId(e.target.value || null)}
             >

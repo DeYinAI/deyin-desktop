@@ -1,18 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../i18n.js";
+import { writeClipboardText } from "../clipboard.js";
 import { Icon } from "./Icon.js";
 
-/** Writes text and resolves false when the host refuses clipboard access. */
-async function writeClipboard(text: string): Promise<boolean> {
-  if (!navigator.clipboard?.writeText) return false;
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    // Denied permissions or iframe policy must not claim a copy that failed.
-    return false;
-  }
-}
+/** Glyph size; fills the 16px content box of the 28px hit target (see styles.css). */
+const ACTION_ICON_SIZE = 16;
 
 export interface MessageActionsProps {
   /** Text the copy action writes; omit to hide Copy. */
@@ -34,8 +26,9 @@ export interface MessageActionsProps {
 /**
  * Message action row shared by user and assistant bubbles: copy, like/dislike,
  * edit, and branch — the same set the DeepSeek harness puts under an answer.
- * Icons stay visible at rest (muted) and brighten on hover, so the row reads as
- * part of the message instead of appearing only under the pointer.
+ * Icons stay visible at rest (muted, readable on every theme) and brighten on
+ * hover, so the row reads as part of the message instead of appearing only
+ * under the pointer.
  */
 export function MessageActions({
   text,
@@ -67,7 +60,7 @@ export function MessageActions({
     if (copied || copyPending.current || !copyText) return;
     const epoch = copyEpoch.current;
     copyPending.current = true;
-    void writeClipboard(copyText).then((ok) => {
+    void writeClipboardText(copyText).then((ok) => {
       if (epoch !== copyEpoch.current) return;
       copyPending.current = false;
       if (!ok) return;
@@ -97,7 +90,7 @@ export function MessageActions({
           title={copyLabel}
           aria-label={copyLabel}
         >
-          <Icon name={copied ? "check" : "copy"} size={14} />
+          <Icon name={copied ? "check" : "copy"} size={ACTION_ICON_SIZE} />
         </button>
       )}
       {onFeedback && (
@@ -110,7 +103,7 @@ export function MessageActions({
             aria-label={likeLabel}
             aria-pressed={upActive}
           >
-            <Icon name="thumbUp" size={14} />
+            <Icon name="thumbUp" size={ACTION_ICON_SIZE} />
           </button>
           <button
             type="button"
@@ -120,7 +113,7 @@ export function MessageActions({
             aria-label={dislikeLabel}
             aria-pressed={downActive}
           >
-            <Icon name="thumbDown" size={14} />
+            <Icon name="thumbDown" size={ACTION_ICON_SIZE} />
           </button>
         </>
       )}
@@ -132,7 +125,7 @@ export function MessageActions({
           title={t("chat.editMessage")}
           aria-label={t("chat.editMessage")}
         >
-          <Icon name="pencil" size={14} />
+          <Icon name="pencil" size={ACTION_ICON_SIZE} />
         </button>
       )}
       {onFork && (
@@ -147,7 +140,7 @@ export function MessageActions({
           title={forkLabel}
           aria-label={t("chat.forkHere")}
         >
-          <Icon name="gitBranch" size={14} />
+          <Icon name="gitBranch" size={ACTION_ICON_SIZE} />
         </button>
       )}
     </div>

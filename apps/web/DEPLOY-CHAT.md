@@ -36,6 +36,11 @@ cd apps/web
 pnpm deploy:chat
 ```
 
+`deploy:chat` rebuilds the SPA, so export the three `VITE_DEYIN_*` variables from the Build section in the
+same shell first. Without `VITE_DEYIN_CHAT_ONLY=true` the bundle is no longer chat-only and will try to open a
+host-server WebSocket that this Worker does not provide. To ship an already-verified `dist/client` without
+rebuilding, run `wrangler deploy --config wrangler.chat.jsonc` instead.
+
 ## Local dev (chat-only)
 
 ```bash
@@ -54,7 +59,7 @@ Use `pnpm oauth:dev` for local OAuth if testing sign-in.
 | Plain chat + models | Yes | Yes |
 | Agent / tools / terminal | No | Yes |
 | Git / repo connect | No | Yes |
-| Side workspace panel | Hidden | Yes |
+| Side workspace panel | Preview only (HTML artifacts) | Yes (files, terminal, git, diff) |
 
 Users see a banner linking to the desktop app for full agent features.
 

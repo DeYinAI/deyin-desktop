@@ -4,6 +4,8 @@ import { isAutomationEnded, type Automation, type AutomationsStore } from "@deyi
 export interface SchedulerCallbacks {
   onTrigger: (automationId: string, scheduledAt: number) => void;
   isCatchUpEnabled: () => boolean;
+  /** An automation something else starts on schedule (a server's engine): it gets no timer and no catch-up here. */
+  skip?: (automation: Automation) => boolean;
 }
 
 /** Returns null when the expression is valid; otherwise an error message. */
@@ -103,7 +105,7 @@ export class AutomationScheduler {
 
   private schedule(automation: Automation): void {
     const trigger = automation.trigger;
-    if (trigger.kind === "manual") return;
+    if (trigger.kind === "manual" || this.callbacks.skip?.(automation)) return;
     try {
       if (trigger.kind === "once" && trigger.at > Date.now()) {
         const slot = trigger.at;
@@ -160,7 +162,7 @@ export class AutomationScheduler {
   handleResume(): void {
     if (this.disposed || !this.callbacks.isCatchUpEnabled()) return;
     for (const automation of this.store.list()) {
-      if (!automation.enabled || isAutomationEnded(automation)) continue;
+      if (!automation.enabled || isAutomationEnded(automation) || this.callbacks.skip?.(automation)) continue;
       this.maybeCatchUp(automation);
     }
   }

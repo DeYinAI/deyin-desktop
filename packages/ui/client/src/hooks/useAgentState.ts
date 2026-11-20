@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { AgentEventEnvelope, ChatMode, ContextUsageSnapshot, DiffSnippetLine, ThreadEvent } from "@deyin/contract";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, truncateToolResultUi } from "@deyin/contract";
-import { describeStreamRetry } from "@deyin/host-core/shared";
+import { describeStreamRetry, type SecureFormRequest } from "@deyin/host-core/shared";
 import {
   isBetterPlanDoc,
   looksLikePlan,
@@ -118,7 +118,8 @@ export type AgentSideEffect =
   | { type: "pending-change-resolved"; changeId: string }
   | { type: "goal-updated"; threadId: string; goal: import("@deyin/contract").ThreadGoal | null }
   | { type: "todos"; threadId: string; todos: import("@deyin/contract").AgentTodoItem[] }
-  | { type: "permission-request"; threadId: string; requestId: string; toolName: string; summary: string }
+  | { type: "permission-request"; threadId: string; requestId: string; toolName: string; summary: string; reason?: string; saved?: boolean }
+  | { type: "secure-form-request"; threadId: string; requestId: string; form: SecureFormRequest }
   | {
       type: "mcp-auth-needed";
       threadId: string;
@@ -190,6 +191,8 @@ interface ThreadRunMutable {
   textBuffer: string;
   reasoningBuffer: string;
   reasoningStart: number;
+  /** Loop step (one model request) in flight; undefined until the host announces one. */
+  step: number | undefined;
   tokens: number;
   optimization: Extract<ThreadEvent, { kind: "optimization" }> | null;
   running: boolean;
@@ -214,6 +217,11 @@ function emptyStatus(): RunStatus {
 /** Unique id for a run's undo checkpoint (stamped on every file card it produces). */
 function newCheckpointId(): string {
   return `cp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** `{ step }` once the loop has announced a step, else nothing: rows from hosts that predate step events simply carry none. */
+function stepStamp(t: ThreadRunMutable): { step?: number } {
+  return t.step === undefined ? {} : { step: t.step };
 }
 
 function safeRequestAnimationFrame(cb: () => void): void {
@@ -253,6 +261,7 @@ function freshThreadRun(mode: ChatMode = "agent"): ThreadRunMutable {
     textBuffer: "",
     reasoningBuffer: "",
     reasoningStart: 0,
+    step: undefined,
     tokens: 0,
     optimization: null,
     running: false,
@@ -432,6 +441,7 @@ class AgentStateStore {
     t.planStream = null;
     t.textBuffer = "";
     t.reasoningBuffer = "";
+    t.step = undefined;
     t.status = emptyStatus();
     this.notifyStructural();
     this.notifyStream(threadId);
@@ -456,10 +466,14 @@ class AgentStateStore {
   private flushReasoning(t: ThreadRunMutable): void {
     const text = t.reasoningBuffer;
     if (text.trim().length === 0) return;
-    const seconds = Math.max(1, Math.round((Date.now() - t.reasoningStart) / 1000));
+    const endedAt = Date.now();
+    const seconds = Math.max(1, Math.round((endedAt - t.reasoningStart) / 1000));
     t.reasoningBuffer = "";
     t.streamReasoning = "";
-    t.runEvents = [...t.runEvents, { kind: "reasoning", text, seconds }];
+    t.runEvents = [
+      ...t.runEvents,
+      { kind: "reasoning", text, seconds, startedAt: t.reasoningStart, endedAt, ...stepStamp(t) },
+    ];
     t.status = { ...t.status, phase: "streaming", label: "Responding…" };
   }
 
@@ -491,6 +505,14 @@ class AgentStateStore {
     if (event.type === "done" && !t.running && !this.ignoreNextDone.has(threadId)) return;
 
     switch (event.type) {
+      case "step-start": {
+        // Reasoning still buffered belongs to the step that just ended.
+        const before = t.runEvents.length;
+        this.flushReasoning(t);
+        t.step = event.step;
+        if (t.runEvents.length !== before) this.notifyStructural();
+        break;
+      }
       case "reasoning-delta": {
         if (t.reasoningBuffer.length === 0) t.reasoningStart = Date.now();
         t.reasoningBuffer += event.delta;
@@ -522,7 +544,14 @@ class AgentStateStore {
         t.toolIndex.set(event.callId, t.runEvents.length);
         t.runEvents = [
           ...t.runEvents,
-          { kind: "tool", name: event.name, summary: event.summary, cwd: event.cwd, startedAt: Date.now() },
+          {
+            kind: "tool",
+            name: event.name,
+            summary: event.summary,
+            cwd: event.cwd,
+            startedAt: Date.now(),
+            ...stepStamp(t),
+          },
         ];
         t.status = { ...t.status, phase: "tool", label: `${event.name}…` };
         this.notifyStructural();
@@ -577,6 +606,7 @@ class AgentStateStore {
             adds: stats.adds,
             dels: stats.dels,
             checkpointId: t.runId,
+            ...stepStamp(t),
             ...snippet,
           },
         ];
@@ -795,6 +825,8 @@ class AgentStateStore {
           requestId: event.requestId,
           toolName: event.toolName,
           summary: event.summary,
+          ...(event.reason ? { reason: event.reason } : {}),
+          ...(event.saved ? { saved: true } : {}),
         });
         break;
       case "mcp-auth-needed":
@@ -806,6 +838,9 @@ class AgentStateStore {
           serverName: event.serverName,
           message: event.message,
         });
+        break;
+      case "secure-form-request":
+        this.emit({ type: "secure-form-request", threadId, requestId: event.requestId, form: event.form });
         break;
       case "question-request":
         this.emit({
@@ -924,7 +959,8 @@ class AgentStateStore {
         }
         const text = t.textBuffer.trim().length > 0 ? t.textBuffer : event.finalText;
         const reasoning = t.reasoningBuffer;
-        const reasoningSeconds = Math.max(1, Math.round((Date.now() - t.reasoningStart) / 1000));
+        const reasoningEndedAt = Date.now();
+        const reasoningSeconds = Math.max(1, Math.round((reasoningEndedAt - t.reasoningStart) / 1000));
         t.textBuffer = "";
         t.reasoningBuffer = "";
         let planText = t.planDoc;
@@ -933,7 +969,16 @@ class AgentStateStore {
         const planFinished = planRun && event.reason === "completed";
         const planTitle = planRun ? planTitleFromMarkdown(planText) : undefined;
         const finished: ThreadEvent[] = [...t.runEvents];
-        if (reasoning.trim().length > 0) finished.push({ kind: "reasoning", text: reasoning, seconds: reasoningSeconds });
+        if (reasoning.trim().length > 0) {
+          finished.push({
+            kind: "reasoning",
+            text: reasoning,
+            seconds: reasoningSeconds,
+            startedAt: t.reasoningStart,
+            endedAt: reasoningEndedAt,
+            ...stepStamp(t),
+          });
+        }
         if (text.trim().length > 0 && !planRun) finished.push({ kind: "assistant", text });
         if (planFinished && !t.planArtifactShown) {
           finished.push({
@@ -960,6 +1005,7 @@ class AgentStateStore {
         ) {
           finished.push(opt);
         }
+        if (event.stats) finished.push({ kind: "run-stats", ...event.stats });
         const tokens = t.tokens;
         this.emit({
           type: "run-complete",
@@ -984,6 +1030,7 @@ class AgentStateStore {
         t.planDoc = "";
         t.planArtifactShown = false;
         t.optimization = null;
+        t.step = undefined;
         t.tokens = 0;
         t.status = emptyStatus();
         this.notifyStructural();
@@ -1008,6 +1055,7 @@ class AgentStateStore {
     t.toolIndex.clear();
     t.subagentIndex.clear();
     t.optimization = null;
+    t.step = undefined;
     t.status = emptyStatus();
     this.notifyStructural();
     this.notifyStream(threadId);
@@ -1023,6 +1071,24 @@ class AgentStateStore {
       if (t.running) return id;
     }
     return null;
+  }
+
+  private runningIdsCache: readonly string[] = [];
+
+  /**
+   * Ids of every thread with an agent run in flight. The same array comes back
+   * while membership is unchanged, so useSyncExternalStore consumers skip the
+   * re-renders that tool and token updates would otherwise cause.
+   */
+  getRunningThreadIds(): readonly string[] {
+    const ids: string[] = [];
+    for (const [id, t] of this.threads) {
+      if (t.running) ids.push(id);
+    }
+    const prev = this.runningIdsCache;
+    if (ids.length === prev.length && ids.every((id, i) => id === prev[i])) return prev;
+    this.runningIdsCache = ids;
+    return ids;
   }
 
   getPlanStream(threadId: string): string | null {
@@ -1074,6 +1140,17 @@ export function useRunningThreadId(): string | null {
     agentStateStore.subscribe,
     () => agentStateStore.anyRunning(),
     () => null,
+  );
+}
+
+const NO_RUNNING_THREADS: readonly string[] = [];
+
+/** Every thread with a run in flight (the sidebar shows a spinner on each). */
+export function useRunningThreadIds(): readonly string[] {
+  return useSyncExternalStore(
+    agentStateStore.subscribe,
+    () => agentStateStore.getRunningThreadIds(),
+    () => NO_RUNNING_THREADS,
   );
 }
 

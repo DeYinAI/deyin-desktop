@@ -17,11 +17,14 @@ import {
   type PayloadKind,
   type TargetKind,
 } from "../automationDraft.js";
-import { describeTimeZone, formatNextRun } from "../automationFormat.js";
-import { scheduleToTrigger, type RepeatKind, type ScheduleDraft } from "../automationSchedule.js";
-import { automationStatus } from "@deyin/host-core/shared";
+import { fill, formatNextRun } from "../automationFormat.js";
+import { outcomeKey, runFacts } from "../automationRun.js";
+import { scheduleToTrigger, type ScheduleDraft } from "../automationSchedule.js";
+import { automationStatus, runTimeline } from "@deyin/host-core/shared";
 import { AnchoredMenu } from "./AnchoredMenu.js";
-import { RuleRow, RuleStepper, RuleTimeInput, RuleWeekdayRow } from "./AutomationRuleControls.js";
+import { AutomationHealing } from "./AutomationHealing.js";
+import { RuleRow } from "./AutomationRuleControls.js";
+import { ScheduleRows } from "./ScheduleRows.js";
 import { Icon } from "./Icon.js";
 import { RuleSelect, type RuleOption } from "./RuleSelect.js";
 
@@ -53,50 +56,13 @@ interface Props {
   onRun: (task: AutomationInfo) => void;
   onStop: (runId: string) => void;
   onDelete: (task: AutomationInfo) => void;
+  onSetAutoHeal: (task: AutomationInfo, enabled: boolean) => Promise<void>;
+  onRevertLearned: (task: AutomationInfo, revisionId: string) => Promise<void>;
   onOpenSshSettings: () => void;
   onProbeWsl: (distro: string) => Promise<string>;
 }
 
 type Tab = "rules" | "records";
-
-const REPEAT_ORDER: readonly RepeatKind[] = [
-  "weekly",
-  "weekdays",
-  "daily",
-  "hourly",
-  "minutely",
-  "monthly",
-  "once",
-  "manual",
-  "custom",
-];
-
-function repeatLabelKey(kind: RepeatKind) {
-  switch (kind) {
-    case "weekly":
-      return "automations.repeat.weekly" as const;
-    case "weekdays":
-      return "automations.repeat.weekdays" as const;
-    case "daily":
-      return "automations.repeat.daily" as const;
-    case "hourly":
-      return "automations.repeat.hourly" as const;
-    case "minutely":
-      return "automations.repeat.minutely" as const;
-    case "monthly":
-      return "automations.repeat.monthly" as const;
-    case "once":
-      return "automations.repeat.once" as const;
-    case "manual":
-      return "automations.repeat.manual" as const;
-    case "custom":
-      return "automations.repeat.custom" as const;
-    default: {
-      const unreachable: never = kind;
-      return unreachable;
-    }
-  }
-}
 
 function statusKey(status: AutomationRun["status"]) {
   switch (status) {
@@ -115,10 +81,6 @@ function statusKey(status: AutomationRun["status"]) {
       return unreachable;
     }
   }
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
 }
 
 export function AutomationDetail(props: Props) {
@@ -149,7 +111,6 @@ export function AutomationDetail(props: Props) {
 
   const status = task ? automationStatus(task) : "active";
   const running = props.activeRunId !== null;
-  const zone = describeTimeZone(new Date(props.now));
   const schedule = draft.schedule;
   const rowId = (name: string) => `autos-${name}`;
 
@@ -165,8 +126,6 @@ export function AutomationDetail(props: Props) {
       setSaving(false);
     }
   };
-
-  const repeatOptions: RuleOption[] = REPEAT_ORDER.map((kind) => ({ id: kind, label: t(repeatLabelKey(kind)) }));
 
   const workspaceOptions: RuleOption[] = props.workspaces.map((w) => ({ id: w.root, label: w.name, hint: w.root }));
   if (draft.workspacePath && !workspaceOptions.some((o) => o.id === draft.workspacePath)) {
@@ -194,101 +153,7 @@ export function AutomationDetail(props: Props) {
     { id: "subagent", label: t("automations.payload.subagent") },
   ];
 
-  const hourlyMinute = Number(schedule.time.split(":")[1] ?? "0");
-  const ranges: ReactNode = (
-    <>
-      <RuleSelect
-        label={t("automations.field.repeat")}
-        value={schedule.repeat}
-        options={repeatOptions}
-        onChange={(id) => changeSchedule({ repeat: id as RepeatKind })}
-      />
-      {(schedule.repeat === "daily" || schedule.repeat === "hourly" || schedule.repeat === "minutely") && (
-        <RuleRow label={t("automations.field.interval")} htmlFor={rowId("interval")}>
-          <RuleStepper
-            id={rowId("interval")}
-            min={1}
-            max={9999}
-            value={Number(schedule.interval) || 1}
-            onChange={(value) => changeSchedule({ interval: String(value) })}
-          />
-        </RuleRow>
-      )}
-      {schedule.repeat === "weekly" && (
-        <RuleWeekdayRow
-          weekdays={schedule.weekdays}
-          onToggle={(day) =>
-            changeSchedule({
-              weekdays: schedule.weekdays.includes(day)
-                ? schedule.weekdays.filter((d) => d !== day)
-                : [...schedule.weekdays, day].sort((a, b) => a - b),
-            })
-          }
-        />
-      )}
-      {schedule.repeat === "monthly" && (
-        <RuleRow label={t("automations.field.monthDay")} htmlFor={rowId("monthDay")}>
-          <RuleStepper
-            id={rowId("monthDay")}
-            min={1}
-            max={31}
-            value={schedule.monthDay}
-            onChange={(value) => changeSchedule({ monthDay: value })}
-          />
-        </RuleRow>
-      )}
-      {schedule.repeat === "once" && (
-        <RuleRow label={t("automations.field.date")} htmlFor={rowId("date")}>
-          <input
-            id={rowId("date")}
-            className="rule-input"
-            type="date"
-            value={schedule.date}
-            onChange={(event) => changeSchedule({ date: event.target.value })}
-          />
-        </RuleRow>
-      )}
-      {(schedule.repeat === "weekly" ||
-        schedule.repeat === "weekdays" ||
-        schedule.repeat === "daily" ||
-        schedule.repeat === "monthly" ||
-        schedule.repeat === "once") && (
-        <RuleRow label={t("automations.field.time")} htmlFor={rowId("time")}>
-          <RuleTimeInput id={rowId("time")} value={schedule.time} onChange={(time) => changeSchedule({ time })} />
-        </RuleRow>
-      )}
-      {schedule.repeat === "hourly" && (
-        <RuleRow label={t("automations.field.minute")} htmlFor={rowId("minute")}>
-          <RuleStepper
-            id={rowId("minute")}
-            min={0}
-            max={59}
-            value={Number.isFinite(hourlyMinute) ? hourlyMinute : 0}
-            onChange={(minute) => changeSchedule({ time: `${schedule.time.split(":")[0] ?? "00"}:${pad2(minute)}` })}
-          />
-        </RuleRow>
-      )}
-      {schedule.repeat === "custom" && (
-        <RuleRow label={t("automations.cron")} htmlFor={rowId("cron")}>
-          <input
-            id={rowId("cron")}
-            className="rule-input rule-input--mono"
-            value={schedule.cron}
-            spellCheck={false}
-            onChange={(event) => changeSchedule({ cron: event.target.value })}
-          />
-        </RuleRow>
-      )}
-      {schedule.repeat !== "manual" && (
-        <div className="rule-row">
-          <span className="rule-row__label">{t("automations.field.zone")}</span>
-          <span className="rule-value rule-value--disabled">
-            <span className="rule-value__text">{zone}</span>
-          </span>
-        </div>
-      )}
-    </>
-  );
+  const ranges: ReactNode = <ScheduleRows schedule={schedule} onChange={changeSchedule} now={props.now} idPrefix="autos" />;
 
   const headerActions = (
     <div className="autos-detail__actions">
@@ -400,6 +265,17 @@ export function AutomationDetail(props: Props) {
                       : t(status === "paused" ? "automations.status.paused" : "automations.status.ended")}
                 </p>
                 {running && <p className="autos-detail__notice">{t("automations.runningNow")}</p>}
+                {(task.consent?.browserOrigins?.length ?? 0) > 0 && (
+                  <p className="autos-detail__notice">{fill(t("automations.browser.access"), { sites: (task.consent?.browserOrigins ?? []).join(", ") })}</p>
+                )}
+                {task.health?.pausedAt !== undefined && (
+                  <p className="autos-detail__notice autos-detail__notice--paused" role="status">
+                    {fill(t("automations.health.paused"), { reason: task.health.pausedReason ?? "" })}{" "}
+                    {task.health.nextProbeAt !== undefined
+                      ? fill(t("automations.health.recheck"), { when: formatNextRun(task.health.nextProbeAt, props.now) })
+                      : t("automations.health.needsYou")}
+                  </p>
+                )}
               </>
             )}
             <div className="autos-editor">
@@ -573,6 +449,9 @@ export function AutomationDetail(props: Props) {
                   <p className="autos-detail__notice">{t("automations.sshOpenferenceOnly")}</p>
                 )}
               </section>
+              {task && (
+                <AutomationHealing task={task} onSetAutoHeal={props.onSetAutoHeal} onRevert={props.onRevertLearned} />
+              )}
               {error ? (
                 <p className="autos-detail__failure" role="alert">
                   {error}
@@ -619,12 +498,16 @@ export function AutomationDetail(props: Props) {
 function RunRecords({ runs }: { runs: readonly AutomationRun[] }) {
   const t = useT();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [stepsOpen, setStepsOpen] = useState<Record<string, boolean>>({});
   if (runs.length === 0) return <p className="autos-detail__empty">{t("automations.noRuns")}</p>;
   return (
     <ol className="autos-records">
       {runs.map((run) => {
         const text = run.finalText?.trim() ?? "";
         const open = expanded[run.id] === true;
+        const showSteps = stepsOpen[run.id] === true;
+        const facts = runFacts(run, t);
+        const timeline = showSteps ? runTimeline(run.events) : [];
         return (
           <li key={run.id} className="autos-record">
             <Icon name="clock" size={16} className="autos-record__glyph" />
@@ -635,8 +518,22 @@ function RunRecords({ runs }: { runs: readonly AutomationRun[] }) {
                   <span className="run-pill__dot" />
                   {t(statusKey(run.status))}
                 </span>
+                {run.outcome && (
+                  <span className={`autos-record__outcome autos-record__outcome--${run.outcome}`}>{t(outcomeKey(run.outcome))}</span>
+                )}
               </div>
+              {facts && <p className="autos-record__facts">{facts}</p>}
+              {run.blocker && (
+                <p className="autos-record__reason">
+                  {run.blocker.kind}: {run.blocker.detail}
+                </p>
+              )}
               {run.reason && <p className="autos-record__reason">{run.reason}</p>}
+              {run.artifacts && run.artifacts.length > 0 && (
+                <p className="autos-record__facts">
+                  {t("automations.records.artifacts")}: {run.artifacts.join(" · ")}
+                </p>
+              )}
               {text ? (
                 <>
                   <p className={`autos-record__text${open ? " autos-record__text--open" : ""}`}>{text.slice(0, 4000)}</p>
@@ -654,6 +551,30 @@ function RunRecords({ runs }: { runs: readonly AutomationRun[] }) {
                 run.status !== "running" &&
                 run.status !== "queued" && <p className="autos-record__text">{t("automations.records.noOutput")}</p>
               )}
+              {run.status !== "queued" && (
+                <button
+                  type="button"
+                  className="autos-record__toggle"
+                  aria-expanded={showSteps}
+                  onClick={() => setStepsOpen((prev) => ({ ...prev, [run.id]: !showSteps }))}
+                >
+                  {t(showSteps ? "automations.records.hideSteps" : "automations.records.showSteps")}
+                </button>
+              )}
+              {showSteps &&
+                (timeline.length === 0 ? (
+                  <p className="autos-record__facts">{t("automations.records.noSteps")}</p>
+                ) : (
+                  <ol className="autos-steps">
+                    {timeline.map((row) => (
+                      <li key={row.id} className={`autos-steps__row autos-steps__row--${row.state}`}>
+                        <span className="autos-steps__tool">{row.tool}</span>
+                        {row.summary && <span className="autos-steps__summary">{row.summary}</span>}
+                        {row.detail && <span className="autos-steps__detail">{row.detail}</span>}
+                      </li>
+                    ))}
+                  </ol>
+                ))}
             </div>
           </li>
         );

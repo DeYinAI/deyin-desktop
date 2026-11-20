@@ -1,0 +1,36 @@
+{
+  "name": "@deyin/bot-engine",
+  "private": true,
+  "version": "0.1.1",
+  "description": "The Deyin Bot engine: a small HTTP service that keeps a Bot's files, commands and routines on a server the person owns, so the desktop app can use that server as the Bot's computer and routines keep running while it is closed.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DeYinAI/deyin-desktop.git",
+    "directory": "packages/bot-engine"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@deyin/host-core": "workspace:*",
+    "croner": "^10.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.23.12",
+    "typescript": "^5.6.3"
+  }
+}

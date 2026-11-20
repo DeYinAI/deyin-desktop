@@ -1,5 +1,13 @@
 /** Compact inline icon set (original 16x16 stroke glyphs), themed via currentColor. */
 
+/** Thumbs-up: a cuff on the left and a hand whose thumb points up. Thumbs-down flips it. */
+const THUMB = (
+  <>
+    <rect x="2" y="7.2" width="2.6" height="6.3" rx="0.7" />
+    <path d="M4.6 13.5V7.2l2.2-4.3a1.2 1.2 0 0 1 2.3.5V6h3.2a1.4 1.4 0 0 1 1.4 1.7l-.9 4.2a1.6 1.6 0 0 1-1.6 1.6z" />
+  </>
+);
+
 const PATHS: Record<string, JSX.Element> = {
   plus: <path d="M8 3v10M3 8h10" />,
   plusCircle: (
@@ -109,6 +117,12 @@ const PATHS: Record<string, JSX.Element> = {
     </>
   ),
   swap: <path d="M4.5 6H13l-2.5-2.5M11.5 10H3l2.5 2.5" />,
+  lock: (
+    <>
+      <rect x="3.2" y="7" width="9.6" height="6.8" rx="1.4" />
+      <path d="M5.4 7V5.2a2.6 2.6 0 0 1 5.2 0V7" />
+    </>
+  ),
   play: <path d="M5 3.5l7 4.5-7 4.5z" />,
   pause: (
     <>
@@ -183,16 +197,8 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M10.5 5.5V3.7A1.2 1.2 0 009.3 2.5H3.7A1.2 1.2 0 002.5 3.7v5.6a1.2 1.2 0 001.2 1.2h1.8" />
     </>
   ),
-  thumbUp: (
-    <>
-      <path d="M5.5 7.5V4.2a1 1 0 012 0V7.5m0-4.7a1 1 0 012 0V7.5m0-3.4a1 1 0 012 0v2.1c0 2.2-1.6 4-3.6 4.4H5.8c-1.1 0-2-.6-2.6-1.5L2.4 8.8a1.1 1.1 0 011.7-1.4l.9 1" />
-    </>
-  ),
-  thumbDown: (
-    <>
-      <path d="M5.5 8.5v3.3a1 1 0 002 0V8.5m0 4.7a1 1 0 002 0V8.5m0 3.4a1 1 0 002 0v-2.1c0-2.2-1.6-4-3.6-4.4H5.8c-1.1 0-2 .6-2.6 1.5l-1.8 3.1a1.1 1.1 0 011.7 1.4l.9-1" />
-    </>
-  ),
+  thumbUp: THUMB,
+  thumbDown: <g transform="translate(0 16) scale(1 -1)">{THUMB}</g>,
   flag: <path d="M4 14V2.5M4 3h8l-1.8 2.5L12 8H4" />,
   route: <path d="M4 13.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM12 5.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3zM12 5.5v3a2 2 0 01-2 2H5.5" />,
   message: <path d="M2.5 4.5A1.5 1.5 0 014 3h8a1.5 1.5 0 011.5 1.5v4A1.5 1.5 0 0112 10H7l-3 3v-3a1.5 1.5 0 01-1.5-1.5z" />,

@@ -1,3 +1,5 @@
+import { sanitizeConductorRolePreferences } from "./conductor-roles.js";
+import { isProductId } from "./products.js";
 import { pickImageModelParamsRecord } from "./image-model-params.js";
 import { pickVideoModelParamsRecord } from "./video-model-params.js";
 import type { CapabilityItem, DeyinSettings, ProviderApiFormat, ProviderInfo } from "./types.js";
@@ -19,7 +21,7 @@ export const THEME_IDS = [
   "reference",
 ] as const satisfies readonly DeyinSettings["theme"][];
 
-export const SETTINGS_SCHEMA_VERSION = 22;
+export const SETTINGS_SCHEMA_VERSION = 24;
 
 export const DEFAULT_SETTINGS: DeyinSettings = {
   schemaVersion: SETTINGS_SCHEMA_VERSION,
@@ -33,8 +35,13 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   /** OS-level computer use (Windows); opt-in for safety. */
   computerUseEnabled: false,
   computerUseScreenshotRetentionDays: 7,
+  computerUseOverlay: true,
+  /** Real-Chrome control needs the extension installed and paired; opt-in. */
+  chromeControlEnabled: false,
+  chromeTabStrategy: "group",
   defaultModel: null,
   roleModels: {},
+  conductorRolePreferences: {},
   subagentModels: {},
   subagentEfforts: {},
   modelEfforts: {},
@@ -53,6 +60,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   wrapLongLines: false,
   codeFontSize: 12,
   agentMode: "agent",
+  activeProduct: "code",
   defaultShell: null,
   terminalFontSize: 12,
   terminalScrollback: 5000,
@@ -65,6 +73,7 @@ export const DEFAULT_SETTINGS: DeyinSettings = {
   automationsCatchUp: true,
   optimizationPluginEnabled: false,
   memoryEnabled: true,
+  vaultOnePassword: false,
   reviewMode: "off",
  autoImageGeneration: true,
   autoVideoGeneration: true,
@@ -85,6 +94,13 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     if (key in input) {
       (merged as unknown as Record<string, unknown>)[key] = input[key];
     }
+  }
+  // v23: Conductor's role preferences were saved as `botRolePreferences` before its ids
+  // left "bot". The pick above only reads current keys, so without this the user's
+  // saved plan/code/review agent choices would silently reset on upgrade. A value
+  // already saved under the new key wins.
+  if (!("conductorRolePreferences" in input) && "botRolePreferences" in input) {
+    merged.conductorRolePreferences = input.botRolePreferences as DeyinSettings["conductorRolePreferences"];
   }
   merged.onboard = { ...DEFAULT_SETTINGS.onboard, ...(typeof input.onboard === "object" && input.onboard ? input.onboard : {}) };
 
@@ -119,6 +135,7 @@ export function migrateSettings(raw: unknown): DeyinSettings {
   }
   merged.subagentConcurrency = clamp(merged.subagentConcurrency, 1, 32, DEFAULT_SETTINGS.subagentConcurrency);
   merged.roleModels = pickRoleRecord(merged.roleModels);
+  merged.conductorRolePreferences = sanitizeConductorRolePreferences(merged.conductorRolePreferences);
   merged.subagentModels = pickStringRecord(merged.subagentModels);
   merged.subagentEfforts = pickStringRecord(
     merged.subagentEfforts,
@@ -142,6 +159,15 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     90,
     DEFAULT_SETTINGS.computerUseScreenshotRetentionDays,
   );
+  if (typeof merged.computerUseOverlay !== "boolean") {
+    merged.computerUseOverlay = DEFAULT_SETTINGS.computerUseOverlay;
+  }
+  if (typeof merged.chromeControlEnabled !== "boolean") {
+    merged.chromeControlEnabled = DEFAULT_SETTINGS.chromeControlEnabled;
+  }
+  if (merged.chromeTabStrategy !== "group" && merged.chromeTabStrategy !== "window") {
+    merged.chromeTabStrategy = DEFAULT_SETTINGS.chromeTabStrategy;
+  }
   if (typeof merged.revealTerminalOnAgentCommand !== "boolean") {
     merged.revealTerminalOnAgentCommand = DEFAULT_SETTINGS.revealTerminalOnAgentCommand;
   }
@@ -167,10 +193,14 @@ export function migrateSettings(raw: unknown): DeyinSettings {
     merged.automationsCatchUp = DEFAULT_SETTINGS.automationsCatchUp;
   }
   if (typeof merged.memoryEnabled !== "boolean") merged.memoryEnabled = DEFAULT_SETTINGS.memoryEnabled;
+  if (typeof merged.vaultOnePassword !== "boolean") merged.vaultOnePassword = DEFAULT_SETTINGS.vaultOnePassword;
   if (merged.reviewMode !== "on" && merged.reviewMode !== "off") merged.reviewMode = DEFAULT_SETTINGS.reviewMode;
 if (typeof merged.autoImageGeneration !== "boolean") merged.autoImageGeneration = DEFAULT_SETTINGS.autoImageGeneration;
   if (typeof merged.autoVideoGeneration !== "boolean") merged.autoVideoGeneration = DEFAULT_SETTINGS.autoVideoGeneration;
   if (merged.agentMode !== "agent" && merged.agentMode !== "chat") merged.agentMode = "agent";
+  // v24: the product switcher. An unknown or missing id (a hand-edited file, a newer build's
+  // value read by an older one) falls back to Code rather than opening a shell that is not there.
+  if (!isProductId(merged.activeProduct)) merged.activeProduct = DEFAULT_SETTINGS.activeProduct;
   if (typeof merged.whatsNewSeenVersion !== "string") merged.whatsNewSeenVersion = DEFAULT_SETTINGS.whatsNewSeenVersion;
   // Theme ids must stay in sync with DeyinSettings["theme"]. A hardcoded list
   // here silently drops any newly added style back to the default.

@@ -3,8 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { CONDUCTOR_PIPELINE_TEMPLATES, CONDUCTOR_ROLES, CONDUCTOR_ROLE_INFO } from "@deyin/host-core/shared";
 import { BUILTIN_SKILLS, materializeBuiltinSkills } from "../src/capabilities/builtin-skills.js";
 import {
+  BUILTIN_COMMANDS,
   expandCommand,
   discoverCommands,
   matchCommand,
@@ -86,12 +88,12 @@ test("commands: discovery, built-ins, $ARGUMENTS expansion and /matching", async
     const deploy = found.find((c) => c.name === "deploy-prod");
     assert.ok(deploy);
     assert.ok(found.some((c) => c.name === "commit" && c.source === "built-in"));
-    // Bot Mode's entry points: the guided pipeline wizard and one-shot delegation.
+    // Conductor's entry points: the guided pipeline wizard and one-shot delegation.
     for (const name of ["pipeline", "delegate", "review-pr", "run-tests"]) {
       assert.ok(found.some((c) => c.name === name && c.source === "built-in"), `missing /${name}`);
     }
     const pipeline = found.find((c) => c.name === "pipeline")!;
-    assert.ok(pipeline.body.includes("build-bot-workflow"));
+    assert.ok(pipeline.body.includes("build-conductor-workflow"));
     // Authoring workflows ship as built-in skills, not commands.
     assert.ok(!found.some((c) => c.name === "create-skill"));
 
@@ -361,6 +363,10 @@ test("built-in skills materialize idempotently and clean up stale entries", asyn
     // Discovered like any other skills, with manual-only ones excluded from the prompt.
     const skills = await discoverSkills([{ dir, source: "built-in" }]);
     assert.equal(skills.length, BUILTIN_SKILLS.length);
+    // Descriptions survive the frontmatter round trip exactly: the parser does not unescape \" in a quoted value.
+    for (const shipped of BUILTIN_SKILLS) {
+      assert.equal(skills.find((s) => s.name === shipped.name)?.description, shipped.description, shipped.name);
+    }
     const loop = skills.find((s) => s.name === "loop");
     assert.equal(loop?.disableModelInvocation, true);
     const section = skillsPromptSection(skills);
@@ -511,4 +517,98 @@ test("resolveCommandInvocation expands commands, skills, and names the misses", 
 
   // A path must never reach the unknown-command path.
   assert.deepEqual(resolveCommandInvocation("/home/me/x.md needs an update", caps), { kind: "none" });
+});
+
+test("the pipeline skill turns a sentence into confirmed stages and uses the shared role and template data", () => {
+  const skill = BUILTIN_SKILLS.find((candidate) => candidate.name === "build-conductor-workflow");
+  assert.ok(skill, "build-conductor-workflow ships built in");
+  const body = skill.content;
+
+  // The authoring flow: read the sentence, use the user's role preferences, confirm, then write.
+  assert.match(body, /Claude plans, ZCode builds, Codex reviews/);
+  assert.match(body, /`list_external_bots`[\s\S]*`roles`/);
+  assert.match(body, /An agent the user names always wins/);
+  assert.match(body, /### 4\. Confirm the stage list/);
+  assert.match(body, /Do not write the file until the user has confirmed the stage list/);
+  assert.match(body, /plan: Claude → build: ZCode → review: Codex/);
+
+  // Agents that cannot do the work are handled, not guessed at.
+  assert.match(body, /is not installed/);
+  assert.match(body, /does not generate images or media itself/);
+  assert.match(body, /not in the agent's `availableModels`/);
+
+  // Stages that need earlier code must stay isolated; read-only stages on the live tree must not.
+  assert.match(body, /Isolated stages chain/);
+  assert.match(body, /uncommitted changes/);
+
+  // Every role and every starter pipeline, with prompts a model can copy, comes from the shared data.
+  for (const role of CONDUCTOR_ROLES) assert.ok(body.includes(`\`${role}\`: ${CONDUCTOR_ROLE_INFO[role].description}`), role);
+  for (const template of CONDUCTOR_PIPELINE_TEMPLATES) {
+    assert.ok(body.includes(`(\`${template.id}\`)`), template.id);
+    for (const stage of template.stages) {
+      assert.ok(body.includes(JSON.stringify(stage.userPromptTemplate)), `${template.id}/${stage.id}`);
+    }
+  }
+  assert.match(body, /"role": "code"/);
+
+  // Names the user no longer sees must not leak into guidance for a pipeline they read about.
+  assert.doesNotMatch(body, /Bot Flow tab|Bot Mode \(/);
+  assert.match(body, /Conductor > Pipelines/);
+});
+
+test("the pipeline and delegation commands defer to role preferences", () => {
+  const pipeline = BUILTIN_COMMANDS.find((command) => command.name === "pipeline")!;
+  assert.match(pipeline.body, /build-conductor-workflow/);
+  assert.match(pipeline.body, /confirm the stage list/);
+  assert.match(pipeline.description, /Conductor/);
+
+  const delegate = BUILTIN_COMMANDS.find((command) => command.name === "delegate")!;
+  assert.match(delegate.body, /`roles`/);
+  assert.match(delegate.body, /agent I name/);
+
+  const review = BUILTIN_COMMANDS.find((command) => command.name === "review-pr")!;
+  assert.match(review.body, /`roles`/);
+});
+
+test("the Superagent setup skill interviews with ask_question, never handles a token, and defaults to the safe choice", () => {
+  const skill = BUILTIN_SKILLS.find((candidate) => candidate.name === "setup-superagent");
+  assert.ok(skill, "setup-superagent ships built in");
+  assert.match(skill.description, /\/superagent/);
+  const body = skill.content;
+
+  // The hard rules: a secret never goes through chat, and a pasted one is not used.
+  assert.match(body, /Never ask for, accept, repeat or store a GitHub token, password or key in chat/);
+  assert.match(body, /never use the "Other" answer for one/);
+  assert.match(body, /revoke it at GitHub/);
+
+  // The interview runs through ask_question, within what that tool accepts (a question with one option is dropped).
+  assert.match(body, /Every question goes through `ask_question`/);
+  assert.match(body, /at least 2 options each/);
+  assert.match(body, /"I approved it" \(recommended\) and "That did not work"/);
+
+  // Nothing that lets it act happens without a clear yes, and the agent's account is not the person's own.
+  assert.match(body, /Default to the safe choice/);
+  assert.match(body, /Observe first/);
+  assert.match(body, /dedicated account/);
+  assert.match(body, /may not contain it, so the user could never ask it for anything/);
+  assert.match(body, /Do not use computer use or browser automation/);
+
+  // The order: look, configure, connect, verify, watch and mode, confirm, then switch on.
+  const order = ["### 1. Look around", "### 2. Repository and people", "### 3. The agent's GitHub account", "### 4. Check access", "### 5. What to watch", "### 6. Confirm and turn on", "### 7. Wrap up"];
+  const positions = order.map((heading) => body.indexOf(heading));
+  assert.ok(positions.every((position) => position >= 0), `a step is missing: ${positions.join(", ")}`);
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions, "the steps are in order");
+
+  // The modes are described as the product behaves: observe still acts on direct mentions.
+  assert.match(body, /an allowed account that mentions the agent still gets work done/);
+});
+
+test("the /superagent command loads the setup skill and forbids a token in chat", () => {
+  const command = BUILTIN_COMMANDS.find((candidate) => candidate.name === "superagent");
+  assert.ok(command, "/superagent ships built in");
+  assert.equal(command.source, "built-in");
+  assert.match(command.body, /`setup-superagent` skill/);
+  assert.match(command.body, /`superagent_status` first/);
+  assert.match(command.body, /never ask for or accept a GitHub token in chat/);
+  assert.equal(expandCommand(command, "watch acme/app"), command.body.replace("$ARGUMENTS", "watch acme/app"));
 });

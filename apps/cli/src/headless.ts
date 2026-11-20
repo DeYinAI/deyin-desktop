@@ -282,6 +282,18 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
         // Text already streamed to stdout cannot be taken back; the replay re-emits
         // it from the start, so mark the seam. (--json consumers get the event itself.)
         stderr.write(dim(`\n[retry] ${describeStreamRetry(event)}\n`));
+        // The run summary keeps only a count; journal each replay so a retry storm
+        // can be traced to a step and a cause after the fact.
+        if (sessionId) {
+          ctx.sessions.appendEvent(sessionId, {
+            kind: "stream-retry",
+            step: event.step,
+            attempt: event.attempt,
+            maxAttempts: event.maxAttempts,
+            reason: event.reason,
+            delayMs: event.delayMs,
+          });
+        }
         break;
       case "evidence-gate": {
         // Delivery-mode gates stay silent here as before; the loop's own
@@ -296,6 +308,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
           dim(
             `[run] ${s.steps} steps, ${s.toolCalls} tool calls (${s.deniedCalls} denied, ${s.failedCalls} failed, ` +
               `${s.duplicateResults} duplicates elided, ${s.loopGuardTrips} guard trips), ` +
+              (s.httpAttempts ? `${s.httpAttempts} http requests (${s.streamRetries ?? 0} replays, ${s.reviewerCalls ?? 0} goal reviews), ` : "") +
               `cache hit rate ${(s.cacheHitRate * 100).toFixed(1)}%\n`,
           ),
         );

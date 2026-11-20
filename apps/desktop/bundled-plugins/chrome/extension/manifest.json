@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Deyin Browser Bridge",
+  "version": "0.1.0",
+  "description": "Lets the Deyin desktop app work in your Chrome tabs when you ask it to. Nothing is shared until you pair it and allow it.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqx3lDJRkHYy0vrq+PPfhLh8lB4sZ2K4G6FEp3kBtKrrbLc2JWhMKOUsjQPVXdjXm+AQzIsrK/zWaSdcsjK27rJWcw5e6BYcvkZiG29X7E+TsfD/GFngrPk1EYLpzt55qbpSP50mpsR1akTvVKtsAgLThSEit6cQm8XE5jJ84+AaMh3lPCNXIJl4KQ7qU9SY5jlKneJ7ykjeOvYktVF1tpjwCu0Worj8KCiIkcJ4AmKL310Fcnn5yacBc84lCxgbv9C0SP6h0MKWkoQFfJHrUdzusuce7A+00jhhHrW/fvJH/k8fZLbuqjOX29htzpFibtXpxChH9q/lNd6trewUrFwIDAQAB",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Deyin",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "permissions": [
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "storage",
+    "alarms"
+  ]
+}

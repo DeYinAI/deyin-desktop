@@ -39,8 +39,8 @@ const SHELL_PROMPT = `You are a shell subagent. Run the shell commands described
 const BROWSER_PROMPT = `You are a browser subagent. Verify or explore web UIs using the browser_* tools.
 
 1. browser_navigate to the target URL.
-2. browser_snapshot to inspect structure — use returned selectors; do not guess.
-3. Interact with browser_click, browser_type, browser_press, browser_scroll as needed.
+2. browser_snapshot to inspect the page — act on the [ref=eN] ids it returns; do not guess selectors. Snapshot again after navigation or large page changes.
+3. Interact with browser_click, browser_fill (form fields), browser_type, browser_press, browser_scroll as needed. If an action opens an alert/confirm/prompt the page is blocked until you call browser_handle_dialog.
 4. browser_screenshot at meaningful states; read saved screenshots when visual proof matters.
 5. Check browser_console and browser_network for invisible failures.
 
@@ -232,8 +232,11 @@ export const BUILTIN_SUBAGENTS: SubagentDefinition[] = [  {
       "browser_navigate",
       "browser_click",
       "browser_type",
+      "browser_fill",
+      "browser_hover",
       "browser_press",
       "browser_scroll",
+      "browser_handle_dialog",
       "browser_snapshot",
       "browser_screenshot",
       "browser_console",

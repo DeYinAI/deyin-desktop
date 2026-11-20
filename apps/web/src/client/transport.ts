@@ -24,13 +24,19 @@ import {
   imageParamsToExtra,
   modelImageCapability,
   videoParamsToExtra,
+  EMPTY_BOT_LAYOUT,
   type StoredProviderBase,
 } from "@deyin/host-core/shared";
+import {
+  CONDUCTOR_WORKFLOWS_KEY,
+  readConductorWorkflows as readSavedConductorWorkflows,
+  readProjects as readSavedProjects,
+} from "./legacy-local-state.js";
 import { browserImageDataUrl, readBrowserImage, saveBrowserImage } from "./browser-image-store.js";
 import { browserVideoDataUrl, readBrowserVideo, saveBrowserVideo } from "./browser-video-store.js";
 import { readBrowserPage, saveBrowserPage } from "./browser-page-store.js";
 import type { DeyinApi } from "@deyin/contract";
-import type { AgentEventEnvelope, AgentStartOptions } from "@deyin/host-core/shared";
+import type { AgentEventEnvelope, AgentStartOptions, BotResult } from "@deyin/host-core/shared";
 import type {
   Bootstrap,
   CapabilityItem,
@@ -49,7 +55,6 @@ import type {
   ImageGenerateResult,
   VideoGenerateResult,
   PluginCatalogEntry,
-  ProjectsState,
   ProviderInfo,
   ProviderPatch,
   ProviderTestResult,
@@ -60,7 +65,7 @@ import type {
   UsageDay,
   UsageEvent,
   UserProfile,
-  BotWorkflowDefinition,
+  ConductorWorkflowDefinition,
   ExternalAgentDescriptor,
 } from "@deyin/contract";
 import type {
@@ -631,20 +636,9 @@ export function createBrowserTransport(): DeyinApi {
       onProgress: (cb: (e: RepoProgressEvent) => void) => host.onRepoProgress(cb),
     },
     projects: {
-      get: async () =>
-        readLocal<ProjectsState>("deyin.projects", {
-          projects: [],
-          activeProjectId: null,
-          activeThreadId: null,
-          workspaceRoot: null,
-        }),
+      get: async () => readSavedProjects(localStorage),
       set: async (patch) => {
-        const prev = readLocal<ProjectsState>("deyin.projects", {
-          projects: [],
-          activeProjectId: null,
-          activeThreadId: null,
-          workspaceRoot: null,
-        });
+        const prev = readSavedProjects(localStorage);
         const next = {
           ...prev,
           ...patch,
@@ -1264,6 +1258,9 @@ export function createBrowserTransport(): DeyinApi {
         if (/^https?:\/\//.test(url)) window.open(url, "_blank", "noopener");
       },
     },
+    // Left undefined on purpose in the browser host: `clipboard.ts` falls back
+    // to navigator.clipboard and leaves the platform's own context menu alone,
+    // which is already the expected behaviour for a web page.
     paths: {
       get: async () => ({
         userData: "browser-session",
@@ -1366,13 +1363,13 @@ export function createBrowserTransport(): DeyinApi {
       nudge: async () => false,
       logs: async () => [],
     },
-    botWorkflows: {
-      list: async (): Promise<BotWorkflowDefinition[]> => {
-        return readLocal<BotWorkflowDefinition[]>("deyin.botWorkflows", []);
+    conductorWorkflows: {
+      list: async (): Promise<ConductorWorkflowDefinition[]> => {
+        return readSavedConductorWorkflows(localStorage);
       },
-      save: async (workflow: BotWorkflowDefinition): Promise<BotWorkflowDefinition> => {
-        const list = readLocal<BotWorkflowDefinition[]>("deyin.botWorkflows", []);
-        const toSave: BotWorkflowDefinition = {
+      save: async (workflow: ConductorWorkflowDefinition): Promise<ConductorWorkflowDefinition> => {
+        const list = readSavedConductorWorkflows(localStorage);
+        const toSave: ConductorWorkflowDefinition = {
           ...workflow,
           id: workflow.id && workflow.id.trim() ? workflow.id : `wf-${Math.random().toString(36).slice(2, 10)}`,
           updatedAt: Date.now(),
@@ -1381,13 +1378,13 @@ export function createBrowserTransport(): DeyinApi {
         const idx = list.findIndex((w) => w.id === toSave.id);
         if (idx >= 0) list[idx] = toSave;
         else list.push(toSave);
-        writeLocal("deyin.botWorkflows", list);
+        writeLocal(CONDUCTOR_WORKFLOWS_KEY, list);
         return toSave;
       },
       delete: async (id: string): Promise<boolean> => {
-        const list = readLocal<BotWorkflowDefinition[]>("deyin.botWorkflows", []);
+        const list = readSavedConductorWorkflows(localStorage);
         const filtered = list.filter((w) => w.id !== id);
-        writeLocal("deyin.botWorkflows", filtered);
+        writeLocal(CONDUCTOR_WORKFLOWS_KEY, filtered);
         return filtered.length < list.length;
       },
       run: async () => ({ ok: false, runId: undefined }),
@@ -1395,10 +1392,35 @@ export function createBrowserTransport(): DeyinApi {
       merge: async () => ({ ok: false, message: "Worktree merge requires Deyin Desktop local git access." }),
       onEvent: () => () => {},
     },
+    // Bots run agents, hold memory and use a computer, so they need the desktop runtime: the browser
+    // build reports an empty roster and refuses changes (the UI hides the Bot product here anyway).
+    bots: {
+      list: async () => ({ bots: [], layout: EMPTY_BOT_LAYOUT }),
+      create: async () => botsUnavailable(),
+      update: async () => botsUnavailable(),
+      archive: async () => botsUnavailable(),
+      restore: async () => botsUnavailable(),
+      delete: async () => botsUnavailable(),
+      setPrimary: async () => botsUnavailable(),
+      setPinned: async () => botsUnavailable(),
+      setHidden: async () => botsUnavailable(),
+      addSection: async () => botsUnavailable(),
+      renameSection: async () => botsUnavailable(),
+      removeSection: async () => botsUnavailable(),
+      moveToSection: async () => botsUnavailable(),
+      memoryList: async () => botsUnavailable(),
+      memoryForget: async () => botsUnavailable(),
+      memoryShare: async () => botsUnavailable(),
+      onChange: () => () => {},
+    },
     beta: {
       submitFeedback: async () => ({ ok: false }),
     },
   };
+}
+
+function botsUnavailable<T>(): BotResult<T> {
+  return { ok: false, code: "invalid", error: "Bots need the Deyin Desktop app." };
 }
 
 /** Stable anonymous id for this browser profile (fingerprint + install id). */

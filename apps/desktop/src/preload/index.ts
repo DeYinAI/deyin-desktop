@@ -3,7 +3,17 @@ import { CH, type DeyinApi } from "@deyin/contract";
 import type {
   AgentEventEnvelope,
   AgentUiEvent,
+  AutomationInfo,
   AutomationRun,
+  BotPermissionSettings,
+  EngineHostView,
+  EngineSetupEvent,
+  FileScope,
+  TeachState,
+  VaultSnapshot,
+  BotsSnapshot,
+  ChromeBridgeStatus,
+  ComputerUseState,
   IndexStatus,
   TerminalDataEvent,
   TerminalExitEvent,
@@ -179,6 +189,7 @@ agent: {
  resetSession: (threadId) => ipcRenderer.invoke(CH.agentResetSession, threadId),
  approve: (requestId, decision) => ipcRenderer.send(CH.agentApprove, requestId, decision),
  answerQuestion: (requestId, answers) => ipcRenderer.send(CH.agentAnswerQuestion, requestId, answers),
+ answerSecureForm: (requestId, values) => ipcRenderer.send(CH.agentAnswerSecureForm, requestId, values),
  disposeShell: (threadId) => ipcRenderer.send(CH.agentDisposeShell, threadId),
  onEvent: (cb) => {
  const listener = (_e: unknown, envelope: AgentEventEnvelope) => cb(envelope);
@@ -221,11 +232,13 @@ agent: {
     setAllowlist: (apps) => ipcRenderer.invoke(CH.computerUseSetAllowlist, apps),
     listApps: () => ipcRenderer.invoke(CH.computerUseListApps),
     getHostStatus: () => ipcRenderer.invoke(CH.computerUseGetHostStatus),
-    onActive: (cb) => {
-      const listener = (_e: unknown, active: boolean) => cb(active);
-      ipcRenderer.on(CH.computerUseActive, listener);
-      return () => ipcRenderer.removeListener(CH.computerUseActive, listener);
+    onState: (cb) => {
+      const listener = (_e: unknown, state: ComputerUseState) => cb(state);
+      ipcRenderer.on(CH.computerUseState, listener);
+      return () => ipcRenderer.removeListener(CH.computerUseState, listener);
     },
+    stop: () => ipcRenderer.send(CH.computerUseStop),
+    resume: () => ipcRenderer.send(CH.computerUseResume),
     onAppApprovalRequest: (cb) => {
       const listener = (_e: unknown, req: { requestId: string; appId: string; action: string }) => cb(req);
       ipcRenderer.on(CH.computerUseAppApprovalRequest, listener);
@@ -233,6 +246,35 @@ agent: {
     },
     respondAppApproval: (requestId, decision) =>
       ipcRenderer.send(CH.computerUseAppApprovalRespond, requestId, decision),
+  },
+  chrome: {
+    getStatus: () => ipcRenderer.invoke(CH.chromeGetStatus),
+    onStatus: (cb) => {
+      const listener = (_e: unknown, status: ChromeBridgeStatus) => cb(status);
+      ipcRenderer.on(CH.chromeStatus, listener);
+      return () => ipcRenderer.removeListener(CH.chromeStatus, listener);
+    },
+    beginPairing: () => ipcRenderer.invoke(CH.chromeBeginPairing),
+    cancelPairing: () => ipcRenderer.invoke(CH.chromeCancelPairing),
+    forgetBrowser: (browserId) => ipcRenderer.invoke(CH.chromeForgetBrowser, browserId),
+    stop: () => ipcRenderer.invoke(CH.chromeStop),
+    resume: () => ipcRenderer.invoke(CH.chromeResume),
+    closeAgentTabs: () => ipcRenderer.invoke(CH.chromeCloseAgentTabs),
+    getApprovedOrigins: () => ipcRenderer.invoke(CH.chromeGetApprovedOrigins),
+    setApprovedOrigins: (origins) => ipcRenderer.invoke(CH.chromeSetApprovedOrigins, origins),
+    openExtensionFolder: () => ipcRenderer.invoke(CH.chromeOpenExtensionFolder),
+    onActive: (cb) => {
+      const listener = (_e: unknown, active: boolean) => cb(active);
+      ipcRenderer.on(CH.chromeActive, listener);
+      return () => ipcRenderer.removeListener(CH.chromeActive, listener);
+    },
+    onOriginApprovalRequest: (cb) => {
+      const listener = (_e: unknown, req: { requestId: string; origin: string; action: string }) => cb(req);
+      ipcRenderer.on(CH.chromeOriginApprovalRequest, listener);
+      return () => ipcRenderer.removeListener(CH.chromeOriginApprovalRequest, listener);
+    },
+    respondOriginApproval: (requestId, decision) =>
+      ipcRenderer.send(CH.chromeOriginApprovalRespond, requestId, decision),
   },
   workspaceTrust: {
     onRequest: (cb) => {
@@ -310,6 +352,13 @@ agent: {
     showItem: (path) => ipcRenderer.send(CH.shellShowItem, path),
     openExternal: (url) => ipcRenderer.send(CH.shellOpenExternal, url),
   },
+  clipboard: {
+    readText: () => ipcRenderer.invoke(CH.clipboardReadText),
+    writeText: (text) => ipcRenderer.invoke(CH.clipboardWriteText, text),
+  },
+  contextMenu: {
+    show: (request) => ipcRenderer.invoke(CH.contextMenu, request),
+  },
   paths: {
     get: () => ipcRenderer.invoke(CH.pathsGet),
   },
@@ -364,6 +413,7 @@ agent: {
     update: (id, patch) => ipcRenderer.invoke(CH.automationsUpdate, id, patch),
     remove: (id) => ipcRenderer.invoke(CH.automationsDelete, id),
     toggle: (id, enabled) => ipcRenderer.invoke(CH.automationsToggle, id, enabled),
+    revertLearned: (id, revisionId) => ipcRenderer.invoke(CH.automationsRevertLearned, id, revisionId),
     run: (id) => ipcRenderer.invoke(CH.automationsRun, id),
     stop: (runId) => ipcRenderer.send(CH.automationsStop, runId),
     runs: (automationId) => ipcRenderer.invoke(CH.automationsRuns, automationId),
@@ -377,6 +427,11 @@ agent: {
       const listener = (_e: unknown, payload: { run: AutomationRun }) => cb(payload);
       ipcRenderer.on(CH.automationRunFinished, listener);
       return () => ipcRenderer.removeListener(CH.automationRunFinished, listener);
+    },
+    onChange: (cb) => {
+      const listener = (_e: unknown, payload: AutomationInfo[]) => cb(payload);
+      ipcRenderer.on(CH.automationsChanged, listener);
+      return () => ipcRenderer.removeListener(CH.automationsChanged, listener);
     },
   },
   superagent: {
@@ -430,17 +485,149 @@ agent: {
     nudge: (runId, message) => ipcRenderer.invoke(CH.externalAgentsNudge, runId, message),
     logs: (runId, maxLines) => ipcRenderer.invoke(CH.externalAgentsLogs, runId, maxLines),
   },
-  botWorkflows: {
-    list: () => ipcRenderer.invoke(CH.botWorkflowsList),
-    save: (workflow) => ipcRenderer.invoke(CH.botWorkflowsSave, workflow),
-    delete: (id) => ipcRenderer.invoke(CH.botWorkflowsDelete, id),
-    run: (workflowId, cwd) => ipcRenderer.invoke(CH.botWorkflowsRun, workflowId, cwd),
-    abort: (runId) => ipcRenderer.invoke(CH.botWorkflowsAbort, runId),
-    merge: (workspaceRoot, branchName) => ipcRenderer.invoke(CH.botWorkflowsMerge, workspaceRoot, branchName),
+  conductorWorkflows: {
+    list: () => ipcRenderer.invoke(CH.conductorWorkflowsList),
+    save: (workflow) => ipcRenderer.invoke(CH.conductorWorkflowsSave, workflow),
+    delete: (id) => ipcRenderer.invoke(CH.conductorWorkflowsDelete, id),
+    run: (workflowId, cwd) => ipcRenderer.invoke(CH.conductorWorkflowsRun, workflowId, cwd),
+    abort: (runId) => ipcRenderer.invoke(CH.conductorWorkflowsAbort, runId),
+    merge: (workspaceRoot, branchName) => ipcRenderer.invoke(CH.conductorWorkflowsMerge, workspaceRoot, branchName),
     onEvent: (cb) => {
       const listener = (_e: unknown, payload: any) => cb(payload);
-      ipcRenderer.on(CH.botWorkflowsEvent, listener);
-      return () => ipcRenderer.removeListener(CH.botWorkflowsEvent, listener);
+      ipcRenderer.on(CH.conductorWorkflowsEvent, listener);
+      return () => ipcRenderer.removeListener(CH.conductorWorkflowsEvent, listener);
+    },
+  },
+  bots: {
+    list: () => ipcRenderer.invoke(CH.botsList),
+    create: (input) => ipcRenderer.invoke(CH.botsCreate, input),
+    update: (id, patch) => ipcRenderer.invoke(CH.botsUpdate, id, patch),
+    archive: (id) => ipcRenderer.invoke(CH.botsArchive, id),
+    restore: (id) => ipcRenderer.invoke(CH.botsRestore, id),
+    delete: (id) => ipcRenderer.invoke(CH.botsDelete, id),
+    setPrimary: (id) => ipcRenderer.invoke(CH.botsSetPrimary, id),
+    setPinned: (id, pinned) => ipcRenderer.invoke(CH.botsSetPinned, id, pinned),
+    setHidden: (id, hidden) => ipcRenderer.invoke(CH.botsSetHidden, id, hidden),
+    addSection: (name) => ipcRenderer.invoke(CH.botsAddSection, name),
+    renameSection: (sectionId, name) => ipcRenderer.invoke(CH.botsRenameSection, sectionId, name),
+    removeSection: (sectionId) => ipcRenderer.invoke(CH.botsRemoveSection, sectionId),
+    moveToSection: (id, sectionId) => ipcRenderer.invoke(CH.botsMoveToSection, id, sectionId),
+    memoryList: (id) => ipcRenderer.invoke(CH.botsMemoryList, id),
+    memoryForget: (id, ref) => ipcRenderer.invoke(CH.botsMemoryForget, id, ref),
+    memoryShare: (id, ref, shared) => ipcRenderer.invoke(CH.botsMemoryShare, id, ref, shared),
+    onChange: (cb) => {
+      const listener = (_e: unknown, payload: BotsSnapshot) => cb(payload);
+      ipcRenderer.on(CH.botsChanged, listener);
+      return () => ipcRenderer.removeListener(CH.botsChanged, listener);
+    },
+  },
+  botAvatar: {
+    generate: (request) => ipcRenderer.invoke(CH.botAvatarGenerate, request),
+  },
+  botPermissions: {
+    get: () => ipcRenderer.invoke(CH.botPermissionsGet),
+    update: (patch) => ipcRenderer.invoke(CH.botPermissionsUpdate, patch),
+    onChange: (cb) => {
+      const listener = (_e: unknown, payload: BotPermissionSettings) => cb(payload);
+      ipcRenderer.on(CH.botPermissionsChanged, listener);
+      return () => ipcRenderer.removeListener(CH.botPermissionsChanged, listener);
+    },
+  },
+  botSkills: {
+    list: (botId) => ipcRenderer.invoke(CH.botSkillsList, botId),
+    get: (botId, name) => ipcRenderer.invoke(CH.botSkillsGet, botId, name),
+    save: (botId, input, expectedVersion) => ipcRenderer.invoke(CH.botSkillsSave, botId, input, expectedVersion),
+    remove: (botId, name) => ipcRenderer.invoke(CH.botSkillsRemove, botId, name),
+    revisions: (botId, name) => ipcRenderer.invoke(CH.botSkillsRevisions, botId, name),
+    revert: (botId, name, revisionId) => ipcRenderer.invoke(CH.botSkillsRevert, botId, name, revisionId),
+    onChange: (cb) => {
+      const listener = (_e: unknown, botId: string) => cb(botId);
+      ipcRenderer.on(CH.botSkillsChanged, listener);
+      return () => ipcRenderer.removeListener(CH.botSkillsChanged, listener);
+    },
+  },
+  botTemplates: {
+    export: (botId, options) => ipcRenderer.invoke(CH.botTemplatesExport, botId, options),
+    preview: (text) => ipcRenderer.invoke(CH.botTemplatesPreview, text),
+    import: (text, options) => ipcRenderer.invoke(CH.botTemplatesImport, text, options),
+    catalog: (query, category) => ipcRenderer.invoke(CH.botTemplatesCatalog, query, category),
+    importCatalog: (id, options) => ipcRenderer.invoke(CH.botTemplatesImportCatalog, id, options),
+    takeLink: () => ipcRenderer.invoke(CH.botTemplatesTakeLink),
+    onLink: (cb) => {
+      const listener = (_e: unknown, link: string) => cb(link);
+      ipcRenderer.on(CH.botTemplatesLink, listener);
+      return () => ipcRenderer.removeListener(CH.botTemplatesLink, listener);
+    },
+  },
+  botFiles: {
+    list: (scope, botId, path) => ipcRenderer.invoke(CH.botFilesList, scope, botId, path),
+    read: (scope, botId, path) => ipcRenderer.invoke(CH.botFilesRead, scope, botId, path),
+    write: (scope, botId, path, content) => ipcRenderer.invoke(CH.botFilesWrite, scope, botId, path, content),
+    remove: (scope, botId, path) => ipcRenderer.invoke(CH.botFilesRemove, scope, botId, path),
+    copy: (direction, botId, path, as) => ipcRenderer.invoke(CH.botFilesCopy, direction, botId, path, as),
+    onChange: (cb) => {
+      const listener = (_e: unknown, event: { scope: FileScope; botId: string | null }) => cb(event);
+      ipcRenderer.on(CH.botFilesChanged, listener);
+      return () => ipcRenderer.removeListener(CH.botFilesChanged, listener);
+    },
+  },
+  botTeach: {
+    state: () => ipcRenderer.invoke(CH.botTeachState),
+    start: (botId, title) => ipcRenderer.invoke(CH.botTeachStart, botId, title),
+    note: (text) => ipcRenderer.invoke(CH.botTeachNote, text),
+    stop: (options) => ipcRenderer.invoke(CH.botTeachStop, options),
+    cancel: () => ipcRenderer.invoke(CH.botTeachCancel),
+    save: (botId, skill) => ipcRenderer.invoke(CH.botTeachSave, botId, skill),
+    onChange: (cb) => {
+      const listener = (_e: unknown, state: TeachState) => cb(state);
+      ipcRenderer.on(CH.botTeachChanged, listener);
+      return () => ipcRenderer.removeListener(CH.botTeachChanged, listener);
+    },
+  },
+  botSurfaces: {
+    state: (botId) => ipcRenderer.invoke(CH.botSurfacesState, botId),
+    save: (botId, kind, input) => ipcRenderer.invoke(CH.botSurfacesSave, botId, kind, input),
+    remake: (botId, kind, name) => ipcRenderer.invoke(CH.botSurfacesRemake, botId, kind, name),
+    setEnabled: (botId, kind, enabled) => ipcRenderer.invoke(CH.botSurfacesSetEnabled, botId, kind, enabled),
+    remove: (botId, kind) => ipcRenderer.invoke(CH.botSurfacesRemove, botId, kind),
+    setHub: (settings) => ipcRenderer.invoke(CH.botSurfacesSetHub, settings),
+    outboxEdit: (id, text) => ipcRenderer.invoke(CH.botSurfacesOutboxEdit, id, text),
+    outboxApprove: (id) => ipcRenderer.invoke(CH.botSurfacesOutboxApprove, id),
+    outboxDeny: (id) => ipcRenderer.invoke(CH.botSurfacesOutboxDeny, id),
+    onChange: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(CH.botSurfacesChanged, listener);
+      return () => ipcRenderer.removeListener(CH.botSurfacesChanged, listener);
+    },
+  },
+  vault: {
+    get: () => ipcRenderer.invoke(CH.vaultGet),
+    save: (input) => ipcRenderer.invoke(CH.vaultSave, input),
+    remove: (id) => ipcRenderer.invoke(CH.vaultRemove, id),
+    revoke: (botId, itemId, host) => ipcRenderer.invoke(CH.vaultRevoke, botId, itemId, host),
+    onChange: (cb) => {
+      const listener = (_e: unknown, payload: VaultSnapshot) => cb(payload);
+      ipcRenderer.on(CH.vaultChanged, listener);
+      return () => ipcRenderer.removeListener(CH.vaultChanged, listener);
+    },
+  },
+  engines: {
+    list: () => ipcRenderer.invoke(CH.enginesList),
+    status: (hostId) => ipcRenderer.invoke(CH.enginesStatus, hostId),
+    install: (hostId) => ipcRenderer.invoke(CH.enginesInstall, hostId),
+    cancel: (hostId) => ipcRenderer.invoke(CH.enginesCancel, hostId),
+    uninstall: (hostId, purge) => ipcRenderer.invoke(CH.enginesUninstall, hostId, purge),
+    forget: (hostId) => ipcRenderer.invoke(CH.enginesForget, hostId),
+    health: (botId) => ipcRenderer.invoke(CH.enginesHealth, botId),
+    onChange: (cb) => {
+      const listener = (_e: unknown, payload: EngineHostView[]) => cb(payload);
+      ipcRenderer.on(CH.enginesChanged, listener);
+      return () => ipcRenderer.removeListener(CH.enginesChanged, listener);
+    },
+    onSetup: (cb) => {
+      const listener = (_e: unknown, payload: EngineSetupEvent) => cb(payload);
+      ipcRenderer.on(CH.enginesSetup, listener);
+      return () => ipcRenderer.removeListener(CH.enginesSetup, listener);
     },
   },
 };

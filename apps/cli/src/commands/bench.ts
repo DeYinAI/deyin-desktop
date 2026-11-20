@@ -85,7 +85,7 @@ export const benchCommand = defineCommand({
         },
         onTaskDone: (task, res) => {
           if (!isJson) {
-            let status = "";
+            let status: string;
             switch (res.status) {
               case "passed":
                 status = green("✔ PASS");

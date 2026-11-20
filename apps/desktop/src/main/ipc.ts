@@ -1,6 +1,6 @@
 import { randomUUID, randomBytes } from "node:crypto";
 import { join } from "node:path";
-import { BrowserWindow, app, dialog, ipcMain, powerMonitor, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { BrowserWindow, Menu, app, clipboard, dialog, ipcMain, powerMonitor, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import {
   AccountCache,
   AgentsStore,
@@ -27,6 +27,7 @@ import {
   type GitResult,
   webSearch,
   deyinUserAgent,
+  fetchWithUserAgent,
 } from "@deyin/host-core";
 import { fetchPublicPlans, fetchReleaseStatus, projectLocation } from "@deyin/host-core/shared";
 import {
@@ -43,9 +44,11 @@ import type {
   AgentImageInput,
   AgentStartOptions,
   Automation,
-  BotWorkflowDefinition,
+  ConductorWorkflowDefinition,
   Bootstrap,
   CapabilityKind,
+  ContextMenuCommand,
+  ContextMenuRequest,
   DeyinSettings,
   GitBranch,
   GitRepoInfo,
@@ -63,16 +66,34 @@ import type {
 } from "@deyin/contract";
 import type { DeyinConfig } from "@deyin/contract";
 import { DesktopAgentHost } from "./agent.js";
-import { AutomationsStore, BotWorkflowsStore, BotWorkflowEngine } from "@deyin/host-core";
+import { ActivityLog, AutomationsStore, BotMemory, BotPermissionStore, BotSkillStore, BotStore, ConductorWorkflowsStore, ConductorWorkflowEngine, EngineRegistryStore, Outbox, SurfaceStore, VaultStore, XCursors } from "@deyin/host-core";
+import { createBotsHandlers } from "./bots/handlers.js";
+import { createAvatarHandlers } from "./bots/avatar-generate.js";
+import { shrinkWithElectron } from "./bots/avatar-electron.js";
+import { createEngineHandlers } from "./bots/engine/handlers.js";
+import { RoutineBridge } from "./bots/engine/routine-bridge.js";
+import { BotEngineService } from "./bots/engine/service.js";
+import { connectSsh } from "./automations/ssh-client.js";
+import { createPermissionsHandlers } from "./bots/permissions-handlers.js";
+import { createVaultHandlers } from "./bots/vault-handlers.js";
+import { LocalBotRuntime } from "./bots/engine/runtimes.js";
+import { registerBotSurface } from "./bots/surface-ipc.js";
+import { RunWatch } from "./bots/run-watch.js";
+import { registerSurfaces } from "./bots/surface-wiring.js";
+import { chromePageSource } from "./bots/vault-pages.js";
+import type { BotRunSource } from "./bots/run.js";
 import { AutomationService } from "./automations/service.js";
+import { isAutomationThread } from "./automations/consent.js";
 import { registerSuperagent, superagentDir } from "./superagent/register.js";
 import { ExternalAgentService } from "./external-agents/service.js";
-import { BotWorkflowScheduler } from "./external-agents/scheduler.js";
+import { ConductorWorkflowScheduler } from "./external-agents/scheduler.js";
 import type { AgentRunContextDeps } from "./automations/agent-run-context.js";
 import { testWslDistro } from "./automations/wsl-executor.js";
 import type { AuthManager } from "./auth.js";
 import { BrowserControlService, workspacePartition } from "./browser.js";
+import { ChromeService, type OriginDecision } from "./chrome.js";
 import { ComputerUseService } from "./computer-use.js";
+import { ComputerUseOverlay } from "./computer-use-overlay.js";
 import { CapabilityService } from "./capabilities.js";
 import { DiagnosticsService } from "./diagnostics.js";
 import { IdentityService } from "./identity.js";
@@ -90,7 +111,7 @@ import { VisualizeService } from "./visualize.js";
 import { PageService } from "./page.js";
 import { ImageService } from "./images.js";
 import { VideoService } from "./videos.js";
-import { runImageGeneration, type ImageRouting } from "./image-gen.js";
+import { requestImages, runImageGeneration, type ImageRouting } from "./image-gen.js";
 import { runVideoGeneration, type VideoRouting } from "./video-gen.js";
 import { LocalVisionService } from "./local-vision-service.js";
 import { PendingReviewQueue } from "./pending-review.js";
@@ -115,6 +136,8 @@ export interface IpcServices {
   shouldKeepRunningInBackground: () => boolean;
   /** Call when the auth session changes (login/logout) to drop server caches. */
   notifyAuthChanged: () => void;
+  /** A shared Bot's `deyin://bot/import` link was opened: show the person what it carries and ask. */
+  offerBotImport: (link: string) => void;
   /** Async teardown for app quit (agent runs, telemetry, automations, …). */
   shutdown: () => Promise<void>;
 }
@@ -278,6 +301,52 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       broadcast(CH.computerUseAppApprovalRequest, { requestId, appId: req.appId, action: req.action });
     });
   });
+  const computerUseOverlay = new ComputerUseOverlay({
+    isEnabled: () => settings.get().computerUseOverlay,
+    onStop: () => computerUse.stop(),
+    onResume: () => computerUse.resume(),
+  });
+  computerUse.onState((state) => {
+    broadcast(CH.computerUseState, state);
+    computerUseOverlay.update(state);
+  });
+
+  /* The user's real Chrome through the Deyin extension. */
+  const pendingOriginApprovals = new Map<
+    string,
+    { resolve: (decision: OriginDecision) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }
+  >();
+  const chromeExtensionSource = join(bundledSrcDir, "chrome", "extension");
+  const chrome = new ChromeService({
+    dataDir: join(app.getPath("userData"), "chrome"),
+    extensionSource: existsSync(chromeExtensionSource) ? chromeExtensionSource : null,
+    isEnabled: () => settings.get().chromeControlEnabled,
+    strategy: () => settings.get().chromeTabStrategy,
+    saveImage: (threadId, image) => {
+      try {
+        return imagesService.save(threadId, image).file;
+      } catch {
+        return null;
+      }
+    },
+    requestOriginApproval: (req) =>
+      // An unattended automation has nobody to answer. It was held to the sites it has consent for before it got here,
+      // so a prompt means it was sent somewhere new (a redirect, a link); refuse rather than pop a dialog nobody sees.
+      isAutomationThread(req.threadId)
+        ? Promise.resolve<OriginDecision>("deny")
+        : new Promise<OriginDecision>((resolve, reject) => {
+        const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const timer = setTimeout(() => {
+          pendingOriginApprovals.delete(requestId);
+          reject(new Error(`Approval for ${req.origin} timed out. Ask the user to allow it, then try again.`));
+        }, 5 * 60 * 1000);
+        pendingOriginApprovals.set(requestId, { resolve, reject, timer });
+        broadcast(CH.chromeOriginApprovalRequest, { requestId, origin: req.origin, action: req.action });
+      }),
+  });
+  chrome.onStatus((status) => broadcast(CH.chromeStatus, status));
+  chrome.onActive((active) => broadcast(CH.chromeActive, active));
+  void chrome.applyEnabled();
 
   const index = new IndexManager({
     indexRoot: join(app.getPath("userData"), "index"),
@@ -363,6 +432,13 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     return modelsCache.listCached().find((m) => m.id === modelId)?.contextLength;
   };
 
+  const getMaxOutputTokens = (providerId: string, modelId: string): number | undefined => {
+    const provider = agents.listProviders(true).find((p) => p.id === providerId);
+    const fromProvider = provider?.models.find((m) => m.id === modelId)?.maxOutputTokens;
+    if (fromProvider) return fromProvider;
+    return modelsCache.listCached().find((m) => m.id === modelId)?.maxOutputTokens;
+  };
+
   /** Shared by the interactive host and the unattended automation executors. */
   const agentDeps: AgentRunContextDeps = {
     config,
@@ -376,14 +452,79 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength,
+    getMaxOutputTokens,
     mcpAuth: createMcpAuthBridge(mcpModules, mcpOAuth),
+    chrome,
+    chromePages: chromePageSource(chrome.control),
   };
 
-  const automations = new AutomationService({
+  // Bots live in <userData>/bots/<id>/ (files + memory); the agent host runs as them, the IPC handlers manage them.
+  const botStore = new BotStore(storage);
+  const botsDir = join(storage.dir, "bots");
+  // What every Bot may do with a tool. Both chat and routines hold a Bot to it, so both are given the same store.
+  const botPermissions = new BotPermissionStore(storage);
+  // The Vault: logins, cards and contacts a Bot fills in without seeing them. Chat and routines share it.
+  const vault = new VaultStore(storage);
+  const botSource: BotRunSource = { store: botStore, botsDir, permissions: botPermissions, vault };
+
+  // Bot engines: Bots that live on the person's own servers. The service sets an engine up and hands out the computer
+  // a Bot works on; the bridge keeps routines on the servers and brings their runs back. Each reaches the saved servers
+  // and the automations through `automations`, which is built next and is only used once everything exists.
+  const engineRegistry = new EngineRegistryStore(storage);
+  const engineService: BotEngineService = new BotEngineService({
+    registry: engineRegistry,
+    hosts: { list: () => automations.listSshHosts() },
+    bots: botStore,
+    connect: async (hostId) => (await connectSsh({ hostId, hosts: automations.sshHosts })).client,
+    filesDir: (botId) => join(botStore.dataDir(botId), "files"),
+    emit: (event) => broadcast(CH.enginesSetup, event),
+  });
+  const routineBridge = new RoutineBridge({
+    automations: { list: () => automations.automations.list() },
+    bots: botStore,
+    permissions: botPermissions,
+    // Routines read the Bot's memory under the same switch chat does: with memory off, a Bot is told nothing it remembers.
+    memoryOf: (bot) => (settings.get().memoryEnabled ? new BotMemory(botsDir, bot.id).list() : []),
+    skillsOf: (bot) => new BotSkillStore(join(botStore.dataDir(bot.id), "skills")).all(),
+    isCustomProvider: (providerId) => agents.listProviders(true).find((p) => p.id === providerId)?.kind === "custom",
+    engines: { hostIds: () => engineRegistry.list().map((r) => r.hostId), port: (hostId) => engineService.client(hostId) },
+    runs: { mirror: (run) => automations.runs.mirror(run) },
+    onChange: () => broadcast(CH.automationsChanged, automations.list()),
+  });
+  const hostLabel = (hostId: string): string => automations.listSshHosts().find((host) => host.id === hostId)?.label ?? "that server";
+
+  // Where a Bot can be reached from outside the app. These are made first because the automation service tells them when
+  // a run ends and when a routine is deleted; the hub that uses them is started below, once the service exists.
+  const surfaceStore = new SurfaceStore(storage);
+  const surfaceOutbox = new Outbox(storage);
+  const xCursors = new XCursors(storage);
+  const surfaceActivity = new ActivityLog();
+  const runWatch = new RunWatch((runId) => automations.runs.get(runId));
+
+  const automations: AutomationService = new AutomationService({
     storage,
     deps: agentDeps,
     auth,
+    onRunFinished: (run) => runWatch.finished(run),
+    onRemoved: (id) => surfaceStore.routineRemoved(id),
     isCatchUpEnabled: () => settings.get().automationsCatchUp,
+    bots: botSource,
+    servers: engineService,
+    serverRoutines: {
+      schedulesOnServer: (automation) => routineBridge.schedulesOnServer(automation),
+      viewOf: (automation) => {
+        const state = routineBridge.stateOf(automation.id);
+        return state ? { ...state, hostLabel: hostLabel(state.hostId) } : undefined;
+      },
+    },
+    onChanged: () => routineBridge.schedule(),
+    hostGuard: {
+      blocker: (hostId) => {
+        const living = botStore.list({ includeArchived: true }).filter((bot) => bot.harness === "server" && bot.hostId === hostId).length;
+        return living === 0 ? null : `Cannot delete: ${living} Bot${living === 1 ? " lives" : "s live"} on this server. Move ${living === 1 ? "it" : "them"} to this computer or delete ${living === 1 ? "it" : "them"} first.`;
+      },
+      removed: (hostId) => void engineService.forget(hostId),
+    },
   });
 
   // First-run seed: give the Automations view something real to show. Only
@@ -424,31 +565,31 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   const workspaceService = new WorkspaceService(automations.sshHosts);
   const github = new GitHubService();
   const externalAgents = new ExternalAgentService();
-  const botWorkflowsStore = new BotWorkflowsStore(storage, opts.getWorkspaceRoot);
-  const botWorkflowEngine = new BotWorkflowEngine();
-  const botWorkflowScheduler = new BotWorkflowScheduler(
-    botWorkflowsStore,
-    botWorkflowEngine,
+  const conductorWorkflowsStore = new ConductorWorkflowsStore(storage, opts.getWorkspaceRoot);
+  const conductorWorkflowEngine = new ConductorWorkflowEngine();
+  const conductorWorkflowScheduler = new ConductorWorkflowScheduler(
+    conductorWorkflowsStore,
+    conductorWorkflowEngine,
     externalAgents,
     opts.getWorkspaceRoot,
-    (event) => broadcast(CH.botWorkflowsEvent, event),
+    (event) => broadcast(CH.conductorWorkflowsEvent, event),
   );
 
   /**
    * Start a pipeline run and return at once; progress arrives as broadcast
-   * events. Shared by the Bot Flow tab's Run button and the agent's
-   * `bot_workflow_run` tool, so both drive the same run strip and monitor.
+   * events. Shared by the Pipeline tab's Run button and the agent's
+   * `conductor_workflow_run` tool, so both drive the same run strip and monitor.
    */
-  const startBotWorkflowRun = (
+  const startConductorWorkflowRun = (
     workflowId: string,
     cwd: string,
     inputs?: Record<string, string>,
   ): { runId: string } => {
-    const wf = botWorkflowsStore.get(workflowId);
+    const wf = conductorWorkflowsStore.get(workflowId);
     if (!wf) throw new Error(`Workflow '${workflowId}' not found.`);
     const effectiveCwd = cwd || opts.getWorkspaceRoot() || process.cwd();
     const runId = randomUUID();
-    void botWorkflowEngine.execute({
+    void conductorWorkflowEngine.execute({
       workflow: wf,
       workspaceRoot: effectiveCwd,
       runId,
@@ -459,18 +600,21 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
           runId: runnerOpts.runId ?? `${runId}-${runnerOpts.stageId ?? randomUUID()}`,
           logBufferId: runId,
         }),
-      onEvent: (event) => broadcast(CH.botWorkflowsEvent, event),
+      onEvent: (event) => broadcast(CH.conductorWorkflowsEvent, event),
     });
     return { runId };
   };
 
   const agentHost = new DesktopAgentHost({
+    bots: botSource,
+    serverBots: engineService,
     config,
     auth,
     agents,
     settings,
     capabilities,
     browser,
+    chrome,
     computerUse,
     visualize,
     pages,
@@ -486,6 +630,7 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
     getWorkspaceRoot: opts.getWorkspaceRoot,
     searchIndex: (query, topK) => index.search(query, topK),
     getContextLength,
+    getMaxOutputTokens,
     getImageModels: (providerId) => {
       const provider = agents.listProviders(true).find((p) => p.id === providerId);
       const list = provider && provider.kind !== "primary" ? provider.models : modelsCache.listCached();
@@ -497,13 +642,15 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
       ];
     },
     externalAgents,
-    botWorkflowEngine,
-    botWorkflows: {
+    conductorWorkflowEngine,
+    conductorWorkflows: {
       getWorkspaceRoot: opts.getWorkspaceRoot,
-      listWorkflows: () => botWorkflowsStore.list(),
+      listWorkflows: () => conductorWorkflowsStore.list(),
       listAgents: (forceRefresh) => externalAgents.listAgents(forceRefresh),
-      startRun: startBotWorkflowRun,
+      getRolePreferences: () => settings.get().conductorRolePreferences,
+      startRun: startConductorWorkflowRun,
     },
+    superagent: superagent.service,
   });
   let desktopRepoManager: RepoManager | null = null;
   const emitRepoProgress = (e: RepoProgressEvent): void => broadcast(CH.repoProgress, e);
@@ -731,9 +878,13 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   ipcMain.handle(CH.settingsSet, (_e, patch: Partial<DeyinSettings>) => {
     const next = settings.set(patch);
     if ("indexingEnabled" in patch) void index.refresh();
+    if ("chromeControlEnabled" in patch) void chrome.applyEnabled();
+    if ("computerUseOverlay" in patch) computerUseOverlay.update(computerUse.getState());
     if ("automationsCatchUp" in patch || "keepRunningInBackground" in patch) {
       automations.refreshScheduler();
     }
+    // What the Bot remembers is written into the routines kept on servers, so turning memory on or off changes them.
+    if ("memoryEnabled" in patch) routineBridge.schedule();
     return next;
   });
 
@@ -744,11 +895,34 @@ export function registerIpc(opts: RegisterOptions): IpcServices {
   });
   ipcMain.handle(CH.computerUseListApps, () => computerUse.listAppsPreview());
   ipcMain.handle(CH.computerUseGetHostStatus, () => computerUse.getHostStatus());
+  ipcMain.on(CH.computerUseStop, () => computerUse.stop());
+  ipcMain.on(CH.computerUseResume, () => computerUse.resume());
   ipcMain.on(CH.computerUseAppApprovalRespond, (_e, requestId: string, decision: "always" | "once" | "deny") => {
     const pending = pendingAppApprovals.get(requestId);
     if (!pending) return;
     clearTimeout(pending.timer);
     pendingAppApprovals.delete(requestId);
+    pending.resolve(decision);
+  });
+
+  ipcMain.handle(CH.chromeGetStatus, () => chrome.status());
+  ipcMain.handle(CH.chromeBeginPairing, () => chrome.beginPairing());
+  ipcMain.handle(CH.chromeCancelPairing, () => chrome.cancelPairing());
+  ipcMain.handle(CH.chromeForgetBrowser, (_e, browserId: string) => chrome.forgetBrowser(browserId));
+  ipcMain.handle(CH.chromeStop, () => chrome.stop());
+  ipcMain.handle(CH.chromeResume, () => chrome.resume());
+  ipcMain.handle(CH.chromeCloseAgentTabs, () => chrome.closeAgentTabs());
+  ipcMain.handle(CH.chromeGetApprovedOrigins, () => chrome.getApprovedOrigins());
+  ipcMain.handle(CH.chromeSetApprovedOrigins, (_e, origins: string[]) => chrome.setApprovedOrigins(origins));
+  ipcMain.handle(CH.chromeOpenExtensionFolder, async () => {
+    const path = chrome.extensionPath();
+    if (path) await shell.openPath(path);
+  });
+  ipcMain.on(CH.chromeOriginApprovalRespond, (_e, requestId: string, decision: OriginDecision) => {
+    const pending = pendingOriginApprovals.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingOriginApprovals.delete(requestId);
     pending.resolve(decision);
   });
 
@@ -1040,6 +1214,7 @@ ipcMain.on(CH.workspaceTrustRespond, (_e, requestId: string, decision: "trust" |
 ipcMain.on(CH.agentAnswerQuestion, (_e, requestId: string, answers: Record<string, string | string[]>) =>
  agentHost.answerQuestion(requestId, answers),
 );
+ipcMain.on(CH.agentAnswerSecureForm, (_e, requestId: unknown, values: unknown) => agentHost.answerSecureForm(requestId, values));
 ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShell(threadId));
 
   /* Browser control plumbing. */
@@ -1106,6 +1281,57 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
   });
 
+  /* Clipboard + native context menu.
+   *
+   * The renderer's navigator.clipboard needs a focused document with clipboard
+   * permissions; a packaged build started from a shortcut, or one whose window
+   * lost focus to the menu, silently drops the write. Going through Electron's
+   * clipboard always reaches the OS, so copy/paste keeps working everywhere. */
+  ipcMain.handle(CH.clipboardReadText, () => clipboard.readText());
+  ipcMain.handle(CH.clipboardWriteText, (_e, text: string) => {
+    if (typeof text !== "string") return false;
+    clipboard.writeText(text);
+    return true;
+  });
+
+  ipcMain.handle(
+    CH.contextMenu,
+    (e, request: ContextMenuRequest): Promise<ContextMenuCommand | null> =>
+      new Promise((resolve) => {
+        const win = windowOf(e);
+        if (!win || win.isDestroyed()) return resolve(null);
+
+        let picked: ContextMenuCommand | null = null;
+        const pick = (command: ContextMenuCommand) => () => {
+          picked = command;
+        };
+
+        // The menu keeps a stable shape so a right-click always looks the same:
+        // the same four commands, greyed out when they cannot apply. A menu
+        // that grows and shrinks with context reads as flaky.
+        const hasSelection = !!request?.hasSelection;
+        const editable = !!request?.editable;
+        const items: Electron.MenuItemConstructorOptions[] = [
+          { label: "Cut", enabled: editable && hasSelection, click: pick("cut") },
+          { label: "Copy", enabled: hasSelection, click: pick("copy") },
+          { label: "Paste", enabled: editable || request?.kind === "terminal", click: pick("paste") },
+          { type: "separator" },
+          { label: "Select All", click: pick("selectAll") },
+        ];
+
+        const menu = Menu.buildFromTemplate(items);
+        // Open at the pointer the renderer saw, not wherever the OS cursor
+        // happens to be by the time the IPC round-trip lands.
+        const at =
+          typeof request?.x === "number" && typeof request?.y === "number"
+            ? { x: Math.round(request.x), y: Math.round(request.y) }
+            : {};
+        // The callback fires on close and again per click, so resolve there:
+        // by then `picked` holds whichever command ran.
+        menu.popup({ window: win, ...at, callback: () => resolve(picked) });
+      }),
+  );
+
   ipcMain.handle(CH.pathsGet, () => {
     const userData = app.getPath("userData");
     return {
@@ -1135,6 +1361,7 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
   );
   ipcMain.handle(CH.automationsDelete, (_e, id: string) => automations.remove(id));
   ipcMain.handle(CH.automationsToggle, (_e, id: string, enabled: boolean) => automations.toggle(id, enabled));
+  ipcMain.handle(CH.automationsRevertLearned, (_e, id: string, revisionId: string) => automations.revertLearned(id, revisionId));
   ipcMain.handle(CH.automationsRun, (_e, id: string) => automations.run(id));
   ipcMain.on(CH.automationsStop, (_e, runId: string) => automations.stopRun(runId));
   ipcMain.handle(CH.automationsRuns, (_e, automationId?: string) => automations.listRuns(automationId));
@@ -1192,26 +1419,135 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
   ipcMain.handle(CH.externalAgentsNudge, (_e, runId: string, message?: string) => externalAgents.nudgeRun(runId, message));
   ipcMain.handle(CH.externalAgentsLogs, (_e, runId: string, maxLines?: number) => externalAgents.getRecentLogs(runId, maxLines));
 
-  /* Bot Workflows --------------------------------------------------------- */
-  ipcMain.handle(CH.botWorkflowsList, () => botWorkflowsStore.list());
-  ipcMain.handle(CH.botWorkflowsSave, (_e, workflow: BotWorkflowDefinition) => {
-    const res = botWorkflowsStore.save(workflow);
-    botWorkflowScheduler.refresh();
+  /* Conductor Workflows --------------------------------------------------------- */
+  ipcMain.handle(CH.conductorWorkflowsList, () => conductorWorkflowsStore.list());
+  ipcMain.handle(CH.conductorWorkflowsSave, (_e, workflow: ConductorWorkflowDefinition) => {
+    const res = conductorWorkflowsStore.save(workflow);
+    conductorWorkflowScheduler.refresh();
     return res;
   });
-  ipcMain.handle(CH.botWorkflowsDelete, (_e, id: string) => {
-    const res = botWorkflowsStore.delete(id);
-    botWorkflowScheduler.refresh();
+  ipcMain.handle(CH.conductorWorkflowsDelete, (_e, id: string) => {
+    const res = conductorWorkflowsStore.delete(id);
+    conductorWorkflowScheduler.refresh();
     return res;
   });
-  ipcMain.handle(CH.botWorkflowsRun, async (_e, workflowId: string, cwd: string) => ({
+  ipcMain.handle(CH.conductorWorkflowsRun, async (_e, workflowId: string, cwd: string) => ({
     ok: true,
-    ...startBotWorkflowRun(workflowId, cwd),
+    ...startConductorWorkflowRun(workflowId, cwd),
   }));
-  ipcMain.handle(CH.botWorkflowsAbort, (_e, runId: string) => botWorkflowEngine.abort(runId));
-  ipcMain.handle(CH.botWorkflowsMerge, async (_e, workspaceRoot: string, branchName: string) => {
+  ipcMain.handle(CH.conductorWorkflowsAbort, (_e, runId: string) => conductorWorkflowEngine.abort(runId));
+  ipcMain.handle(CH.conductorWorkflowsMerge, async (_e, workspaceRoot: string, branchName: string) => {
     const effectiveRoot = workspaceRoot || opts.getWorkspaceRoot() || process.cwd();
-    return botWorkflowEngine.mergeWorktree(effectiveRoot, branchName);
+    return conductorWorkflowEngine.mergeWorktree(effectiveRoot, branchName);
+  });
+
+  /* Deyin Bots ------------------------------------------------------------------ */
+  const surfaces = registerSurfaces({
+    store: surfaceStore,
+    outbox: surfaceOutbox,
+    cursors: xCursors,
+    activity: surfaceActivity,
+    runWatch,
+    bots: botStore,
+    routines: { get: (routineId) => automations.automations.get(routineId) },
+    invoke: (routineId, text) => automations.run(routineId, { text }),
+    fetch: (url, init) => fetchWithUserAgent(url, init),
+    handle: (channel, handler) => ipcMain.handle(channel, (_event, ...args: unknown[]) => handler(...args)),
+    broadcast,
+    log: (message) => console.warn(`[deyin] ${message}`),
+  });
+  const bots = createBotsHandlers({
+    store: botStore,
+    botsDir,
+    removeSessions: (botId) => agentHost.removeBotSessions(botId),
+    removeRoutines: (botId) => automations.removeForBot(botId),
+    removeVaultGrants: (botId) => vault.revokeBot(botId),
+    removeSurfaces: (botId) => surfaces.removeBot(botId),
+    removeFromServer: (bot) => void engineService.removeBot(bot),
+  });
+  const botAvatar = createAvatarHandlers({
+    generate: async ({ prompt, model, providerId }) => {
+      const [first] = await requestImages(imageRouting(providerId), { prompt, model, ...(providerId ? { providerId } : {}) });
+      if (!first) throw new Error("The image model did not return a picture.");
+      return first;
+    },
+    shrink: shrinkWithElectron,
+  });
+  ipcMain.handle(CH.botAvatarGenerate, (_e, request: unknown) => botAvatar.generate(request));
+  const vaultHandlers = createVaultHandlers(vault);
+  vault.onChange(() => broadcast(CH.vaultChanged, vaultHandlers.get()));
+  ipcMain.handle(CH.vaultGet, () => vaultHandlers.get());
+  ipcMain.handle(CH.vaultSave, (_e, input: unknown) => vaultHandlers.save(input));
+  ipcMain.handle(CH.vaultRemove, (_e, id: unknown) => vaultHandlers.remove(id));
+  ipcMain.handle(CH.vaultRevoke, (_e, botId: unknown, itemId: unknown, host: unknown) => vaultHandlers.revoke(botId, itemId, host));
+  // Skills, files, shared Bots and teaching. The library is a folder on this computer that every Bot can be given from.
+  const botSurface = registerBotSurface({
+    store: botStore,
+    routines: {
+      of: (botId) => automations.automations.list().filter((automation) => automation.botId === botId),
+      create: (input) => void automations.create(input),
+    },
+    runtimeOf: (bot) => engineService.runtime(bot),
+    library: new LocalBotRuntime({ root: join(app.getPath("userData"), "bot-library") }),
+    browserTab: () => browser.activeWebContents(),
+    handle: (channel, handler) => ipcMain.handle(channel, (_event, ...args: unknown[]) => handler(...args)),
+    broadcast,
+    skillsChanged: () => routineBridge.schedule(),
+  });
+  botStore.onChange((snapshot) => {
+    botSurface.retain(snapshot.bots.map((bot) => bot.id));
+    broadcast(CH.botsChanged, snapshot);
+    // A Bot that moved to a server, or off one, changes who starts its routines and how many Bots a server holds.
+    automations.refreshScheduler();
+    routineBridge.schedule();
+    broadcast(CH.enginesChanged, engineService.list());
+  });
+  const engineHandlers = createEngineHandlers({ service: engineService, bots: botStore });
+  engineService.onChange(() => {
+    routineBridge.schedule();
+    broadcast(CH.enginesChanged, engineService.list());
+  });
+  ipcMain.handle(CH.enginesList, () => engineHandlers.list());
+  ipcMain.handle(CH.enginesStatus, (_e, hostId: unknown) => engineHandlers.status(hostId));
+  ipcMain.handle(CH.enginesInstall, (_e, hostId: unknown) => engineHandlers.install(hostId));
+  ipcMain.handle(CH.enginesCancel, (_e, hostId: unknown) => engineHandlers.cancel(hostId));
+  ipcMain.handle(CH.enginesUninstall, (_e, hostId: unknown, purge: unknown) => engineHandlers.uninstall(hostId, purge));
+  ipcMain.handle(CH.enginesForget, (_e, hostId: unknown) => engineHandlers.forget(hostId));
+  ipcMain.handle(CH.enginesHealth, (_e, botId: unknown) => engineHandlers.health(botId));
+  // Servers removed while the app was closed leave no engine behind in the list; then bring routines in step, and
+  // again every ten minutes so what the servers ran comes back into the history while the app is open.
+  engineService.prune();
+  routineBridge.schedule();
+  const engineSyncTimer = setInterval(() => void routineBridge.syncAll().catch(() => undefined), 10 * 60_000);
+  engineSyncTimer.unref();
+  const botPermissionHandlers = createPermissionsHandlers(botPermissions);
+  botPermissions.onChange((settings) => broadcast(CH.botPermissionsChanged, settings));
+  ipcMain.handle(CH.botPermissionsGet, () => botPermissionHandlers.get());
+  ipcMain.handle(CH.botPermissionsUpdate, (_e, patch: unknown) => botPermissionHandlers.update(patch));
+  ipcMain.handle(CH.botsList, () => bots.list());
+  ipcMain.handle(CH.botsCreate, (_e, input: unknown) => bots.create(input));
+  ipcMain.handle(CH.botsUpdate, (_e, id: unknown, patch: unknown) => bots.update(id, patch));
+  ipcMain.handle(CH.botsArchive, (_e, id: unknown) => bots.archive(id));
+  ipcMain.handle(CH.botsRestore, (_e, id: unknown) => bots.restore(id));
+  ipcMain.handle(CH.botsDelete, (_e, id: unknown) => bots.delete(id));
+  ipcMain.handle(CH.botsSetPrimary, (_e, id: unknown) => bots.setPrimary(id));
+  ipcMain.handle(CH.botsSetPinned, (_e, id: unknown, pinned: unknown) => bots.setPinned(id, pinned));
+  ipcMain.handle(CH.botsSetHidden, (_e, id: unknown, hidden: unknown) => bots.setHidden(id, hidden));
+  ipcMain.handle(CH.botsAddSection, (_e, name: unknown) => bots.addSection(name));
+  ipcMain.handle(CH.botsRenameSection, (_e, sectionId: unknown, name: unknown) => bots.renameSection(sectionId, name));
+  ipcMain.handle(CH.botsRemoveSection, (_e, sectionId: unknown) => bots.removeSection(sectionId));
+  ipcMain.handle(CH.botsMoveToSection, (_e, id: unknown, sectionId: unknown) => bots.moveToSection(id, sectionId));
+  ipcMain.handle(CH.botsMemoryList, (_e, id: unknown) => bots.memoryList(id));
+  // A routine on a server carries what the Bot remembers in its prompt, so a change to memory is a change to it.
+  ipcMain.handle(CH.botsMemoryForget, (_e, id: unknown, ref: unknown) => {
+    const result = bots.memoryForget(id, ref);
+    routineBridge.schedule();
+    return result;
+  });
+  ipcMain.handle(CH.botsMemoryShare, (_e, id: unknown, ref: unknown, shared: unknown) => {
+    const result = bots.memoryShare(id, ref, shared);
+    routineBridge.schedule();
+    return result;
   });
 
   ipcMain.handle(CH.repoConnect, async (_e, req: RepoConnectRequest) => {
@@ -1261,13 +1597,22 @@ ipcMain.on(CH.agentDisposeShell, (_e, threadId: string) => agentHost.disposeShel
         if (user) void identity.sync();
       });
     },
+    offerBotImport: (link) => botSurface.offerImport(link),
     shutdown: async () => {
       // Abort in-flight agent runs first so MCP children observe the signal.
       agentHost.stopAll();
+      await botSurface.dispose();
+      await surfaces.dispose();
       // Superagent's workers are agent runs too; a stuck one must not hold the app open.
       await Promise.race([superagent.dispose(), new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
       automations.dispose();
-      botWorkflowScheduler.dispose();
+      clearInterval(engineSyncTimer);
+      routineBridge.dispose();
+      engineService.dispose();
+      conductorWorkflowScheduler.dispose();
+      await chrome.dispose();
+      computerUse.dispose();
+      computerUseOverlay.dispose();
       // Also hangs up the pooled MCP servers, which now outlive a single run.
       await agentHost.dispose();
       telemetry.stop();

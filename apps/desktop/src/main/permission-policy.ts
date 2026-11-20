@@ -18,14 +18,19 @@ export function requiresExtraConfirmation(_toolName: string, _args: Record<strin
  * The same idea, but for unattended automation runs, where the reasoning above
  * does not hold: there is no user to interrupt, so a tool reaching the "ask"
  * tier cannot be answered and must be denied instead. These are the tools an
- * automation may never take on its own — OS input synthesis and browser
- * navigation, which can act on already-authenticated sessions.
+ * automation may never take on its own: OS input synthesis (`computer_`).
  *
- * `deny` beats `skipAll` in PermissionEngine, so listing a tool here guarantees
- * the automation resolver sees it rather than it being auto-allowed.
+ * A prefix listed here stops `skipAll` from auto-allowing the tool, so an
+ * execute-tier call falls back to "ask" and the automation resolver sees (and
+ * denies) it.
+ *
+ * The user's real Chrome (`chrome_`) is deliberately not here. It used to be,
+ * which made every Chrome call a refusal and left an automation that needed the
+ * browser to improvise around it. Chrome is instead governed by the automation's
+ * own per-site consent, enforced in the executor before each call (see
+ * automations/consent.ts), and the tools are only present at all when that
+ * consent exists.
  */
-export const AUTOMATION_NEVER_SKIP_TOOLS = new Set<string>(["chrome_navigate"]);
-
 export const AUTOMATION_NEVER_SKIP_PREFIXES: string[] = ["computer_"];
 
 /**

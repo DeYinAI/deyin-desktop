@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { themeByName, type CodeTheme } from "../code.js";
+import { writeClipboardText } from "../clipboard.js";
 import { useT } from "../i18n.js";
 import { Icon } from "./Icon.js";
 import { Logo } from "./Logo.js";
@@ -13,15 +14,15 @@ import type { ThreadEvent } from "../threads.js";
 import { extractHtmlPageFromMarkdownLoose } from "../htmlPage.js";
 import { InlineHtmlPagePreview } from "./InlineHtmlPagePreview.js";
 import { STEP_LIMIT_LABEL, TOOL_RESULT_UI_CAP, type AgentTodoStatus } from "@deyin/contract";
-import { describeEvidenceGate } from "@deyin/host-core/shared";
+import { describeEvidenceGate, describeRunStats } from "@deyin/host-core/shared";
 import { formatTokens } from "../formatTokens.js";
 export {
-  BotWorkflowCard,
-  BotStageProgressCard,
-  BotWatchdogAlertCard,
-  BotReviewMergeCard,
-} from "./BotModeCards.js";
-import { BotReviewMergeCard, BotStageProgressCard } from "./BotModeCards.js";
+  ConductorWorkflowCard,
+  ConductorStageProgressCard,
+  ConductorWatchdogAlertCard,
+  ConductorReviewMergeCard,
+} from "./ConductorModeCards.js";
+import { ConductorReviewMergeCard, ConductorStageProgressCard } from "./ConductorModeCards.js";
 
 /** Distance from the bottom (px) within which we consider the view "pinned". */
 const PIN_THRESHOLD = 64;
@@ -663,17 +664,17 @@ function EventRow({
       );
 
     case "tool": {
-      if (event.name === "merge_bot_diff" && event.result) {
+      if (event.name === "merge_conductor_diff" && event.result) {
         return (
-          <BotReviewMergeCard
+          <ConductorReviewMergeCard
             workflowName="External Bot Pipeline"
-            branchName={event.summary?.replace(/^merge bot branch\s*/i, "").trim() || "bot/worktree"}
+            branchName={event.summary?.replace(/^merge bot branch\s*/i, "").trim() || "conductor/worktree"}
             stagesCompleted={1}
             totalStages={1}
             diffSummary={event.result}
             onMerge={async (branch) => {
-              if (window.deyin?.botWorkflows?.merge) {
-                await window.deyin.botWorkflows.merge(workspaceRoot || "", branch);
+              if (window.deyin?.conductorWorkflows?.merge) {
+                await window.deyin.conductorWorkflows.merge(workspaceRoot || "", branch);
               }
             }}
           />
@@ -681,7 +682,7 @@ function EventRow({
       }
       if (event.name === "delegate_external_bot") {
         const stageProgress: any = {
-          stageId: event.startedAt ? String(event.startedAt) : "bot-run",
+          stageId: event.startedAt ? String(event.startedAt) : "conductor-run",
           stageName: event.summary || "Delegate to External Bot",
           agentId: "external-bot",
           status: event.result ? (event.ok === false ? "failed" : "completed") : "running",
@@ -692,7 +693,7 @@ function EventRow({
           error: event.ok === false ? event.result : undefined,
         };
         return (
-          <BotStageProgressCard
+          <ConductorStageProgressCard
             stage={stageProgress}
             onNudge={(id) => window.deyin?.externalAgents?.nudge(id, "Progress check")}
             onAbort={(id) => window.deyin?.externalAgents?.abort(id)}
@@ -779,6 +780,9 @@ function EventRow({
 
     case "optimization":
       return <OptimizationCard event={event} />;
+
+    case "run-stats":
+      return <StatusLine icon="chart" label={describeRunStats(event)} />;
 
     case "evidence-gate": {
       // The gate channel also carries the loop's "keep going" nudges; only real
@@ -1027,7 +1031,8 @@ function PlanCard({
 
   const copy = () => {
     if (!copyText) return;
-    void navigator.clipboard?.writeText(copyText).then(() => {
+    void writeClipboardText(copyText).then((ok) => {
+      if (!ok) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     });

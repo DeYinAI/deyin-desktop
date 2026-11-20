@@ -1,31 +1,57 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow, globalShortcut } from "electron";
+import { app, globalShortcut } from "electron";
 import type { ToolDefinition } from "@deyin/agent-core";
-import { createComputerUseHost, PipeComputerUseHost, resolveHostExe, hostLogPath, type ComputerUseHostApi } from "@deyin/computer-use-host";
-import { CH, type ComputerUseHostStatus } from "@deyin/contract";
+import {
+  createComputerUseHost,
+  PipeComputerUseHost,
+  HostRpcError,
+  RPC_CODES,
+  resolveHostExe,
+  hostLogPath,
+  type ComputerUseHostApi,
+  type HostEvent,
+  type WindowInfo,
+} from "@deyin/computer-use-host";
+import type { ComputerUseHostStatus, ComputerUseState } from "@deyin/contract";
+import { ComputerUseSession } from "../../bundled-plugins/computer-use/host/computer-session.js";
+import { createComputerUseTools } from "../../bundled-plugins/computer-use/host/computer-tools.js";
 
 interface AllowlistFile {
   apps: string[];
 }
 
-interface WindowRow {
-  id?: string;
-  title?: string;
-  app?: string;
-}
+/**
+ * Stops computer use from anywhere on the desktop. Esc is not used: it would be swallowed system-wide while an
+ * action runs. The chord is registered only while computer use is active.
+ */
+export const COMPUTER_USE_STOP_ACCELERATOR = "CommandOrControl+Alt+Shift+Escape";
+
+/**
+ * Pressing the Stop chord is real keyboard input, which the host reads as the user taking over. Right after a
+ * stop, that event must not turn into a "you took over" pause for an action that is already being stopped.
+ */
+const TAKEOVER_QUIET_AFTER_STOP_MS = 1_500;
+
+/** A window's owning app does not change; a short cache keeps a chain of actions from asking the host each time. */
+const WINDOW_CACHE_MS = 3_000;
+
+type AppDecision = "always" | "once" | "deny";
 
 /** OS-level computer use — Windows native host with mock on other platforms. */
 export class ComputerUseService {
   private host: ComputerUseHostApi | null = null;
-  private abortController: AbortController | null = null;
-  private shortcutsRegistered = false;
+  private unsubscribeHost: (() => void) | null = null;
+  private stopChordRegistered = false;
+  private takeoverIgnoredUntil = 0;
+  private toolList: ToolDefinition[] | null = null;
+  private readonly session = new ComputerUseSession();
+  private readonly windowCache = new Map<string, { window: WindowInfo; at: number }>();
   private readonly dataDir: string;
   private readonly shotsDir: string;
   private readonly allowlistPath: string;
   private readonly getRetentionDays: () => number;
-  private appApprovalResolver: ((req: { appId: string; action: string }) => Promise<"always" | "once" | "deny">) | null =
-    null;
+  private appApprovalResolver: ((req: { appId: string; action: string }) => Promise<AppDecision>) | null = null;
 
   constructor(
     private readonly isEnabled: () => boolean,
@@ -41,54 +67,74 @@ export class ComputerUseService {
       writeFileSync(this.allowlistPath, JSON.stringify({ apps: [] } satisfies AllowlistFile, null, 2));
     }
     this.pruneScreenshots();
+    this.session.onState((state) => this.syncStopChord(state.phase !== "idle"));
   }
 
-  setAppApprovalResolver(
-    resolver: (req: { appId: string; action: string }) => Promise<"always" | "once" | "deny">,
-  ): void {
+  setAppApprovalResolver(resolver: (req: { appId: string; action: string }) => Promise<AppDecision>): void {
     this.appApprovalResolver = resolver;
   }
 
-  registerShortcuts(): void {
-    // Registered lazily while automation is active.
+  /* State, Stop and Resume ------------------------------------------------------- */
+
+  getState(): ComputerUseState {
+    return this.session.state();
   }
 
-  unregisterShortcuts(): void {
+  /** Live phase of the running action, for the overlay windows and the in-app banner. */
+  onState(cb: (state: ComputerUseState) => void): () => void {
+    return this.session.onState(cb);
+  }
+
+  /** Stop whatever is running, now. Safe when idle. */
+  stop(): void {
+    this.takeoverIgnoredUntil = Date.now() + TAKEOVER_QUIET_AFTER_STOP_MS;
+    this.session.stop();
+    void this.host?.cancel?.().catch(() => undefined);
+  }
+
+  /** Continue after the user took over. */
+  resume(): void {
+    this.session.resume();
+  }
+
+  dispose(): void {
+    this.stop();
+    this.syncStopChord(false);
+    this.unsubscribeHost?.();
+    this.unsubscribeHost = null;
+    this.host?.dispose?.();
+    this.host = null;
+  }
+
+  private syncStopChord(active: boolean): void {
+    if (active === this.stopChordRegistered) return;
     try {
-      if (this.shortcutsRegistered) globalShortcut.unregister("Escape");
+      if (active) {
+        this.stopChordRegistered = globalShortcut.register(COMPUTER_USE_STOP_ACCELERATOR, () => this.stop());
+      } else {
+        globalShortcut.unregister(COMPUTER_USE_STOP_ACCELERATOR);
+        this.stopChordRegistered = false;
+      }
     } catch {
-      // ignore
-    }
-    this.shortcutsRegistered = false;
-  }
-
-  private registerEscShortcut(): void {
-    if (this.shortcutsRegistered) return;
-    try {
-      globalShortcut.register("Escape", () => {
-        void this.cancelActive();
-      });
-      this.shortcutsRegistered = true;
-    } catch {
-      // headless / duplicate registration
+      // headless, or the chord belongs to another app; the Stop button still works
+      this.stopChordRegistered = false;
     }
   }
 
-  private async cancelActive(): Promise<void> {
-    this.abortController?.abort();
-    if (this.host && "cancel" in this.host && typeof this.host.cancel === "function") {
-      await this.host.cancel().catch(() => undefined);
+  private onHostEvent(event: HostEvent): void {
+    if (event.type === "takeover") {
+      if (Date.now() >= this.takeoverIgnoredUntil) this.session.pause();
+      return;
     }
-    this.setActive(false);
+    if (event.type === "input") {
+      const data = (event.data ?? {}) as { active?: unknown; x?: unknown; y?: unknown };
+      const point =
+        typeof data.x === "number" && typeof data.y === "number" ? { x: data.x, y: data.y } : undefined;
+      this.session.setRawInput(data.active === true, point);
+    }
   }
 
-  private setActive(active: boolean): void {
-    if (active) this.registerEscShortcut();
-    else this.unregisterShortcuts();
-    for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(CH.computerUseActive, active);
-    }
-  }
+  /* Host -------------------------------------------------------------------------- */
 
   private ensureHost(): ComputerUseHostApi {
     if (!this.isEnabled()) throw new Error("Computer use is disabled. Enable it in Settings → Computer Use.");
@@ -99,38 +145,24 @@ export class ComputerUseService {
         resourcesPath: process.resourcesPath,
         logPath: hostLogPath(this.dataDir),
       });
-    }
-    if (this.host instanceof PipeComputerUseHost) {
-      this.host.setAbortSignal(this.abortController?.signal);
+      this.unsubscribeHost = this.host.onEvent?.((event) => this.onHostEvent(event)) ?? null;
     }
     return this.host;
   }
 
-  getAllowlist(): string[] {
-    try {
-      const parsed = JSON.parse(readFileSync(this.allowlistPath, "utf8")) as AllowlistFile;
-      return parsed.apps ?? [];
-    } catch {
-      return [];
-    }
-  }
-
-  setAllowlist(apps: string[]): void {
-    writeFileSync(this.allowlistPath, JSON.stringify({ apps } satisfies AllowlistFile, null, 2));
-  }
-
-  isAppAllowed(appId: string): boolean {
-    const list = this.getAllowlist();
-    if (list.length === 0) return false;
-    return list.some((entry) => entry.toLowerCase() === appId.toLowerCase());
-  }
-
-  async listAppsPreview(): Promise<unknown> {
-    return this.ensureHost().listApps();
+  /** The host, with this action's cancellation attached (Stop, the Stop chord, or the run being cancelled). */
+  private hostFor(signal?: AbortSignal): ComputerUseHostApi {
+    const host = this.ensureHost();
+    if (host instanceof PipeComputerUseHost) host.setAbortSignal(signal);
+    return host;
   }
 
   getHostPath(): string {
     return resolveHostExe(process.resourcesPath);
+  }
+
+  async listAppsPreview(): Promise<unknown> {
+    return this.ensureHost().listApps();
   }
 
   async getHostStatus(): Promise<ComputerUseHostStatus> {
@@ -141,8 +173,7 @@ export class ComputerUseService {
       return { ok: false, error: "Computer use is disabled. Enable it in Settings → Computer Use.", hostExists: false };
     }
     const hostPath = this.getHostPath();
-    const hostExists = existsSync(hostPath);
-    if (!hostExists) {
+    if (!existsSync(hostPath)) {
       return {
         ok: false,
         error: "Computer use host executable not found. Reinstall Deyin or rebuild the sidecar.",
@@ -165,30 +196,53 @@ export class ComputerUseService {
     }
   }
 
-  private async ensureWindowAllowed(windowId: string): Promise<void> {
-    let windows = (await this.ensureHost().listWindows()) as WindowRow[];
-    let row = windows.find((w) => w.id === windowId);
-    if (!row) {
-      await new Promise((r) => setTimeout(r, 250));
-      windows = (await this.ensureHost().listWindows()) as WindowRow[];
-      row = windows.find((w) => w.id === windowId);
+  /* Permissions ------------------------------------------------------------------- */
+
+  getAllowlist(): string[] {
+    try {
+      const parsed = JSON.parse(readFileSync(this.allowlistPath, "utf8")) as AllowlistFile;
+      return parsed.apps ?? [];
+    } catch {
+      return [];
     }
-    let appId = row?.app ?? "";
-    if (!appId) {
-      // In case windowId is a PID string or recently opened window whose HWND was listed
-      const pidNum = parseInt(windowId, 10);
-      if (!Number.isNaN(pidNum) && pidNum > 0) {
-        const matchByPid = windows.find((w) => {
-          // If window title or properties match or row exists
-          return w.id === windowId;
+  }
+
+  setAllowlist(apps: string[]): void {
+    writeFileSync(this.allowlistPath, JSON.stringify({ apps } satisfies AllowlistFile, null, 2));
+  }
+
+  isAppAllowed(appId: string): boolean {
+    const list = this.getAllowlist();
+    if (list.length === 0) return false;
+    return list.some((entry) => entry.toLowerCase() === appId.toLowerCase());
+  }
+
+  private async lookupWindow(windowId: string): Promise<WindowInfo> {
+    const cached = this.windowCache.get(windowId);
+    if (cached && Date.now() - cached.at < WINDOW_CACHE_MS) return cached.window;
+    let window: WindowInfo;
+    try {
+      window = await this.ensureHost().getWindow(windowId);
+    } catch (err) {
+      if (err instanceof HostRpcError && err.code === RPC_CODES.notFound) {
+        throw new Error(`Window "${windowId}" was not found or has been closed; cannot verify permission. Call computer_list_windows.`, {
+          cause: err,
         });
-        if (matchByPid?.app) appId = matchByPid.app;
       }
+      throw err;
     }
-    if (!appId) {
-      throw new Error(`Window "${windowId}" was not found or has been closed; cannot verify permission.`);
+    this.windowCache.set(windowId, { window, at: Date.now() });
+    return window;
+  }
+
+  /** Throws unless the app that owns this window is allowed; asks the user when it is not on the list. */
+  private async authorizeWindow(windowId: string): Promise<WindowInfo> {
+    const window = await this.lookupWindow(windowId);
+    if (!window.app) {
+      throw new Error(`Could not tell which app owns window "${windowId}", so it cannot be driven.`);
     }
-    await this.ensureAppAllowed(appId, "interact");
+    await this.ensureAppAllowed(window.app, "interact");
+    return window;
   }
 
   private async ensureAppAllowed(appId: string, action: string): Promise<void> {
@@ -198,19 +252,17 @@ export class ComputerUseService {
         `App "${appId}" is not on the always-allow list and no approval prompt is available. Add it in Settings → Computer Use.`,
       );
     }
-    let decision: "always" | "once" | "deny";
+    let decision: AppDecision;
     try {
       decision = await this.appApprovalResolver({ appId, action });
     } catch {
       throw new Error(`App "${appId}" approval request failed. Try again or add it in Settings → Computer Use.`);
     }
-    if (decision === "deny") {
-      throw new Error(`App "${appId}" was denied for computer use.`);
-    }
-    if (decision === "always") {
-      this.setAllowlist([...this.getAllowlist(), appId]);
-    }
+    if (decision === "deny") throw new Error(`App "${appId}" was denied for computer use.`);
+    if (decision === "always") this.setAllowlist([...this.getAllowlist(), appId]);
   }
+
+  /* Housekeeping ------------------------------------------------------------------- */
 
   pruneScreenshots(): void {
     const days = this.getRetentionDays();
@@ -226,233 +278,12 @@ export class ComputerUseService {
   }
 
   tools(): ToolDefinition[] {
-    const withChain = async (fn: () => Promise<string>): Promise<string> => {
-      this.abortController = new AbortController();
-      this.setActive(true);
-      try {
-        if (this.abortController.signal.aborted) throw new Error("Computer use cancelled (Esc).");
-        return await fn();
-      } finally {
-        this.setActive(false);
-        this.abortController = null;
-      }
-    };
-
-    return [
-      {
-        name: "computer_list_apps",
-        description: "List installed/running applications available for automation.",
-        tier: "read",
-        parameters: { type: "object", properties: {} },
-        summarize: () => "list apps",
-        execute: () => withChain(async () => JSON.stringify(await this.ensureHost().listApps(), null, 2)),
-      },
-      {
-        name: "computer_list_windows",
-        description: "List open desktop windows with ids and titles.",
-        tier: "read",
-        parameters: { type: "object", properties: {} },
-        summarize: () => "list windows",
-        execute: () => withChain(async () => JSON.stringify(await this.ensureHost().listWindows(), null, 2)),
-      },
-      {
-        name: "computer_get_state",
-        description: "Capture window screenshot and accessibility tree refs for interaction.",
-        tier: "read",
-        parameters: {
-          type: "object",
-          properties: {
-            window_id: { type: "string", description: "Window id from list_windows." },
-            screenshot: { type: "boolean", description: "Include screenshot path (default true)." },
-            tree: { type: "boolean", description: "Include a11y tree (default true)." },
-          },
-          required: ["window_id"],
-        },
-        summarize: (args) => `state ${String(args.window_id ?? "")}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(
-              await this.ensureHost().getWindowState(windowId, {
-                screenshot: args.screenshot !== false,
-                tree: args.tree !== false,
-              }),
-              null,
-              2,
-            );
-          }),
-      },
-      {
-        name: "computer_launch_app",
-        description: "Launch an application by id or executable name.",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: { app_id: { type: "string", description: "App id or executable." } },
-          required: ["app_id"],
-        },
-        summarize: (args) => `launch ${String(args.app_id ?? "")}`,
-        execute: (args) =>
-          withChain(async () => {
-            const appId = String(args.app_id ?? "");
-            await this.ensureAppAllowed(appId, "launch");
-            const raw = (await this.ensureHost().launchApp(appId)) as {
-              launched?: string;
-              windowId?: string;
-              pid?: number;
-            };
-            let windowId = raw?.windowId ?? "";
-            if (!windowId) {
-              const target = appId.replace(/\.exe$/i, "").toLowerCase();
-              for (let i = 0; i < 8; i++) {
-                await new Promise((r) => setTimeout(r, 250));
-                const windows = (await this.ensureHost().listWindows()) as WindowRow[];
-                const match = windows.find((w) => {
-                  const appName = w.app?.toLowerCase() ?? "";
-                  return (
-                    Boolean(appName) &&
-                    (appName === target || appName.includes(target) || target.includes(appName))
-                  );
-                });
-                if (match?.id) {
-                  windowId = match.id;
-                  break;
-                }
-              }
-            }
-            return JSON.stringify({ ...raw, windowId }, null, 2);
-          }),
-      },
-      {
-        name: "computer_click",
-        description: "Click an element by ref from get_state.",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: {
-            window_id: { type: "string" },
-            ref: { type: "string", description: "Element ref from accessibility tree." },
-          },
-          required: ["window_id", "ref"],
-        },
-        summarize: (args) => `click ${String(args.ref ?? "")}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(await this.ensureHost().click(windowId, String(args.ref)), null, 2);
-          }),
-      },
-      {
-        name: "computer_type",
-        description: "Type text into the focused element or a ref.",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: {
-            window_id: { type: "string" },
-            text: { type: "string" },
-            ref: { type: "string" },
-          },
-          required: ["window_id", "text"],
-        },
-        summarize: (args) => `type ${String(args.text ?? "").slice(0, 40)}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(
-              await this.ensureHost().typeText(windowId, String(args.text), args.ref ? String(args.ref) : undefined),
-              null,
-              2,
-            );
-          }),
-      },
-      {
-        name: "computer_press_key",
-        description: "Press a keyboard key in the target window.",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: { window_id: { type: "string" }, key: { type: "string" } },
-          required: ["window_id", "key"],
-        },
-        summarize: (args) => `press ${String(args.key ?? "")}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(await this.ensureHost().pressKey(windowId, String(args.key)), null, 2);
-          }),
-      },
-      {
-        name: "computer_scroll",
-        description: "Scroll vertically in the target window.",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: { window_id: { type: "string" }, delta_y: { type: "number" } },
-          required: ["window_id"],
-        },
-        summarize: (args) => `scroll ${String(args.delta_y ?? 0)}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(await this.ensureHost().scroll(windowId, Number(args.delta_y) || 600), null, 2);
-          }),
-      },
-      {
-        name: "computer_drag",
-        description: "Drag from one element ref to another.",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: {
-            window_id: { type: "string" },
-            from_ref: { type: "string" },
-            to_ref: { type: "string" },
-          },
-          required: ["window_id", "from_ref", "to_ref"],
-        },
-        summarize: (args) => `drag ${String(args.from_ref ?? "")} → ${String(args.to_ref ?? "")}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(
-              await this.ensureHost().drag(windowId, String(args.from_ref), String(args.to_ref)),
-              null,
-              2,
-            );
-          }),
-      },
-      {
-        name: "computer_set_value",
-        description: "Set the value of a text field by ref (UIA ValuePattern).",
-        tier: "execute",
-        parameters: {
-          type: "object",
-          properties: {
-            window_id: { type: "string" },
-            ref: { type: "string" },
-            value: { type: "string" },
-          },
-          required: ["window_id", "ref", "value"],
-        },
-        summarize: (args) => `set value ${String(args.ref ?? "")}`,
-        execute: (args) =>
-          withChain(async () => {
-            const windowId = String(args.window_id ?? "");
-            await this.ensureWindowAllowed(windowId);
-            return JSON.stringify(
-              await this.ensureHost().setValue(windowId, String(args.ref), String(args.value)),
-              null,
-              2,
-            );
-          }),
-      },
-    ];
+    this.toolList ??= createComputerUseTools({
+      session: this.session,
+      host: (signal) => this.hostFor(signal),
+      authorizeWindow: (windowId) => this.authorizeWindow(windowId),
+      authorizeApp: (appId, action) => this.ensureAppAllowed(appId, action),
+    });
+    return this.toolList;
   }
 }

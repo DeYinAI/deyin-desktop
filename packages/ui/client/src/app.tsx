@@ -22,14 +22,53 @@ import {
   resolveVideoModelParams,
   modelIsVideo,
  touchProjectOpened,
+  addBotThread,
+  botThreads,
+  removeBotThreads,
+  visibleProjects,
+  BOT_LIMITS,
+  canSitInRoom,
+  insertMention,
+  roomMembers,
 } from "@deyin/host-core/shared";
-import type { ModelReasoningMode, WorkspaceLocation, ImageModelParams, VideoModelParams } from "@deyin/host-core/shared";
+import type { ModelReasoningMode, ProductId, SecureFormRequest, WorkspaceLocation, ImageModelParams, VideoModelParams } from "@deyin/host-core/shared";
 import { streamChat } from "./api/openference.js";
+import { readClipboardText, showContextMenu, writeClipboardText } from "./clipboard.js";
 import { AppProviders } from "./providers.js";
+import { BotChatHeader } from "./bots/BotChatHeader.js";
+import { avatarModelChoices } from "./bots/botAvatarMaker.js";
+import { BotCreateDialog } from "./bots/BotCreateDialog.js";
+import { BotRoomDialog } from "./bots/BotRoomDialog.js";
+import { BotDetailView } from "./bots/BotDetailView.js";
+import { BotHome } from "./bots/BotHome.js";
+import { BotImportDialog } from "./bots/BotImportDialog.js";
+import { BotMarketplace } from "./bots/BotMarketplace.js";
+import { BotRosterList } from "./bots/BotRosterList.js";
+import { useBots } from "./bots/useBots.js";
+import {
+  PRODUCTS,
+  availableProducts,
+  coerceProduct,
+  isProductView,
+  loadProductPlaces,
+  productOfThread,
+  productOfView,
+  rememberPlace,
+  resolveProductSwitch,
+  restorableView,
+  saveProductPlaces,
+  type ProductPlaces,
+  type ProductTarget,
+  type ProductView,
+} from "./products.js";
+import { botOfThread, routeMode, threadToOpenForBot } from "./productShell.js";
+import { viewAfterPanelOpen, type View } from "./views.js";
 import { ApprovalDialog } from "./components/ApprovalDialog.js";
 import { AppApprovalDialog } from "./components/AppApprovalDialog.js";
+import { OriginApprovalDialog } from "./components/OriginApprovalDialog.js";
 import { WorkspaceTrustDialog } from "./components/WorkspaceTrustDialog.js";
 import { AskQuestionDialog, type QuestionItem } from "./components/AskQuestionDialog.js";
+import { SecureFormDialog } from "./bots/SecureFormDialog.js";
 import { PlanApprovalDialog } from "./components/PlanApprovalDialog.js";
 import { McpAuthCard } from "./components/McpAuthCard.js";
 import { PromptDockSlot } from "./components/PromptDock.js";
@@ -39,7 +78,6 @@ import { ComposerDock, type ComposerHandle } from "./components/ComposerDock.js"
 import { ChatView } from "./components/ChatView.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { DraftKeeper, emptyComposerDraft, type ComposerDraftState } from "./composer-draft.js";
-import { EnvironmentBadge } from "./components/EnvironmentBadge.js";
 import { RepoBar } from "./components/RepoBar.js";
 import { WorkspaceBar } from "./components/WorkspaceBar.js";
 import {
@@ -55,8 +93,8 @@ import { DEFAULT_MAX_GOAL_ROUNDS } from "@deyin/agent-core/goal-constants";
 import { applyGoalToProjects, isReplacingGoal, type GoalApplyOptions } from "./threadGoal.js";
 import { estimateContextFromThreadEvents } from "./contextEstimate.js";
 import { SearchOverlay } from "./components/SearchOverlay.js";
-import { BotModeView } from "./components/BotModeView.js";
-import { BotRunStrip } from "./components/BotRunStrip.js";
+import { ConductorView } from "./components/ConductorView.js";
+import { ConductorRunStrip } from "./components/ConductorRunStrip.js";
 import { ThreadMenu, type ThreadAction } from "./components/ThreadMenu.js";
 import { ProjectMenu, type ProjectAction } from "./components/ProjectMenu.js";
 import { ConversationHeader } from "./components/ConversationHeader.js";
@@ -79,10 +117,12 @@ import {
   useAgentStateController,
   useAgentRunState,
   useRunningThreadId,
+  useRunningThreadIds,
   useSessionTokenStats,
   agentStateStore,
   type AgentSideEffect,
 } from "./hooks/useAgentState.js";
+import { mergeRunningThreadIds } from "./threadActivity.js";
 import { useThreadHistory } from "./hooks/useThreadHistory.js";
 import {
   DEFAULT_THREAD_TITLE,
@@ -142,7 +182,7 @@ const MemoChatView = memo(ChatView);
 const MemoWorkspacePanel = memo(WorkspacePanel);
 
 /**
- * Secondary views (automations, superagent, bot workflows, plans, settings) are
+ * Secondary views (automations, superagent, conductor workflows, plans, settings) are
  * code-split: they are reachable from the sidebar but nobody opens the app to
  * land on them, so their code must not sit in the first-load bundle.
  */
@@ -155,8 +195,8 @@ const LazyAutomationsView = lazy(() =>
 const LazySuperagentPage = lazy(() =>
   import("./components/superagent/SuperagentPage.js").then((m) => ({ default: m.SuperagentPage })),
 );
-const LazyBotWorkflowsView = lazy(() =>
-  import("./components/BotWorkflowsView.js").then((m) => ({ default: m.BotWorkflowsView })),
+const LazyConductorWorkflowsView = lazy(() =>
+  import("./components/ConductorWorkflowsView.js").then((m) => ({ default: m.ConductorWorkflowsView })),
 );
 const LazyPlansView = lazy(() =>
   import("./components/PlansView.js").then((m) => ({ default: m.PlansView })),
@@ -179,23 +219,25 @@ function clampFraction(value: number): number {
 const BUILD_PROMPT = "Implement the plan you proposed above. Follow it step by step, keep the todo list current, and report what you changed when done.";
 const CONTINUE_PROMPT = "Continue the task from where you stopped. Check the todo list and workspace state first, then finish the remaining work.";
 
-type View = "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
-
-/** Opening a right-panel tab surfaces the conversation, but Bot Mode stays Bot Mode. */
-function viewAfterPanelOpen(current: View): View {
-  return current === "bot" ? "bot" : "workspace";
-}
-
 interface PendingApproval {
   requestId: string;
   toolName: string;
   summary: string;
+  /** Why a person is being asked; set for a Bot. */
+  reason?: string;
+  /** "Always allow" is kept for the Bot, not just this conversation. */
+  saved?: boolean;
 }
 
 interface PendingQuestion {
   requestId: string;
   title?: string;
   questions: QuestionItem[];
+}
+
+interface PendingSecureForm {
+  requestId: string;
+  form: SecureFormRequest;
 }
 
 interface PendingMcpAuth {
@@ -235,6 +277,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const avatarChoices = useMemo(() => avatarModelChoices(models, providers), [models, providers]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>("openference");
   const [selectedModel, setSelectedModel] = useState<string>("GLM-5.2");
   const [composerMode, setComposerMode] = useState<ChatMode>("agent");
@@ -260,6 +303,7 @@ export function App() {
   const [approvalsByThread, setApprovalsByThread] = useState<Record<string, PendingApproval[]>>({});
   const [mcpAuthByThread, setMcpAuthByThread] = useState<Record<string, PendingMcpAuth[]>>({});
   const [questionByThread, setQuestionByThread] = useState<Record<string, PendingQuestion[]>>({});
+  const [secureFormByThread, setSecureFormByThread] = useState<Record<string, PendingSecureForm[]>>({});
   /**
    * Per-thread composer drafts. Owned here (not in the dock) so they survive
    * view switches that unmount the composer; the dock restores on remount.
@@ -286,9 +330,15 @@ export function App() {
   }, []);
   /** Bumped to pull focus into the composer (declining a plan hands the turn back). */
   const [composerFocus, setComposerFocus] = useState(0);
+  /** Add `@handle` to the message being written, and put the cursor back in the box. */
+  const mentionInComposer = useCallback((handle: string) => {
+    composerRef.current?.updateInput((current) => insertMention(current, handle));
+    setComposerFocus((n) => n + 1);
+  }, []);
   const sessionTokenStats = useSessionTokenStats();
   const agentRunState = useAgentRunState(activeThreadId);
   const runningThreadId = useRunningThreadId();
+  const agentRunningThreadIds = useRunningThreadIds();
   /** Volatile diff contents per file path; thread events only persist the counts. */
   const fileDiffsRef = useRef(new Map<string, FileDiff>());
   /** Follow-up queued while a run is active; drained when the run finishes (per thread). */
@@ -330,6 +380,12 @@ export function App() {
       return next;
     });
     setQuestionByThread((cur) => {
+      if (!(threadId in cur)) return cur;
+      const next = { ...cur };
+      delete next[threadId];
+      return next;
+    });
+    setSecureFormByThread((cur) => {
       if (!(threadId in cur)) return cur;
       const next = { ...cur };
       delete next[threadId];
@@ -543,14 +599,31 @@ export function App() {
       if (s.whatsNewSeenVersion !== b.version) setShowWhatsNew(true);
       setEnv(e);
       setProviders(provs);
-      setProjects(hydrateProjects(projState.projects));
-      setActiveProjectId(projState.activeProjectId);
+      const hydrated = hydrateProjects(projState.projects);
+      // Bot conversations live in a reserved project that is never a workspace, so no workspace fallback may land on it.
+      const workspaces = visibleProjects(hydrated);
+      const restoredProjectId = workspaces.some((p) => p.id === projState.activeProjectId)
+        ? projState.activeProjectId
+        : (workspaces[0]?.id ?? null);
+      setProjects(hydrated);
+      setActiveProjectId(restoredProjectId);
+      const restoredProduct = coerceProduct(s.activeProduct, b.chatOnly ?? false);
+      const savedThread = hydrated.flatMap((p) => p.threads).find((t) => t.id === projState.activeThreadId);
+      const productTarget = resolveProductSwitch(restoredProduct, getPlaces(), hydrated, restoredProjectId);
       setActiveThreadId(
-        projState.activeThreadId ??
-          projState.projects.flatMap((p) => p.threads).find((t) => t.events.length > 0)?.id ??
-          projState.projects[0]?.threads[0]?.id ??
-          null,
+        savedThread && productOfThread(savedThread) === restoredProduct
+          ? savedThread.id
+          : restoredProduct === "code"
+            ? (workspaces.flatMap((p) => p.threads).find((t) => t.events.length > 0)?.id ??
+              workspaces[0]?.threads[0]?.id ??
+              null)
+            : productTarget.threadId,
       );
+      if (restoredProduct !== "code") {
+        setView(restorableView(productTarget.view));
+        setComposerMode(productTarget.composerMode);
+      }
+      productRestoredRef.current = true;
       setProjectsHydrated(true);
       // defaultModel persists as "providerId::modelId" (falls back to a bare model id).
       const [savedProvider, savedModel] = s.defaultModel?.includes("::")
@@ -720,17 +793,49 @@ export function App() {
 
   // Keep the active project selection valid as projects come and go.
   useEffect(() => {
-    if (projects.length === 0) {
+    const workspaces = visibleProjects(projects);
+    if (workspaces.length === 0) {
       if (activeProjectId !== null) setActiveProjectId(null);
       return;
     }
-    if (!projects.some((p) => p.id === activeProjectId)) setActiveProjectId(projects[0]!.id);
+    if (!workspaces.some((p) => p.id === activeProjectId)) setActiveProjectId(workspaces[0]!.id);
   }, [projects, activeProjectId]);
 
   const activeThread = useMemo(
     () => projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId) ?? null,
     [projects, activeThreadId],
   );
+
+  // Products: Code, Bot and Conductor are separate shells. A product view says which one is open; a shared
+  // view (Settings, Plugins, ...) keeps the one the user was in.
+  const { bots, ready: botsReady, layout: botLayout, loadError: botsLoadError, actions: botActions } = useBots();
+  // A Bot's routines are automations it owns; the host exposes them only in the desktop app.
+  const botRoutines = useMemo(
+    () => (window.deyin?.automations ? { api: window.deyin.automations, defaults: { model: selectedModel, providerId: selectedProviderId } } : undefined),
+    [selectedModel, selectedProviderId],
+  );
+  const [botCreateOpen, setBotCreateOpen] = useState(false);
+  const [botRoomOpen, setBotRoomOpen] = useState(false);
+  // Adding a Bot someone shared: `text` is what a link brought, when one did.
+  const [botImport, setBotImport] = useState<{ text?: string } | null>(null);
+  // What a Bot's routines run on when it is added with some: the model chosen in the chat box.
+  const botModelDefaults = useMemo(() => ({ model: selectedModel, providerId: selectedProviderId }), [selectedModel, selectedProviderId]);
+  const [botDetailId, setBotDetailId] = useState<string | null>(null);
+  // The last place the user was inside a product. A shared page (Settings, Plans, Superagent) belongs to whichever
+  // product they came from, and going back from it returns there instead of to Deyin Code.
+  const [lastProductView, setLastProductView] = useState<ProductView>("workspace");
+  const product = productOfView(view, productOfView(lastProductView, "code"));
+  const sharedBackView = restorableView(lastProductView);
+  useEffect(() => {
+    if (isProductView(view)) setLastProductView(view);
+  }, [view]);
+  const shellProducts = useMemo(() => availableProducts(chatOnlyHosted), [chatOnlyHosted]);
+  const activeBot = product === "bot" ? botOfThread(activeThread, bots) : null;
+  /** Where the user last was in each product, kept so switching back lands there. */
+  const placesRef = useRef<ProductPlaces | null>(null);
+  const getPlaces = useCallback((): ProductPlaces => (placesRef.current ??= loadProductPlaces(localStorage)), []);
+  /** False until the saved product has been applied, so startup never overwrites it with the default. */
+  const productRestoredRef = useRef(false);
 
   const activeQueuedPrompt =
     activeThreadId !== null ? queuedPromptByThread[activeThreadId]?.trim() ?? null : null;
@@ -749,19 +854,27 @@ export function App() {
       ...Object.keys(approvalsByThread),
       ...Object.keys(mcpAuthByThread),
       ...Object.keys(questionByThread),
+      ...Object.keys(secureFormByThread),
     ]);
-    const pending = { approvalsByThread, questionByThread, mcpAuthByThread };
+    const pending = { approvalsByThread, questionByThread, mcpAuthByThread, secureFormByThread };
     const out: Record<string, number> = {};
     for (const id of ids) {
       const count = countPendingInteractionsForThread(id, pending);
       if (count > 0) out[id] = count;
     }
     return out;
-  }, [approvalsByThread, mcpAuthByThread, questionByThread]);
+  }, [approvalsByThread, mcpAuthByThread, questionByThread, secureFormByThread]);
+  /** Sessions with work in flight, for the sidebar spinner: agent runs plus plain chat and media streams. */
+  const runningThreadIds = useMemo(
+    () => mergeRunningThreadIds(agentRunningThreadIds, plainStreamByThread),
+    [agentRunningThreadIds, plainStreamByThread],
+  );
   const activeApprovals = activeThreadId !== null ? (approvalsByThread[activeThreadId] ?? []) : [];
   const activeMcpAuthRequests = activeThreadId !== null ? (mcpAuthByThread[activeThreadId] ?? []) : [];
   const activeQuestion =
     activeThreadId !== null ? (questionByThread[activeThreadId]?.[0] ?? null) : null;
+  const activeSecureForm =
+    activeThreadId !== null ? (secureFormByThread[activeThreadId]?.[0] ?? null) : null;
 
   const selectedContextLength = useMemo(() => {
     const fromModels = models.find((m) => m.id === selectedModel)?.contextLength;
@@ -1165,6 +1278,14 @@ export function App() {
     );
   }, []);
 
+  /** A chat or generation finished: flag it for the sidebar dot unless the user is looking at it. */
+  const markUnreadIfAway = useCallback(
+    (threadId: string) => {
+      if (threadId !== activeThreadIdRef.current) updateThread(threadId, { unread: true });
+    },
+    [updateThread],
+  );
+
   const registerChatOnlyPage = useCallback(
     async (threadId: string, markdown: string) => {
       if (!chatOnlyHosted) return;
@@ -1391,7 +1512,13 @@ export function App() {
               ...cur,
               [effect.threadId]: [
                 ...list,
-                { requestId: effect.requestId, toolName: effect.toolName, summary: effect.summary },
+                {
+                  requestId: effect.requestId,
+                  toolName: effect.toolName,
+                  summary: effect.summary,
+                  ...(effect.reason ? { reason: effect.reason } : {}),
+                  ...(effect.saved ? { saved: true } : {}),
+                },
               ],
             };
           });
@@ -1412,6 +1539,16 @@ export function App() {
                 },
               ],
             };
+          });
+          break;
+        case "secure-form-request":
+          if (effect.threadId !== activeThreadIdRef.current) {
+            updateThread(effect.threadId, { unread: true });
+          }
+          setSecureFormByThread((cur) => {
+            const list = cur[effect.threadId] ?? [];
+            if (list.some((f) => f.requestId === effect.requestId)) return cur;
+            return { ...cur, [effect.threadId]: [...list, { requestId: effect.requestId, form: effect.form }] };
           });
           break;
         case "question-request":
@@ -1602,7 +1739,7 @@ export function App() {
     void (async () => {
       // No workspace yet on desktop: the folder picked here becomes the project.
       let createdProject: Project | null = null;
-      if (projects.length === 0 && boot?.platform === "desktop") {
+      if (visibleProjects(projects).length === 0 && boot?.platform === "desktop") {
         const root = await window.deyin.workspace.openFolder();
         if (root) {
           const location: WorkspaceLocation = { kind: "local", root };
@@ -1614,22 +1751,25 @@ export function App() {
       const thread: Thread = { ...emptyThread(), mode: effectiveMode };
       const createdId = createdProject?.id ?? null;
       setProjects((cur) => {
-        if (cur.length === 0) {
-          return [{ id: newId("proj"), name: chatOnlyHosted || boot?.platform === "web" ? "Chat" : "Workspace", root: null, threads: [thread] }];
+        const workspaces = visibleProjects(cur);
+        if (workspaces.length === 0) {
+          // The first workspace goes before the Bots project so it stays first in the list.
+          const first: Project = { id: newId("proj"), name: chatOnlyHosted || boot?.platform === "web" ? "Chat" : "Workspace", root: null, threads: [thread] };
+          return [first, ...cur];
         }
         const target =
-          createdId && cur.some((p) => p.id === createdId)
+          createdId && workspaces.some((p) => p.id === createdId)
             ? createdId
-            : projectIdOverride && cur.some((p) => p.id === projectIdOverride)
+            : projectIdOverride && workspaces.some((p) => p.id === projectIdOverride)
               ? projectIdOverride
-              : cur.some((p) => p.id === activeProjectId)
+              : workspaces.some((p) => p.id === activeProjectId)
                 ? activeProjectId!
-                : cur[0]!.id;
+                : workspaces[0]!.id;
         return cur.map((p) => (p.id === target ? { ...p, threads: [thread, ...p.threads] } : p));
       });
       if (initialDraft) draftKeeper.save(thread.id, { ...emptyComposerDraft(), input: initialDraft });
       setActiveThreadId(thread.id);
-      setView(viewOverride ?? (effectiveMode === "bot" ? "bot" : "workspace"));
+      setView(viewOverride ?? (effectiveMode === "conductor" ? "conductor" : "workspace"));
       if (modeOverride) setComposerMode(modeOverride);
     })();
   }, [projects, activeProjectId, activeThreadId, boot, ensureFolderProject, composerMode, chatOnlyHosted, draftKeeper]);
@@ -1751,56 +1891,199 @@ export function App() {
   const selectThread = useCallback(
     (threadId: string, projectId?: string) => {
       const owner = projectId ?? projects.find((p) => p.threads.some((t) => t.id === threadId))?.id;
-      if (owner && owner !== activeProjectId) void selectProject(owner);
+      const targetThread = projects.flatMap((p) => p.threads).find((t) => t.id === threadId);
+      const threadProduct = targetThread ? productOfThread(targetThread) : "code";
+      // A Bot's conversation is not in a workspace, so opening it must not switch the workspace.
+      if (owner && owner !== activeProjectId && threadProduct !== "bot") void selectProject(owner);
       setActiveThreadId(threadId);
       updateThread(threadId, { unread: false });
-      const targetThread = projects.flatMap((p) => p.threads).find((t) => t.id === threadId);
-      if (targetThread?.mode === "bot") {
-        setView("bot");
-      } else if (view !== "workspace") {
-        setView("workspace");
-      }
+      const home = PRODUCTS[threadProduct].homeView;
+      if (view !== home) setView(home);
     },
     [projects, activeProjectId, selectProject, updateThread, view],
   );
 
-  const handleSelectView = useCallback(
-    (nextView: "workspace" | "bot") => {
-      setView(nextView);
-      if (nextView === "bot") {
-        setComposerMode("bot");
-        if (activeThreadId) {
-          const curThread = projects.flatMap((p) => p.threads).find((t) => t.id === activeThreadId);
-          if (curThread && curThread.mode !== "bot") {
-            const actProj = projects.find((p) => p.id === activeProjectId);
-            const botThread = (actProj?.threads ?? []).find((t) => t.mode === "bot" && !t.archived);
-            if (botThread) {
-              setActiveThreadId(botThread.id);
-            }
-          }
-        }
-      } else {
-        setComposerMode("agent");
-      }
+  /** Make a product's shell current: its view, its conversation, and the composer mode that goes with it. */
+  const applyProductTarget = useCallback(
+    (target: ProductTarget) => {
+      // The detail page and the marketplace are visits, not places to return to; land on the Bot's chat or home.
+      setView(restorableView(target.view));
+      setActiveThreadId(target.threadId);
+      // Only Code and Conductor have workspaces; a Bot's conversation belongs to no folder.
+      if (target.product !== "bot" && target.projectId && target.projectId !== activeProjectId) void selectProject(target.projectId);
+      setComposerMode(target.composerMode);
     },
-    [activeThreadId, projects, activeProjectId],
+    [activeProjectId, selectProject],
   );
+
+  const selectProduct = useCallback(
+    (to: ProductId) => {
+      // Picking the product you are in still leaves a shared page (Settings, Plugins) for the product's own view.
+      if (to === product && isProductView(view)) return;
+      applyProductTarget(resolveProductSwitch(to, getPlaces(), projectsRef.current, activeProjectId));
+    },
+    [product, view, activeProjectId, applyProductTarget, getPlaces],
+  );
+
+  const createBotConversation = useCallback((botId: string) => {
+    const thread: Thread = { ...emptyThread(), mode: "agent", botId };
+    setProjects((cur) => addBotThread(cur, thread));
+    setActiveThreadId(thread.id);
+  }, []);
+
+  /** Open a Bot: its newest conversation, or a fresh one when it has none yet. */
+  const openBot = useCallback(
+    (botId: string) => {
+      const existing = threadToOpenForBot(projectsRef.current, botId);
+      if (existing) {
+        setActiveThreadId(existing.id);
+        updateThread(existing.id, { unread: false });
+      } else {
+        createBotConversation(botId);
+      }
+      setComposerMode("agent");
+      setView("bot");
+    },
+    [createBotConversation, updateThread],
+  );
+
+  const openBotDetails = useCallback((botId: string) => {
+    setBotDetailId(botId);
+    setView("botDetail");
+  }, []);
+
+  // A shared Bot's link opened the app (or arrived while it is open): show what it carries and ask. Nothing is added by the link.
+  useEffect(() => {
+    const templates = window.deyin?.botTemplates;
+    if (!templates) return;
+    let current = true;
+    const show = (link: string): void => {
+      if (current) setBotImport({ text: link });
+    };
+    void templates
+      .takeLink()
+      .then((link) => {
+        if (link) show(link);
+      })
+      .catch(() => undefined);
+    const stop = templates.onLink((link) => {
+      show(link);
+      // The window has it now; it must not be shown again the next time the app asks.
+      void templates.takeLink().catch(() => undefined);
+    });
+    return () => {
+      current = false;
+      stop();
+    };
+  }, []);
+
+  const handleBotDeleted = useCallback(
+    (botId: string) => {
+      const wasOpen = activeThread?.botId === botId;
+      setProjects((cur) => removeBotThreads(cur, botId));
+      if (wasOpen) setActiveThreadId(null);
+      setBotDetailId((cur) => (cur === botId ? null : cur));
+      setView("bot");
+    },
+    [activeThread?.botId],
+  );
+
+  /** What Code and Conductor list: every project except the one reserved for Bot conversations. */
+  const workspaceProjects = useMemo(() => visibleProjects(projects), [projects]);
+
+  /** The open Bot's conversations, listed under its roster row. */
+  const activeBotConversations = useMemo(
+    () => (activeBot ? botThreads(projects, activeBot.id).map((t) => ({ id: t.id, title: t.title })) : []),
+    [projects, activeBot],
+  );
+  const selectBotConversation = useCallback((threadId: string) => selectThread(threadId), [selectThread]);
+
+  const botSidebarBody = useMemo(
+    () => (
+      <BotRosterList
+        bots={bots}
+        layout={botLayout}
+        ready={botsReady}
+        loadError={botsLoadError}
+        activeBotId={activeBot?.id ?? null}
+        conversations={activeBotConversations}
+        activeThreadId={activeThreadId}
+        onSelectConversation={selectBotConversation}
+        actions={botActions}
+        onSelect={openBot}
+        onDetails={openBotDetails}
+        onDeleted={handleBotDeleted}
+        onNewRoom={() => setBotRoomOpen(true)}
+        {...(window.deyin?.botTemplates ? { onBrowse: () => setView("botMarket") } : {})}
+      />
+    ),
+    [bots, botLayout, botsReady, botsLoadError, activeBot?.id, activeBotConversations, activeThreadId, selectBotConversation, botActions, openBot, openBotDetails, handleBotDeleted],
+  );
+
+  // Remember where the user was in this product so switching back lands there; only product-owned views are kept.
+  useEffect(() => {
+    if (!projectsHydrated || !isProductView(view)) return;
+    const owned = activeThread && productOfThread(activeThread) === product ? activeThread : null;
+    const projectId = owned ? (projects.find((p) => p.threads.some((t) => t.id === owned.id))?.id ?? null) : null;
+    const next = rememberPlace(getPlaces(), product, { view, projectId, threadId: owned?.id ?? null });
+    if (next !== placesRef.current) {
+      placesRef.current = next;
+      saveProductPlaces(localStorage, next);
+    }
+  }, [projectsHydrated, view, product, activeThread, projects, getPlaces]);
+
+  // The open product is a setting, so the app reopens in it. Not before the saved one has been applied.
+  useEffect(() => {
+    if (!projectsHydrated || !productRestoredRef.current || !settings || settings.activeProduct === product) return;
+    patchSettings({ activeProduct: product });
+  }, [projectsHydrated, product, settings, patchSettings]);
+
+  /** The sidebar's primary action: a session, a Bot or a run, whichever the open product makes. */
+  const newItem = useCallback(() => {
+    switch (product) {
+      case "code":
+      case "conductor":
+        newTask();
+        return;
+      case "bot":
+        setBotCreateOpen(true);
+        return;
+      default: {
+        const unhandled: never = product;
+        throw new Error(`Unhandled product: ${String(unhandled)}`);
+      }
+    }
+  }, [product, newTask]);
 
   const threadHistory = useThreadHistory(activeThreadId, allThreadIds, selectThread);
 
   /** Composer mode change: remembered app-wide and stamped on the active thread. */
   const selectMode = useCallback(
     (mode: ChatMode) => {
-      // Bot Mode runs pipelines and external agent CLIs through a local shell and
-      // git, which a chat-only host does not have, so the mode is refused there.
-      if (mode === "bot" && chatOnlyHosted) return;
-      setComposerMode(mode);
-      if (activeThreadId) updateThread(activeThreadId, { mode });
-      if (mode === "bot") {
-        setView("bot");
+      // Conductor is its own product: choosing its mode moves there, and any other mode moves back to Code.
+      // Conductor runs pipelines and external agent CLIs through a local shell and git, which a chat-only
+      // host does not have, so it refuses the switch.
+      const route = routeMode(mode, product, !chatOnlyHosted);
+      switch (route.kind) {
+        case "ignore":
+          return;
+        case "set-mode":
+          setComposerMode(route.mode);
+          if (activeThreadId) updateThread(activeThreadId, { mode: route.mode });
+          return;
+        case "switch-product": {
+          const target = resolveProductSwitch(route.product, getPlaces(), projectsRef.current, activeProjectId);
+          applyProductTarget({ ...target, composerMode: route.mode });
+          if (target.threadId) updateThread(target.threadId, { mode: route.mode });
+          return;
+        }
+        default: {
+          const unhandled: never = route;
+          throw new Error(`Unhandled mode route: ${JSON.stringify(unhandled)}`);
+        }
       }
     },
-    [activeThreadId, updateThread, chatOnlyHosted],
+    [product, activeThreadId, activeProjectId, updateThread, chatOnlyHosted, applyProductTarget, getPlaces],
   );
   selectModeRef.current = selectMode;
 
@@ -1859,7 +2142,7 @@ export function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
-        newTask();
+        newItem();
       }
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
@@ -1875,12 +2158,92 @@ export function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        selectMode(composerMode === "bot" ? "agent" : "bot");
+        selectMode(composerMode === "conductor" ? "agent" : "conductor");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [newTask, terminalVisible, collapsePanel, openPanelTab, composerMode, selectMode]);
+  }, [newItem, terminalVisible, collapsePanel, openPanelTab, composerMode, selectMode]);
+
+  // Right-click menu for text the renderer owns.
+  //
+  // Electron draws no menu of its own: a packaged build has no application menu
+  // and the web content is not an editable field, so a right-click used to do
+  // nothing at all except inside a textarea. This adds the standard edit menu
+  // for an editable field or a selection, and deliberately steps aside when a
+  // component already drew its own menu (a thread row, a message card) — those
+  // call preventDefault themselves before the event reaches here.
+  useEffect(() => {
+    const onContextMenu = (e: MouseEvent) => {
+      // A component that wants its own menu has already handled the event.
+      if (e.defaultPrevented) return;
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // The terminal panel owns its own menu; it needs canvas-aware actions.
+      if (target.closest(".terminal-panel")) return;
+
+      const field = target.closest<HTMLInputElement | HTMLTextAreaElement | HTMLElement>(
+        "input, textarea, [contenteditable='true']",
+      );
+      const isField =
+        !!field && !(field as HTMLInputElement).disabled && !(field as HTMLInputElement).readOnly;
+
+      const selection = window.getSelection?.()?.toString() ?? "";
+      // No native menu exists in the browser host, so leave the platform alone.
+      if (!window.deyin?.contextMenu) return;
+
+      // Both an editable field and a plain-text selection get the menu. Plain
+      // content with nothing selected still gets one — Copy simply reports
+      // itself unavailable — because a right-click that does nothing at all
+      // reads as a broken app, not as "there is nothing to copy here".
+      e.preventDefault();
+      void showContextMenu({
+        kind: "text",
+        editable: isField,
+        hasSelection: isField
+          ? selection.length > 0 ||
+            (!!field &&
+              (field as HTMLInputElement).selectionStart !== (field as HTMLInputElement).selectionEnd)
+          : selection.length > 0,
+        x: e.clientX,
+        y: e.clientY,
+      }).then((command) => {
+        if (!command) return;
+        // execCommand still drives the field's own undo stack, which keeps a
+        // paste or cut reversible with Ctrl+Z. The menu stole focus, so the
+        // field is re-focused before acting on it.
+        if (command === "copy" && !isField) {
+          if (selection) void writeClipboardText(selection);
+          return;
+        }
+        if (command === "selectAll") {
+          if (isField) {
+            (field as HTMLInputElement).focus();
+            (field as HTMLInputElement).select();
+            return;
+          }
+          const range = document.createRange();
+          const container = target.closest(".chat, .markdown, .ui-flat-card") ?? document.body;
+          range.selectNodeContents(container);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+          return;
+        }
+        if (!isField) return;
+        (field as HTMLInputElement).focus();
+        if (command === "paste") {
+          void readClipboardText().then((text) => {
+            if (text) document.execCommand("insertText", false, text);
+          });
+          return;
+        }
+        document.execCommand(command);
+      });
+    };
+    window.addEventListener("contextmenu", onContextMenu);
+    return () => window.removeEventListener("contextmenu", onContextMenu);
+  }, []);
 
   // Interface theme: apply the setting to <html data-theme>; "system" follows the OS.
   const [themeVariant, setThemeVariant] = useState<"light" | "dark" | "obsidian">("dark");
@@ -1986,6 +2349,7 @@ export function App() {
         ...resolveModelReasoning(settings ?? DEFAULT_SETTINGS, runProviderId, runModel),
         approvalMode: settings?.approvalMode ?? "full-access",
         mode,
+        ...(thread.botId ? { botId: thread.botId } : {}),
         history: toChatMessages(historyThread.events),
         initialTodos: thread.todos,
         goalText: thread.goal?.status === "active" ? thread.goal.text : undefined,
@@ -2290,8 +2654,8 @@ const continueFromStepLimit = useCallback(() => {
 
   /**
    * Switch the composer/thread mode for a typed mode command. Unlike `selectMode`
-   * this never navigates: `/bot <task>` should run the task in this thread, not
-   * carry the user off to the Bot page.
+   * this never navigates: `/conductor <task>` should run the task in this thread, not
+   * carry the user off to the Conductor page.
    */
   const applyModeCommand = useCallback(
     (mode: ChatMode) => {
@@ -2303,13 +2667,13 @@ const continueFromStepLimit = useCallback(() => {
 
   /**
    * Parse a composer line as a mode command, refusing the modes this host cannot
-   * run. A chat-only host has no shell or git, so a typed `/bot` falls through
+   * run. A chat-only host has no shell or git, so a typed `/conductor` falls through
    * and is sent as ordinary text instead of switching to a mode that cannot work.
    */
   const parseComposerModeCommand = useCallback(
     (text: string) => {
       const parsed = parseModeCommand(text);
-      if (parsed?.mode === "bot" && chatOnlyHosted) return null;
+      if (parsed?.mode === "conductor" && chatOnlyHosted) return null;
       return parsed;
     },
     [chatOnlyHosted],
@@ -2318,7 +2682,7 @@ const continueFromStepLimit = useCallback(() => {
   const send = useCallback(async (text: string, draft: ComposerDraftState) => {
     if (!text || !boot) return;
 
-    // /plan, /ask, /bot and /agent are client-side mode commands: a bare command
+    // /plan, /ask, /conductor (alias /bot) and /agent are client-side mode commands: a bare command
     // switches the mode and stops there; a command with text runs that text in
     // the new mode. Handled before queueing so it works mid-run too.
     const modeCommand = parseComposerModeCommand(text);
@@ -2509,6 +2873,7 @@ const continueFromStepLimit = useCallback(() => {
         ]);
       } finally {
         setPlainStreamForThread(thread.id, null);
+        markUnreadIfAway(thread.id);
         void window.deyin.usage.record({ model: directVideoModelId, tokens: 0, newSession: isFirstMessage });
       }
       return;
@@ -2556,6 +2921,7 @@ const continueFromStepLimit = useCallback(() => {
         ]);
       } finally {
         setPlainStreamForThread(thread.id, null);
+        markUnreadIfAway(thread.id);
         void window.deyin.usage.record({ model: directImageModelId, tokens: 0, newSession: isFirstMessage });
       }
       return;
@@ -2623,6 +2989,7 @@ const continueFromStepLimit = useCallback(() => {
         ]);
       } finally {
         setPlainStreamForThread(thread.id, null);
+        markUnreadIfAway(thread.id);
         void window.deyin.usage.record({ model: runModelId, tokens: 0, newSession: isFirstMessage });
       }
       return;
@@ -2679,11 +3046,12 @@ const continueFromStepLimit = useCallback(() => {
       // Only drop this thread's controller: a concurrent chat owns its own.
       if (plainChatAbortsRef.current.get(thread.id) === abort) plainChatAbortsRef.current.delete(thread.id);
       setPlainStreamForThread(thread.id, null);
+      markUnreadIfAway(thread.id);
       // Real token usage from the provider's final stream frame. Providers that
       // report none record 0 tokens; message/session counts still apply.
       void window.deyin.usage.record({ model: runModelId, tokens: reportedTokens, newSession: isFirstMessage });
     }
-  }, [activeThread, boot, models, providers, settings, composerMode, applyModeCommand, parseComposerModeCommand, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, handleGoalInput, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread]);
+  }, [activeThread, boot, models, providers, settings, composerMode, applyModeCommand, parseComposerModeCommand, connect, appendEvents, registerChatOnlyPage, startAgentRun, updateThread, ensureThread, handleGoalInput, resolveThreadModel, setQueuedForThread, plainStreamFor, setPlainStreamForThread, markUnreadIfAway]);
 
   /** Abort the current run and send immediately (does not wait for natural completion). */
   const sendNow = useCallback(
@@ -2869,7 +3237,7 @@ const continueFromStepLimit = useCallback(() => {
   const sidebarSelectProject = useCallback(
     (projectId: string) => {
       void selectProject(projectId);
-      if (view !== "bot" && view !== "workflows") {
+      if (view !== "conductor" && view !== "workflows") {
         setView("workspace");
       }
     },
@@ -2878,13 +3246,13 @@ const continueFromStepLimit = useCallback(() => {
   const handleSelectTargetRepository = useCallback(
     async (projectId: string) => {
       await selectProject(projectId);
-      setView("bot");
-      setComposerMode("bot");
+      setView("conductor");
+      setComposerMode("conductor");
       const targetProj = projects.find((p) => p.id === projectId);
-      const isAlreadyInTarget = targetProj?.threads.some((t) => t.id === activeThreadId && t.mode === "bot");
+      const isAlreadyInTarget = targetProj?.threads.some((t) => t.id === activeThreadId && t.mode === "conductor");
       if (!isAlreadyInTarget) {
-        const latestBotMission = (targetProj?.threads ?? []).find((t) => t.mode === "bot" && !t.archived);
-        setActiveThreadId(latestBotMission?.id ?? null);
+        const latestConductorMission = (targetProj?.threads ?? []).find((t) => t.mode === "conductor" && !t.archived);
+        setActiveThreadId(latestConductorMission?.id ?? null);
       }
     },
     [selectProject, projects, activeThreadId],
@@ -2930,7 +3298,7 @@ const continueFromStepLimit = useCallback(() => {
   const sidebarOpenWorkflows = useCallback((workflowId?: string | null) => {
     setSelectedWorkflowForEdit(workflowId ?? null);
     setView("workflows");
-    setComposerMode("bot");
+    setComposerMode("conductor");
   }, []);
   const sidebarOpenCustomize = useCallback(() => {
     setSettingsPage("appearance");
@@ -3040,7 +3408,7 @@ const continueFromStepLimit = useCallback(() => {
             onOpenPlans={() => setView("upgrade")}
             onBack={() => {
               void window.deyin.providers.list().then(handleProvidersChanged);
-              setView("workspace");
+              setView(sharedBackView);
             }}
             onRefreshLiveModels={async () => {
               setModels(await window.deyin.models.refresh());
@@ -3060,10 +3428,10 @@ const continueFromStepLimit = useCallback(() => {
           platform={boot.platform}
           oauthIssuer={boot.config.oauthIssuer}
           userPlan={user?.plan ?? null}
-          onBack={() => setView("workspace")}
+          onBack={() => setView(sharedBackView)}
           onComplete={() => {
             void window.deyin.usage.account(true);
-            setView("workspace");
+            setView(sharedBackView);
           }}
         />
         </Suspense>
@@ -3151,6 +3519,8 @@ const continueFromStepLimit = useCallback(() => {
               key={activeApprovals[0].requestId}
               toolName={activeApprovals[0].toolName}
               summary={activeApprovals[0].summary}
+              reason={activeApprovals[0].reason}
+              saved={activeApprovals[0].saved}
               pendingCount={activeApprovals.length}
               onDecision={(decision) => {
                 const answered = activeApprovals[0]!;
@@ -3184,6 +3554,26 @@ const continueFromStepLimit = useCallback(() => {
                   ? () => void window.deyin.shell.showItem(planApproval.filePath!)
                   : undefined
               }
+            />
+          )}
+          {activeSecureForm && activeThreadId && (
+            <SecureFormDialog
+              key={activeSecureForm.requestId}
+              request={activeSecureForm.form}
+              onSubmit={(values) => {
+                window.deyin.agent?.answerSecureForm?.(activeSecureForm.requestId, values);
+                setSecureFormByThread((cur) => ({
+                  ...cur,
+                  [activeThreadId]: (cur[activeThreadId] ?? []).filter((f) => f.requestId !== activeSecureForm.requestId),
+                }));
+              }}
+              onCancel={() => {
+                window.deyin.agent?.answerSecureForm?.(activeSecureForm.requestId, null);
+                setSecureFormByThread((cur) => ({
+                  ...cur,
+                  [activeThreadId]: (cur[activeThreadId] ?? []).filter((f) => f.requestId !== activeSecureForm.requestId),
+                }));
+              }}
             />
           )}
           {activeQuestion && activeThreadId && (
@@ -3226,7 +3616,7 @@ const continueFromStepLimit = useCallback(() => {
         onStartMultitasking={startMultitasking}
         onClearQueue={clearQueue}
         plainChat={chatOnlyHosted}
-        botModeAvailable={!chatOnlyHosted}
+        conductorModeAvailable={!chatOnlyHosted && product !== "bot"}
         focusSignal={composerFocus}
         models={models}
         selectedModel={selectedModel}
@@ -3243,7 +3633,6 @@ const continueFromStepLimit = useCallback(() => {
         thinkingDefault={settings?.thinking ?? true}
         modelEfforts={settings?.modelEfforts}
         streaming={activeThreadStreaming}
-        runStatus={chatOnlyHosted ? null : agentRunState?.running ? agentRunState.status ?? null : null}
         hasEvents={(activeThread?.events.length ?? 0) > 0}
         providers={providers}
         selectedProviderId={selectedProviderId}
@@ -3265,7 +3654,7 @@ const continueFromStepLimit = useCallback(() => {
         onSelectApproval={
           chatOnlyHosted ? () => {} : (mode: ApprovalMode) => patchSettings({ approvalMode: mode })
         }
-        onSelectMode={chatOnlyHosted ? undefined : selectMode}
+        onSelectMode={chatOnlyHosted || product === "bot" ? undefined : selectMode}
         onToggleThinking={(on) => patchSettings({ thinking: on })}
         onSetModelEffort={(providerId, modelId, mode: ModelReasoningMode | undefined) => {
           const key = modelEffortKey(providerId, modelId);
@@ -3335,7 +3724,31 @@ const continueFromStepLimit = useCallback(() => {
                 applyGoalToThreadRef.current(thread, text);
               }
         }
-      />
+      >
+        <WorkspaceBar
+          platform={boot?.platform === "web" ? "web" : "desktop"}
+          projects={workspaceProjects}
+          activeProjectId={activeProjectId}
+          projectName={projectName}
+          workspaceRoot={workspaceRoot}
+          homeDir={boot?.homeDir ?? null}
+          onSelectProject={(projectId) => void selectProject(projectId)}
+          onPickFolder={(startIn) => void addProjectFolder(startIn)}
+          wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
+          onOpenSshHosts={
+            boot?.platform === "desktop"
+              ? () => {
+                  setSettingsPage("sshHosts");
+                  setView("settings");
+                }
+              : undefined
+          }
+          onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
+          onOpenSourceControl={() => {
+            openPanelTab("git");
+          }}
+        />
+      </ComposerDock>
     </div>
   );
 
@@ -3364,9 +3777,6 @@ const continueFromStepLimit = useCallback(() => {
       onThreadAction={handleThreadAction}
       trailing={
         <>
-          {!chatOnlyHosted && (
-            <EnvironmentBadge env={env} onPickShell={() => openPanelTab("terminal")} />
-          )}
           {boot?.platform === "web" && !chatOnlyHosted && (
             <RepoBar
               repoState={repoState}
@@ -3400,7 +3810,7 @@ const continueFromStepLimit = useCallback(() => {
   const dockNode = (
     <>
       {taskListNode}
-      {!chatOnlyHosted && <BotRunStrip onOpen={() => openPanelTab("botflow")} />}
+      {!chatOnlyHosted && <ConductorRunStrip onOpen={() => openPanelTab("conductorflow")} />}
     </>
   );
 
@@ -3487,13 +3897,23 @@ const continueFromStepLimit = useCallback(() => {
     </div>
   ) : null;
 
+  const botHeaderNode = activeBot ? (
+    <BotChatHeader
+      bot={activeBot}
+      onDetails={() => openBotDetails(activeBot.id)}
+      onNewConversation={() => createBotConversation(activeBot.id)}
+      members={activeBot.kind === "room" ? roomMembers(activeBot, new Map(bots.map((b) => [b.id, b]))) : []}
+      onMention={mentionInComposer}
+    />
+  ) : null;
+
   return (
     <AppProviders
       language={language}
-      onBotRunStarted={() => {
+      onConductorRunStarted={() => {
         // Show the monitor for a new run, but never pull the user out of Settings or another page.
-        if (chatOnlyHosted || (view !== "workspace" && view !== "bot")) return;
-        openPanelTab("botflow");
+        if (chatOnlyHosted || (view !== "workspace" && view !== "conductor")) return;
+        openPanelTab("conductorflow");
       }}
     >
     <div className="app">
@@ -3505,31 +3925,6 @@ const continueFromStepLimit = useCallback(() => {
         canForward={threadHistory.canForward}
         onBack={threadHistory.back}
         onForward={threadHistory.forward}
-        workspace={
-          <WorkspaceBar
-            platform={boot?.platform === "web" ? "web" : "desktop"}
-            projects={projects}
-            activeProjectId={activeProjectId}
-            projectName={projectName}
-            workspaceRoot={workspaceRoot}
-            homeDir={boot?.homeDir ?? null}
-            onSelectProject={(projectId) => void selectProject(projectId)}
-            onPickFolder={(startIn) => void addProjectFolder(startIn)}
-            wslDistros={boot?.platform === "desktop" ? (env?.wslDistros ?? []) : []}
-            onOpenSshHosts={
-              boot?.platform === "desktop"
-                ? () => {
-                    setSettingsPage("sshHosts");
-                    setView("settings");
-                  }
-                : undefined
-            }
-            onConnectRepo={boot?.platform === "web" ? () => setRepoConnectOpen(true) : undefined}
-            onOpenSourceControl={() => {
-              openPanelTab("git");
-            }}
-          />
-        }
       />
       {workspaceState?.connectionState === "error" && workspaceState.error ? (
         <div className="update-banner update-banner--error" role="alert">
@@ -3542,11 +3937,10 @@ const continueFromStepLimit = useCallback(() => {
           <NavRail
             activeView={view}
             platform={boot?.platform ?? "desktop"}
-            currentMode={composerMode}
-            onSwitchMode={selectMode}
-            onSelectView={handleSelectView}
-            botModeAvailable={!chatOnlyHosted}
-            onNewTask={newTask}
+            products={shellProducts}
+            activeProduct={product}
+            onSelectProduct={selectProduct}
+            onNewItem={newItem}
             onOpenPlugins={sidebarOpenPlugins}
             onOpenSearch={() => setSearchOpen(true)}
             onOpenAutomations={() => setView("automations")}
@@ -3567,11 +3961,11 @@ const continueFromStepLimit = useCallback(() => {
         <MemoSidebar
           platform={boot?.platform ?? "desktop"}
           activeView={view}
-          currentMode={composerMode}
-          onSwitchMode={selectMode}
-          onSelectView={handleSelectView}
-          botModeAvailable={!chatOnlyHosted}
-          projects={projects}
+          products={shellProducts}
+          activeProduct={product}
+          onSelectProduct={selectProduct}
+          botBody={botSidebarBody}
+          projects={workspaceProjects}
           activeProjectId={activeProjectId}
           activeThreadId={activeThreadId}
           renamingThreadId={renamingThreadId}
@@ -3579,7 +3973,7 @@ const continueFromStepLimit = useCallback(() => {
           settings={settings ?? DEFAULT_SETTINGS}
           busy={busy}
           connecting={connecting}
-          onNewTask={newTask}
+          onNewTask={newItem}
           onNewTaskInProject={sidebarNewTaskInProject}
           onNewProject={sidebarNewProject}
           onSelectProject={sidebarSelectProject}
@@ -3601,6 +3995,7 @@ const continueFromStepLimit = useCallback(() => {
           onOpenWorkflows={sidebarOpenWorkflows}
           onOpenCustomize={sidebarOpenCustomize}
           pendingByThread={pendingByThread}
+          runningThreadIds={runningThreadIds}
         />
         )}
 
@@ -3629,24 +4024,73 @@ const continueFromStepLimit = useCallback(() => {
             <LazySuperagentPage
               models={models}
               selectedProviderId={selectedProviderId}
-              onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
+              onBack={() => setView(sharedBackView)}
+              // Agent mode: the setup tools save settings, which Ask and Plan do not allow.
+              onSetupInChat={() => newTask("agent", "workspace", undefined, "/superagent ")}
             />
           ) : view === "workflows" ? (
-            <LazyBotWorkflowsView
+            <LazyConductorWorkflowsView
               workspaceRoot={workspaceRoot}
               initialWorkflowId={selectedWorkflowForEdit}
-              onBack={() => setView(composerMode === "bot" ? "bot" : "workspace")}
+              onBack={() => setView(composerMode === "conductor" ? "conductor" : "workspace")}
               onRunWorkflow={() => {
                 // The run is already started; show it where it is monitored.
-                setComposerMode("bot");
-                setView("bot");
-                openPanelTab("botflow");
+                setComposerMode("conductor");
+                setView("conductor");
+                openPanelTab("conductorflow");
               }}
-              onCreateInChat={() => newTask("bot", "bot", undefined, "/pipeline ")}
+              onCreateInChat={() => newTask("conductor", "conductor", undefined, "/pipeline ")}
             />
-          ) : view === "bot" ? (
+          ) : view === "botDetail" ? (
+            <BotDetailView
+              bot={bots.find((b) => b.id === botDetailId) ?? null}
+              actions={botActions}
+              routines={botRoutines}
+              permissions={window.deyin.botPermissions}
+              servers={window.deyin.engines}
+              skills={window.deyin.botSkills ? { api: window.deyin.botSkills, ...(window.deyin.botTeach ? { teach: window.deyin.botTeach } : {}) } : undefined}
+              files={window.deyin.botFiles}
+              templates={window.deyin.botTemplates}
+              connections={window.deyin.botSurfaces}
+              avatarMaker={window.deyin.botAvatar ? { api: window.deyin.botAvatar, choices: avatarChoices } : undefined}
+              roster={bots}
+              onOpenServers={() => {
+                setSettingsPage("botServers");
+                setView("settings");
+              }}
+              onOpenVault={
+                window.deyin.vault
+                  ? () => {
+                      setSettingsPage("vault");
+                      setView("settings");
+                    }
+                  : undefined
+              }
+              onBack={() => (botDetailId ? openBot(botDetailId) : setView("bot"))}
+              onDeleted={handleBotDeleted}
+            />
+          ) : view === "botMarket" && window.deyin.botTemplates ? (
+            <BotMarketplace
+              api={window.deyin.botTemplates}
+              defaults={botModelDefaults}
+              onOpenBot={openBot}
+              onImport={() => setBotImport({})}
+              onBack={() => setView("bot")}
+            />
+          ) : view === "bot" && !activeBot ? (
+            botsReady ? (
+              <BotHome
+                activeCount={bots.filter((b) => !b.archived).length}
+                onCreate={() => setBotCreateOpen(true)}
+                {...(bots.filter(canSitInRoom).length >= BOT_LIMITS.minRoomMembers ? { onCreateRoom: () => setBotRoomOpen(true) } : {})}
+                {...(window.deyin.botTemplates ? { onBrowse: () => setView("botMarket"), onImport: () => setBotImport({}) } : {})}
+              />
+            ) : (
+              <div className="bot-home" aria-busy="true" />
+            )
+          ) : view === "conductor" ? (
             <div className={`app__columns${panelOpen && panelFullscreen ? " app__columns--panel-full" : ""}`} ref={attachColumns}>
-              <BotModeView
+              <ConductorView
                 workspaceRoot={workspaceRoot}
                 activeThreadId={activeThreadId}
                 chatEvents={chatEvents}
@@ -3680,7 +4124,7 @@ const continueFromStepLimit = useCallback(() => {
           ) : (<>
           <div className={`app__columns${panelOpen && panelFullscreen ? " app__columns--panel-full" : ""}`} ref={attachColumns}>
             <main className={`chat-column${isChatEmpty ? " chat-column--empty" : ""}`}>
-              {conversationHeaderNode}
+              {activeBot ? botHeaderNode : conversationHeaderNode}
 
               <MemoChatView
                 events={chatEvents}
@@ -3767,13 +4211,51 @@ const continueFromStepLimit = useCallback(() => {
         );
       })()}
 
+      {botImport && window.deyin.botTemplates && (
+        <BotImportDialog
+          api={window.deyin.botTemplates}
+          defaults={botModelDefaults}
+          {...(botImport.text ? { initialText: botImport.text } : {})}
+          onOpenBot={(bot) => {
+            setBotImport(null);
+            openBot(bot.id);
+          }}
+          onClose={() => setBotImport(null)}
+        />
+      )}
+
+      {botCreateOpen && (
+        <BotCreateDialog
+          onCreate={botActions.create}
+          onCreated={(bot) => {
+            setBotCreateOpen(false);
+            openBot(bot.id);
+          }}
+          onCancel={() => setBotCreateOpen(false)}
+        />
+      )}
+
+      {botRoomOpen && (
+        <BotRoomDialog
+          bots={bots}
+          onCreate={botActions.create}
+          onCreated={(room) => {
+            setBotRoomOpen(false);
+            openBot(room.id);
+          }}
+          onCancel={() => setBotRoomOpen(false)}
+        />
+      )}
+
       {searchOpen && (
         <SearchOverlay
           projects={projects}
           onSelectThread={(_pid, tid) => {
             setActiveThreadId(tid);
             updateThread(tid, { unread: false });
-            setView("workspace");
+            // Open it in its own product's shell: a Bot's chat is not a Code conversation.
+            const found = projects.flatMap((p) => p.threads).find((t) => t.id === tid);
+            setView(PRODUCTS[found ? productOfThread(found) : "code"].homeView);
           }}
           onOpenUrl={(url) => {
             openPanelTab("browser");
@@ -3787,7 +4269,7 @@ const continueFromStepLimit = useCallback(() => {
         <ProjectPicker
           open={projectPickerOpen}
           platform="desktop"
-          projects={projects}
+          projects={workspaceProjects}
           activeProjectId={activeProjectId}
           homeDir={boot?.homeDir}
           wslDistros={env?.wslDistros}
@@ -3819,9 +4301,12 @@ const continueFromStepLimit = useCallback(() => {
       )}
       {showBetaFeedback && <BetaFeedbackForm onClose={() => setShowBetaFeedback(false)} />}
 
-      <BrowserOverlay />
-      <ComputerUseOverlay />
+      <div className="agent-activity">
+        <BrowserOverlay />
+        <ComputerUseOverlay />
+      </div>
       <AppApprovalDialog />
+      <OriginApprovalDialog />
         <WorkspaceTrustDialog />
     </div>
     </AppProviders>

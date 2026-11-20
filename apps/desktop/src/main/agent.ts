@@ -1,6 +1,18 @@
 import { randomUUID, createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { withBotSkills } from "./bots/skills-run.js";
+import { resolveBotRun, runScope, withBotPersona, withoutWorkspaceCaps, type BotRunContext, type BotRunSource } from "./bots/run.js";
+import { allowRoomDelegation, roomSubagents, withRoomMembers } from "./bots/room-run.js";
+import { createBotRunGuard } from "./bots/run-guard.js";
+import { runServerBotTurn, type ServerBotPort } from "./bots/engine/server-chat.js";
+import type { ToolGuard } from "./bots/tool-guard.js";
+import { removeBotSessions } from "./bots/sessions.js";
+import { SecureFormBroker } from "./bots/secure-form-broker.js";
+import { takeoverOutcome, takeoverRequest } from "./bots/takeover.js";
+import { onePasswordIf } from "./bots/onepassword.js";
+import { createVaultRun, type VaultRun } from "./bots/vault-run.js";
+import { browserPageSource, chromePageSource } from "./bots/vault-pages.js";
 import { BrowserWindow, app } from "electron";
 import {
   AgentShell,
@@ -9,13 +21,16 @@ import {
   resolveWireProvider,
   createImageBridge,
   storeAttachedImages,
+  EMPTY_PERMISSIONS,
   type AgentsStore,
+  type ApprovalMode,
   type ImageModelChoice,
   type MemoryStore,
   type SettingsStore,
   type TerminalManager,
   type CheckpointStore,
   inferCheckpointOperation,
+  runRequestStats,
 } from "@deyin/host-core";
 import {
   PermissionEngine,
@@ -48,6 +63,7 @@ import {
   getSubagentStateStore,
   type TaskCallOverrides,
   type TaskRunResult,
+  type ToolRegistry,
   type AgentMessage,
   type ImageGenBridge,
   type InteractionRequest,
@@ -84,6 +100,7 @@ import { CH } from "@deyin/contract";
 import type { DeyinConfig } from "@deyin/contract";
 import type { AuthManager } from "./auth.js";
 import type { BrowserControlService } from "./browser.js";
+import type { ChromeService } from "./chrome.js";
 import type { ComputerUseService } from "./computer-use.js";
 import type { CapabilityService } from "./capabilities.js";
 import type { VisualizeService } from "./visualize.js";
@@ -92,7 +109,8 @@ import type { ImageService } from "./images.js";
 import { PendingReviewQueue } from "./pending-review.js";
 import { registerBundledHostTools } from "./plugin-host.js";
 import { createAutomationTools } from "./automation-tools.js";
-import { createBotWorkflowTools, type BotWorkflowToolDeps } from "./bot-workflow-tools.js";
+import { createConductorWorkflowTools, type ConductorWorkflowToolDeps } from "./conductor-workflow-tools.js";
+import { createSuperagentChatTools, type SuperagentChatPort } from "./superagent-chat-tools.js";
 import type { AutomationService } from "./automations/service.js";
 import { NEVER_SKIP_PREFIXES, NEVER_SKIP_TOOLS } from "./permission-policy.js";
 import { workspaceHasDeyinArtifacts, type WorkspaceTrust } from "./workspace-trust.js";
@@ -101,7 +119,7 @@ import type { SecurityFindingsStore } from "./security-findings-store.js";
 import { wrapSecurityMcpTools } from "./security-mcp-hook.js";
 import { createMcpAuthenticateTool, isMcpUnauthorized, resolveMcpModuleId } from "./mcp-auth-bridge.js";
 import type { ExternalAgentService } from "./external-agents/service.js";
-import type { BotWorkflowEngine } from "@deyin/host-core";
+import type { ConductorWorkflowEngine } from "@deyin/host-core";
 
 const PERMISSION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Files bigger than this ship to the renderer without diff content. */
@@ -129,6 +147,10 @@ interface SubagentCallContext {
   /** Owning thread session, so a resumed transcript cannot cross sessions. */
   sessionId: string;
   overrides: TaskCallOverrides;
+  /** Set for a Bot's run: builds the guard that holds the Bot's subagents to the Bot's permissions too. */
+  botGuardFor?: (nameFor?: (toolName: string) => string) => ToolGuard;
+  /** Set for a Bot's run: the Vault tools its subagents may use, and the cover that keeps secrets out of what they read. */
+  vaultRun?: VaultRun;
 }
 
 interface ThreadSession {
@@ -138,6 +160,10 @@ interface ThreadSession {
   mode: ChatMode;
   /** Mode before entering plan mode (ExitPlanMode restores this). */
   previousMode?: ChatMode;
+  /** Persona of the Bot this thread runs as; part of every rebuilt system prompt. */
+  persona?: string;
+  /** The Bot's own files folder: its working directory, including for its subagents. */
+  botCwd?: string;
   /** Structured system-prompt slices for Context Usage accounting. */
   systemSections?: SystemPromptSections;
   /**
@@ -184,6 +210,8 @@ export interface AgentHostOptions {
   settings: SettingsStore;
   capabilities: CapabilityService;
   browser: BrowserControlService;
+  /** The user's real Chrome through the Deyin extension; absent in headless hosts. */
+  chrome?: ChromeService;
   computerUse: ComputerUseService;
   visualize?: VisualizeService;
   /** One-page website artifact store (create_page tool). */
@@ -195,6 +223,10 @@ export interface AgentHostOptions {
   terminals: TerminalManager;
   /** Background memory store (remember/forget tools + recall). */
   memory: MemoryStore;
+  /** Deyin Bots: where to find one and where its files and memory live. Absent in hosts without Bots. */
+  bots?: BotRunSource;
+  /** Bots that live on a server: how to reach the computer each one works on. Absent in hosts without servers. */
+  serverBots?: ServerBotPort;
   /** Shared change-review queue (review mode) — also surfaced over IPC. */
   review: PendingReviewQueue;
   /** Durable file mutation checkpoints for revert / edit-and-resend. */
@@ -209,6 +241,8 @@ export interface AgentHostOptions {
   searchIndex: (query: string, topK: number) => Promise<IndexSearchHit[]>;
   /** Context window for the model, when known (drives compaction). */
   getContextLength: (providerId: string, modelId: string) => number | undefined;
+  /** Declared output-token ceiling for the model, when the catalog publishes one (drives `max_tokens`). */
+  getMaxOutputTokens?: (providerId: string, modelId: string) => number | undefined;
   /**
    * Image-capable models on a provider, best first: dedicated text-to-image
    * models ("endpoint") and chat models that draw ("chat").
@@ -216,10 +250,12 @@ export interface AgentHostOptions {
   getImageModels?: (providerId: string) => ImageModelChoice[];
   /** External bot adapter service for multi-agent delegation tools. */
   externalAgents?: ExternalAgentService;
-  /** Bot workflow engine for worktree isolation and 1-click merge tools. */
-  botWorkflowEngine?: BotWorkflowEngine;
+  /** Conductor workflow engine for worktree isolation and 1-click merge tools. */
+  conductorWorkflowEngine?: ConductorWorkflowEngine;
   /** Pipeline validate/run tools for the guided pipeline builder. */
-  botWorkflows?: BotWorkflowToolDeps;
+  conductorWorkflows?: ConductorWorkflowToolDeps;
+  /** Superagent's setup tools for the guided /superagent interview; absent when Superagent could not start. */
+  superagent?: SuperagentChatPort;
 }
 
 /**
@@ -238,6 +274,8 @@ export class DesktopAgentHost {
     string,
     { threadId: string; resolve: (answers: string) => void; timer: ReturnType<typeof setTimeout> }
   >();
+  /** Secure Forms a Bot has put up, waiting for a person to type into them. */
+  private readonly secureForms = new SecureFormBroker(PERMISSION_TIMEOUT_MS);
   private readonly pendingTrust = new Map<
     string,
     { resolve: (decision: "trust" | "skip") => void; timer: ReturnType<typeof setTimeout> }
@@ -526,6 +564,11 @@ export class DesktopAgentHost {
     this.sessions.delete(threadId);
   }
 
+  /** Delete every conversation a deleted Bot had, stopping any that is still running. */
+  removeBotSessions(botId: string): number {
+    return removeBotSessions(this.store, this.sessions, (threadId) => this.resetSession(threadId), botId);
+  }
+
   private recordFileCheckpoint(
     threadId: string,
     runId: string,
@@ -598,6 +641,7 @@ export class DesktopAgentHost {
       clearTimeout(pending.timer);
       pending.resolve("skip");
     }
+    this.secureForms.cancelThread(threadId);
 
     run.abort.abort();
     // Emit `done` immediately and free the slot so interrupt-and-send can start
@@ -623,6 +667,11 @@ export class DesktopAgentHost {
     this.pendingQuestions.delete(requestId);
     clearTimeout(pending.timer);
     pending.resolve(JSON.stringify(answers, null, 2));
+  }
+
+  /** What a person typed into a Bot's Secure Form (or `null` when they cancelled). It goes to the page, not to the model. */
+  answerSecureForm(requestId: unknown, values: unknown): void {
+    this.secureForms.answer(requestId, values);
   }
 
   /** Surface a startup failure to the renderer when start() rejects unexpectedly. */
@@ -666,15 +715,68 @@ export class DesktopAgentHost {
     }
   }
 
+  /**
+   * One chat turn for a Bot on a server. The renderer sends the whole conversation each time, so the server
+   * run is stateless and nothing is kept here; the run ends the way every run ends, with a single `done`.
+   */
+  private async runOnServer(options: AgentStartOptions, botRun: BotRunContext, signal: AbortSignal, active: ActiveRun): Promise<void> {
+    const servers = this.opts.serverBots;
+    if (!servers) throw new Error("Servers are not available in this window.");
+    const provider = this.opts.agents.listProviders(true).find((p) => p.id === options.providerId);
+    const send = (event: AgentUiEvent): void => {
+      // stop() has already ended this run for the renderer; whatever the server says after that is not shown.
+      if (active.doneEmitted) return;
+      if (event.type === "done") active.doneEmitted = true;
+      this.send(options.threadId, event);
+    };
+    await runServerBotTurn(
+      servers.runtime(botRun.bot),
+      {
+        bot: botRun.bot,
+        permissions: this.opts.bots?.permissions?.get() ?? EMPTY_PERMISSIONS,
+        memory: this.opts.settings.get().memoryEnabled ? botRun.memory.list() : [],
+        skills: await botRun.skills.all(),
+        history: options.history,
+        prompt: options.prompt,
+        model: options.model,
+        customProvider: provider?.kind === "custom",
+        imageCount: options.images?.length ?? 0,
+        maxSteps: options.maxSteps,
+      },
+      send,
+      { label: servers.label(botRun.bot), signal },
+    );
+  }
+
   private async run(options: AgentStartOptions, signal: AbortSignal, active: ActiveRun): Promise<void> {
-    const cwd = this.opts.getWorkspaceRoot() ?? app.getPath("home") ?? process.cwd();
+    // A Bot run swaps in the Bot's own folder, persona and memory for the open project's. A refusal
+    // (deleted, archived, a room) throws, and start() reports it in the chat like any startup error.
+    let botRun: BotRunContext | null = null;
+    if (options.botId) {
+      if (!this.opts.bots) throw new Error("Bots are not available in this window.");
+      const resolved = resolveBotRun(this.opts.bots, options.botId);
+      if (!resolved.ok) throw new Error(resolved.error);
+      botRun = resolved.value;
+    }
+    // A Bot that lives on a server is run there, by its engine; nothing below (project, tools, trust) applies.
+    if (botRun?.bot.kind === "agent" && botRun.bot.harness === "server") {
+      await this.runOnServer(options, botRun, signal, active);
+      return;
+    }
+    const scope = runScope(botRun, this.opts.getWorkspaceRoot(), app.getPath("home") ?? process.cwd());
+    const cwd = scope.cwd;
     let caps = await this.opts.capabilities.enabledForRun();
+    if (botRun) caps = await withBotSkills(withoutWorkspaceCaps(caps), botRun.skills.root);
     const settings = this.opts.settings.get();
+    // A room's host asks the room's Bots, and only them: each is a subagent that answers as itself.
+    if (botRun && botRun.bot.kind === "room" && this.opts.bots) {
+      caps = withRoomMembers(caps, await roomSubagents(this.opts.bots, botRun.members, { memoryEnabled: settings.memoryEnabled }));
+    }
 
     // Workspace trust gate: a cloned repo's hooks.json / mcp.json define shell
     // commands. They run only after a one-time explicit trust decision; an
     // untrusted workspace's hooks and MCP servers are skipped for this run.
-    const root = this.opts.getWorkspaceRoot();
+    const root = scope.trustRoot;
     if (root && workspaceHasDeyinArtifacts(root) && !this.opts.trust.isTrusted(root)) {
         const trusted = (await this.askTrust(root)) === "trust";
       if (trusted) {
@@ -708,9 +810,11 @@ export class DesktopAgentHost {
         apiFormat: provider?.apiFormat ?? "chat-completions",
         authHeader: provider?.authHeader,
         contextLength: this.opts.getContextLength(options.providerId, options.model),
+        maxOutputTokens: this.opts.getMaxOutputTokens?.(options.providerId, options.model),
       },
       resolveProvider: (providerId) => this.providerRouting(providerId),
       getContextLength: (providerId, model) => this.opts.getContextLength(providerId, model),
+      getMaxOutputTokens: (providerId, model) => this.opts.getMaxOutputTokens?.(providerId, model),
     });
 
     // Goal for this run. A freshly typed `/goal` objective is restated as a checkable one
@@ -791,13 +895,19 @@ export class DesktopAgentHost {
  registry.register(tool);
  }
  }
-    // Bot pipeline tools (validate / run) for the build-bot-workflow skill.
-    if (this.opts.botWorkflows) {
-      for (const tool of createBotWorkflowTools(this.opts.botWorkflows)) {
+    // Conductor pipeline tools (validate / run) for the build-conductor-workflow skill.
+    if (this.opts.conductorWorkflows) {
+      for (const tool of createConductorWorkflowTools(this.opts.conductorWorkflows)) {
         registry.register(tool);
       }
     }
-    if (settings.indexingEnabled) {
+    if (this.opts.superagent) {
+      for (const tool of createSuperagentChatTools(this.opts.superagent)) {
+        registry.register(tool);
+      }
+    }
+    // The index covers the open project, which a Bot is not working on.
+    if (settings.indexingEnabled && !botRun) {
       registry.register(createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK)));
     }
     // Bundled host modules (browser/visualize) register their
@@ -805,6 +915,7 @@ export class DesktopAgentHost {
     // extra ask-tier permission rules (e.g. computer-use confirmation).
     const hostRules = await registerBundledHostTools(registry, this.opts.agents, this.opts.settings, {
       browser: this.opts.browser,
+      chrome: this.opts.chrome,
       computerUse: this.opts.computerUse,
       visualize: this.opts.visualize,
     }).catch((err) => {
@@ -862,6 +973,65 @@ export class DesktopAgentHost {
     // Hooks (custom only, from hooks.json files).
     const hooks = caps.hooks;
 
+    // A Bot's tool calls are held to the Bot's own permissions (its approval mode, the saved tool permissions and
+    // the auto review instructions) instead of the composer's access chip. The permission engine below then only
+    // keeps the composer mode's own read-only rules; every prompt a person sees comes from this guard.
+    const botId = botRun?.bot.id;
+    const botSource = this.opts.bots;
+    const botGuardFor =
+      botId !== undefined && botSource
+        ? (nameFor?: (toolName: string) => string): ToolGuard =>
+            createBotRunGuard({
+              source: botSource,
+              botId,
+              tierOf: (name) => registry.get(name)?.tier,
+              reviewer: {
+                apiBaseUrl,
+                getToken,
+                apiFormat: provider?.apiFormat ?? "chat-completions",
+                authHeader: provider?.authHeader,
+                model: options.model,
+                contextLength: this.opts.getContextLength(options.providerId, options.model),
+                cwd,
+              },
+              ask: (request) =>
+                this.askPermission(options.threadId, request.toolName, request.summary, { reason: request.reason, saved: true }),
+              nameFor,
+            })
+        : undefined;
+    // A room's host may ask its members without approval; what they do is held to the same guard (see below).
+    const botGuard = botGuardFor
+      ? botRun?.bot.kind === "room"
+        ? allowRoomDelegation(botGuardFor(), botRun.members)
+        : botGuardFor()
+      : undefined;
+    const approvalMode: ApprovalMode = botGuard ? "full-access" : options.approvalMode;
+
+    // A Bot with a Vault fills logins, cards and contacts through tools that never show it the secret, in whichever
+    // browser the run has tools for, and everything it reads is scrubbed of what the Vault holds.
+    const vaultRun: VaultRun | undefined =
+      botId !== undefined && botSource?.vault
+        ? createVaultRun({
+            vault: botSource.vault,
+            botId,
+            pages: {
+              ...(registry.get("browser_snapshot") ? { browser: browserPageSource(this.opts.browser) } : {}),
+              ...(registry.get("chrome_snapshot") && this.opts.chrome ? { chrome: chromePageSource(this.opts.chrome.control) } : {}),
+            },
+            onePassword: onePasswordIf(this.opts.settings.get().vaultOnePassword),
+            people: {
+              ask: (request) =>
+                this.askPermission(options.threadId, request.once ? "onepassword_fill" : "vault_fill", request.summary, { reason: request.reason, ...(request.once ? {} : { saved: true }) }),
+              takeover: async (reason) => takeoverOutcome(await this.askQuestion(options.threadId, takeoverRequest(reason))),
+              secureForm: (form) =>
+                this.secureForms.ask(options.threadId, form, (requestId, shown) =>
+                  this.send(options.threadId, { type: "secure-form-request", requestId, form: shown }),
+                ),
+            },
+          })
+        : undefined;
+    if (vaultRun) for (const tool of vaultRun.tools()) registry.register(tool);
+
     let parentMcpTools: ToolDefinition[] = [];
 
     try {
@@ -883,7 +1053,7 @@ export class DesktopAgentHost {
 
       // Transcript: reuse the in-memory session, else restore/create a persisted one.
       // Built after MCP connect so the system prompt lists connected MCP tools.
-      const session = await this.ensureSession(options, cwd, caps.skills.length > 0 ? caps.skills : [], hooks);
+      const session = await this.ensureSession(options, cwd, caps.skills.length > 0 ? caps.skills : [], hooks, botRun);
       const jobsMgr = getSessionJobsManager(session.sessionId, join(app.getPath("userData"), "jobs"));
       if (subagents.length > 0) {
         registry.register(
@@ -897,6 +1067,8 @@ export class DesktopAgentHost {
                 hooks,
                 sessionId: session.sessionId,
                 overrides,
+                botGuardFor,
+                vaultRun,
               }),
             onBackgroundStart: (def, subPrompt) =>
               jobsMgr.register({ kind: "task", label: def.name, prompt: subPrompt }).id,
@@ -912,6 +1084,8 @@ export class DesktopAgentHost {
           }),
         );
       }
+      // Last, once every tool the run can use is registered: what the Vault holds never reaches the Bot.
+      vaultRun?.protect(registry);
       // Attached pictures also land in the thread's image store, so generate_image
       // can edit them by file name instead of drawing something new.
       const attached =
@@ -945,9 +1119,9 @@ export class DesktopAgentHost {
       // read-only even under "full access". Under full access every build-style
       // mode (agent, delivery) skips prompts entirely — deny rules still win.
       const buildPermissionOptions = (mode: ChatMode): PermissionEngineOptions => ({
-        agentRules: [...rulesForApprovalMode(options.approvalMode), ...hostRules],
+        agentRules: [...rulesForApprovalMode(approvalMode), ...hostRules],
         configRules: agentForMode(mode).permissions ?? [],
-        skipAll: skipPromptsForApproval(options.approvalMode, mode),
+        skipAll: skipPromptsForApproval(approvalMode, mode),
         neverSkipTools: NEVER_SKIP_TOOLS,
         neverSkipPrefixes: NEVER_SKIP_PREFIXES,
         // Thread-scoped, so "Allow for session" survives the next message instead
@@ -1136,6 +1310,7 @@ export class DesktopAgentHost {
           return undefined;
         },
         contextLength: this.opts.getContextLength(options.providerId, options.model),
+        maxTokens: this.opts.getMaxOutputTokens?.(options.providerId, options.model),
         messages: session.messages,
         tools: registry,
         permissions,
@@ -1148,7 +1323,7 @@ export class DesktopAgentHost {
         todos: options.initialTodos ? options.initialTodos.map((t) => ({ ...t })) : [],
         shell: shellBridge,
         systemSections: session.systemSections,
-        memory: settings.memoryEnabled ? this.opts.memory : undefined,
+        memory: settings.memoryEnabled ? (botRun?.memory ?? this.opts.memory) : undefined,
         evidenceGatesEnabled: options.mode === "delivery",
         // Reviewer-driven goal loop: a separate model call judges the transcript
         // after every round and its verdict decides whether this run continues.
@@ -1182,7 +1357,7 @@ export class DesktopAgentHost {
           skills: caps.skills.map((s) => ({ name: s.name, path: s.path, description: s.description })),
           imageGen: this.imageGenBridge(options, apiBaseUrl, getToken, cwd, signal),
           sessionMeta: liveMeta,
-          memory: settings.memoryEnabled ? this.opts.memory : undefined,
+          memory: settings.memoryEnabled ? (botRun?.memory ?? this.opts.memory) : undefined,
           applyFileChange,
           goalText,
           onGoalReport: (report) => {
@@ -1206,11 +1381,12 @@ export class DesktopAgentHost {
           listExternalAgents: this.opts.externalAgents
             ? (forceRefresh) => this.opts.externalAgents!.listAgents(forceRefresh)
             : undefined,
+          getConductorRolePreferences: () => this.opts.settings.get().conductorRolePreferences,
           runExternalAgent: this.opts.externalAgents
             ? (opts) => this.opts.externalAgents!.runAgent(opts)
             : undefined,
-          mergeBotBranch: this.opts.botWorkflowEngine
-            ? (mergeCwd, branchName) => this.opts.botWorkflowEngine!.mergeWorktree(mergeCwd, branchName)
+          mergeConductorBranch: this.opts.conductorWorkflowEngine
+            ? (mergeCwd, branchName) => this.opts.conductorWorkflowEngine!.mergeWorktree(mergeCwd, branchName)
             : undefined,
           onPlanCreated: (plan) => this.onPlanCreated(options.threadId, plan),
           pageArtifact: this.opts.pages
@@ -1310,6 +1486,8 @@ export class DesktopAgentHost {
             const shellHook = await runHooks(hooks, "beforeShellExecution", command, { command, cwd });
             if (shellHook.blocked) return { block: shellHook.reason ?? "beforeShellExecution hook" };
           }
+          // Last, so a hook that vetoes the call never costs the person an approval card.
+          if (botGuard) return botGuard(call, args, summary);
           return undefined;
         },
         afterTool: async (call, toolResult, ok) => {
@@ -1331,6 +1509,11 @@ export class DesktopAgentHost {
         },
         onEvent: (event) => {
           switch (event.type) {
+            case "step-start":
+              // One loop step is one model request: the renderer stamps it onto the
+              // reasoning and tool rows the step produces so they read as one unit.
+              this.send(options.threadId, { type: "step-start", step: event.step });
+              break;
             case "text-delta":
               this.send(options.threadId, { type: "text-delta", delta: event.delta });
               break;
@@ -1413,6 +1596,16 @@ export class DesktopAgentHost {
                 reason: event.reason,
                 delayMs: event.delayMs,
               });
+              // The run summary keeps only a count; journal each replay so a retry
+              // storm can be traced to a step and a cause after the fact.
+              this.store.appendEvent(session.sessionId, {
+                kind: "stream-retry",
+                step: event.step,
+                attempt: event.attempt,
+                maxAttempts: event.maxAttempts,
+                reason: event.reason,
+                delayMs: event.delayMs,
+              });
               break;
             case "loop-guard":
               // Surfaced on the existing gate channel: from the user's point of
@@ -1437,6 +1630,8 @@ export class DesktopAgentHost {
                   `${event.summary.duplicateResults} duplicate results elided, ` +
                   `${event.summary.loopGuardTrips} loop-guard trips), ` +
                   `${event.summary.compactionPasses} compaction passes, ` +
+                  (event.summary.httpAttempts ? `${event.summary.httpAttempts} http requests, ` : "") +
+                  (event.summary.reviewerCalls ? `${event.summary.reviewerCalls} goal reviews, ` : "") +
                   (event.summary.streamRetries ? `${event.summary.streamRetries} stream retries, ` : "") +
                   (event.summary.continuationNudges ? `${event.summary.continuationNudges} continuation nudges, ` : "") +
                   `cache hit rate ${(event.summary.cacheHitRate * 100).toFixed(1)}%`,
@@ -1489,7 +1684,13 @@ export class DesktopAgentHost {
       await runHooks(hooks, "stop", "stop", { reason: result.reason, cwd });
       if (!active.doneEmitted) {
         active.doneEmitted = true;
-        this.send(options.threadId, { type: "done", reason: result.reason, finalText: result.finalText });
+        const stats = runRequestStats(result.summary);
+        this.send(options.threadId, {
+          type: "done",
+          reason: result.reason,
+          finalText: result.finalText,
+          ...(stats ? { stats } : {}),
+        });
       }
     } finally {
       // Pooled connections stay up for the next message; `close()` is a no-op
@@ -1515,14 +1716,19 @@ export class DesktopAgentHost {
     ctx: SubagentCallContext,
   ): Promise<TaskRunResult> {
     const { apiBaseUrl, getToken, parentMcpTools, hooks, sessionId, overrides } = ctx;
+    const botGuard = ctx.botGuardFor?.((toolName) => `${def.name} → ${toolName}`);
+    const vaultRun = ctx.vaultRun;
+    const approvalMode: ApprovalMode = botGuard ? "full-access" : parent.approvalMode;
     const signal = overrides.signal;
     // A call may tighten a subagent to read-only; it can never loosen one.
     const readonly = effectiveSubagentReadonly(def, overrides.readonly);
     const subagentId = randomUUID();
     const startedAt = Date.now();
     this.send(parent.threadId, { type: "subagent-start", id: subagentId, name: def.name, prompt: prompt.slice(0, 200) });
-    const cwd = this.opts.getWorkspaceRoot() ?? process.cwd();
-    const parentGrants = this.sessions.get(parent.threadId)?.permissionGrants;
+    const parentSession = this.sessions.get(parent.threadId);
+    // A Bot's subagents work in the Bot's folder, never in the open project.
+    const cwd = runScope(parentSession?.botCwd ? { cwd: parentSession.botCwd } : null, this.opts.getWorkspaceRoot(), process.cwd()).cwd;
+    const parentGrants = parentSession?.permissionGrants;
     const parentProvider = this.opts.agents.listProviders(true).find((p) => p.id === parent.providerId);
     const parentProviderWire: { apiFormat: ProviderApiFormat; authHeader?: boolean } = {
       apiFormat: parentProvider?.apiFormat ?? "chat-completions",
@@ -1535,6 +1741,16 @@ export class DesktopAgentHost {
       callModel: overrides.model,
       effortOverride: subagentEffort(this.opts.settings.get().subagentEfforts[def.name], def.effort),
       maxStepsDefault: this.opts.settings.get().subagentMaxSteps,
+      // The child's own output ceiling, so a reviewer is not capped at a fixed
+      // number and left with no room to emit its findings.
+      ...(this.opts.getMaxOutputTokens
+        ? {
+            maxTokens: this.opts.getMaxOutputTokens(
+              parent.providerId,
+              this.opts.settings.get().subagentModels[def.name] ?? parent.model,
+            ),
+          }
+        : {}),
       readonly,
       hooks,
       // Transcripts live beside the jobs log so resume/fork survives a restart.
@@ -1563,27 +1779,30 @@ export class DesktopAgentHost {
       // Subagents inherit the parent run's mode restrictions: a plan/ask session
       // must stay read-only even inside a spawned task.
       permissionEngine: new PermissionEngine({
-        agentRules: rulesForApprovalMode(parent.approvalMode),
+        agentRules: rulesForApprovalMode(approvalMode),
         configRules: [...(agentForMode(parent.mode).permissions ?? []), ...subagentReadonlyRules({ readonly })],
         // Full access covers spawned work too: a readonly definition still has
         // write/edit denied, but its bash rule must not turn into a prompt.
-        skipAll: skipPromptsForApproval(parent.approvalMode, parent.mode),
+        skipAll: skipPromptsForApproval(approvalMode, parent.mode),
         // Spawned work shares the thread's grants both ways: what the user
         // already allowed is not asked again, and a grant made inside a
         // subagent sticks for the rest of the thread.
         ...(parentGrants ? { sessionGrants: parentGrants } : {}),
       }),
       resolvePermission: (req) => this.askPermission(parent.threadId, `${def.name} → ${req.toolName}`, req.summary),
+      ...(botGuard ? { beforeTool: botGuard } : {}),
       extraTools: [
         ...parentMcpTools,
-        ...(this.opts.settings.get().indexingEnabled
+        ...(this.opts.settings.get().indexingEnabled && !parentSession?.botCwd
           ? [createCodebaseSearchTool((query, topK) => this.opts.searchIndex(query, topK))]
           : []),
         ...hostToolsForSubagent(def, { browser: this.opts.browser, computerUse: this.opts.computerUse }, {
           browserEnabled: this.opts.settings.get().browserControlEnabled,
           computerUseEnabled: this.opts.settings.get().computerUseEnabled,
         }),
+        ...(vaultRun?.subagentTools(def.tools) ?? []),
       ],
+      ...(vaultRun ? { prepareRegistry: (registry: ToolRegistry) => vaultRun.protect(registry) } : {}),
       signal,
     });
     this.send(parent.threadId, {
@@ -1606,14 +1825,18 @@ export class DesktopAgentHost {
     cwd: string,
     skills: Parameters<typeof buildSystemPromptParts>[0]["skills"],
     hooks: LoadedHook[],
+    bot: BotRunContext | null,
   ): Promise<ThreadSession> {
     const existing = this.sessions.get(options.threadId);
     if (existing) {
+      // Re-read each run so an edited Bot takes effect on its next message.
+      existing.persona = bot?.persona;
+      existing.botCwd = bot?.cwd;
       const modeChanged = existing.mode !== options.mode;
       if (modeChanged && options.mode === "plan") {
         existing.previousMode = existing.mode;
       }
-      const parts = await this.systemPromptParts(options.mode, cwd, skills, hooks, existing);
+      const parts = await this.systemPromptParts(options.mode, cwd, skills, hooks, existing, bot?.persona);
       this.pinSystemPrompt(existing, parts);
       if (modeChanged) {
         const reminder = modeReminder({ event: "enter", target: options.mode, previous: existing.previousMode });
@@ -1637,14 +1860,19 @@ export class DesktopAgentHost {
     }
 
     const hookState: { startHookContext?: string[] } = {};
-    const parts = await this.systemPromptParts(options.mode, cwd, skills, hooks, hookState);
+    const parts = await this.systemPromptParts(options.mode, cwd, skills, hooks, hookState, bot?.persona);
     const messages: AgentMessage[] = [{ role: "system", content: parts.content }];
     // Rebuild prior plain-text turns (post-restart continuity).
     for (const turn of options.history) {
       messages.push({ role: turn.role, content: turn.content });
     }
 
-    const meta = this.store.create({ cwd, model: options.model, agent: agentForMode(options.mode).name });
+    const meta = this.store.create({
+      cwd,
+      model: options.model,
+      agent: agentForMode(options.mode).name,
+      ...(bot ? { botId: bot.bot.id } : {}),
+    });
     for (const message of messages) this.store.append(meta.id, message);
     const session: ThreadSession = {
       sessionId: meta.id,
@@ -1655,6 +1883,8 @@ export class DesktopAgentHost {
       startHookContext: hookState.startHookContext,
       shellEpoch: 0,
       permissionGrants: new Set<string>(),
+      persona: bot?.persona,
+      botCwd: bot?.cwd,
     };
     this.sessions.set(options.threadId, session);
     return session;
@@ -1683,6 +1913,8 @@ export class DesktopAgentHost {
     hooks: LoadedHook[],
     /** Carries sessionStart hook output across turns; populated on first use. */
     hookState?: { startHookContext?: string[] },
+    /** A Bot's standing instructions, appended after the agent's own prompt. */
+    persona?: string,
   ) {
     const agent = agentForMode(mode);
     const [contextFiles, projectToolchain] = await Promise.all([
@@ -1693,9 +1925,11 @@ export class DesktopAgentHost {
       cwd,
       agent: {
         ...agent,
-        prompt:
+        prompt: withBotPersona(
           agent.prompt +
-          " You run inside the Deyin desktop app: the user sees your streamed text and tool cards in the chat timeline.",
+            " You run inside the Deyin desktop app: the user sees your streamed text and tool cards in the chat timeline.",
+          persona,
+        ),
       },
       contextFiles,
       skills,
@@ -1715,7 +1949,16 @@ export class DesktopAgentHost {
     return parts;
   }
 
-  private askPermission(threadId: string, toolName: string, summary: string): Promise<PermissionDecision> {
+  /**
+   * `extra.reason` says why a person is being asked; `extra.saved` means "always allow" is kept for the
+   * Bot's later runs, not just this conversation.
+   */
+  private askPermission(
+    threadId: string,
+    toolName: string,
+    summary: string,
+    extra: { reason?: string; saved?: boolean } = {},
+  ): Promise<PermissionDecision> {
     return new Promise<PermissionDecision>((resolve) => {
       const requestId = randomUUID();
       const timer = setTimeout(() => {
@@ -1723,7 +1966,14 @@ export class DesktopAgentHost {
         resolve("deny");
       }, PERMISSION_TIMEOUT_MS);
       this.pendingPermissions.set(requestId, { threadId, resolve, timer });
-      this.send(threadId, { type: "permission-request", requestId, toolName, summary });
+      this.send(threadId, {
+        type: "permission-request",
+        requestId,
+        toolName,
+        summary,
+        ...(extra.reason ? { reason: extra.reason } : {}),
+        ...(extra.saved ? { saved: true } : {}),
+      });
     });
   }
 
@@ -1831,7 +2081,7 @@ export class DesktopAgentHost {
       this.store.append(session.sessionId, reminderMsg);
     }
 
-    const parts = await this.systemPromptParts(nextMode, cwd, skills, hooks, session);
+    const parts = await this.systemPromptParts(nextMode, cwd, skills, hooks, session, session.persona);
     this.pinSystemPrompt(session, parts);
 
     this.send(threadId, { type: "mode-changed", mode: nextMode, previousMode: previous, reminder });

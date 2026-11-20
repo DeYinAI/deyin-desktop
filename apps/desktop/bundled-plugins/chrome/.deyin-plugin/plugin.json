@@ -1,0 +1,18 @@
+{
+  "name": "chrome",
+  "version": "1.0.0",
+  "description": "Work in the user's real Chrome (their logins, extensions and tabs) from background tabs, without taking over the browser.",
+  "bundled": true,
+  "hostModule": "chrome",
+  "platform": "all",
+  "interface": {
+    "displayName": "Chrome",
+    "shortDescription": "Use your real Chrome in background tabs, without touching your own tabs.",
+    "longDescription": "Connects to your own Chrome through the Deyin extension. Deyin opens its own background tabs (grouped as \"Deyin\"), reads and acts on them while you keep working, and only touches one of your tabs when you share it. Requires installing the extension and pairing it in Settings.",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "brandColor": "#10B981",
+    "defaultPrompt": ["Open my GitHub notifications in Chrome and summarize them", "Check the tab I shared and tell me what is on it"],
+    "logo": "logo.svg"
+  }
+}

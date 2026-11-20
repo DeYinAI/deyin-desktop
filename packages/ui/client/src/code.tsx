@@ -7,6 +7,7 @@
 
 import { useCallback, useRef, useState, type CSSProperties } from "react";
 import { Icon } from "./components/Icon.js";
+import { writeClipboardText } from "./clipboard.js";
 import { useT } from "./i18n.js";
 
 export type TokenType = "kw" | "str" | "num" | "com" | "fn" | "type" | "plain";
@@ -183,7 +184,8 @@ export function CodeBlock(props: CodeBlockProps) {
   const langLabel = props.lang?.trim() || "text";
 
   const copy = useCallback(() => {
-    void navigator.clipboard?.writeText(props.code).then(() => {
+    void writeClipboardText(props.code).then((ok) => {
+      if (!ok) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1600);
     });

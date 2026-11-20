@@ -14,6 +14,8 @@
  * CLI word these identically.
  */
 
+import type { RunRequestStats } from "./types.js";
+
 export type RunNoticeTone = "error" | "notice";
 
 export interface RunNotice {
@@ -110,4 +112,40 @@ export interface StreamRetryNotice {
 export function describeStreamRetry(retry: StreamRetryNotice): string {
   const seconds = Math.max(1, Math.round(retry.delayMs / 1000));
   return `${stripTrailingPeriod(retry.reason) || "The connection to the model was interrupted"} — retrying in ${seconds}s (${retry.attempt}/${retry.maxAttempts})`;
+}
+
+/** The fields of the loop's run summary that say how many model requests a run sent. */
+export interface RunRequestSummary {
+  steps: number;
+  httpAttempts?: number;
+  streamRetries?: number;
+  reviewerCalls?: number;
+}
+
+/**
+ * Request accounting for the end-of-run line, or undefined when the run sent no
+ * request (a cached response, an immediate abort) or reported no summary: a line
+ * saying "0 requests" would only be noise.
+ */
+export function runRequestStats(summary: RunRequestSummary | undefined): RunRequestStats | undefined {
+  if (!summary) return undefined;
+  const requests = summary.httpAttempts ?? 0;
+  if (requests <= 0) return undefined;
+  return {
+    steps: summary.steps,
+    requests,
+    replays: summary.streamRetries ?? 0,
+    reviewerCalls: summary.reviewerCalls ?? 0,
+  };
+}
+
+const plural = (n: number, one: string): string => `${n} ${n === 1 ? one : `${one}s`}`;
+
+/** "12 steps · 13 requests (1 replay)": steps are what the transcript keeps, requests are what was sent. */
+export function describeRunStats(stats: RunRequestStats): string {
+  const extras: string[] = [];
+  if (stats.replays > 0) extras.push(plural(stats.replays, "replay"));
+  if (stats.reviewerCalls > 0) extras.push(plural(stats.reviewerCalls, "goal review"));
+  const requests = plural(stats.requests, "request") + (extras.length > 0 ? ` (${extras.join(", ")})` : "");
+  return `${plural(stats.steps, "step")} · ${requests}`;
 }

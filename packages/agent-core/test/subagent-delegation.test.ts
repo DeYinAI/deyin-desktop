@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync, mkdirSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync, chmodSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -10,7 +10,7 @@ import { SubagentStateStore } from "../src/subagent-state.js";
 import { createTaskTool, type TaskCallOverrides } from "../src/tools/task.js";
 import type { SubagentDefinition } from "../src/capabilities/subagents.js";
 import type { ToolContext } from "../src/types.js";
-import { startMockOpenAI, textResponse } from "./helpers/mock-openai.js";
+import { startMockOpenAI, textResponse, toolCallResponse } from "./helpers/mock-openai.js";
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "deyin-subagent-"));
@@ -434,6 +434,118 @@ test("a subagent that finishes within its step limit reports exactly what it sai
     });
     assert.equal(result.ok, true);
     assert.equal(result.report, "Found it: src/loop.ts.");
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ── a host's own gate reaches the child's tool calls ──────────────────── */
+
+/** A child that tries to write a file, then says it is done. */
+function writesThenFinishes(): (i: number) => unknown[] {
+  return (i) => (i === 0 ? toolCallResponse("call_w", "write", { path: "made.txt", content: "hello" }) : textResponse("done"));
+}
+
+test("a host's beforeTool gate can stop a subagent's tool call", async () => {
+  const dir = tempDir();
+  const server = await startMockOpenAI(writesThenFinishes());
+  const seen: string[] = [];
+  try {
+    const result = await runSubagent(WRITER, "make a file", {
+      cwd: dir,
+      parent: { model: "test-model", providerId: "openference" },
+      parentRouting: { apiBaseUrl: server.url, getToken: async () => "test-token" },
+      permissionEngine: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      beforeTool: async (call) => {
+        seen.push(call.name);
+        return { block: "This Bot is read-only." };
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(seen, ["write"], "the gate saw the call before it ran");
+    assert.equal(existsSync(join(dir, "made.txt")), false, "a blocked call does nothing");
+    // The child is told why, so it can adjust.
+    const sent = JSON.stringify(server.requests[1]);
+    assert.match(sent, /This Bot is read-only\./);
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("without a gate the same subagent call goes through", async () => {
+  const dir = tempDir();
+  const server = await startMockOpenAI(writesThenFinishes());
+  try {
+    await runSubagent(WRITER, "make a file", {
+      cwd: dir,
+      parent: { model: "test-model", providerId: "openference" },
+      parentRouting: { apiBaseUrl: server.url, getToken: async () => "test-token" },
+      permissionEngine: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+    });
+    assert.equal(existsSync(join(dir, "made.txt")), true, "so the test above is really about the gate");
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ── a host can wrap every tool the child has ──────────────────────────── */
+
+/** A child that reads a file, then says it is done. */
+function readsThenFinishes(): (i: number) => unknown[] {
+  return (i) => (i === 0 ? toolCallResponse("call_r", "read", { path: "note.txt" }) : textResponse("done"));
+}
+
+test("a host's prepareRegistry sees the child's finished toolset and can wrap its tools", async () => {
+  const dir = tempDir();
+  writeFileSync(join(dir, "note.txt"), "the code is 834201");
+  const server = await startMockOpenAI(readsThenFinishes());
+  let names: string[] = [];
+  try {
+    await runSubagent(DEF, "read the note", {
+      cwd: dir,
+      parent: { model: "test-model", providerId: "openference" },
+      parentRouting: { apiBaseUrl: server.url, getToken: async () => "test-token" },
+      permissionEngine: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      prepareRegistry: (registry) => {
+        names = registry.names();
+        for (const name of names) {
+          const tool = registry.get(name);
+          if (tool) registry.register({ ...tool, execute: async (args, ctx) => (await tool.execute(args, ctx)).replaceAll("834201", "[hidden]") });
+        }
+      },
+    });
+    assert.ok(names.includes("read"), "it was given the finished registry");
+    const sent = JSON.stringify(server.requests[1]);
+    assert.match(sent, /the code is \[hidden\]/);
+    assert.doesNotMatch(sent, /834201/);
+  } finally {
+    await server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("the registry it is given already has the allowlist applied", async () => {
+  const dir = tempDir();
+  const server = await startMockOpenAI(() => textResponse("done"));
+  let names: string[] = [];
+  try {
+    await runSubagent({ ...DEF, tools: ["read"] }, "hello", {
+      cwd: dir,
+      parent: { model: "test-model", providerId: "openference" },
+      parentRouting: { apiBaseUrl: server.url, getToken: async () => "test-token" },
+      permissionEngine: new PermissionEngine({ skipAll: true }),
+      resolvePermission: async () => "allow",
+      prepareRegistry: (registry) => {
+        names = registry.names();
+      },
+    });
+    assert.deepEqual(names, ["read"]);
   } finally {
     await server.close();
     rmSync(dir, { recursive: true, force: true });

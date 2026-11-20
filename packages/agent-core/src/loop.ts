@@ -170,7 +170,7 @@ export type AgentEvent =
    * stream, 5xx, overloaded) and the loop is about to try the same step again
    * after `delayMs`. Whatever text/reasoning the failed attempt streamed is void.
    */
-  | { type: "stream-retry"; attempt: number; maxAttempts: number; reason: string; delayMs: number }
+  | { type: "stream-retry"; step: number; attempt: number; maxAttempts: number; reason: string; delayMs: number }
   | { type: "loop-guard"; code: GuardIntervention["code"]; message: string; detail: string }
   | { type: "run-summary"; summary: RunSummary }
   | { type: "model-routed"; step: number; role: ModelRole; model: string; providerId?: string }
@@ -202,8 +202,17 @@ export interface RunSummary {
    * than the region it replaced). Gated retries are free and not counted.
    */
   foldFailures: number;
+  /**
+   * Every HTTP request this run sent to the model provider: one per step, plus
+   * replays, compatibility re-posts, continuation requests and goal-review calls.
+   * `steps` counts only the steps the transcript kept, so this is the number to
+   * compare against a provider's own request log. Omitted when no request was sent.
+   */
+  httpAttempts?: number;
   /** Model requests replayed after a transient failure or a cut-off stream. Omitted when zero. */
   streamRetries?: number;
+  /** Goal-reviewer calls made (each is at least one of `httpAttempts`). Omitted when zero. */
+  reviewerCalls?: number;
   /** Times the loop nudged the model to carry on after an empty, announce-only or truncated turn. Omitted when zero. */
   continuationNudges?: number;
   /** Continuation rounds the reviewer-driven goal loop spent. Omitted when zero. */
@@ -248,7 +257,7 @@ export interface AgentRunOptions {
   apiFormat?: ProviderApiFormat;
   /** Anthropic-compatible gateways using Bearer instead of x-api-key. */
   authHeader?: boolean;
-  /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
+  /** Max output tokens; omitted when unset, which lets the provider apply its own ceiling. */
   maxTokens?: number;
   /**
  * Max loop iterations (request + tool execution rounds) before the run stops
@@ -455,6 +464,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     streamRetries: 0,
     continuationNudges: 0,
     goalRounds: 0,
+    /** Raw HTTP requests sent to the model provider (see RunSummary.httpAttempts). */
+    httpAttempts: 0,
+    reviewerCalls: 0,
+  };
+  const countHttpAttempt = (): void => {
+    counters.httpAttempts += 1;
   };
 
   const mutatedPaths: string[] = [];
@@ -742,14 +757,17 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
    * Returns once the delay has elapsed or the run was aborted (callers re-check
    * the signal), never throws.
    */
+  /** The step in flight, so a replay announcement can say which step it belongs to. */
+  let activeStep = 0;
   const replayAfter = async (attempt: number, maxAttempts: number, reason: string, delayMs: number): Promise<void> => {
     runRetries += 1;
     counters.streamRetries += 1;
-    emit({ type: "stream-retry", attempt, maxAttempts, reason, delayMs });
+    emit({ type: "stream-retry", step: activeStep, attempt, maxAttempts, reason, delayMs });
     await sleepUnlessAborted(delayMs, opts.signal);
   };
 
   for (let step = 1; step <= maxSteps; step++) {
+    activeStep = step;
     if (opts.signal?.aborted) return finish("aborted", step - 1);
 
     // Drain pending user steering messages queued mid-flight
@@ -781,6 +799,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
     });
     const stepModel = routed?.model ?? opts.model;
     const stepWindow = routed?.contextLength ?? contextTokens;
+    // A role that routes to a different model gets that model's own output
+    // ceiling; without a routed value the run-level one still applies.
+    const stepMaxTokens = routed?.maxOutputTokens ?? opts.maxTokens;
     const stepWire = opts.wire ? { ...opts.wire, model: stepModel, previousMessageCount } : undefined;
     if (routed && stepModel !== previousModel) {
       emit({ type: "model-routed", step, role: routed.role, model: stepModel, providerId: routed.providerId });
@@ -844,8 +865,12 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         effort: opts.effort,
         apiFormat: routed?.apiFormat ?? opts.apiFormat,
         authHeader: routed?.authHeader ?? opts.authHeader,
-        maxTokens: opts.maxTokens,
+        maxTokens: stepMaxTokens,
         signal: opts.signal,
+        // The loop owns replays (visible, capped, Retry-After-aware). A second,
+        // silent retry layer under it multiplied a provider outage by 4x.
+        transientRetries: 0,
+        onHttpAttempt: countHttpAttempt,
         wire: stepWire,
         promptCacheKey: cacheKeyFor(stepModel),
         promptCacheOptions: opts.wire?.enablePromptCaching === false ? undefined : { mode: "implicit" },
@@ -1193,7 +1218,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
         try {
           const reviewerToken = await (routed?.getToken ?? opts.getToken)();
           if (reviewerToken !== null && reviewerToken !== undefined) {
+            counters.reviewerCalls += 1;
             review = await reviewGoal({
+              onHttpAttempt: countHttpAttempt,
               apiBaseUrl: routed?.apiBaseUrl ?? opts.apiBaseUrl,
               token: reviewerToken,
               model: stepModel,
@@ -1378,7 +1405,9 @@ export async function runAgent(opts: AgentRunOptions): Promise<AgentRunResult> {
       loopGuardTrips: counters.loopGuardTrips,
       compactionPasses: counters.compactionPasses,
       foldFailures: counters.foldFailures,
+      ...(counters.httpAttempts > 0 ? { httpAttempts: counters.httpAttempts } : {}),
       ...(counters.streamRetries > 0 ? { streamRetries: counters.streamRetries } : {}),
+      ...(counters.reviewerCalls > 0 ? { reviewerCalls: counters.reviewerCalls } : {}),
       ...(counters.continuationNudges > 0 ? { continuationNudges: counters.continuationNudges } : {}),
       ...(counters.goalRounds > 0 ? { goalRounds: counters.goalRounds } : {}),
       promptTokens: usage.promptTokens,

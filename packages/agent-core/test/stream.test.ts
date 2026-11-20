@@ -261,3 +261,99 @@ test("a 400 with no image parts to strip still surfaces the provider error", asy
  globalThis.fetch = originalFetch;
  }
 });
+
+/**
+ * Regression: DeepSeek was special-cased to a flat `max_tokens: 8192`, which is
+ * smaller than the output window several models declare. A reviewer subagent
+ * spent that whole budget on reasoning and returned no content, so the parent
+ * re-delegated the same review forever. The field must come from the catalog and
+ * must be absent — not guessed — when the catalog publishes no ceiling.
+ */
+test("chat completions: no max_tokens is invented when the caller supplies none", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    if (init && typeof init.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+    const sse = 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n';
+    return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }) as typeof fetch;
+  try {
+    // A DeepSeek model on a DeepSeek endpoint: the old code forced 8192 here.
+    for await (const _ of streamChatEvents({
+      apiBaseUrl: "https://api.deepseek.com",
+      token: "tok",
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: "hi" }],
+    })) {
+      // drain
+    }
+    assert.equal("max_tokens" in (bodies[0] ?? {}), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("chat completions: the catalog's output window is forwarded as max_tokens", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    if (init && typeof init.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+    const sse = 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n';
+    return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }) as typeof fetch;
+  try {
+    for await (const _ of streamChatEvents({
+      apiBaseUrl: "https://api.deepseek.com",
+      token: "tok",
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 384_000,
+    })) {
+      // drain
+    }
+    assert.equal(bodies[0]?.max_tokens, 384_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+/**
+ * A catalog's declared output window can exceed what a gateway accepts. The turn
+ * must survive: drop `max_tokens` and let the provider apply its own ceiling
+ * rather than 400-ing on every request for the rest of the session.
+ */
+test("chat completions: a rejected max_tokens is dropped and the turn retried", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    if (init && typeof init.body === "string") bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+    if (bodies.length === 1) {
+      return new Response(JSON.stringify({ error: { message: "max_tokens is too large: 384000" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const sse = 'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n';
+    return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }) as typeof fetch;
+  try {
+    const events: StreamEvent[] = [];
+    for await (const ev of streamChatEvents({
+      apiBaseUrl: "http://host",
+      token: "tok",
+      model: "m",
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 384_000,
+    })) {
+      events.push(ev);
+    }
+    const done = events.at(-1);
+    if (done?.type !== "done") throw new Error("expected the retry to succeed");
+    assert.equal(done.content, "ok");
+    // The first request carried the declared ceiling; the retry carried none.
+    assert.equal(bodies[0]?.max_tokens, 384_000);
+    assert.equal("max_tokens" in (bodies[1] ?? {}), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

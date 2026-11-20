@@ -38,21 +38,27 @@ export const BUILTIN_COMMANDS: CommandDefinition[] = [
   },
   {
     name: "pipeline",
-    description: "Build a multi-agent pipeline step by step.",
+    description: "Turn \"Claude plans, ZCode builds, Codex reviews\" into a Conductor pipeline.",
     source: "built-in",
-    body: "Load the `build-bot-workflow` skill with the `skill` tool and follow its interview: ask me one `ask_question` at a time, validate the draft, then write the pipeline. What I want it to do: $ARGUMENTS",
+    body: "Load the `build-conductor-workflow` skill with the `skill` tool and follow it: read my request into stages (who does what), confirm the stage list with one `ask_question`, validate the draft, then write the pipeline. What I want it to do: $ARGUMENTS",
+  },
+  {
+    name: "superagent",
+    description: "Set up Superagent, the GitHub requests-to-pull-requests agent, by answering a few questions.",
+    source: "built-in",
+    body: "Load the `setup-superagent` skill with the `skill` tool and follow it: call `superagent_status` first, ask me one `ask_question` at a time for what is missing, apply it with the `superagent_*` tools, and never ask for or accept a GitHub token in chat. What I want: $ARGUMENTS",
   },
   {
     name: "delegate",
     description: "Hand a task to an external coding agent (Claude Code, Codex, and others).",
     source: "built-in",
-    body: "Call `list_external_bots` to see which agents are installed, pick the best fit for the task below (use `ask_question` only if it is genuinely unclear), and hand it off with `delegate_external_bot` in an isolated worktree. Task: $ARGUMENTS",
+    body: "Call `list_external_bots` to see which agents are installed and which one its `roles` list suggests for this kind of task (it reflects my saved role preferences). Use the agent I name if I name one, otherwise pick the best fit (use `ask_question` only if it is genuinely unclear), and hand it off with `delegate_external_bot` in an isolated worktree. Task: $ARGUMENTS",
   },
   {
     name: "review-pr",
     description: "Have an external agent review the current diff.",
     source: "built-in",
-    body: "Call `list_external_bots` and delegate a review of the uncommitted changes and recent diff to Claude Code with `delegate_external_bot` (fall back to reviewing it yourself when it is not installed). Check for security vulnerabilities, edge-case regressions, and missing tests. $ARGUMENTS",
+    body: "Call `list_external_bots` and delegate a review of the uncommitted changes and recent diff with `delegate_external_bot` to the agent its `roles` list gives for `review` (or the agent I name). Fall back to reviewing it yourself when no agent is installed. Check for security vulnerabilities, edge-case regressions, and missing tests. $ARGUMENTS",
   },
   {
     name: "run-tests",

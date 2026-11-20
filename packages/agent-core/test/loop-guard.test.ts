@@ -98,6 +98,18 @@ test("repeat-success precheck blocks the third identical write", () => {
   assert.match(refusal!, /loop guard/);
 });
 
+test("repeat-success does not treat identical UI actions as no-ops", () => {
+  // Clicking "Next" twice is legitimate: the page behind the ref changed.
+  for (const toolName of ["chrome_click", "browser_click", "computer_click"]) {
+    const guard = new LoopGuard();
+    const args = '{"ref":"e12"}';
+    for (let i = 0; i < REPEAT_SUCCESS_THRESHOLD + 2; i++) {
+      assert.equal(guard.precheck(toolName, args, "execute"), null, `${toolName} blocked at ${i}`);
+      guard.observe([outcome({ toolName, argsKey: args })]);
+    }
+  }
+});
+
 test("repeat-success never blocks read-tier tools", () => {
   const guard = new LoopGuard();
   const args = '{"path":"a.ts"}';

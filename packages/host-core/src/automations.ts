@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { Storage } from "./storage.js";
+import { RunEventLog, emptySummary, updateSummary } from "./automation-run-log.js";
 import type {
   Automation,
+  AutomationBlocker,
   AutomationInfo,
+  AutomationOutcome,
   AutomationRun,
   AutomationRunStatus,
   AgentUiEvent,
@@ -14,7 +17,6 @@ import type {
 
 const MAX_RUNS_PER_AUTOMATION = 20;
 const MAX_TOTAL_RUNS = 200;
-const MAX_EVENTS_PER_RUN = 200;
 const EVENT_PERSIST_DEBOUNCE_MS = 400;
 
 /* AutomationsStore --------------------------------------------------------- */
@@ -83,6 +85,22 @@ export class AutomationsStore {
     return this.update(id, { enabled });
   }
 
+  /**
+   * Runner-owned fields (health, learned rules). Unlike `update`, this does not
+   * touch `updatedAt`: that stamp is the catch-up floor, so bumping it on every
+   * finished run would make a missed slot look like it predated an edit.
+   */
+  patchRuntime(
+    id: string,
+    patch: Partial<Pick<Automation, "health" | "learnedRules" | "learnedRevisions">>,
+  ): Automation | null {
+    const automation = this.get(id);
+    if (!automation) return null;
+    Object.assign(automation, patch);
+    this.persist();
+    return automation;
+  }
+
   setLastScheduledAt(id: string, at: number): void {
     const automation = this.get(id);
     if (!automation) return;
@@ -104,6 +122,8 @@ export class AutomationRunsStore {
   private dirty = false;
   /** automationId → runs sorted by startedAt descending. O(1) lastForAutomation. */
   private index = new Map<string, AutomationRun[]>();
+  /** Live event logs, by run id. Only runs that are still appending have one. */
+  private logs = new Map<string, RunEventLog>();
 
   constructor(private readonly storage: Storage) {
     this.state = storage.readJson<RunsState>("automation-runs.json", { runs: [] });
@@ -198,10 +218,15 @@ export class AutomationRunsStore {
   appendEvent(runId: string, event: AgentUiEvent): void {
     const run = this.get(runId);
     if (!run) return;
-    run.events.push(event);
-    if (run.events.length > MAX_EVENTS_PER_RUN) {
-      run.events = run.events.slice(-MAX_EVENTS_PER_RUN);
+    let log = this.logs.get(runId);
+    if (!log) {
+      log = new RunEventLog(run.events);
+      this.logs.set(runId, log);
     }
+    log.push(event);
+    run.events = log.events;
+    run.summary ??= emptySummary();
+    updateSummary(run.summary, event);
     // Flush immediately on terminal events so a crash does not drop the last deltas.
     if (event.type === "done" || event.type === "error") this.persistNow();
     else this.persistSoon();
@@ -210,7 +235,13 @@ export class AutomationRunsStore {
   finish(
     runId: string,
     status: AutomationRunStatus,
-    opts: { reason?: string; finalText?: string } = {},
+    opts: {
+      reason?: string;
+      finalText?: string;
+      outcome?: AutomationOutcome;
+      blocker?: AutomationBlocker;
+      artifacts?: string[];
+    } = {},
   ): AutomationRun | null {
     const run = this.get(runId);
     if (!run) return null;
@@ -218,8 +249,34 @@ export class AutomationRunsStore {
     run.finishedAt = Date.now();
     if (opts.reason !== undefined) run.reason = opts.reason;
     if (opts.finalText !== undefined) run.finalText = opts.finalText;
+    if (opts.outcome !== undefined) run.outcome = opts.outcome;
+    if (opts.blocker !== undefined) run.blocker = opts.blocker;
+    if (opts.artifacts !== undefined && opts.artifacts.length > 0) run.artifacts = opts.artifacts;
+    run.summary ??= emptySummary();
+    run.summary.durationMs = run.finishedAt - run.startedAt;
+    this.logs.delete(runId);
     this.persistNow();
     return run;
+  }
+
+  /**
+   * Keep a record of a run that happened somewhere else, such as on a server (its engine ran it, and told us). The
+   * record with the same id is replaced, so asking again after the run ends updates it instead of repeating it.
+   * Returns whether anything changed.
+   */
+  mirror(run: AutomationRun): boolean {
+    const existing = this.state.runs.findIndex((r) => r.id === run.id);
+    if (existing >= 0) {
+      if (JSON.stringify(this.state.runs[existing]) === JSON.stringify(run)) return false;
+      this.state.runs[existing] = run;
+    } else {
+      this.state.runs.push(run);
+    }
+    this.logs.delete(run.id);
+    // `trim` puts the runs in order, keeps the newest of each automation, and rebuilds the index.
+    this.trim();
+    this.persistNow();
+    return true;
   }
 
   /** Mark any leftover queued/running runs as aborted (app restart). */
@@ -230,6 +287,7 @@ export class AutomationRunsStore {
         run.status = "aborted";
         run.finishedAt = Date.now();
         run.reason = reason;
+        this.logs.delete(run.id);
         count += 1;
       }
     }

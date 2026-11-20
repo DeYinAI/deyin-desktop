@@ -24,6 +24,12 @@ export type SessionLifecycleEvent =
   | { kind: "forked"; from: string; atSeq: number }
   | { kind: "title-set"; title: string }
   | { kind: "compaction"; droppedMessages: number }
+  /**
+   * A model request was replayed after a transient failure or a cut-off stream.
+   * Journaled one per replay so a retry storm is visible from disk: the run
+   * summary keeps only the count, never which step failed or why.
+   */
+  | { kind: "stream-retry"; step: number; attempt: number; maxAttempts: number; reason: string; delayMs: number }
   /** End-of-run cost metrics; journaled so workloads can be scored from disk. */
   | { kind: "run-summary"; summary: RunSummary };
 
@@ -110,7 +116,7 @@ export class SessionStore {
     }
   }
 
-  create(init: { cwd: string; model: string; agent: string }): SessionMeta {
+  create(init: { cwd: string; model: string; agent: string; botId?: string }): SessionMeta {
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     const now = new Date().toISOString();
     const meta: SessionMeta = {
@@ -123,6 +129,7 @@ export class SessionStore {
       agent: init.agent,
       messageCount: 0,
       schemaVersion: SESSION_SCHEMA_VERSION,
+      ...(init.botId ? { botId: init.botId } : {}),
     };
     const record: SessionRecord = {
       type: "meta",
@@ -134,6 +141,7 @@ export class SessionStore {
         model: init.model,
         agent: init.agent,
         schemaVersion: SESSION_SCHEMA_VERSION,
+        ...(init.botId ? { botId: init.botId } : {}),
       },
     };
     appendFileSync(this.file(meta.id), `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -166,7 +174,7 @@ export class SessionStore {
   }
 
   /** Import a portable snapshot into a fresh session, optionally rebasing its cwd. */
-  importSnapshot(input: unknown, opts?: { cwd?: string }): SessionMeta | null {
+  importSnapshot(input: unknown, opts?: { cwd?: string; botId?: string }): SessionMeta | null {
     if (!input || typeof input !== "object") return null;
     const raw = input as Partial<SessionExportSnapshot> & { meta?: unknown; events?: unknown };
     if (raw.format !== "deyin-session" || raw.version !== 1 || !raw.meta || !Array.isArray(raw.events)) return null;
@@ -176,6 +184,9 @@ export class SessionStore {
       cwd: opts?.cwd ?? source.cwd,
       model: source.model,
       agent: source.agent,
+      // Only the caller can attach an import to a Bot: the file's own botId may name one that
+      // does not exist on this machine, which would leave an orphaned conversation.
+      botId: opts?.botId,
     });
     if (source.title) this.appendEvent(created.id, { kind: "title-set", title: source.title });
     for (const candidate of raw.events) {
@@ -267,6 +278,7 @@ export class SessionStore {
       agent: source.meta.agent,
       schemaVersion: SESSION_SCHEMA_VERSION,
       forkedFrom: id,
+      ...(source.meta.botId ? { botId: source.meta.botId } : {}),
     };
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     const lines = [
@@ -472,6 +484,11 @@ export class SessionStore {
   }
 
   /** Most recent session, optionally restricted to one workspace. */
+  /** Sessions that are conversations with one Bot, newest first (as `list()` orders them). */
+  listForBot(botId: string): SessionMeta[] {
+    return this.list().filter((meta) => meta.botId === botId);
+  }
+
   latest(cwd?: string): SessionMeta | null {
     const all = this.list();
     if (!cwd) return all[0] ?? null;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { AutomationsStore, FileStorage, automationStatus, plainCipher, type Automation } from "@deyin/host-core";
 import {
   AutomationScheduler,
@@ -284,4 +284,62 @@ test("automationStatus: active, paused, ended", () => {
   assert.equal(automationStatus({ enabled: false, trigger: { kind: "manual" } }), "paused");
   assert.equal(automationStatus({ enabled: true, trigger, lastScheduledAt: 1 }), "ended");
   assert.equal(automationStatus({ enabled: true, trigger }), "active");
+});
+
+// A scheduler left running by a test that failed would keep the whole test process alive.
+const live: AutomationScheduler[] = [];
+after(() => {
+  for (const scheduler of live) scheduler.dispose();
+});
+
+test("a routine the server schedules is not scheduled here: no job is armed and nothing is caught up", () => {
+  const s = store();
+  const mine = create(s, { name: "App's" });
+  const theirs = create(s, { name: "Server's" });
+  age(s, mine.id, 2);
+  age(s, theirs.id, 2);
+  const fired: string[] = [];
+  const asked: string[] = [];
+  const scheduler = new AutomationScheduler(s, {
+    onTrigger: (id) => fired.push(id),
+    isCatchUpEnabled: () => true,
+    skip: (automation) => {
+      asked.push(automation.id);
+      return automation.id === theirs.id;
+    },
+  });
+  live.push(scheduler);
+  scheduler.refresh();
+  assert.deepEqual(fired, [mine.id], "only the one the app schedules catches up");
+  assert.ok(asked.includes(theirs.id) && asked.includes(mine.id), "each routine is asked about, not the whole app");
+  scheduler.handleResume();
+  assert.ok(fired.length >= 1 && fired.every((id) => id === mine.id), "waking up does not catch the server's up either");
+  const jobs = (scheduler as unknown as { jobs: Map<string, unknown> }).jobs;
+  assert.deepEqual([...jobs.keys()], [mine.id], "no timer is armed for the server's");
+  scheduler.dispose();
+});
+
+test("a routine is scheduled here again once the server no longer schedules it", () => {
+  const s = store();
+  const routine = create(s);
+  let onServer = true;
+  const scheduler = new AutomationScheduler(s, { onTrigger: () => undefined, isCatchUpEnabled: () => false, skip: () => onServer });
+  live.push(scheduler);
+  scheduler.refresh();
+  const jobs = (scheduler as unknown as { jobs: Map<string, unknown> }).jobs;
+  assert.equal(jobs.size, 0);
+  onServer = false;
+  scheduler.notifyAutomationChanged();
+  assert.deepEqual([...jobs.keys()], [routine.id]);
+  scheduler.dispose();
+});
+
+test("without a skip, every routine is scheduled as before", () => {
+  const s = store();
+  const routine = create(s);
+  const scheduler = new AutomationScheduler(s, { onTrigger: () => undefined, isCatchUpEnabled: () => false });
+  live.push(scheduler);
+  scheduler.refresh();
+  assert.deepEqual([...(scheduler as unknown as { jobs: Map<string, unknown> }).jobs.keys()], [routine.id]);
+  scheduler.dispose();
 });

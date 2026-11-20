@@ -11,9 +11,9 @@ import {
   delegateExternalBotTool,
   enterWorktreeTool,
   exitWorktreeTool,
-  inspectBotRunTool,
+  inspectConductorRunTool,
   listExternalBotsTool,
-  mergeBotDiffTool,
+  mergeConductorDiffTool,
   readSessionContextTool,
   sendMessageTool,
   skillTool,
@@ -33,8 +33,8 @@ export const AGENT_STATE_TOOLS = [
   askQuestionTool,
   listExternalBotsTool,
   delegateExternalBotTool,
-  inspectBotRunTool,
-  mergeBotDiffTool,
+  inspectConductorRunTool,
+  mergeConductorDiffTool,
 ];
 
 export const toolsAgentPlugin: PluginDefinition = {

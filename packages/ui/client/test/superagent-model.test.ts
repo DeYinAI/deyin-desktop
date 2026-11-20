@@ -7,6 +7,7 @@ import {
   admissionValue,
   blankRule,
   changedAdvancedCells,
+  changedPolicyCells,
   commandsText,
   githubPolicy,
   HEADLINE_CELL,
@@ -177,6 +178,26 @@ test("cells that only Advanced policy shows are counted when they leave their de
 
   // Setting a cell back to its default stops counting it.
   assert.deepEqual(changedAdvancedCells(withAdmission(hidden, "comments", "unlistedUnaddressed", "ignore")), []);
+});
+
+test("the collapsed Advanced section opens for any policy change, the headline cell included", () => {
+  const settings = defaultSettings();
+  assert.deepEqual(changedPolicyCells(settings), [], "a default policy hides nothing, so Advanced can stay closed");
+
+  // Letting strangers who mention the agent start work is the most consequential cell: it must never sit behind a closed section.
+  const headline = withAdmission(settings, "issues", HEADLINE_CELL, "explicit");
+  assert.deepEqual(changedPolicyCells(headline), [{ row: "issues", cell: HEADLINE_CELL }]);
+  assert.deepEqual(changedAdvancedCells(headline), [], "while the table's own count still leaves it out");
+
+  const both = withAdmission(headline, "comments", "unlistedUnaddressed", "inferred");
+  assert.deepEqual(changedPolicyCells(both), [
+    { row: "issues", cell: HEADLINE_CELL },
+    { row: "comments", cell: "unlistedUnaddressed" },
+  ]);
+  assert.deepEqual(changedAdvancedCells(both), [{ row: "comments", cell: "unlistedUnaddressed" }]);
+
+  // Back to the defaults, nothing is left to show.
+  assert.deepEqual(changedPolicyCells(withAdmission(headline, "issues", HEADLINE_CELL, "ignore")), []);
 });
 
 test("the model menu offers the app's default and the provider's chat models only", () => {

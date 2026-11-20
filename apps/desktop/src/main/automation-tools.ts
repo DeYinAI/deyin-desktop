@@ -7,17 +7,16 @@
 import type { ToolDefinition } from "@deyin/agent-core";
 import type {
  Automation,
+ AutomationLimits,
+ AutomationRun,
  AutomationPayload,
  AutomationTarget,
  AutomationTrigger,
 } from "@deyin/host-core";
-import type { SettingsStore } from "@deyin/host-core";
+import { resolveLimits, type SettingsStore } from "@deyin/host-core";
+import { consentError, consentOrigins, normalizeOrigin } from "./automations/consent.js";
+import { describeRunDetail, describeRunLine, stamp } from "./automations/run-report.js";
 import type { AutomationService } from "./automations/service.js";
-
-/** "2026-09-02T14:03:00Z"-style stamp for run listings. */
-function stamp(ms?: number): string {
- return ms ? new Date(ms).toISOString() : "—";
-}
 
 function str(args: Record<string, unknown>, key: string): string {
  const v = args[key];
@@ -56,6 +55,79 @@ function describeTrigger(trigger: AutomationTrigger): string {
  return "manual";
 }
 
+/** The limit fields an agent passed, or undefined when it passed none. Out-of-range values are rejected by the service. */
+function parseLimits(args: Record<string, unknown>): Partial<AutomationLimits> | undefined {
+ const limits: Partial<AutomationLimits> = {};
+ for (const key of ["maxMinutes", "idleMinutes", "maxSteps"] as const) {
+  if (args[key] !== undefined) limits[key] = args[key] as number;
+ }
+ return Object.keys(limits).length > 0 ? limits : undefined;
+}
+
+/** A list argument, or undefined when it was not passed. An empty list is a deliberate "none". */
+function parseList(args: Record<string, unknown>, key: string): string[] | undefined {
+ const value = args[key];
+ if (value === undefined) return undefined;
+ if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`${key} must be a list of strings.`);
+ return (value as string[]).map((item) => item.trim()).filter(Boolean);
+}
+
+/** Browser consent from `browserSites`, normalized to origins; undefined when not passed. Throws on anything that is not a site. */
+function parseConsent(args: Record<string, unknown>): Automation["consent"] | undefined {
+ const sites = parseList(args, "browserSites");
+ if (sites === undefined) return undefined;
+ const problem = consentError(sites);
+ if (problem) throw new Error(problem);
+ return { browserOrigins: [...new Set(sites.map((site) => normalizeOrigin(site) as string))] };
+}
+
+/** Tool requirements from `requiredTools`; undefined when not passed. */
+function parseRequires(args: Record<string, unknown>, existing?: Automation["requires"]): Automation["requires"] | undefined {
+ const tools = parseList(args, "requiredTools");
+ if (tools === undefined) return undefined;
+ return { ...existing, tools };
+}
+
+/** What an unwell automation needs the reader to know: paused, or failing repeatedly. */
+function describeHealth(a: Automation): string {
+ const health = a.health;
+ if (!health) return "";
+ if (health.pausedAt) return `, PAUSED (${health.pausedKind ?? "other"}: ${health.pausedReason ?? "no reason recorded"})`;
+ if (health.consecutiveFailures > 0) return `, ${health.consecutiveFailures} failed run(s) in a row`;
+ return "";
+}
+
+/** Shown only when the automation overrides the defaults (15 minutes, 5 quiet, 120 steps). */
+function describeLimits(a: Automation): string {
+ if (!a.limits) return "";
+ const l = resolveLimits(a);
+ return `, limits ${l.maxMinutes}m run / ${l.idleMinutes}m quiet / ${l.maxSteps} steps`;
+}
+
+/** What a person approving the call must see: it grants access to their signed-in browser. */
+function browserNote(args: Record<string, unknown>): string {
+ const sites = Array.isArray(args.browserSites) ? args.browserSites.filter((s): s is string => typeof s === "string") : [];
+ return sites.length > 0 ? ` — grants Chrome access to ${sites.join(", ")}` : "";
+}
+
+/** Shown only when the automation may use the user's Chrome: the sites, because that is the grant. */
+function describeBrowser(a: Automation): string {
+ const origins = consentOrigins(a);
+ return origins.length > 0 ? `, may use Chrome on ${origins.join(" ")}` : "";
+}
+
+/** Self-healing is on unless switched off; say so only when there is something to know. */
+function describeHealing(a: Automation): string {
+ const parts: string[] = [];
+ if (a.autoHeal === false) parts.push("self-healing off");
+ const rules = a.learnedRules?.length ?? 0;
+ if (rules > 0) {
+  const onProbation = a.learnedRevisions?.some((revision) => revision.status === "probation");
+  parts.push(`${rules} learned rule${rules === 1 ? "" : "s"}${onProbation ? " (latest patch on probation)" : ""}`);
+ }
+ return parts.length > 0 ? `, ${parts.join(", ")}` : "";
+}
+
 /** One-line human summary of an automation for tool results. */
 function describe(a: Automation): string {
  const schedule = describeTrigger(a.trigger);
@@ -65,7 +137,7 @@ function describe(a: Automation): string {
  : a.target.kind === "wsl"
  ? `wsl(${a.target.distro}) @ ${a.target.workspacePath}`
  : `ssh host ${a.target.hostId}`;
- return `${a.name} (id ${a.id}) — ${schedule}, ${target}, ${a.enabled ? "enabled" : "disabled"}, model ${a.providerId}::${a.model}`;
+ return `${a.name} (id ${a.id}) — ${schedule}, ${target}, ${a.enabled ? "enabled" : "disabled"}, model ${a.providerId}::${a.model}${describeLimits(a)}${describeBrowser(a)}${describeHealing(a)}${describeHealth(a)}`;
 }
 
 function buildInput(
@@ -92,6 +164,10 @@ function buildInput(
  );
  }
 
+ const limits = parseLimits(args);
+ const consent = parseConsent(args);
+ const requires = parseRequires(args);
+
  return {
  name,
  description: str(args, "description"),
@@ -101,7 +177,26 @@ function buildInput(
  target,
  model,
  providerId,
+ ...(limits ? { limits } : {}),
+ ...(consent?.browserOrigins.length ? { consent } : {}),
+ ...(requires?.tools?.length ? { requires } : {}),
+ ...(args.autoHeal === false ? { autoHeal: false } : {}),
  };
+}
+
+/** Finds the run `runId` names (a unique prefix is enough), or the live run of automation `id`. */
+function findRun(service: AutomationService, args: Record<string, unknown>): AutomationRun | string {
+ const runId = str(args, "runId");
+ const id = str(args, "id");
+ if (!runId && !id) return "Pass runId, or the automation id to stop its current run.";
+ if (runId) {
+  const matches = service.listRuns().filter((r) => r.id === runId || r.id.startsWith(runId));
+  if (matches.length === 0) return `No run matches ${runId}.`;
+  if (matches.length > 1) return `${runId} matches ${matches.length} runs; pass more of the id.`;
+  return matches[0]!;
+ }
+ const live = service.listRuns(id).find((r) => r.status === "running" || r.status === "queued");
+ return live ?? `Automation ${id} has no run in progress.`;
 }
 
 /** Poll a freshly started run briefly so the agent sees the outcome in-turn. */
@@ -121,7 +216,7 @@ async function waitForRun(
  return `Run ${run.id} ${run.status}.\n${run.status === "failed" ? `Error: ${run.reason ?? "unknown"}` : tail ? `Final output (truncated): ${tail}` : "(no output text)"}`;
  }
  }
- return `Run ${runId} still running — check Run History in Automations, or the desktop notification when it finishes.`;
+ return `Run ${runId} still running. See what it has done so far with automation_runs {runId: "${runId}", detail: true}, or end it with automation_stop {runId: "${runId}"}.`;
 }
 
 export function createAutomationTools(
@@ -147,10 +242,16 @@ export function createAutomationTools(
  model: { type: "string", description: "Model id; defaults to the app's current default model." },
  providerId: { type: "string", description: "Provider id; defaults to openference (required for non-local targets)." },
  enable: { type: "boolean", description: "Start scheduled runs immediately (default true)." },
+ maxMinutes: { type: "number", description: "Longest a single run may take, 1-240 (default 15). The run is stopped and recorded as failed past it." },
+ idleMinutes: { type: "number", description: "Longest a run may go without any progress, 1-60 (default 5)." },
+ maxSteps: { type: "number", description: "Most model steps a run may take, 1-1000 (default 120)." },
+ browserSites: { type: "array", items: { type: "string" }, description: "Sites this automation may use in the user's own Chrome, as origins (e.g. [\"https://x.com\"]). This is a grant to act as the user on those sites: ask the user before adding one, and never add a site the task does not need. Each site must also be approved for Chrome control in Settings. Without it the automation has no Chrome access and reports blocked." },
+ autoHeal: { type: "boolean", description: "Let the app add short learned rules to this automation after failed runs (default true). Rules only refine how a run goes about the task, are rolled back if the next run fails again, and can be reviewed and reverted in the Automations view." },
+ requiredTools: { type: "array", items: { type: "string" }, description: "Tool names or patterns the automation cannot work without (e.g. [\"chrome_*\"]). If one is missing at run time the run reports blocked instead of improvising." },
  },
  required: ["name", "prompt", "workspacePath"],
  },
- summarize: (args) => `create automation ${str(args, "name") || "(unnamed)"}`,
+ summarize: (args) => `create automation ${str(args, "name") || "(unnamed)"}${browserNote(args)}`,
     execute: async (args) => {
       const input = buildInput(args, settings);
       const mutation = service.create(input);
@@ -192,30 +293,55 @@ export function createAutomationTools(
  const runsTool: ToolDefinition = {
  name: "automation_runs",
  description:
- "Show recent runs (status, timestamps, final output) for one automation or all of them.",
+ "Show recent runs for one automation or all of them: status, outcome, timestamps and the start of the output. Pass detail=true for the full record of a run — every tool call with its result, the blocker, what it produced and the whole final output. Use that before concluding a run is stuck or has failed.",
  tier: "read",
  parameters: {
  type: "object",
  properties: {
  id: { type: "string", description: "Automation id to scope to; omit for all." },
- limit: { type: "number", description: "Max runs to show (default 5)." },
+ runId: { type: "string", description: "Show only this run (a unique prefix of its id is enough)." },
+ limit: { type: "number", description: "Max runs to show (default 5; default 1 with detail)." },
+ detail: { type: "boolean", description: "Full record of each run: tool-call timeline and entire final output." },
  },
  required: [],
  },
  summarize: (args) => `list automation runs${args.id ? ` for ${String(args.id)}` : ""}`,
  execute: async (args) => {
  const id = str(args, "id");
+ const runId = str(args, "runId");
+ const detail = args.detail === true;
  const limitRaw = args.limit;
  const limit =
- typeof limitRaw === "number" && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 20) : 5;
- const runs = service.listRuns(id || undefined).slice(0, limit);
+ typeof limitRaw === "number" && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 20) : detail ? 1 : 5;
+ const all = service.listRuns(id || undefined);
+ const runs = (runId ? all.filter((r) => r.id === runId || r.id.startsWith(runId)) : all).slice(0, limit);
  if (runs.length === 0) return "No runs recorded.";
- return runs
- .map(
- (r) =>
- `${r.id} — ${r.status}, started ${stamp(r.startedAt)}, finished ${stamp(r.finishedAt)}${r.reason ? `, reason: ${r.reason}` : r.finalText ? `, output: ${r.finalText.trim().slice(0, 200)}` : ""}`,
- )
- .join("\n");
+ return runs.map(detail ? describeRunDetail : describeRunLine).join(detail ? "\n\n" : "\n");
+ },
+ };
+
+ const stopTool: ToolDefinition = {
+ name: "automation_stop",
+ description:
+ "Stop a run that is in progress (the Stop button in Run History). Give the run id, or the automation id to stop its current run. The run is recorded as stopped by you; it does not count against the automation's health.",
+ tier: "write",
+ parameters: {
+ type: "object",
+ properties: {
+ runId: { type: "string", description: "Run id (from automation_runs)." },
+ id: { type: "string", description: "Automation id; stops its current run." },
+ },
+ required: [],
+ },
+ summarize: (args) => `stop automation run ${str(args, "runId") || str(args, "id") || "(id?)"}`,
+ execute: async (args) => {
+ const found = findRun(service, args);
+ if (typeof found === "string") return found;
+ if (found.status !== "running" && found.status !== "queued") {
+  return `Run ${found.id} already ${found.status}${found.outcome ? ` (${found.outcome})` : ""}; nothing to stop.`;
+ }
+ service.stopRun(found.id);
+ return `Stop requested for run ${found.id}. Check automation_runs {runId: "${found.id}", detail: true} for how it ended.`;
  },
  };
 
@@ -263,10 +389,16 @@ export function createAutomationTools(
  distro: { type: "string", description: "WSL distro when targetKind=wsl." },
  model: { type: "string", description: "New model id." },
  enable: { type: "boolean", description: "Enabled state." },
+ maxMinutes: { type: "number", description: "Longest a single run may take, 1-240." },
+ idleMinutes: { type: "number", description: "Longest a run may go without any progress, 1-60." },
+ maxSteps: { type: "number", description: "Most model steps a run may take, 1-1000." },
+ browserSites: { type: "array", items: { type: "string" }, description: "Sites this automation may use in the user's own Chrome, as origins (e.g. [\"https://x.com\"]). This is a grant to act as the user on those sites: ask the user before adding one, and never add a site the task does not need. Each site must also be approved for Chrome control in Settings. Replaces the current list; an empty list removes Chrome access." },
+ autoHeal: { type: "boolean", description: "Let the app add short learned rules to this automation after failed runs (on unless switched off). Rules only refine how a run goes about the task, are rolled back if the next run fails again, and can be reviewed and reverted in the Automations view." },
+ requiredTools: { type: "array", items: { type: "string" }, description: "Replaces the current list; tool names or patterns the automation cannot work without (e.g. [\"chrome_*\"]). If one is missing at run time the run reports blocked instead of improvising." },
  },
  required: ["id"],
  },
- summarize: (args) => `update automation ${str(args, "id") || "(id?)"}`,
+ summarize: (args) => `update automation ${str(args, "id") || "(id?)"}${browserNote(args)}`,
  execute: async (args) => {
  const id = str(args, "id");
  const existing = service.list().find((a) => a.id === id);
@@ -293,6 +425,13 @@ export function createAutomationTools(
  patch.providerId = str(args, "providerId") || existing.providerId;
  }
  if (args.enable !== undefined) patch.enabled = args.enable === true;
+ const limits = parseLimits(args);
+ if (limits) patch.limits = { ...existing.limits, ...limits };
+ const consent = parseConsent(args);
+ if (consent) patch.consent = consent;
+ const requires = parseRequires(args, existing.requires);
+ if (requires) patch.requires = requires;
+ if (args.autoHeal !== undefined) patch.autoHeal = args.autoHeal === true;
  if (Object.keys(patch).length === 0) return "Nothing to update.";
 
  service.update(id, patch);
@@ -319,5 +458,5 @@ export function createAutomationTools(
  },
  };
 
- return [createTool, listTool, runsTool, runTool, updateTool, deleteTool];
+ return [createTool, listTool, runsTool, runTool, stopTool, updateTool, deleteTool];
 }

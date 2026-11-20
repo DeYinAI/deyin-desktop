@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { platform } from "node:os";
 import type {
   AgentUiEvent,
-  BotElicitationRequest,
+  ConductorElicitationRequest,
   ExternalAgentDescriptor,
 } from "@deyin/contract";
 import {
@@ -22,7 +22,7 @@ import { killProcessTree } from "./tree-kill.js";
 
 export interface ExternalRunOptions {
   runId?: string;
-  /** Workflow stage this run belongs to, when it was dispatched by a bot pipeline. */
+  /** Workflow stage this run belongs to, when it was dispatched by a Conductor pipeline. */
   stageId?: string;
   agentId: string;
   prompt: string;
@@ -34,7 +34,7 @@ export interface ExternalRunOptions {
   logBufferId?: string;
   onEvent?: (event: AgentUiEvent) => void;
   onRawLine?: (line: string) => void;
-  onElicitation?: (request: BotElicitationRequest) => Promise<string>;
+  onElicitation?: (request: ConductorElicitationRequest) => Promise<string>;
   onStall?: (inactiveMs: number) => void;
   signal?: AbortSignal;
 }
@@ -530,7 +530,7 @@ export class ExternalAgentService {
             } else if (msg.method === "session/requestDecision" || msg.method === "session/elicitInput") {
               // Interactive elicitation from external agent
               if (options.onElicitation) {
-                const elicitReq: BotElicitationRequest = {
+                const elicitReq: ConductorElicitationRequest = {
                   id: String(msg.id),
                   stageId: runId,
                   agentId: agent.id,
@@ -584,7 +584,7 @@ export class ExternalAgentService {
                 settle({ ok: true, outputText: final, runId });
               }
             }
-          } catch {}
+          } catch { /* a line that is not valid JSON, or cannot be handled, is skipped */ }
         }
       });
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { PageHeader, SectionTitle, SettingCard, Toggle } from "./controls.js";
-import type { ComputerUseHostStatus, DeyinSettings } from "@deyin/contract";
+import { COMPUTER_USE_STOP_CHORD_LABEL, type ComputerUseHostStatus, type DeyinSettings } from "@deyin/contract";
 
 interface Props {
   settings: DeyinSettings;
@@ -145,6 +145,19 @@ function ComputerUseSettings({ api, settings, onChange }: Props & { api: Compute
 
       {isWindows && (
         <SettingCard
+          title="On-screen indicator"
+          description="While Deyin is using your real mouse and keyboard, draw a glowing border and a Stop button over your screen. It never appears in the screenshots the agent sees."
+        >
+          <Toggle
+            checked={settings.computerUseOverlay}
+            disabled={!computerUseOn}
+            onChange={(v) => onChange({ computerUseOverlay: v })}
+          />
+        </SettingCard>
+      )}
+
+      {isWindows && (
+        <SettingCard
           title="Host status"
           description="The native Windows sidecar must be running for listing apps and automation."
         >
@@ -268,8 +281,9 @@ function ComputerUseSettings({ api, settings, onChange }: Props & { api: Compute
 
       <SectionTitle>Privacy</SectionTitle>
       <p className="settings-page__desc">
-        Screenshots are stored locally under your user data folder. Press <kbd>Esc</kbd> during automation to cancel.
-        Training data is not sent to Deyin servers.
+        Screenshots are stored locally under your user data folder. Stop automation with the Stop button, or press{" "}
+        <kbd>{COMPUTER_USE_STOP_CHORD_LABEL}</kbd> from anywhere. If you move the mouse or type while Deyin is using
+        them, it pauses until you resume. Training data is not sent to Deyin servers.
       </p>
     </div>
   );

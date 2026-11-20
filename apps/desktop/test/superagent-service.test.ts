@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { createBuiltinRegistry } from "@deyin/agent-core";
 import type { FetchLike, Logger, SuperagentView } from "@deyin/superagent";
-import { SuperagentService } from "../src/main/superagent/service.js";
+import { createSuperagentChatTools } from "../src/main/superagent-chat-tools.js";
+import { GithubDeviceFlow, type DeviceAuthorization } from "../src/main/superagent/github-device-flow.js";
+import { SuperagentService, type DeviceFlowOutcome } from "../src/main/superagent/service.js";
 import { TokenStore, createCipher, type Cipher } from "../src/main/superagent/token-store.js";
 
 const silent: Logger = { info: () => undefined, warn: () => undefined };
@@ -41,7 +43,17 @@ function github(accepted: string[]): FetchLike {
   };
 }
 
-function makeService(options: { accepted?: string[]; programs?: string[]; probe?: (command: string) => Promise<boolean>; broadcast?: (view: SuperagentView) => void; dir?: string; fetch?: FetchLike } = {}) {
+function makeService(
+  options: {
+    accepted?: string[];
+    programs?: string[];
+    probe?: (command: string) => Promise<boolean>;
+    broadcast?: (view: SuperagentView) => void;
+    dir?: string;
+    fetch?: FetchLike;
+    deviceFlow?: GithubDeviceFlow;
+  } = {},
+) {
   const dir = options.dir ?? tempDir();
   const programs = options.programs ?? ["git", "gh"];
   const service = new SuperagentService({
@@ -56,6 +68,7 @@ function makeService(options: { accepted?: string[]; programs?: string[]; probe?
     },
     broadcast: options.broadcast ?? (() => undefined),
     fetch: options.fetch ?? github(options.accepted ?? ["ghp_good_token", "ghp_also_good"]),
+    ...(options.deviceFlow ? { deviceFlow: options.deviceFlow } : {}),
     logger: silent,
     probe: options.probe ?? (async (command) => programs.includes(command)),
     tickMs: 20,
@@ -272,4 +285,111 @@ test("a settings save and ticket actions wait for a token change that is in prog
   release();
   await Promise.all([connecting, saving, stopping]);
   assert.deepEqual(events, ["token", "save", "stop"], "and then in the order they were asked for");
+});
+
+// ---- signing the agent account in from chat (GitHub's device flow) ---------------------------------------------------------
+
+const DEVICE_CODE = { device_code: "dc_secretish_999", user_code: "WDJB-MJHT", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 };
+const DEVICE_TOKEN = "gho_device_token_abcdef";
+
+/** `github()` for the API, plus the two github.com endpoints the device flow talks to, which answer from a script. */
+function deviceGithub(accepted: string[], answers: unknown[]): FetchLike {
+  const api = github(accepted);
+  return async (url, init) => (url.startsWith("https://github.com/login/") ? response(200, answers.shift()) : api(url, init));
+}
+
+/** A device flow on a clock that only moves when it sleeps, so a test never really waits. */
+function deviceFlowOn(fetch: FetchLike): GithubDeviceFlow {
+  let clock = 0;
+  return new GithubDeviceFlow({ clientId: "Iv1.test", fetch, now: () => clock, sleep: async (ms) => void (clock += ms), budgetMs: 12_000 });
+}
+
+test("signing in from chat stores the token like a pasted one, and neither it nor the device code is ever returned", async () => {
+  const fetch = deviceGithub([DEVICE_TOKEN], [DEVICE_CODE, { access_token: DEVICE_TOKEN, token_type: "bearer", scope: "repo" }]);
+  const { service, dir } = makeService({ fetch, deviceFlow: deviceFlowOn(fetch) });
+  await service.start();
+  assert.equal(service.deviceFlowAvailable(), true);
+
+  const begun = ok<DeviceAuthorization>(await service.beginDeviceFlow());
+  assert.equal(begun.userCode, "WDJB-MJHT");
+  const finished = ok<DeviceFlowOutcome>(await service.finishDeviceFlow());
+  assert.equal(finished.pending, false);
+  if (finished.pending) return;
+  assert.equal(finished.view.status.account?.login, "agent-bot");
+
+  assert.ok(!readFileSync(join(dir, "token.json"), "utf8").includes(DEVICE_TOKEN), "the token is not written in the clear");
+  assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), DEVICE_TOKEN);
+  for (const reply of [begun, finished, service.current()]) {
+    const text = JSON.stringify(reply);
+    assert.ok(!text.includes(DEVICE_TOKEN), "the token never leaves the main process");
+    assert.ok(!text.includes("dc_secretish_999"), "nor does the device code");
+  }
+});
+
+test("a token from the device flow that GitHub then rejects is not kept", async () => {
+  const fetch = deviceGithub(["something_else"], [DEVICE_CODE, { access_token: DEVICE_TOKEN, token_type: "bearer" }]);
+  const { service, dir } = makeService({ fetch, deviceFlow: deviceFlowOn(fetch) });
+  await service.start();
+  ok(await service.beginDeviceFlow());
+  failure(await service.finishDeviceFlow());
+  assert.equal(existsSync(join(dir, "token.json")) ? new TokenStore(join(dir, "token.json"), reversing).get() : undefined, undefined);
+  assert.equal(ok<SuperagentView>(service.current()).status.account, null);
+});
+
+test("while the person has not approved, finishing answers pending and keeps the request", async () => {
+  const pending = { error: "authorization_pending" };
+  // Within a 12 second budget and a 5 second interval, one finish polls twice; the token arrives for the next one.
+  const fetch = deviceGithub([DEVICE_TOKEN], [DEVICE_CODE, pending, pending, { access_token: DEVICE_TOKEN, token_type: "bearer" }]);
+  const { service } = makeService({ fetch, deviceFlow: deviceFlowOn(fetch) });
+  await service.start();
+  ok(await service.beginDeviceFlow());
+  assert.deepEqual(ok<DeviceFlowOutcome>(await service.finishDeviceFlow()), { pending: true });
+  const second = ok<DeviceFlowOutcome>(await service.finishDeviceFlow());
+  assert.equal(second.pending, false, "the same request carries on once they approve");
+});
+
+test("a build without a GitHub OAuth app says so, and leaves pasting a token as the way in", async () => {
+  const { service } = makeService();
+  await service.start();
+  assert.equal(service.deviceFlowAvailable(), false);
+  assert.match(failure(await service.beginDeviceFlow()), /not set up in this build/);
+  assert.match(failure(await service.finishDeviceFlow()), /No GitHub sign-in is waiting/);
+  ok(await service.setToken("ghp_good_token"));
+});
+
+test("the chat tools set Superagent up end to end on the real service, and nothing they say contains the token", async () => {
+  const fetch = deviceGithub([DEVICE_TOKEN], [DEVICE_CODE, { access_token: DEVICE_TOKEN, token_type: "bearer", scope: "repo" }]);
+  const { service, dir } = makeService({ fetch, deviceFlow: deviceFlowOn(fetch) });
+  await service.start();
+  const tools = Object.fromEntries(createSuperagentChatTools(service).map((tool) => [tool.name, tool]));
+  const said: string[] = [];
+  const run = async (name: string, args: Record<string, unknown> = {}): Promise<string> => {
+    const out = await tools[name]!.execute(args, {} as never);
+    said.push(out);
+    return out;
+  };
+
+  assert.equal((JSON.parse(await run("superagent_status")) as { ready: boolean }).ready, false);
+  assert.match(await run("superagent_set_state", { state: "on" }), /^ERROR: Superagent cannot run yet/);
+  assert.match(await run("superagent_configure", { repository: "https://github.com/acme/app", allowed_accounts: ["@alice", "Alice", "bob"] }), /^OK: saved\./);
+  assert.match(await run("superagent_connect_github", { action: "start" }), /WDJB-MJHT/);
+  assert.match(await run("superagent_connect_github", { action: "finish" }), /^OK: connected as @agent-bot\./);
+  assert.equal(await run("superagent_verify"), "OK: @agent-bot can push to acme/app.");
+  assert.match(await run("superagent_configure", { watch_issues: true, mode: "observe" }), /^OK: saved\./);
+  assert.match(await run("superagent_set_state", { state: "on" }), /^OK: Superagent is on\./);
+
+  const view = ok<SuperagentView>(service.current());
+  assert.equal(view.settings.github.repository, "acme/app");
+  assert.deepEqual(view.settings.policy.sources.github?.allowed.map((entry) => entry.id), ["alice", "bob"]);
+  assert.equal(view.settings.github.observeIssues, true);
+  assert.deepEqual([view.settings.enabled, view.settings.paused], [true, false]);
+  assert.equal(view.status.account?.login, "agent-bot");
+  assert.equal(new TokenStore(join(dir, "token.json"), reversing).get(), DEVICE_TOKEN);
+
+  assert.match(await run("superagent_disconnect"), /^OK: the GitHub token was deleted\./);
+  assert.equal(ok<SuperagentView>(service.current()).status.account, null);
+  for (const line of said) {
+    assert.ok(!line.includes(DEVICE_TOKEN), "the token is not in anything the model read");
+    assert.ok(!line.includes("dc_secretish_999"), "nor is the device code");
+  }
 });

@@ -34,6 +34,14 @@ export interface StreamChatEventsOptions {
   /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
   maxTokens?: number;
   signal?: AbortSignal;
+  /**
+   * Transport-level retries after a transient HTTP status. Defaults to host-core's
+   * MAX_TRANSIENT_RETRIES. The agent loop passes 0: it replays failed steps itself
+   * (visibly, with Retry-After and a run-wide cap), and two layers would multiply.
+   */
+  transientRetries?: number;
+  /** Called immediately before every HTTP request sent to the provider, retries and compatibility re-posts included. */
+  onHttpAttempt?: () => void;
   /** Compression + Anthropic cache_control markers. */
   wire?: WireOptions;
   /** OpenAI / Openference prompt cache routing key. */
@@ -156,11 +164,15 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     if (opts.thinking !== undefined) body.reasoning = { enabled: opts.thinking };
     if (opts.effort) body.reasoning_effort = opts.effort;
     if (opts.temperature !== undefined) body.temperature = opts.temperature;
-    // DeepSeek defaults max_tokens to ~4k, which forces length-truncations (and
-    // extra billable beta continuations) on long answers. Ask for its full
-    // output window unless the caller chose an explicit cap.
-    const maxTokens = opts.maxTokens ?? (isDeepSeek ? 8192 : undefined);
-    if (maxTokens !== undefined) body.max_tokens = maxTokens;
+    // Output budget. The caller (host) passes the model's declared output window
+    // from the catalog; without one we send no `max_tokens` at all and let the
+    // provider apply its own default. DeepSeek used to be special-cased to a flat
+    // 8192, which truncated models that declare far larger windows (a 384k window
+    // model would burn the whole 8k on reasoning and return no content at all).
+    // Omitting the field is deliberate: a guessed number is worse than the
+    // provider's own ceiling, and every gateway that does not know the field
+    // ignores it anyway.
+    if (opts.maxTokens !== undefined) body.max_tokens = opts.maxTokens;
     // OpenAI-compatible prompt caching: stable key improves prefix cache hits across agent steps.
     if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
     if (opts.promptCacheOptions) body.prompt_cache_options = opts.promptCacheOptions;
@@ -170,12 +182,16 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
     // Local providers (Ollama) run without a key: skip the auth header.
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
     const post = (): Promise<Response> =>
-      fetchWithTransientRetry(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body),
-        signal: opts.signal,
-      });
+      fetchWithTransientRetry(
+        endpoint,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: opts.signal,
+        },
+        { retries: opts.transientRetries, onAttempt: opts.onHttpAttempt },
+      );
 
     let res = await post();
     if (!res.ok) {
@@ -184,6 +200,14 @@ async function* streamChatCompletionsEvents(opts: StreamChatEventsOptions): Asyn
       // retry once: losing the usage anchor is far better than losing the turn.
       if (res.status === 400 && /stream[_ ]?options/i.test(detail)) {
         delete body.stream_options;
+        res = await post();
+        if (!res.ok) detail = await res.text().catch(() => "");
+      }
+      // A catalog's declared output window can exceed what the gateway in front
+      // of the model will accept. Drop `max_tokens` and retry once: the provider
+      // then applies its own (always valid) ceiling instead of 400-ing every turn.
+      if (res.status === 400 && body.max_tokens !== undefined && /max[_ ]?tokens|max_completion|output.{0,12}limit/i.test(detail)) {
+        delete body.max_tokens;
         res = await post();
         if (!res.ok) detail = await res.text().catch(() => "");
       }

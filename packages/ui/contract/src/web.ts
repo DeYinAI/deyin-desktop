@@ -48,7 +48,7 @@ export type ClientMessage =
       thinking: boolean;
       effort?: ReasoningEffort;
       approvalMode: "full-access" | "ask-first" | "read-only";
-      mode: "agent" | "plan" | "ask" | "delivery" | "bot";
+      mode: "agent" | "plan" | "ask" | "delivery" | "conductor";
       history: { role: "user" | "assistant"; content: string }[];
       provider: WebAgentProviderRouting;
       /** Per-phase model overrides: role -> "providerId::modelId". */

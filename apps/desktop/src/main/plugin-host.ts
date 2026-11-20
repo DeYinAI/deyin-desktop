@@ -4,6 +4,7 @@ import { computerUsePermissionRules, discoverPlugins, type PermissionRule, type 
 import type { AgentsStore, SettingsStore } from "@deyin/host-core";
 import type { ToolRegistry } from "@deyin/agent-core";
 import type { BrowserControlService } from "./browser.js";
+import type { ChromeService } from "./chrome.js";
 import type { ComputerUseService } from "./computer-use.js";
 import type { VisualizeService } from "./visualize.js";
 import { createVisualizeWriteTool } from "./visualize-tools.js";
@@ -17,11 +18,13 @@ export function pluginsDir(): string {
 
 export interface HostToolServices {
   browser: BrowserControlService;
+  /** The user's real Chrome through the Deyin extension. */
+  chrome?: ChromeService;
   computerUse: ComputerUseService;
   visualize?: VisualizeService;
 }
 
-/** Register tools from enabled bundled host modules (browser, computer-use, visualize). */
+/** Register tools from enabled bundled host modules (browser, chrome, computer-use, visualize). */
 export async function registerBundledHostTools(
   registry: ToolRegistry,
   agents: AgentsStore,
@@ -40,6 +43,9 @@ export async function registerBundledHostTools(
   if (settings.get().browserControlEnabled && enabled("browser")) {
     for (const tool of services.browser.tools()) registry.register(tool);
   }
+  if (services.chrome && settings.get().chromeControlEnabled && enabled("chrome")) {
+    for (const tool of services.chrome.tools()) registry.register(tool);
+  }
   if (settings.get().computerUseEnabled && enabled("computer-use")) {
     for (const tool of services.computerUse.tools()) registry.register(tool);
     extraRules.push(...computerUsePermissionRules().map((r) => ({ tool: r.tool, action: r.action as "ask" | "allow" })));
@@ -51,5 +57,5 @@ export async function registerBundledHostTools(
 }
 
 export function collectHostTools(services: HostToolServices): ToolDefinition[] {
-  return [...services.browser.tools(), ...services.computerUse.tools()];
+  return [...services.browser.tools(), ...(services.chrome?.tools() ?? []), ...services.computerUse.tools()];
 }

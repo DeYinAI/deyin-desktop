@@ -130,3 +130,11 @@ test("countPendingInteractionsForThread supports question queues", () => {
   };
   assert.equal(countPendingInteractionsForThread("t", pending), 3);
 });
+
+test("countPendingInteractionsForThread: a Secure Form a Bot is waiting on counts, and is optional", () => {
+  const base = { approvalsByThread: { a: [1] }, questionByThread: {}, mcpAuthByThread: {} };
+  assert.equal(countPendingInteractionsForThread("a", base), 1, "hosts that track no Secure Forms are unchanged");
+  assert.equal(countPendingInteractionsForThread("a", { ...base, secureFormByThread: { a: [1, 2], b: [1] } }), 3);
+  assert.equal(countPendingInteractionsForThread("b", { ...base, secureFormByThread: { a: [1, 2], b: [1] } }), 1);
+  assert.equal(countPendingInteractionsForThread("c", { ...base, secureFormByThread: { a: [1] } }), 0);
+});

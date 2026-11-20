@@ -10,15 +10,12 @@ interface TopBarProps {
   canForward: boolean;
   onBack: () => void;
   onForward: () => void;
-  /** Workspace picker (folder + branch) sitting beside the history arrows. */
-  workspace?: ReactNode;
   /** Right-side session controls, before the window buttons. */
   trailing?: ReactNode;
 }
 
-/** Slim custom title bar: sidebar toggle, history and the workspace picker on the
- *  left, session controls and window buttons on the right. Keeping the folder here
- *  leaves the composer column to the conversation alone. */
+/** Slim custom title bar: sidebar toggle and history on the left, session controls
+ *  and window buttons on the right. The folder and branch picker sits above the composer. */
 export function TopBar(props: TopBarProps) {
   const isDesktop = props.platform === "desktop";
   const isMac = isDesktop && navigator.platform.toLowerCase().includes("mac");
@@ -42,12 +39,6 @@ export function TopBar(props: TopBarProps) {
         <button type="button" className="icon-btn" title="Forward" disabled={!props.canForward} onClick={props.onForward}>
           <Icon name="arrowRight" size={15} />
         </button>
-        {props.workspace && (
-          <>
-            <span className="titlebar__sep" aria-hidden />
-            <div className="titlebar__workspace">{props.workspace}</div>
-          </>
-        )}
       </div>
 
       <div className="titlebar__drag" />

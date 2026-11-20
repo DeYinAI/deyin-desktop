@@ -64,7 +64,7 @@ export function resolveBenchmarkSuite(cwd: string, explicitPath?: string, forceB
     try {
       parsed = JSON.parse(readFileSync(full, "utf8"));
     } catch (err) {
-      throw new Error(`Invalid JSON in suite file ${full}: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`Invalid JSON in suite file ${full}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
     assertBenchmarkSuite(parsed);
     return parsed;
@@ -78,7 +78,7 @@ export function resolveBenchmarkSuite(cwd: string, explicitPath?: string, forceB
       try {
         parsed = JSON.parse(readFileSync(candidate, "utf8"));
       } catch (err) {
-        throw new Error(`Invalid JSON in suite file ${candidate}: ${err instanceof Error ? err.message : String(err)}`);
+        throw new Error(`Invalid JSON in suite file ${candidate}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
       }
       assertBenchmarkSuite(parsed);
       return parsed;
@@ -108,7 +108,7 @@ export async function runBenchmarkTask(
   const startedAt = Date.now();
   const workspaceDir = mkdtempSync(join(tmpdir(), `deyin-bench-${task.id}-`));
 
-  let status: TaskBenchmarkResult["status"] = "failed";
+  let status: TaskBenchmarkResult["status"];
   let verificationOutput = "";
   let runResult: AgentRunResult | undefined;
   let taskError: string | undefined;
@@ -403,7 +403,7 @@ export function formatBenchmarkReport(report: BenchmarkSuiteResult): string {
   lines.push(gray("  " + "─".repeat(header.length - 2)));
 
   for (const t of report.tasks) {
-    let statusLabel = "";
+    let statusLabel: string;
     switch (t.status) {
       case "passed":
         statusLabel = green("✔ PASS  ");

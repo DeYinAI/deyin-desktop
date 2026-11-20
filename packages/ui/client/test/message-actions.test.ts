@@ -79,3 +79,23 @@ test("an available branch carries no unavailable markers", () => {
   assert.doesNotMatch(markup, /aria-disabled/);
   assert.doesNotMatch(markup, /data-unavailable/);
 });
+
+test("every glyph is drawn at 16px, and the two ratings are different shapes", () => {
+  const markup = render(
+    createElement(MessageActions, {
+      text: "hello",
+      feedback: undefined,
+      onFeedback: () => {},
+      onEdit: () => {},
+      onFork: () => {},
+    }),
+  );
+  const sizes = [...markup.matchAll(/<svg[^>]*\swidth="(\d+)"/g)].map((m) => m[1]);
+  assert.deepEqual(sizes, ["16", "16", "16", "16", "16"], "a smaller glyph is too faint to read at this stroke");
+  // Dislike is the like glyph flipped, not a second hand-drawn copy that can drift.
+  const buttons = markup.split("<button").slice(1);
+  const like = buttons.find((b) => b.includes('aria-label="Good response"')) ?? "";
+  const dislike = buttons.find((b) => b.includes('aria-label="Bad response"')) ?? "";
+  assert.ok(!like.includes("scale(1 -1)"), "like is drawn upright");
+  assert.ok(dislike.includes("scale(1 -1)"), "dislike is the flipped glyph");
+});

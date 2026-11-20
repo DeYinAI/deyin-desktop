@@ -104,6 +104,8 @@ export interface RouterBase extends ProviderRouting {
   model: string;
   providerId: string;
   contextLength?: number;
+  /** Declared output-token ceiling for the run's model, when the catalog publishes one. */
+  maxOutputTokens?: number;
 }
 
 /** Resolved routing for a single step, as consumed by the agent loop. */
@@ -112,6 +114,7 @@ export interface StepRouting extends ProviderRouting {
   providerId: string;
   role: ModelRole;
   contextLength?: number;
+  maxOutputTokens?: number;
 }
 
 export type StepRouter = (input: StepRoleInput) => StepRouting;
@@ -124,6 +127,8 @@ export interface RoleRouterOptions {
   resolveProvider?: (providerId: string) => ProviderRouting | undefined;
   /** Context window for a routed model, so compaction follows the model in use. */
   getContextLength?: (providerId: string, model: string) => number | undefined;
+  /** Declared output ceiling for a routed model, so `max_tokens` follows the model in use. */
+  getMaxOutputTokens?: (providerId: string, model: string) => number | undefined;
 }
 
 /**
@@ -169,6 +174,9 @@ export function createRoleRouter(opts: RoleRouterOptions): StepRouter | undefine
         contextLength:
           opts.getContextLength?.(providerId, ref.model) ??
           (ref.model === opts.base.model ? opts.base.contextLength : undefined),
+        maxOutputTokens:
+          opts.getMaxOutputTokens?.(providerId, ref.model) ??
+          (ref.model === opts.base.model ? opts.base.maxOutputTokens : undefined),
       };
     }
     cache.set(role, routing);

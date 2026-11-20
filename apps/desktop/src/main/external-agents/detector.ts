@@ -36,7 +36,7 @@ const KNOWN_AGENTS: KnownAgentTarget[] = [
             if (content.includes("token") || content.includes("session") || content.includes("oauth") || content.includes("apiKey")) {
               return { authStatus: "authenticated", account: "Claude Pro / Account" };
             }
-          } catch {}
+          } catch { /* an unreadable file is the same as no sign-in here */ }
         }
       }
       return { authStatus: "unknown" };
@@ -59,7 +59,7 @@ const KNOWN_AGENTS: KnownAgentTarget[] = [
             if (content.includes("token") || content.includes("api_key") || content.includes("session")) {
               return { authStatus: "authenticated", account: "ChatGPT Plus / Team" };
             }
-          } catch {}
+          } catch { /* an unreadable file is the same as no sign-in here */ }
         }
       }
       return { authStatus: "unknown" };

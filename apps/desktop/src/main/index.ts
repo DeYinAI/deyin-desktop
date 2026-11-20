@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog } from "electron";
 import { AuthManager } from "./auth.js";
+import { routeDeepLink } from "./deep-link.js";
 import { registerIpc, type IpcServices } from "./ipc.js";
 import { CH } from "@deyin/contract";
 import { resolveDeyinConfig } from "@deyin/contract";
@@ -41,8 +42,21 @@ function focusMainWindow(): void {
 }
 
 async function handleDeepLink(url: string | undefined): Promise<void> {
-  if (!url || !auth) return;
-  await auth.completeDeepLink(url);
+  const route = routeDeepLink(url);
+  if (!route || !auth) return;
+  switch (route.kind) {
+    case "bot-import":
+      // A shared Bot is only shown to the person; nothing is added until they say so.
+      services?.offerBotImport(route.link);
+      break;
+    case "auth":
+      await auth.completeDeepLink(route.url);
+      break;
+    default: {
+      const unhandled: never = route;
+      throw new Error(`Unhandled deep link: ${JSON.stringify(unhandled)}`);
+    }
+  }
   focusMainWindow();
 }
 

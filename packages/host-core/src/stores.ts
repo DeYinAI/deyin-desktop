@@ -11,6 +11,7 @@ import {
 import { classifyModelKinds, modelImageCapability } from "./images.js";
 import { isVideoModel } from "./videos.js";
 import { listModels, modelSupportsVision, type TokenSource } from "./models.js";
+import { migrateProjectsState } from "./legacy-conductor.js";
 import { deyinUserAgent } from "./user-agent.js";
 import { parseModelReasoningMeta } from "./model-reasoning.js";
 import type { Storage } from "./storage.js";
@@ -325,6 +326,7 @@ export class AgentsStore {
             id: m.id,
             name: m.id,
             contextLength: typeof m.context_length === "number" ? m.context_length : undefined,
+            maxOutputTokens: typeof m.max_output_tokens === "number" ? m.max_output_tokens : undefined,
              // Image models take a prompt, not a conversation: never route vision to them.
  // Vision capability is explicit catalog metadata only (see models.ts) — a catalog
  // that says nothing leaves `vision` undefined, so the client sends images anyway
@@ -508,7 +510,11 @@ export class ProjectsStore {
   private state: ProjectsState;
 
   constructor(private readonly storage: Storage) {
-    this.state = storage.readJson<ProjectsState>("projects.json", DEFAULT_PROJECTS_STATE);
+    const loaded = storage.readJson<ProjectsState>("projects.json", DEFAULT_PROJECTS_STATE);
+    // Threads saved before Conductor's ids left "bot" are upgraded once and written back.
+    const { state, changed } = migrateProjectsState(loaded);
+    this.state = state;
+    if (changed) storage.writeJson("projects.json", state);
   }
 
   get(): ProjectsState {
