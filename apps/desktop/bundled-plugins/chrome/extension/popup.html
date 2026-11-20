@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Deyin</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="icons/icon-32.png" alt="" width="20" height="20" />
+      <h1>Deyin</h1>
+      <span id="dot" class="dot" aria-hidden="true"></span>
+    </header>
+
+    <p id="status" class="status" role="status"></p>
+
+    <section id="pair" class="card" hidden>
+      <p class="label">Pair with Deyin?</p>
+      <p id="code" class="code" aria-live="polite"></p>
+      <p class="hint">Allow only if Deyin shows this same code (Settings → Chrome).</p>
+      <div class="row">
+        <button id="allow" class="primary">Allow</button>
+        <button id="deny">Deny</button>
+      </div>
+    </section>
+
+    <section id="tab" class="card" hidden>
+      <p class="label">This tab</p>
+      <p id="tab-title" class="tab-title"></p>
+      <p id="tab-note" class="hint"></p>
+      <button id="share" class="wide"></button>
+    </section>
+
+    <section id="actions" class="row" hidden>
+      <button id="stop" class="danger">Stop</button>
+      <button id="close-tabs">Close Deyin tabs</button>
+    </section>
+
+    <button id="resume" class="wide primary" hidden>Resume</button>
+
+    <footer>
+      <button id="toggle" class="link"></button>
+      <button id="forget" class="link" hidden>Forget pairing</button>
+    </footer>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

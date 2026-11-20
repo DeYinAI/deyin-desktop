@@ -63,7 +63,7 @@ test("install hands off to a NON-silent installer that relaunches the app", () =
   const t = setup();
   downloadedUpdate(t);
   t.controller.install();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   // (isSilent=false, isForceRunAfter=true). Silent (true, …) is what made updates invisible.
   assert.deepEqual(t.updater.quitAndInstalls, [[false, true]]);
 });
@@ -87,7 +87,7 @@ test("install is ignored unless an update has been downloaded", () => {
   t.controller.install(); // idle
   t.updater.emit("update-available", { version: "1.0.30" });
   t.controller.install(); // available, not yet downloaded
-  t.clock.advance(INSTALL_STALL_TIMEOUT_MS);
+  t.clock.advanceNow(INSTALL_STALL_TIMEOUT_MS);
   assert.deepEqual(t.updater.quitAndInstalls, []);
   assert.equal(t.controller.getState().status, "available");
   assert.equal(t.broadcasts.length, before + 1, "only the update-available broadcast");
@@ -127,7 +127,7 @@ test("a failure during hand-off is shown, not swallowed as 'up to date'", () => 
   const t = setup();
   downloadedUpdate(t);
   t.controller.install();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   t.updater.emit("error", new Error("spawn EACCES"));
 
   assert.equal(t.controller.getState().status, "error");
@@ -140,7 +140,7 @@ test("a process that never exits after the hand-off ends up as an error, not an 
   const t = setup();
   downloadedUpdate(t);
   t.controller.install();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS + INSTALL_STALL_TIMEOUT_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS + INSTALL_STALL_TIMEOUT_MS);
   assert.equal(t.controller.getState().status, "error");
   assert.equal(t.controller.getState().error, INSTALL_STALLED_MESSAGE);
 });

@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { ApprovalMode, ChatMode } from "@deyin/host-core";
-import { ASK_AGENT, BOT_AGENT, BUILD_AGENT, DELIVERY_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
+import { ASK_AGENT, CONDUCTOR_AGENT, BUILD_AGENT, DELIVERY_AGENT, PLAN_AGENT, type AgentDefinition } from "./agents.js";
 import { runHooks, type LoadedHook } from "./capabilities/hooks.js";
 import { runAgent, type AgentEvent } from "./loop.js";
 import { PermissionEngine, type PermissionResolver, type PermissionRule } from "./permissions.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { createBuiltinRegistry } from "./tools/index.js";
+import type { ToolRegistry } from "./tools/registry.js";
 import type { ProviderApiFormat } from "./transports.js";
 import type { SubagentStateStore } from "./subagent-state.js";
-import type { ImageGenBridge, ToolDefinition, AgentMessage, ToolShell } from "./types.js";
+import type { AgentToolCall, ImageGenBridge, ToolDefinition, AgentMessage, ToolShell } from "./types.js";
 import type { SubagentDefinition } from "./capabilities/subagents.js";
 
 /**
@@ -73,8 +74,8 @@ export function agentForMode(mode: ChatMode): AgentDefinition {
       return ASK_AGENT;
     case "delivery":
       return DELIVERY_AGENT;
-    case "bot":
-      return BOT_AGENT;
+    case "conductor":
+      return CONDUCTOR_AGENT;
     default:
       return BUILD_AGENT;
   }
@@ -126,14 +127,26 @@ export interface SubagentRunRequest {
   effortOverride?: "low" | "medium" | "high";
   /** Step cap used when the definition has none; null = unlimited. */
   maxStepsDefault?: number | null;
+  /** Declared output-token ceiling of the resolved child model, when known. */
+  maxTokens?: number;
   /** The parent run's current routing; used when no provider switch happens. */
   parentRouting: SubagentProviderRouting;
   /** Route an arbitrary provider id to endpoint + token source. */
   resolveProvider?: (providerId: string) => SubagentProviderRouting | undefined;
   permissionEngine: PermissionEngine;
   resolvePermission: PermissionResolver;
+  /**
+   * Runs before every tool call the child makes, like the parent loop's `beforeTool`. A host that holds the
+   * parent to a stricter policy than the permission engine can express (a Bot's) holds the child to it too.
+   */
+  beforeTool?: (call: AgentToolCall, args: Record<string, unknown>, summary: string) => Promise<{ block?: string } | void>;
   /** Host tools (codebase search, browser, …) added before allowlist filtering. */
   extraTools?: ToolDefinition[];
+  /**
+   * Called with the child's finished registry (built-ins, host tools, allowlist applied) before the run starts, so a
+   * host can wrap every tool, e.g. to keep a secret out of what the child reads.
+   */
+  prepareRegistry?: (registry: ToolRegistry) => void;
   signal?: AbortSignal;
   /** Live observation of the child run (used for subagent progress lines). */
   onEvent?: (event: AgentEvent) => void;
@@ -235,6 +248,7 @@ export async function runSubagent(
   if (def.tools && def.tools.length > 0) registry = registry.filtered(def.tools);
   // No image bridge from the parent: the child cannot draw, so do not offer it.
   if (!req.imageGen) registry.unregister("generate_image");
+  req.prepareRegistry?.(registry);
 
   const systemPrompt = buildSystemPrompt({
     cwd,
@@ -285,6 +299,7 @@ export async function runSubagent(
       authHeader: routing.authHeader,
       model,
       maxSteps: def.maxSteps ?? req.maxStepsDefault,
+      ...(req.maxTokens !== undefined ? { maxTokens: req.maxTokens } : {}),
       effort: req.effortOverride ?? def.effort,
       promptCacheKey: `deyin-subagent:${def.name}:${model}:${cwd}`,
       ...(req.wire ? { wire: { ...req.wire, model } } : {}),
@@ -292,6 +307,7 @@ export async function runSubagent(
       tools: registry,
       permissions: req.permissionEngine,
       resolvePermission: req.resolvePermission,
+      ...(req.beforeTool ? { beforeTool: req.beforeTool } : {}),
       cwd,
       shell: req.shell,
       thinking: req.parent.thinking,

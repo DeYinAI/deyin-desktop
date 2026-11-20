@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { CONDUCTOR_PIPELINE_TEMPLATES, CONDUCTOR_ROLES, CONDUCTOR_ROLE_INFO, CONDUCTOR_TEMPLATE_GOAL_MARKER } from "@deyin/host-core/shared";
 
 /**
  * Skills that ship with Deyin. Modeled on the proven structure of the best
@@ -20,6 +21,26 @@ export interface BuiltinSkill {
   disableModelInvocation?: boolean;
   /** Markdown body (without frontmatter). */
   content: string;
+}
+
+/** The pipeline roles as skill text, from the same data the settings page shows. */
+function conductorRoleReference(): string {
+  return CONDUCTOR_ROLES.map((role) => `- \`${role}\`: ${CONDUCTOR_ROLE_INFO[role].description}`).join("\n");
+}
+
+/** The starter pipelines as skill text, from the same data the pipelines page offers. */
+function conductorTemplateReference(): string {
+  return CONDUCTOR_PIPELINE_TEMPLATES.map((template) => {
+    const stages = template.stages.map((stage) =>
+      [
+        `- Stage \`${stage.id}\`: role \`${stage.role}\`, ${stage.isolate ? "isolated worktree" : "live tree (not isolated)"}`,
+        `  - systemPrompt: ${JSON.stringify(stage.systemPrompt)}`,
+        `  - userPromptTemplate: ${JSON.stringify(stage.userPromptTemplate)}`,
+      ].join("\n"),
+    );
+    const goal = template.takesGoal ? "Takes the user's goal." : "Needs no goal; it works on the repository as it is.";
+    return [`#### ${template.name} (\`${template.id}\`)`, `${template.summary} ${goal}`, ...stages].join("\n");
+  }).join("\n\n");
 }
 
 function fm(skill: BuiltinSkill): string {
@@ -139,56 +160,76 @@ Non-local targets (wsl) need distro and use the Openference provider.
 `,
   },
   {
-    name: "build-bot-workflow",
+    name: "build-conductor-workflow",
     description:
-      "Guide the user step by step through building, editing, and running a multi-agent bot pipeline (Claude Code, Codex, ZCode, OpenCode, Cursor chained as stages) stored in .deyin/workflows/*.json. Use whenever the user asks to create, build, configure, edit, or run an external bot or multi-agent workflow pipeline, or types /pipeline. Interviews with ask_question, validates with bot_workflow_validate, and never uses computer-use or browser automation.",
+      "Turn a description of who does what (for example 'Claude plans, ZCode builds, Codex reviews') into a validated, runnable Conductor pipeline of external agents (Claude Code, Codex, ZCode, OpenCode, Cursor) stored in .deyin/workflows/*.json. Use whenever the user asks to create, build, configure, edit, or run an external bot or multi-agent pipeline, or types /pipeline. Reads the user's role preferences, confirms the stage list before writing, validates with conductor_workflow_validate, and never uses computer-use or browser automation.",
     content: `
-# Build Bot Workflow
+# Build a Conductor Pipeline
 
-Take the user from a one-line goal to a validated, runnable multi-agent pipeline, asking one small question at a time. A pipeline is a JSON file at \`<workspaceRoot>/.deyin/workflows/<slug>.json\`; writing it registers it in Bot Mode (Bot Flow tab) automatically.
+Turn what the user wants into a validated, runnable multi-agent pipeline. A pipeline is a JSON file at \`<workspaceRoot>/.deyin/workflows/<slug>.json\`; writing it registers it in Conductor > Pipelines automatically.
+
+Most requests arrive as one sentence: "Claude plans, ZCode builds, Codex reviews". Read that into stages, confirm the stage list once, then write it. Ask only about what is missing.
 
 ## Rules
 - Never use computer use or browser automation.
-- Every question goes through \`ask_question\`: plain-text questions are not shown to the user. Ask at most 2 questions per call, give every option a one-sentence description, mark one option \`recommended\`, and remember the user can type their own answer under "Other".
+- Every question goes through \`ask_question\`: plain-text questions are not shown to the user. Ask at most 2 questions per call, give every option a one-sentence description, mark one option \`recommended\`, and remember the user can type their own answer under "Other". A question's prompt is a single line; newlines are not shown.
 - Do not ask what you can find out. Probe first (step 1), and only offer agents that are installed.
-- Do not write the file until the draft passes \`bot_workflow_validate\`.
+- An agent the user names always wins over a role preference.
+- Do not write the file until the user has confirmed the stage list and the draft passes \`conductor_workflow_validate\`.
 - Keep your own commentary to a sentence or two between questions. The questions are the interface.
+- Every stage runs an external coding agent in the repository. Deyin has no built-in stage for generating images or other media; see step 3.
 
-## Interview
+## Steps
 
 ### 1. Look around
-Call \`list_external_bots\`. Note each agent's \`id\`, whether it is \`installed\`, and its \`availableModels\`. If no agent is installed, say so, point to Settings, and stop.
+Call \`list_external_bots\`. It returns:
+- \`agents\`: each agent's \`id\`, \`name\`, whether it is \`installed\`, and its \`availableModels\`.
+- \`roles\`: for each kind of stage, the installed agent that suits it. \`source\` is "preference" (the user chose it in Settings > Conductor), "default" (the built-in choice, used because it is installed) or "fallback" (neither was installed, so the first installed agent is suggested).
 
-### 2. Goal (skip when the user already said it)
-If the text after \`/pipeline\` states a goal, use it. Otherwise ask one question, "What should this pipeline do?", with example options such as "Build a feature end to end", "Fix a bug and verify it" and "Review the current changes". The user types their own goal under "Other".
+If no agent is installed, say so, point to Settings, and stop.
 
-### 3. Shape and lead agent (one call, two questions)
-- Shape: "Plan, build, review" (3 stages, recommended for features), "Build, then review" (2 stages), "One agent in an isolated worktree" (1 stage).
-- Lead agent: the installed agents. Recommend by fit: claude for planning and refactors, codex for review and tests, zcode for fast multi-file edits, opencode for validation or local models, cursor for quick lint fixes.
+### 2. Read the request into stages
+Take the goal from the text after \`/pipeline\`, or from the user's message. Work out an ordered list of stages, each with a role and an agent.
+- **Order** is the order the user gave. Every stage after the first receives the previous stage's result.
+- **Agent**: a named agent (Claude or Claude Code = \`claude\`, Codex = \`codex\`, ZCode = \`zcode\`, OpenCode = \`opencode\`, Cursor = \`cursor\`) runs that stage. When the user gave a role but no agent ("plan it, build it, then review it"), use that role's agent from \`roles\`.
+- **Role** from the verb: plan, research, scope = \`plan\`; build, implement, fix, refactor = \`code\`; review, audit, critique = \`review\`; test, verify, check = \`test\`; UI or layout work = \`design\`; docs, write up = \`docs\`; anything else = \`custom\`.
+- If the request matches a template (see Templates), start from it and change only what the user asked for.
+- If you cannot tell what the pipeline should do, ask one question, "What should this pipeline do?", with the template names as options (plus "Plan, build and review a feature" as the recommended one). The user types their own goal under "Other".
 
-### 4. Reviewer (only when the shape includes review)
-One question, "Who should review?": installed agents other than the lead first (a different model catches different mistakes), then "Same agent as the lead".
+Example: "Claude plans, ZCode builds, Codex reviews" becomes plan (claude), build (zcode), review (codex). It is the Plan, Build, Review template with those agents.
+
+### 3. Deal with agents that cannot do the work
+- **A named agent is not installed**: tell the user, and offer the agent \`roles\` suggests for that kind of stage. Put the change in the confirmation in step 4 instead of asking separately.
+- **The work is not coding work** (generating an image, audio or video): say plainly that pipeline stages are coding agents working in the repository, and Deyin does not generate images or media itself. Offer to build the rest of the pipeline, with a stage whose agent writes the brief or script for that asset into a file in the repository, or to drop that step.
+- **A model the user named is not in the agent's \`availableModels\`**: leave \`modelOverride\` out, use the agent's default, and say so.
+
+### 4. Confirm the stage list
+Ask one question whose prompt is the stage list on one line, for example "Build this pipeline? plan: Claude → build: ZCode → review: Codex". Options: "Looks good" (recommended; builds the pipeline), "Change an agent" and "Change the steps". Mention any substitution from step 3 in the option description. If the user wants a change, ask what to change in one call, update the list, and confirm again.
 
 ### 5. Draft
-Build the definition in your head from the answers. Do not show raw JSON to the user yet.
+Build the definition in your head from the confirmed list. Do not show raw JSON to the user.
 - \`id\`: kebab-case slug of the name. \`name\`: short Title Case. \`description\`: one sentence describing the hand-offs.
-- Stage \`id\`s are short kebab-case words (\`plan\`, \`build\`, \`review\`) and unique within the pipeline.
+- Stage \`id\`s are short kebab-case words (\`plan\`, \`build\`, \`review\`) and unique within the pipeline. Set each stage's \`role\`.
+- Prompts: use the matching template's \`systemPrompt\` and \`userPromptTemplate\` as the starting point, and adapt them to the goal. For a stage the templates do not cover, write a focused prompt of your own.
 - First stage: write the user's goal into \`userPromptTemplate\` as plain text. The Run button and the scheduler pass no inputs, so \`{{inputs.goal}}\` resolves to an empty string there. Use \`{{inputs.goal}}\` only if the user wants a reusable pipeline that is always started from chat.
-- Later stages receive the previous stage with \`{{stage.<previous-id>.output}}\`; a review stage should also get \`{{stage.<build-id>.diff}}\`.
-- Set \`worktree.isolate\` to true for any stage that edits code. Use the default watchdog (\`timeoutMs\` 900000, \`stallThresholdMs\` 120000, \`onStallAction\` "alert-user").
+- Later stages receive the previous stage with \`{{stage.<previous-id>.output}}\`; a review or test stage should also get \`{{stage.<build-id>.diff}}\`.
+- Isolation (\`worktree.isolate\`): set it to true for any stage that edits code, and for any stage that has to see code an earlier isolated stage wrote. Isolated stages chain: each one starts from the previous isolated stage's branch. Set it to false only for a read-only stage that works on the live tree, such as planning, or reviewing uncommitted changes (an isolated worktree would not contain them).
+- Use the default watchdog (\`timeoutMs\` 900000, \`stallThresholdMs\` 120000, \`onStallAction\` "alert-user").
 - Set \`modelOverride\` only when the user asked for a specific model and it appears in that agent's \`availableModels\`.
 - Leave \`schedule\` off (\`"enabled": false\`) unless the user asked for a routine.
 - \`createdAt\` and \`updatedAt\` are the current time in milliseconds.
 
 ### 6. Validate
-Call \`bot_workflow_validate\` with \`workflow\` set to the draft. Fix every error it reports and call it again until it returns \`ok\`. Mention a warning to the user only when it changes what they should expect.
+Call \`conductor_workflow_validate\` with \`workflow\` set to the draft. Fix every error it reports and call it again until it returns \`ok\`.
+
+Warnings: if one says the user prefers a different agent for a role, and the user did not name the agent that stage uses, switch the stage to the preferred agent. If the user named the agent, keep it and do not mention the warning. Mention any other warning to the user only when it changes what they should expect.
 
 ### 7. Write
-\`mkdir -p .deyin/workflows\`, then write the JSON to \`.deyin/workflows/<id>.json\` with the \`write\` tool. Confirm it registered by calling \`bot_workflow_validate\` with \`path\` set to that file. Then give the user a short summary: the stages in order, who runs each one, and what is handed between them.
+\`mkdir -p .deyin/workflows\`, then write the JSON to \`.deyin/workflows/<id>.json\` with the \`write\` tool. Confirm it registered by calling \`conductor_workflow_validate\` with \`path\` set to that file. Then give the user a short summary: the stages in order, who runs each one, and what is handed between them.
 
 ### 8. Hand off
 Ask one question: "Pipeline <name> is ready. What next?" with options "Run it now" (recommended), "Save for later" and "Edit a stage".
-- Run it now: call \`bot_workflow_run\` with \`workflow_id\`. Tell the user it is running; progress shows in the strip above the composer and in the Bot Flow tab. Do not poll it.
+- Run it now: call \`conductor_workflow_run\` with \`workflow_id\`. Tell the user it is running; progress shows in the strip above the composer and in the Pipeline tab. Do not poll it.
 - Save for later: say where it is saved and stop.
 - Edit a stage: ask which stage and what to change (a different agent, a different model, or a rewritten prompt) in one call, apply the change, validate, write, and return to this step.
 
@@ -196,6 +237,15 @@ Ask one question: "Pipeline <name> is ready. What next?" with options "Run it no
 When the user wants to change a pipeline that already exists, \`read\` its file, apply the change, then continue from step 6. Never rewrite fields the user did not ask about.
 
 ## Reference
+
+### Roles
+\`role\` labels what a stage is for. It does not change how the stage runs.
+${conductorRoleReference()}
+
+### Templates
+Starting points for the common shapes. \`${CONDUCTOR_TEMPLATE_GOAL_MARKER}\` marks where the user's goal goes as plain text. The prompts below are JSON strings, ready to put in a pipeline file.
+
+${conductorTemplateReference()}
 
 ### Schema
 \`\`\`json
@@ -210,11 +260,12 @@ When the user wants to change a pipeline that already exists, \`read\` its file,
     {
       "id": "stage-id",
       "name": "Stage Name",
+      "role": "code",
       "agentId": "claude",
       "modelOverride": "optional-model-id",
       "systemPrompt": "Optional role instructions for this stage.",
       "userPromptTemplate": "Task prompt. May reference prior stages with {{stage.<id>.output}}.",
-      "worktree": { "isolate": true, "branchNamePattern": "bot/{{stage.id}}-{{run.id}}" },
+      "worktree": { "isolate": true, "branchNamePattern": "conductor/{{stage.id}}-{{run.id}}" },
       "watchdog": { "timeoutMs": 900000, "stallThresholdMs": 120000, "onStallAction": "alert-user" },
       "outputArtifactPatterns": ["**/*.md", "src/**/*.ts"]
     }
@@ -226,12 +277,85 @@ When the user wants to change a pipeline that already exists, \`read\` its file,
 \`agentId\` is one of the ids \`list_external_bots\` returns: typically \`claude\` (Claude Code CLI), \`codex\` (OpenAI Codex CLI), \`zcode\` (ZCode / Zed ACP), \`opencode\` (OpenCode ACP) and \`cursor\` (Cursor CLI). Take model ids from each agent's \`availableModels\`; never invent one.
 
 ### Context passing
-- \`{{inputs.<name>}}\`: run-time input. Only set when the run is started with \`bot_workflow_run\`'s \`goal\`; empty from the Run button and the scheduler.
+- \`{{inputs.<name>}}\`: run-time input. Only set when the run is started with \`conductor_workflow_run\`'s \`goal\`; empty from the Run button and the scheduler.
 - \`{{stage.<id>.output}}\`: text output of an upstream stage.
 - \`{{stage.<id>.diff}}\`: git diff an upstream stage produced in its isolated worktree.
 - \`{{stage.<id>.branch}}\`: git branch of an upstream stage.
 - \`{{artifacts}}\`: all file artifacts captured from previous stages.
 - \`{{workspace.root}}\`: absolute path of the workspace.
+`,
+  },
+  {
+    name: "setup-superagent",
+    description:
+      "Set up Superagent, the agent that turns GitHub requests into pull requests, through a short interview: the repository, who may ask it for work, the agent's own GitHub account, what it watches, and whether it only observes or acts. Uses the superagent_* tools and never handles a token. Use whenever the user asks to set up, configure, connect, switch on, pause or check Superagent, or types /superagent.",
+    content: `
+# Set Up Superagent
+
+Superagent watches one GitHub repository. When someone on its allow-list asks for work in an issue or pull request, it assesses the request and, for the ones it accepts, a worker makes the change in a separate worktree and opens a pull request. It acts on GitHub as an account of its own, so nobody shares their login with it.
+
+Setup is five facts: the repository, the people who may ask, the agent's own GitHub account, what to watch, and how much it may do alone. Gather them with a few questions and apply them with the \`superagent_*\` tools. Advanced settings (rules, models, workers, instructions) live in the dashboard under Advanced; do not walk the user through them.
+
+## Rules
+- **Never ask for, accept, repeat or store a GitHub token, password or key in chat, and never use the "Other" answer for one.** No tool takes a token. The account is connected with the approval flow (step 3) or by the user pasting a token into the masked field in the dashboard.
+- If the user pastes a token anyway: do not repeat it and do not use it. Tell them it is now in this conversation, so they should revoke it at GitHub (Settings → Developer settings) and make a new one, then carry on with step 3.
+- Every question goes through \`ask_question\`: plain-text questions are not shown. At most 2 per call, at least 2 options each (a question with one option is dropped), a one-sentence description on every option, one option marked \`recommended\`. The user can type their own answer under "Other". A question's prompt is one line.
+- Default to the safe choice. Do not switch the mode to auto, or turn Superagent on, without a clear yes to that step.
+- The agent's account must be a dedicated account (a second free account or a bot user), not the user's own. Everything the agent commits, comments or opens is made as that account, and the allowed list may not contain it, so the user could never ask it for anything.
+- Workers run as the user, on this machine, without a sandbox. Say once, in step 2, that the allowed accounts should be people the user trusts.
+- Do not use computer use or browser automation to click through GitHub for the user.
+- Keep your own commentary to a sentence or two between questions. The questions are the interface.
+
+## Steps
+
+### 1. Look around
+Call \`superagent_status\`. If something is already set, skip that step; if it is ready and on, show a one-line summary and ask what to change instead of starting over. Note \`githubSignInAvailable\` for step 3. If \`stillNeeded\` mentions git or the GitHub CLI, tell the user to install it (workers use both); that cannot be fixed from chat.
+
+### 2. Repository and people
+Find out what you can before asking. \`git remote get-url origin\` in the workspace gives the repository (write it as owner/name). If \`gh\` is installed, \`gh api user --jq .login\` gives the user's own login. Then ask both in one call:
+- "Which repository should Superagent watch?": the detected one as the recommended option and "A different repository" (typed under "Other"). If nothing was detected: "I will type it" and "Skip for now".
+- "Whose requests may it act on?": "Just me (@login)" as the recommended option and "Me and others" (the usernames typed under "Other"). If the login is unknown: "I will type usernames" and "Decide later".
+
+Then call \`superagent_configure\` with \`repository\` and \`allowed_accounts\`. If it returns an ERROR, say why in plain words and ask again.
+
+### 3. The agent's GitHub account
+Say in two sentences that Superagent acts as a GitHub account of its own, and that the account needs write access to the repository (invite it as a collaborator and accept the invitation). Then ask "Which GitHub account will Superagent use?" with:
+- "A dedicated account" (recommended): a second or bot account that has been invited to the repository.
+- "I need to create one first": GitHub sign-up takes a minute. If they pick it, give the steps (create the account, invite it as a collaborator with write access, accept the invitation), say \`/superagent\` picks up from here, and stop.
+- "My own account": explain it cannot work, because the agent's account may not be on the allowed list, so they would never be able to ask it for work. Return to the question.
+
+Call \`superagent_connect_github\` with \`action: "start"\`.
+- It returns a code and a link: show both, and tell the user to open the link signed in as the **agent** account (a private window is the easy way), enter the code and authorize. Then ask "Approve Superagent in the browser, then tell me" with the options "I approved it" (recommended) and "That did not work". On "I approved it", call it with \`action: "finish"\`. If that says PENDING, ask them to finish at the link and call finish again (up to two more times), otherwise start again.
+- It returns UNAVAILABLE: follow the instructions it gives. The user creates a fine-grained token themselves and pastes it into the masked field in the dashboard. Ask "Tell me once you have saved the token" with "I saved it" and "Skip for now", then call \`superagent_status\` to see that the account appears.
+
+If the connected account is the user's own login, or is on the allowed list, call \`superagent_disconnect\`, explain, and go back to the question.
+
+### 4. Check access
+Call \`superagent_verify\`. If it warns that the account cannot push or cannot see the repository, tell the user to invite it as a collaborator with write access (the invitation is at https://github.com/<owner>/<repo>/invitations when signed in as that account), then verify again.
+
+### 5. What to watch, and how much to do alone
+Ask both in one call:
+- "What should it watch?" (\`allow_multiple\`): "Issues" (recommended), "Pull requests", "Comments".
+- "What should it do with requests?": "Observe first" (recommended): an allowed account that mentions the agent still gets work done, but other messages are only assessed and recorded as "would accept" in Activity, so the user can check its judgment. "Act on requests": it also takes on other requests it judges to fit the rules.
+
+Call \`superagent_configure\` with \`watch_issues\`, \`watch_pull_requests\`, \`watch_comments\` (true for the picked ones, false for the rest) and \`mode\` ("observe" or "auto").
+
+### 6. Confirm and turn on
+Ask one question whose prompt is the whole setup on one line, for example "Turn on Superagent? owner/repo · asks: @you · agent: @bot-account · watching: issues · observe first". Options: "Turn it on" (recommended) and "Not yet". If the mode is auto, make the safer option the recommended one: "Observe first instead" next to "Turn it on and let it act". Only then call \`superagent_set_state\` with \`on\`; if it is refused, relay what is still needed.
+
+### 7. Wrap up
+Say what happens next in two or three sentences: it polls the repository, the Activity tab shows what it saw, what it would take on and its tickets, and in observe mode they should look at Recent decisions before switching to auto (they can ask you to). Rules, models and worker limits are in the dashboard under Advanced.
+
+## Changing things later
+For "pause it", "add @name", "switch to auto" or "disconnect": call \`superagent_status\`, apply the matching tool (\`superagent_set_state\`, \`superagent_configure\`, \`superagent_disconnect\`), and confirm the result. Ask first before anything that lets it act on its own.
+
+## Tools
+- \`superagent_status\`: what is set, what is missing, whether it can run. Call it first and after each change.
+- \`superagent_configure\`: repository, allowed accounts, watch options and mode. Pass only what changed.
+- \`superagent_connect_github\`: the approval flow, \`start\` then \`finish\`. Never takes a token.
+- \`superagent_verify\`: who the account is and whether it can push.
+- \`superagent_set_state\`: \`on\`, \`paused\` or \`off\`. \`on\` is refused until setup is complete.
+- \`superagent_disconnect\`: deletes the token and stops running tickets.
 `,
   },
   {
@@ -672,8 +796,8 @@ Use the built-in browser tools to prove a UI change actually works. Never claim 
 ## 2. Look, then interact
 
 1. \`browser_navigate\` to the page under test.
-2. \`browser_snapshot\` — structured view: title, URL, interactive elements with CSS selectors. Use it to find what to click; do not guess selectors.
-3. Interact like a user: \`browser_click\` (selector), \`browser_type\` (text, optional selector to focus), \`browser_press\` (enter/tab/escape), \`browser_scroll\`.
+2. \`browser_snapshot\` — accessibility outline of the page: roles, names and a \`[ref=eN]\` on each interactive element. Use the refs to act; do not guess selectors. Refs are cleared by navigation, so snapshot again after the page changes.
+3. Interact like a user (real mouse and keyboard events): \`browser_click\` / \`browser_hover\` (ref, or a CSS selector as a fallback), \`browser_fill\` (replace a field's value), \`browser_type\` (text into the focused element), \`browser_press\` (Enter, Tab, Escape, chords like Control+A), \`browser_scroll\`. If a click opens an alert/confirm/prompt, answer it with \`browser_handle_dialog\`.
 4. \`browser_screenshot\` at meaningful states — after load and after the key interaction — and read the saved file to inspect it.
 
 ## 3. Check the invisible failures

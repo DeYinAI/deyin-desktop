@@ -29,7 +29,7 @@ const MODE_LABEL: Record<ChatMode, { icon: IconName; label: string }> = {
   plan: { icon: "route", label: "Plan mode" },
   ask: { icon: "message", label: "Ask mode" },
   delivery: { icon: "rocket", label: "Delivery mode" },
-  bot: { icon: "bot", label: "Bot mode" },
+  conductor: { icon: "bot", label: "Conductor mode" },
 };
 
 /** Session header above the conversation: title, mode chip, and the run controls. */

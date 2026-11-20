@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import type { SuperagentReply, SuperagentVerification } from "@deyin/contract";
 import { Superagent, UserError, type FetchLike, type Logger, type SuperagentView } from "@deyin/superagent";
+import { GithubDeviceFlow, type DeviceAuthorization, type DeviceFlowPort } from "./github-device-flow.js";
 import { AgentCoreRunner, type RunnerDeps } from "./runner.js";
 import { TokenStore, type Cipher } from "./token-store.js";
 
@@ -23,6 +24,10 @@ export interface SuperagentServiceOptions {
   broadcast(view: SuperagentView): void;
   fetch: FetchLike;
   logger: Logger;
+  /** The public client id of the GitHub OAuth app used to sign the agent account in from chat; empty leaves only pasting a token. */
+  githubClientId?: string;
+  /** Replaces the GitHub device flow; for tests. */
+  deviceFlow?: DeviceFlowPort;
   /** Whether a program runs on this machine; replaceable for tests. */
   probe?: (command: string) => Promise<boolean>;
   tickMs?: number;
@@ -34,9 +39,13 @@ const defaultProbe = (command: string): Promise<boolean> =>
     execFile(command, ["--version"], { timeout: 5000, windowsHide: true }, (error) => resolve(!error));
   });
 
+/** How a chat-started GitHub sign-in stands: waiting for the person, or done and the account connected. */
+export type DeviceFlowOutcome = { pending: true } | { pending: false; view: SuperagentView };
+
 /** Superagent inside the desktop app: the runtime, its agent runner and token, and the replies the window's calls expect. */
 export class SuperagentService {
   private readonly tokens: TokenStore;
+  private readonly deviceFlow: DeviceFlowPort;
   private readonly runner: AgentCoreRunner;
   private readonly runtime: Superagent;
   private readonly probe: (command: string) => Promise<boolean>;
@@ -49,6 +58,7 @@ export class SuperagentService {
   constructor(private readonly options: SuperagentServiceOptions) {
     this.probe = options.probe ?? defaultProbe;
     this.tokens = new TokenStore(join(options.dir, "token.json"), options.cipher);
+    this.deviceFlow = options.deviceFlow ?? new GithubDeviceFlow({ clientId: options.githubClientId ?? "", fetch: options.fetch });
     this.runner = new AgentCoreRunner({ ...options.runner, sessionsDir: join(options.dir, "sessions"), homeDir: options.dir, logger: options.logger });
     this.runtime = new Superagent({
       dataDir: options.dir,
@@ -157,6 +167,30 @@ export class SuperagentService {
         throw new UserError("invalid", reason);
       }),
     );
+  }
+
+  /** Whether GitHub's device flow can run: a registered OAuth app's client id is configured. */
+  deviceFlowAvailable(): boolean {
+    return this.deviceFlow.available;
+  }
+
+  /** Asks GitHub for the code the person enters while signed in as the agent account. */
+  beginDeviceFlow(): Promise<SuperagentReply<DeviceAuthorization>> {
+    return this.reply(() => this.deviceFlow.begin());
+  }
+
+  /**
+   * Collects the token once the person approved and stores it like a pasted one: GitHub must accept it, and the caller only learns
+   * which account it is. Polling can take a few seconds and holds no lock; only storing the token must not overlap other changes.
+   */
+  finishDeviceFlow(): Promise<SuperagentReply<DeviceFlowOutcome>> {
+    return this.reply(async (): Promise<DeviceFlowOutcome> => {
+      const token = await this.deviceFlow.finish();
+      if (token === undefined) return { pending: true };
+      const stored = await this.setToken(token);
+      if (!stored.ok) throw new UserError("invalid", stored.error);
+      return { pending: false, view: stored.value };
+    });
   }
 
   /** Forgets the token and stops the agent's runs, so nothing keeps working under the account. */

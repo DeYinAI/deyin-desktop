@@ -12,6 +12,7 @@ import {
   admissionValue,
   blankRule,
   changedAdvancedCells,
+  changedPolicyCells,
   commandsText,
   githubPolicy,
   HEADLINE_CELL,
@@ -133,7 +134,7 @@ function Lines(props: { value: string; rows?: number; onCommit: (value: string) 
   );
 }
 
-export function SettingsTab(props: { view: SuperagentView; controller: SuperagentController; models: ModelInfo[]; providerId: string }) {
+export function SettingsTab(props: { view: SuperagentView; controller: SuperagentController; models: ModelInfo[]; providerId: string; onSetupInChat: () => void }) {
   const { view, controller } = props;
   const { confirm } = useConfirm();
   const [draft, setDraft] = useState<Settings>(view.settings);
@@ -155,10 +156,12 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
   const api = window.deyin.superagent;
   const edit = (change: (current: Settings) => Settings) => setDraft((current) => change(current));
   const github = githubPolicy(draft);
-  // Advanced policy opens when something in it is not at its default, so it never hides a policy that lets more through.
-  // It is only decided once: it must not close under the cursor when a cell is set back.
+  // Advanced and the table of advanced policy inside it open when something in the policy is not at its default, so a closed section
+  // never hides a policy that lets more through. Each is only decided once: it must not close under the cursor when a cell is set back.
   const changed = changedAdvancedCells(draft);
+  const changedPolicy = changedPolicyCells(draft);
   const [advancedOpen, setAdvancedOpen] = useState(() => changedAdvancedCells(view.settings).length > 0);
+  const [moreOpen, setMoreOpen] = useState(() => changedPolicyCells(view.settings).length > 0);
   const save = async () => {
     if (!api) return;
     const saved = await controller.act(() => api.saveSettings({ ...draft, enabled: view.settings.enabled, paused: view.settings.paused }, base.revision));
@@ -183,6 +186,17 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
 
   return (
     <>
+      <FormSection title="Set up in chat" note="Or fill in this page yourself">
+        <SettingCard
+          title="Answer a few questions"
+          description="The assistant asks for the repository, who may ask and the agent's GitHub account, then fills this page in. A GitHub token is never typed into chat."
+        >
+          <button type="button" className="btn btn--primary" onClick={props.onSetupInChat}>
+            Start in chat
+          </button>
+        </SettingCard>
+      </FormSection>
+
       <AccountSection view={view} controller={controller} />
 
       <FormSection title="Repository" note="Superagent watches one repository">
@@ -198,145 +212,159 @@ export function SettingsTab(props: { view: SuperagentView; controller: Superagen
         <SettingCard title="Watch comments" description="Conversation comments, mentions included, anywhere in the repository.">
           <Toggle label="Watch comments" checked={draft.github.observeComments} onChange={(observeComments) => edit((s) => ({ ...s, github: { ...s.github, observeComments } }))} />
         </SettingCard>
-        <SettingCard title="Check GitHub every" description={`Seconds between polls, ${SETTINGS_LIMITS.pollSeconds.min} to ${SETTINGS_LIMITS.pollSeconds.max}.`}>
-          <NumberField min={SETTINGS_LIMITS.pollSeconds.min} max={SETTINGS_LIMITS.pollSeconds.max} value={draft.github.pollSeconds} onChange={(pollSeconds) => edit((s) => ({ ...s, github: { ...s.github, pollSeconds } }))} />
-        </SettingCard>
-        <Field label="Branch prefix" hint="Workers open their pull requests from branches that start with this.">
-          <Text mono value={draft.github.branchPrefix} onChange={(branchPrefix) => edit((s) => ({ ...s, github: { ...s.github, branchPrefix } }))} />
-        </Field>
       </FormSection>
 
       <FormSection title="Who may ask" note="Nothing is acted on unless an allowed account asked for it">
         <Field label="Allowed accounts" hint="GitHub logins, one per line. The agent's own account must not be here.">
           <Lines mono value={accountsText(github.allowed)} placeholder="alice&#10;bob" onCommit={(text) => edit((s) => withGithubPolicy(s, { allowed: parseAccounts(text, githubPolicy(s).allowed) }))} />
         </Field>
-        <Field label="Trusted bots" hint="Accounts whose messages are read as context, such as review bots, but never as a request.">
-          <Lines mono rows={3} value={accountsText(github.bots)} placeholder="review-bot[bot]" onCommit={(text) => edit((s) => withGithubPolicy(s, { bots: parseAccounts(text, githubPolicy(s).bots) }))} />
-        </Field>
       </FormSection>
 
-      <FormSection title="What counts as a request" note="When someone who is not on the allowed list mentions the agent">
-        {ROWS.map((row) => (
-          <SettingCard key={row.id} title={row.label}>
-            <MenuSelect
-              align="end"
-              label={`Mentions from anyone else, in ${row.label}`}
-              value={admissionValue(draft, row.id, HEADLINE_CELL)}
-              options={admissionOptions(HEADLINE_CELL)}
-              onChange={(value) => edit((s) => withAdmission(s, row.id, HEADLINE_CELL, value))}
-            />
-          </SettingCard>
-        ))}
-        <p className="superagent__policy-hint">Ignore is the safe choice: only allowed accounts can ask. Treat as a request lets anyone who can comment start work.</p>
-
-        <details className="superagent__advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
-          <summary>
-            Advanced policy
-            {changed.length > 0 && <span className="superagent__advanced-count">{changed.length} changed from default</span>}
-          </summary>
-          <div className="superagent__admission">
-            <span />
-            {ROWS.map((row) => (
-              <strong key={row.id}>{row.label}</strong>
-            ))}
-            {CELLS.map((cell) => (
-              <div key={cell.id} className="superagent__admission-row">
-                <div title={cell.hint}>{cell.label}</div>
-                {ROWS.map((row) => (
-                  <MenuSelect
-                    key={row.id}
-                    block
-                    label={`${cell.label}, in ${row.label}`}
-                    value={admissionValue(draft, row.id, cell.id)}
-                    options={admissionOptions(cell.id)}
-                    onChange={(value) => edit((s) => withAdmission(s, row.id, cell.id, value))}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
-        </details>
-      </FormSection>
-
-      <FormSection
-        title="Rules"
-        note="What the agent may take on"
-        action={
-          <button type="button" className="btn btn--ghost btn--small" onClick={() => edit((s) => ({ ...s, policy: { ...s.policy, rules: [...s.policy.rules, blankRule(s.policy.rules.map((rule) => rule.id))] } }))}>
-            Add rule
-          </button>
-        }
-      >
-        {draft.policy.rules.length === 0 && <Callout tone="warn">Without an enabled rule the agent accepts nothing.</Callout>}
-        {draft.policy.rules.map((rule) => (
-          <div key={rule.id} className="superagent__rule">
-            <div className="superagent__rule-head">
-              <Text value={rule.name} max={SETTINGS_LIMITS.ruleName} label="Rule name" onChange={(name) => edit((s) => withRule(s, rule.id, { name }))} />
-              <Toggle label={`Rule enabled: ${rule.name || rule.id}`} checked={rule.enabled} onChange={(enabled) => edit((s) => withRule(s, rule.id, { enabled }))} />
-              <button
-                type="button"
-                className="btn btn--ghost btn--small"
-                onClick={() => edit((s) => ({ ...s, policy: { ...s.policy, rules: s.policy.rules.filter((item) => item.id !== rule.id) } }))}
-              >
-                Remove
-              </button>
-            </div>
-            <textarea className="input" rows={4} maxLength={SETTINGS_LIMITS.ruleInstruction} aria-label="Rule instruction" value={rule.instruction} placeholder="Describe the requests this rule covers, and where it stops." onChange={(event) => edit((s) => withRule(s, rule.id, { instruction: event.target.value }))} />
-          </div>
-        ))}
-      </FormSection>
-
-      <FormSection title="Assessment" note="How requests are judged">
+      <FormSection title="How it acts" note="Start in Observe, and switch to Auto once its decisions look right">
         <SettingCard title="Mode" description="Off acts only on requests that address the agent directly (an @mention from an allowed account). Observe also reads the other messages it can see and records what it would take on, without acting. Auto acts on those too, within the rules.">
           <MenuSelect align="end" label="Assessment mode" value={draft.eval.mode} options={EVAL_MODES} onChange={(mode) => edit((s) => ({ ...s, eval: { ...s.eval, mode } }))} />
         </SettingCard>
-        <SettingCard title="Model" description="Used by the agent that reads and routes messages.">
-          <ModelSelect label="Assessment model" value={draft.eval.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, eval: { ...s.eval, model } }))} />
-        </SettingCard>
-        <SettingCard title="Time to decide" description={`Seconds before an assessment is dropped, ${SETTINGS_LIMITS.evalTimeoutSeconds.min} to ${SETTINGS_LIMITS.evalTimeoutSeconds.max}.`}>
-          <NumberField min={SETTINGS_LIMITS.evalTimeoutSeconds.min} max={SETTINGS_LIMITS.evalTimeoutSeconds.max} value={draft.eval.timeoutSeconds} onChange={(timeoutSeconds) => edit((s) => ({ ...s, eval: { ...s.eval, timeoutSeconds } }))} />
-        </SettingCard>
       </FormSection>
 
-      <FormSection title="Workers" note="Each ticket runs in its own git worktree">
-        <SettingCard title="Model" description="Used by the agents that write the code.">
-          <ModelSelect label="Worker model" value={draft.executor.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, executor: { ...s.executor, model } }))} />
-        </SettingCard>
-        <SettingCard title="Parallel workers" description={`Tickets worked on at once, ${SETTINGS_LIMITS.maxWorkers.min} to ${SETTINGS_LIMITS.maxWorkers.max}.`}>
-          <NumberField min={SETTINGS_LIMITS.maxWorkers.min} max={SETTINGS_LIMITS.maxWorkers.max} value={draft.executor.maxWorkers} onChange={(maxWorkers) => edit((s) => ({ ...s, executor: { ...s.executor, maxWorkers } }))} />
-        </SettingCard>
-        <Field label="Worktrees directory" hint="An absolute path. Empty keeps them inside Deyin's data folder.">
-          <Text mono value={draft.executor.directory} onChange={(directory) => edit((s) => ({ ...s, executor: { ...s.executor, directory } }))} />
-        </Field>
-        <Field label="Local checkout" hint="An absolute path to a clone of the repository to branch from. Empty lets Deyin keep its own clone.">
-          <Text mono value={draft.executor.checkout} onChange={(checkout) => edit((s) => ({ ...s, executor: { ...s.executor, checkout } }))} />
-        </Field>
-        <Field label="Blocked commands" hint="Commands a worker's shell refuses, separated by spaces. This is a best-effort screen, not a sandbox. git and gh cannot be blocked.">
-          <Lines mono rows={2} value={commandsText(draft.executor.blockedCommands)} placeholder="rm curl" onCommit={(text) => edit((s) => ({ ...s, executor: { ...s.executor, blockedCommands: parseCommands(text) } }))} />
-        </Field>
-      </FormSection>
+      <details className="superagent__more" open={moreOpen} onToggle={(event) => setMoreOpen(event.currentTarget.open)}>
+        <summary>
+          Advanced
+          {changedPolicy.length > 0 && <span className="superagent__advanced-count">policy changed from default</span>}
+        </summary>
+        <div className="superagent__more-body">
+          <FormSection title="GitHub" note="How the repository is read">
+            <SettingCard title="Check GitHub every" description={`Seconds between polls, ${SETTINGS_LIMITS.pollSeconds.min} to ${SETTINGS_LIMITS.pollSeconds.max}.`}>
+              <NumberField min={SETTINGS_LIMITS.pollSeconds.min} max={SETTINGS_LIMITS.pollSeconds.max} value={draft.github.pollSeconds} onChange={(pollSeconds) => edit((s) => ({ ...s, github: { ...s.github, pollSeconds } }))} />
+            </SettingCard>
+            <Field label="Branch prefix" hint="Workers open their pull requests from branches that start with this.">
+              <Text mono value={draft.github.branchPrefix} onChange={(branchPrefix) => edit((s) => ({ ...s, github: { ...s.github, branchPrefix } }))} />
+            </Field>
+            <Field label="Trusted bots" hint="Accounts whose messages are read as context, such as review bots, but never as a request.">
+              <Lines mono rows={3} value={accountsText(github.bots)} placeholder="review-bot[bot]" onCommit={(text) => edit((s) => withGithubPolicy(s, { bots: parseAccounts(text, githubPolicy(s).bots) }))} />
+            </Field>
+          </FormSection>
 
-      <FormSection title="Instructions" note="Added to the agents' built-in prompts">
-        {(
-          [
-            ["communication", "Communication", "How the agent talks on GitHub: language, tone, length."],
-            ["scope", "Scope", "What the agent should treat as in or out of bounds, beyond the rules."],
-            ["delivery", "Delivery", "How work is delivered: branch and pull-request conventions, checks to run."],
-          ] as const
-        ).map(([key, label, hint]) => (
-          <Field key={key} label={label} hint={hint}>
-            <textarea className="input" rows={4} maxLength={SETTINGS_LIMITS.promptSection} value={draft.prompts[key]} onChange={(event) => edit((s) => ({ ...s, prompts: { ...s.prompts, [key]: event.target.value } }))} />
-          </Field>
-        ))}
-      </FormSection>
+          <FormSection title="What counts as a request" note="When someone who is not on the allowed list mentions the agent">
+            {ROWS.map((row) => (
+              <SettingCard key={row.id} title={row.label}>
+                <MenuSelect
+                  align="end"
+                  label={`Mentions from anyone else, in ${row.label}`}
+                  value={admissionValue(draft, row.id, HEADLINE_CELL)}
+                  options={admissionOptions(HEADLINE_CELL)}
+                  onChange={(value) => edit((s) => withAdmission(s, row.id, HEADLINE_CELL, value))}
+                />
+              </SettingCard>
+            ))}
+            <p className="superagent__policy-hint">Ignore is the safe choice: only allowed accounts can ask. Treat as a request lets anyone who can comment start work.</p>
 
-      <FormSection title="Reset">
-        <SettingCard title="Reset Superagent" description="Delete all tickets, decisions and conversations, and return every setting to its default.">
-          <button type="button" className="btn btn--ghost" disabled={controller.busy} onClick={() => void reset()}>
-            Reset…
-          </button>
-        </SettingCard>
-      </FormSection>
+            <details className="superagent__advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+              <summary>
+                Advanced policy
+                {changed.length > 0 && <span className="superagent__advanced-count">{changed.length} changed from default</span>}
+              </summary>
+              <div className="superagent__admission">
+                <span />
+                {ROWS.map((row) => (
+                  <strong key={row.id}>{row.label}</strong>
+                ))}
+                {CELLS.map((cell) => (
+                  <div key={cell.id} className="superagent__admission-row">
+                    <div title={cell.hint}>{cell.label}</div>
+                    {ROWS.map((row) => (
+                      <MenuSelect
+                        key={row.id}
+                        block
+                        label={`${cell.label}, in ${row.label}`}
+                        value={admissionValue(draft, row.id, cell.id)}
+                        options={admissionOptions(cell.id)}
+                        onChange={(value) => edit((s) => withAdmission(s, row.id, cell.id, value))}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </FormSection>
+
+          <FormSection
+            title="Rules"
+            note="What the agent may take on"
+            action={
+              <button type="button" className="btn btn--ghost btn--small" onClick={() => edit((s) => ({ ...s, policy: { ...s.policy, rules: [...s.policy.rules, blankRule(s.policy.rules.map((rule) => rule.id))] } }))}>
+                Add rule
+              </button>
+            }
+          >
+            {draft.policy.rules.length === 0 && <Callout tone="warn">Without an enabled rule the agent accepts nothing.</Callout>}
+            {draft.policy.rules.map((rule) => (
+              <div key={rule.id} className="superagent__rule">
+                <div className="superagent__rule-head">
+                  <Text value={rule.name} max={SETTINGS_LIMITS.ruleName} label="Rule name" onChange={(name) => edit((s) => withRule(s, rule.id, { name }))} />
+                  <Toggle label={`Rule enabled: ${rule.name || rule.id}`} checked={rule.enabled} onChange={(enabled) => edit((s) => withRule(s, rule.id, { enabled }))} />
+                  <button
+                    type="button"
+                    className="btn btn--ghost btn--small"
+                    onClick={() => edit((s) => ({ ...s, policy: { ...s.policy, rules: s.policy.rules.filter((item) => item.id !== rule.id) } }))}
+                  >
+                    Remove
+                  </button>
+                </div>
+                <textarea className="input" rows={4} maxLength={SETTINGS_LIMITS.ruleInstruction} aria-label="Rule instruction" value={rule.instruction} placeholder="Describe the requests this rule covers, and where it stops." onChange={(event) => edit((s) => withRule(s, rule.id, { instruction: event.target.value }))} />
+              </div>
+            ))}
+          </FormSection>
+
+          <FormSection title="Assessment" note="How requests are judged">
+            <SettingCard title="Model" description="Used by the agent that reads and routes messages.">
+              <ModelSelect label="Assessment model" value={draft.eval.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, eval: { ...s.eval, model } }))} />
+            </SettingCard>
+            <SettingCard title="Time to decide" description={`Seconds before an assessment is dropped, ${SETTINGS_LIMITS.evalTimeoutSeconds.min} to ${SETTINGS_LIMITS.evalTimeoutSeconds.max}.`}>
+              <NumberField min={SETTINGS_LIMITS.evalTimeoutSeconds.min} max={SETTINGS_LIMITS.evalTimeoutSeconds.max} value={draft.eval.timeoutSeconds} onChange={(timeoutSeconds) => edit((s) => ({ ...s, eval: { ...s.eval, timeoutSeconds } }))} />
+            </SettingCard>
+          </FormSection>
+
+          <FormSection title="Workers" note="Each ticket runs in its own git worktree">
+            <SettingCard title="Model" description="Used by the agents that write the code.">
+              <ModelSelect label="Worker model" value={draft.executor.model} models={props.models} providerId={props.providerId} onChange={(model) => edit((s) => ({ ...s, executor: { ...s.executor, model } }))} />
+            </SettingCard>
+            <SettingCard title="Parallel workers" description={`Tickets worked on at once, ${SETTINGS_LIMITS.maxWorkers.min} to ${SETTINGS_LIMITS.maxWorkers.max}.`}>
+              <NumberField min={SETTINGS_LIMITS.maxWorkers.min} max={SETTINGS_LIMITS.maxWorkers.max} value={draft.executor.maxWorkers} onChange={(maxWorkers) => edit((s) => ({ ...s, executor: { ...s.executor, maxWorkers } }))} />
+            </SettingCard>
+            <Field label="Worktrees directory" hint="An absolute path. Empty keeps them inside Deyin's data folder.">
+              <Text mono value={draft.executor.directory} onChange={(directory) => edit((s) => ({ ...s, executor: { ...s.executor, directory } }))} />
+            </Field>
+            <Field label="Local checkout" hint="An absolute path to a clone of the repository to branch from. Empty lets Deyin keep its own clone.">
+              <Text mono value={draft.executor.checkout} onChange={(checkout) => edit((s) => ({ ...s, executor: { ...s.executor, checkout } }))} />
+            </Field>
+            <Field label="Blocked commands" hint="Commands a worker's shell refuses, separated by spaces. This is a best-effort screen, not a sandbox. git and gh cannot be blocked.">
+              <Lines mono rows={2} value={commandsText(draft.executor.blockedCommands)} placeholder="rm curl" onCommit={(text) => edit((s) => ({ ...s, executor: { ...s.executor, blockedCommands: parseCommands(text) } }))} />
+            </Field>
+          </FormSection>
+
+          <FormSection title="Instructions" note="Added to the agents' built-in prompts">
+            {(
+              [
+                ["communication", "Communication", "How the agent talks on GitHub: language, tone, length."],
+                ["scope", "Scope", "What the agent should treat as in or out of bounds, beyond the rules."],
+                ["delivery", "Delivery", "How work is delivered: branch and pull-request conventions, checks to run."],
+              ] as const
+            ).map(([key, label, hint]) => (
+              <Field key={key} label={label} hint={hint}>
+                <textarea className="input" rows={4} maxLength={SETTINGS_LIMITS.promptSection} value={draft.prompts[key]} onChange={(event) => edit((s) => ({ ...s, prompts: { ...s.prompts, [key]: event.target.value } }))} />
+              </Field>
+            ))}
+          </FormSection>
+
+          <FormSection title="Reset">
+            <SettingCard title="Reset Superagent" description="Delete all tickets, decisions and conversations, and return every setting to its default.">
+              <button type="button" className="btn btn--ghost" disabled={controller.busy} onClick={() => void reset()}>
+                Reset…
+              </button>
+            </SettingCard>
+          </FormSection>
+        </div>
+      </details>
 
       {dirty && (
         <div className="superagent__savebar" role="region" aria-label="Unsaved settings">

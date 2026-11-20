@@ -20,7 +20,7 @@ import { FilesTab } from "./FilesTab.js";
 import { GitTab } from "./GitTab.js";
 import { SecurityFindingsPanel } from "./SecurityFindingsPanel.js";
 import { SubagentPanel, type SubagentEvent } from "./SubagentPanel.js";
-import { BotFlowPanel } from "./BotFlowPanel.js";
+import { ConductorFlowPanel } from "./ConductorFlowPanel.js";
 import type { AttachableTerminal } from "./TerminalPanel.js";
 // xterm is large and only needed when the terminal tab opens; keep it out of the
 // initial chunk via a lazy boundary.
@@ -40,7 +40,7 @@ interface WorkspacePanelProps {
   platform: "desktop" | "web";
   projectName: string;
   workspaceRoot: string | null;
-  /** Opens the pipeline editor (optionally on one workflow) from the Bot Flow tab. */
+  /** Opens the pipeline editor (optionally on one workflow) from the Pipeline tab. */
   onOpenWorkflows?: (workflowId?: string | null) => void;
   /** Bumped when the sandbox content changes outside root switches (repo connect). */
   filesRefreshKey?: number;
@@ -245,10 +245,10 @@ export function WorkspacePanel(props: WorkspacePanelProps) {
           threadId={props.threadId ?? null}
         />
       </div>
-      <div className="wspanel__pane" hidden={current !== "botflow"}>
-        <BotFlowPanel
+      <div className="wspanel__pane" hidden={current !== "conductorflow"}>
+        <ConductorFlowPanel
           workspaceRoot={props.workspaceRoot}
-          visible={current === "botflow"}
+          visible={current === "conductorflow"}
           onOpenWorkflows={props.onOpenWorkflows}
         />
       </div>

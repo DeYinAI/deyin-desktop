@@ -7,7 +7,7 @@ import { Icon, type IconName } from "./Icon.js";
 import { ModelPicker } from "./ModelPicker.js";
 import { PortalledPanel } from "./PortalledPanel.js";
 import { goalCommandDescription, goalComposerHint } from "../goal-command.js";
-import { MODE_COMMAND_NAMES, modeCommandHint } from "../modeCommand.js";
+import { MODE_MENU_COMMAND_NAMES, modeCommandHint } from "../modeCommand.js";
 import { clampSlashIndex, stepSlashIndex } from "../slashMenu.js";
 import type {
   ApprovalMode,
@@ -94,8 +94,6 @@ export interface ComposerProps {
   onOpenUsage?: () => void;
   /** Active thread id — resets the Context Usage popover on switch. */
   threadKey?: string | null;
-  /** Run status from event-sourced agent state. */
-  runStatus?: { phase: string; label: string; retryCount: number; maxRetries: number; workDurationMs: number } | null;
   /** Soft compaction warning from the agent loop (50% context threshold). */
   compactionNotice?: string | null;
   attachments?: ContextAttachment[];
@@ -117,10 +115,10 @@ export interface ComposerProps {
   /** Hosted web chat-only: plain messages, no agent controls. */
   plainChat?: boolean;
   /**
-   * Bot Mode needs a local shell and git for its pipelines and external agent
-   * CLIs, so a chat-only host does not offer `/bot`. Absent means available.
+   * Conductor needs a local shell and git for its pipelines and external agent
+   * CLIs, so a chat-only host does not offer `/conductor`. Absent means available.
    */
-  botModeAvailable?: boolean;
+  conductorModeAvailable?: boolean;
 }
 
 const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "hand" | "eye" }> = {
@@ -129,7 +127,7 @@ const APPROVAL_META: Record<ApprovalMode, { label: string; icon: "shield" | "han
   "read-only": { label: "Read only", icon: "eye" },
 };
 
-const MODE_ORDER: ChatMode[] = ["agent", "delivery", "plan", "ask", "bot"];
+const MODE_ORDER: ChatMode[] = ["agent", "delivery", "plan", "ask", "conductor"];
 
 /** Read-out labels for the non-default mode chip (modes are selected by typing). */
 const MODE_LABEL: Record<ChatMode, string> = {
@@ -137,7 +135,7 @@ const MODE_LABEL: Record<ChatMode, string> = {
   delivery: "Delivery",
   plan: "Plan",
   ask: "Ask",
-  bot: "Bot Mode",
+  conductor: "Conductor",
 };
 
 const MODE_ICON: Record<ChatMode, IconName> = {
@@ -145,7 +143,7 @@ const MODE_ICON: Record<ChatMode, IconName> = {
   delivery: "shield",
   plan: "route",
   ask: "message",
-  bot: "bot",
+  conductor: "bot",
 };
 
 /** `/mode` command descriptions for the slash menu, one per selectable mode. */
@@ -153,24 +151,11 @@ const MODE_COMMAND_DESC: Record<string, string> = {
   agent: "Build mode: full tool access",
   plan: "Plan mode: research read-only, then propose a plan",
   ask: "Ask mode: answer questions, change nothing",
-  bot: "Bot mode: orchestrate external tools across pipelines",
 };
 
 interface SlashItem {
   name: string;
   description: string;
-}
-
-/** Compact elapsed time for the live run strip: 8s, 1m 12s, 1h 4m. */
-function formatRunTime(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  if (total < 60) return `${total}s`;
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) {
-    const seconds = total % 60;
-    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 export function Composer(props: ComposerProps) {
@@ -280,10 +265,11 @@ export function Composer(props: ComposerProps) {
           if (!byName.has(s.name)) byName.set(s.name, { name: s.name, description: `Skill · ${s.description}` });
         }
         // Client-side commands handled in App.send, not by the host.
-        for (const name of MODE_COMMAND_NAMES) {
-          if (name === "bot" && props.botModeAvailable === false) continue;
+        for (const name of MODE_MENU_COMMAND_NAMES) {
+          if (name === "conductor" && props.conductorModeAvailable === false) continue;
           if (!byName.has(name)) {
-            byName.set(name, { name, description: MODE_COMMAND_DESC[name] ?? "" });
+            const description = name === "conductor" ? t("conductor.commandDesc") : (MODE_COMMAND_DESC[name] ?? "");
+            byName.set(name, { name, description });
           }
         }
         if (!byName.has("goal")) {
@@ -295,7 +281,7 @@ export function Composer(props: ComposerProps) {
     return () => {
       alive = false;
     };
-  }, [slashOpen, props.workspaceRoot, props.botModeAvailable]);
+  }, [slashOpen, props.workspaceRoot, props.conductorModeAvailable, t]);
 
   const slashMatches = (() => {
     if (!slashOpen) return [];
@@ -578,21 +564,6 @@ export function Composer(props: ComposerProps) {
           {props.compactionNotice}
         </div>
       )}
-      {/* Live run status: what the agent is doing right now, in one line. */}
-      {props.runStatus && props.streaming && (
-        <div className="composer__run-status" role="status" aria-live="polite">
-          <span className={`composer__run-dot composer__run-dot--${props.runStatus.phase}`} />
-          <span className="composer__run-label">{props.runStatus.label}</span>
-          {props.runStatus.workDurationMs > 0 && (
-            <span className="composer__run-time">{formatRunTime(props.runStatus.workDurationMs)}</span>
-          )}
-          {props.runStatus.retryCount > 0 && (
-            <span className="composer__run-retry">
-              retry {props.runStatus.retryCount}/{props.runStatus.maxRetries}
-            </span>
-          )}
-        </div>
-      )}
       {imageError && (
         <div className="composer__attach-warn" role="status">
           {imageError}
@@ -767,9 +738,9 @@ export function Composer(props: ComposerProps) {
               }}
             >
               <Icon name="route" size={14} />
-              {props.botModeAvailable === false
+              {props.conductorModeAvailable === false
                 ? "Switch mode (/plan, /ask)"
-                : "Switch mode (/plan, /ask, /bot)"}
+                : "Switch mode (/plan, /ask, /conductor)"}
             </button>
           )}
           {props.onSetGoal && (
@@ -795,21 +766,21 @@ export function Composer(props: ComposerProps) {
         </AnchoredMenu>
         ) : null}
 
-        {/* Mode is chosen by typing (/plan, /ask, /bot, /agent), so this row holds
+        {/* Mode is chosen by typing (/plan, /ask, /conductor, /agent), so this row holds
             no mode menu. A chip appears only while the thread is outside the
             default build mode, as the way back out. */}
         {!props.plainChat && props.mode && props.mode !== "agent" && (
           <button
             type="button"
             className="chip chip--mode"
-            title={`${MODE_LABEL[props.mode]} mode. Click to return to Agent mode, or type /agent.`}
+            title={props.mode === "conductor" ? t("conductor.modeTitle") : `${MODE_LABEL[props.mode]} mode. Click to return to Agent mode, or type /agent.`}
             onClick={() => {
               props.onSelectMode?.("agent");
               ref.current?.focus();
             }}
           >
             <Icon name={MODE_ICON[props.mode]} size={13} />
-            <span>{MODE_LABEL[props.mode]}</span>
+            <span>{props.mode === "conductor" ? t("mode.conductor") : MODE_LABEL[props.mode]}</span>
             <Icon name="close" size={11} />
           </button>
         )}

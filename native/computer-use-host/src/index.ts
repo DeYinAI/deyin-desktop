@@ -2,9 +2,10 @@ import { platform } from "node:os";
 import { MockComputerUseHost, type ComputerUseHostApi } from "./host-api.js";
 import { PipeComputerUseHost, resolveHostExe } from "./pipe-host.js";
 
-export type { ComputerUseHostApi } from "./host-api.js";
 export { MockComputerUseHost } from "./host-api.js";
-export { PipeComputerUseHost, resolveHostExe, hostLogPath } from "./pipe-host.js";
+export type * from "./host-api.js";
+export { PipeComputerUseHost, HostCancelledError, HostRpcError, resolveHostExe, hostLogPath } from "./pipe-host.js";
+export { RPC_CODES, METHOD_TIMEOUT_MS, PIPE_NAME } from "./protocol.js";
 
 export interface CreateComputerUseHostOptions {
   resourcesPath?: string;

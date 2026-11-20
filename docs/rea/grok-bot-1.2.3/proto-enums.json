@@ -1,0 +1,3015 @@
+{
+  "AgentStoreKind": [
+    "0=UNSPECIFIED",
+    "1=CLOUD",
+    "2=LOCAL",
+    "3=AUTOMATION",
+    "4=USER",
+    "5=TEAM",
+    "6=NAMED_AGENT",
+    "7=GROK_BOT"
+  ],
+  "AgentStoreSourceKind": [
+    "0=UNSPECIFIED",
+    "1=CLOUD",
+    "2=LOCAL",
+    "3=AUTOMATION",
+    "4=USER",
+    "5=TEAM",
+    "6=NAMED_AGENT",
+    "7=GROK_BOT"
+  ],
+  "AgentStoreEntryKind": [
+    "0=UNSPECIFIED",
+    "1=DIRECTORY",
+    "2=FILE"
+  ],
+  "AgentStoreDocumentVisibility": [
+    "0=UNSPECIFIED",
+    "1=PRIVATE",
+    "2=TEAM_VIEW",
+    "3=PUBLIC"
+  ],
+  "AgentStoreTombstoneMode": [
+    "0=UNSPECIFIED",
+    "1=INCLUDE",
+    "2=OMIT",
+    "3=SINCE"
+  ],
+  "AgentStoreDirectoryListingMode": [
+    "0=UNSPECIFIED",
+    "1=DIRECTORY_PAGE",
+    "2=COMPLETE_FLAT_STORE",
+    "3=COMPLETE_FLAT_SUBTREE"
+  ],
+  "AgentStoreMultipartOperationFailureCode": [
+    "0=UNSPECIFIED",
+    "1=PRECONDITION_FAILED",
+    "2=UPLOAD_NOT_FOUND",
+    "3=INVALID_PARTS",
+    "4=CHECKSUM_MISMATCH",
+    "5=TRANSIENT",
+    "6=INTERNAL",
+    "7=RESTART_REQUIRED"
+  ],
+  "AgentStoreDeleteFileStatus": [
+    "0=UNSPECIFIED",
+    "1=DELETED",
+    "2=ALREADY_DELETED",
+    "3=CONFLICT"
+  ],
+  "AgentStoreUndeleteFileStatus": [
+    "0=UNSPECIFIED",
+    "1=RESTORED",
+    "2=NOT_DELETED",
+    "3=CONFLICT",
+    "4=UNRECOVERABLE",
+    "5=TOO_LARGE"
+  ],
+  "AgentStoreShareVisibility": [
+    "0=UNSPECIFIED",
+    "2=TEAM",
+    "3=PUBLIC"
+  ],
+  "ListSharedAgentStoresScope": [
+    "0=UNSPECIFIED",
+    "1=MINE",
+    "2=TEAM"
+  ],
+  "EmbeddingModel": [
+    "0=UNSPECIFIED",
+    "1=VOYAGE_CODE_2",
+    "2=TEXT_EMBEDDINGS_LARGE_3",
+    "3=QWEN_1_5B_CUSTOM",
+    "4=MOCK_CHUNKER_ERROR",
+    "5=QWEN_1_5B_0618_CUSTOM",
+    "6=QWEN_1_5B_0618_FP8_MM_CUSTOM"
+  ],
+  "TimeoutBehavior": [
+    "0=UNSPECIFIED",
+    "1=CANCEL",
+    "2=BACKGROUND"
+  ],
+  "ShellBackgroundReason": [
+    "0=UNSPECIFIED",
+    "1=TIMEOUT",
+    "2=USER_REQUEST"
+  ],
+  "ShellAbortReason": [
+    "0=UNSPECIFIED",
+    "1=USER_ABORT",
+    "2=TIMEOUT"
+  ],
+  "RecordingMode": [
+    "0=UNSPECIFIED",
+    "1=START_RECORDING",
+    "2=SAVE_RECORDING",
+    "3=DISCARD_RECORDING"
+  ],
+  "RequestedFilePathRejectedReason": [
+    "0=UNSPECIFIED",
+    "1=SLASHES_NOT_ALLOWED"
+  ],
+  "DatabaseProvider": [
+    "0=UNSPECIFIED",
+    "1=AURORA",
+    "2=PLANETSCALE"
+  ],
+  "CustomSubagentPermissionMode": [
+    "0=UNSPECIFIED",
+    "1=DEFAULT",
+    "2=READONLY",
+    "3=AGENT_ONLY"
+  ],
+  "SubagentExecutionEnvironment": [
+    "0=UNSPECIFIED",
+    "1=LOCAL",
+    "2=CLOUD"
+  ],
+  "SubagentBackgroundReason": [
+    "0=UNSPECIFIED",
+    "1=AGENT_REQUEST",
+    "2=USER_REQUEST",
+    "3=QUEUED_FOLLOW_UP"
+  ],
+  "BackgroundTaskCompletionReason": [
+    "0=UNSPECIFIED",
+    "1=TASK_FINISHED",
+    "2=TASK_PROGRESS",
+    "3=WORKER_REPARENTED",
+    "4=WORKER_MESSAGE",
+    "5=WORKER_NEEDS_ATTENTION",
+    "6=PROJECT_SESSION_MESSAGE"
+  ],
+  "TaskMode": [
+    "0=UNSPECIFIED",
+    "1=AGENT",
+    "2=PLAN"
+  ],
+  "MouseButton": [
+    "0=UNSPECIFIED",
+    "1=LEFT",
+    "2=RIGHT",
+    "3=MIDDLE",
+    "4=BACK",
+    "5=FORWARD"
+  ],
+  "ScrollDirection": [
+    "0=UNSPECIFIED",
+    "1=UP",
+    "2=DOWN",
+    "3=LEFT",
+    "4=RIGHT"
+  ],
+  "KeyStroke": [
+    "0=UNSPECIFIED",
+    "1=TAP",
+    "2=DOWN",
+    "3=UP"
+  ],
+  "ComputerUseDriver": [
+    "0=UNSPECIFIED",
+    "1=XDOTOOL",
+    "2=NATIVE_X11"
+  ],
+  "BugfixVerdict": [
+    "0=UNSPECIFIED",
+    "1=FIXED",
+    "2=FALSE_POSITIVE",
+    "3=COULD_NOT_FIX",
+    "4=RESOLVED_BY_OTHER_FIX"
+  ],
+  "ClientSideToolV2": [
+    "0=UNSPECIFIED",
+    "1=READ_SEMSEARCH_FILES",
+    "3=RIPGREP_SEARCH",
+    "5=READ_FILE",
+    "6=LIST_DIR",
+    "7=EDIT_FILE",
+    "8=FILE_SEARCH",
+    "9=SEMANTIC_SEARCH_FULL",
+    "11=DELETE_FILE",
+    "12=REAPPLY",
+    "15=RUN_TERMINAL_COMMAND_V2",
+    "16=FETCH_RULES",
+    "18=WEB_SEARCH",
+    "19=MCP",
+    "23=SEARCH_SYMBOLS",
+    "24=BACKGROUND_COMPOSER_FOLLOWUP",
+    "25=KNOWLEDGE_BASE",
+    "26=FETCH_PULL_REQUEST",
+    "27=DEEP_SEARCH",
+    "28=CREATE_DIAGRAM",
+    "29=FIX_LINTS",
+    "30=READ_LINTS",
+    "31=GO_TO_DEFINITION",
+    "32=TASK",
+    "33=AWAIT_TASK",
+    "34=TODO_READ",
+    "35=TODO_WRITE",
+    "38=EDIT_FILE_V2",
+    "39=LIST_DIR_V2",
+    "40=READ_FILE_V2",
+    "41=RIPGREP_RAW_SEARCH",
+    "42=GLOB_FILE_SEARCH",
+    "43=CREATE_PLAN",
+    "44=LIST_MCP_RESOURCES",
+    "45=READ_MCP_RESOURCE",
+    "46=READ_PROJECT",
+    "47=UPDATE_PROJECT",
+    "48=TASK_V2",
+    "49=CALL_MCP_TOOL",
+    "50=APPLY_AGENT_DIFF",
+    "51=ASK_QUESTION",
+    "52=SWITCH_MODE",
+    "53=GENERATE_IMAGE",
+    "54=COMPUTER_USE",
+    "55=WRITE_SHELL_STDIN",
+    "56=RECORD_SCREEN",
+    "57=WEB_FETCH",
+    "58=REPORT_BUGFIX_RESULTS",
+    "59=AI_ATTRIBUTION",
+    "60=MCP_AUTH",
+    "61=REFLECT",
+    "62=AWAIT",
+    "63=GET_MCP_TOOLS",
+    "65=SEND_TO_USER",
+    "66=CONNECT_SCM"
+  ],
+  "RunTerminalCommandEndedReason": [
+    "0=UNSPECIFIED",
+    "1=EXECUTION_COMPLETED",
+    "2=EXECUTION_ABORTED",
+    "3=EXECUTION_FAILED",
+    "4=ERROR_OCCURRED_CHECKING_REASON",
+    "5=IDLE_TIMEOUT"
+  ],
+  "CursorRuleSource": [
+    "0=UNSPECIFIED",
+    "1=TEAM",
+    "2=USER"
+  ],
+  "TodoStatus": [
+    "0=UNSPECIFIED",
+    "1=PENDING",
+    "2=IN_PROGRESS",
+    "3=COMPLETED",
+    "4=CANCELLED"
+  ],
+  "DiagnosticSeverity": [
+    "0=UNSPECIFIED",
+    "1=ERROR",
+    "2=WARNING",
+    "3=INFORMATION",
+    "4=HINT"
+  ],
+  "McpPolicyBlockedReason": [
+    "0=UNSPECIFIED",
+    "1=MCP_SERVERS_OFF",
+    "2=MCP_ALLOWLIST",
+    "3=CLOUD_AGENT_ALLOWLIST",
+    "4=DENYLIST",
+    "5=APPLIES_TO",
+    "6=TOOL_ACCESS"
+  ],
+  "MergePrMode": [
+    "0=UNSPECIFIED",
+    "1=MERGE",
+    "2=AUTO",
+    "3=DISABLE_AUTO"
+  ],
+  "MergePrMethod": [
+    "0=UNSPECIFIED",
+    "1=MERGE",
+    "2=SQUASH"
+  ],
+  "PullRequestStatus": [
+    "0=UNSPECIFIED",
+    "1=OPEN",
+    "2=CLOSED"
+  ],
+  "ReplaceEnvMode": [
+    "0=UNSPECIFIED",
+    "1=CUSTOM",
+    "2=CLEAN_SLATE",
+    "3=DEFAULT"
+  ],
+  "ConversationSearchSource": [
+    "0=UNSPECIFIED",
+    "1=LOCAL",
+    "2=CLOUD_CACHE"
+  ],
+  "GoalStatus": [
+    "0=UNSPECIFIED",
+    "1=ACTIVE",
+    "2=PAUSED",
+    "3=COMPLETE",
+    "4=CLEARED"
+  ],
+  "CreateAgentPlacementApprovalState": [
+    "0=UNSPECIFIED",
+    "1=REQUIRED",
+    "2=DENIED"
+  ],
+  "WriteCanvasFailReason": [
+    "0=UNSPECIFIED",
+    "1=TYPECHECK_FAILED",
+    "2=COMPILE_FAILED",
+    "3=TOO_LARGE",
+    "4=UNAVAILABLE",
+    "5=NOT_FOUND",
+    "6=REFUSED"
+  ],
+  "ReadCanvasFailReason": [
+    "0=UNSPECIFIED",
+    "1=NOT_FOUND",
+    "2=UNAVAILABLE",
+    "3=REFUSED",
+    "4=INVALID_REFERENCE"
+  ],
+  "UpdatePrCodeTourExecutionMode": [
+    "0=UNSPECIFIED",
+    "1=SERVER_SCHEDULED",
+    "2=CLIENT_REQUIRED",
+    "3=SKIPPED",
+    "4=EDITED"
+  ],
+  "ExecuteOutcome": [
+    "0=UNSPECIFIED",
+    "1=COMPLETED",
+    "2=FAILED",
+    "3=CANCELLED"
+  ],
+  "PackageType": [
+    "0=UNSPECIFIED",
+    "1=CURSOR_PROJECT",
+    "2=CURSOR_PERSONAL",
+    "3=CLAUDE_SKILL",
+    "4=CLAUDE_PLUGIN"
+  ],
+  "ComputerUseDesktopPlatform": [
+    "0=UNSPECIFIED",
+    "1=LINUX",
+    "2=MACOS",
+    "3=WINDOWS"
+  ],
+  "MountedAgentStoreKind": [
+    "0=UNSPECIFIED",
+    "1=SELF",
+    "2=PEER",
+    "3=SHARE",
+    "4=PRINCIPAL"
+  ],
+  "SelectedPluginCapabilityType": [
+    "0=UNSPECIFIED",
+    "1=COMMAND",
+    "2=SKILL",
+    "3=SUBAGENT"
+  ],
+  "AgentMode": [
+    "0=UNSPECIFIED",
+    "1=AGENT",
+    "2=ASK",
+    "3=PLAN",
+    "4=DEBUG",
+    "5=TRIAGE",
+    "7=MULTITASK",
+    "8=CUSTOM"
+  ],
+  "BackgroundTaskKind": [
+    "0=UNSPECIFIED",
+    "1=SHELL",
+    "2=SUBAGENT"
+  ],
+  "BackgroundTaskStatus": [
+    "0=UNSPECIFIED",
+    "1=SUCCESS",
+    "2=ERROR",
+    "3=ABORTED"
+  ],
+  "BackgroundTaskNotificationContext": [
+    "0=UNSPECIFIED",
+    "1=USER_DRIVEN_INTERACTIVE_CHILD"
+  ],
+  "CustomModeSource": [
+    "0=UNSPECIFIED",
+    "1=AGENT_SKILL",
+    "2=PLUGIN_SKILL",
+    "3=REPO_SKILL",
+    "4=MANAGED_SKILL"
+  ],
+  "SimulatedMsgReason": [
+    "0=UNSPECIFIED",
+    "1=PLAN_EXECUTION",
+    "2=COMMIT_REMINDER",
+    "3=BACKGROUND_TASK_COMPLETION",
+    "4=DIFF_TAB_COMMIT",
+    "5=DIFF_TAB_COMMIT_AND_PUSH",
+    "6=DIFF_TAB_PUSH",
+    "7=DIFF_TAB_CREATE_PR",
+    "8=DIFF_TAB_FIX_MERGE_CONFLICTS",
+    "9=USER_SENT_TO_SUBAGENT",
+    "10=USER_INTERRUPTED_SUBAGENT",
+    "11=USER_QUEUED_TO_SUBAGENT",
+    "12=BABYSIT_PR_IN_CLOUD",
+    "13=CI_PANEL_INVESTIGATE_FAILURE",
+    "14=MULTITASK",
+    "15=BUILD_IN_PARALLEL",
+    "16=MULTITASK_SPLIT_PRS",
+    "17=APPLY_LOCALLY",
+    "18=CHECKOUT_BRANCH",
+    "19=DIFF_TAB_UPDATE_BRANCH",
+    "20=PR_TAB_BUGBOT_FIX",
+    "22=RUN_BUGBOT_REVIEW",
+    "23=RUN_SECURITY_REVIEW",
+    "24=FSD_APPLY_FINDING",
+    "25=FSD_UNDO_FINDING",
+    "26=FSD_START",
+    "27=FSD_PR_INTERRUPT",
+    "28=SUBSCRIPTION",
+    "29=DIFF_TAB_CREATE_BRANCH",
+    "30=AGENT_STORE_CONFLICT",
+    "31=GOAL_CONTINUATION",
+    "32=PROJECT_KICKOFF",
+    "33=MARKDOWN_PROMPT_BUTTON",
+    "34=USER_QUICK_ACTION",
+    "35=INTERACTION_RESPONSE"
+  ],
+  "SubscriptionSource": [
+    "0=UNSPECIFIED",
+    "1=SLACK",
+    "2=GITHUB",
+    "3=LINEAR",
+    "4=ORIGIN",
+    "5=FACTORY"
+  ],
+  "ReplyAudience": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=AGENT"
+  ],
+  "SubagentType": [
+    "0=UNSPECIFIED",
+    "1=DEEP_SEARCH",
+    "2=FIX_LINTS",
+    "3=TASK",
+    "4=SPEC"
+  ],
+  "AvailableModelsScope": [
+    "0=UNSPECIFIED",
+    "1=USER_AVAILABLE",
+    "2=AUTOMATIONS",
+    "3=ADMIN_SETTINGS_ALL_APPLICATION_MODELS"
+  ],
+  "CloudAgentEffortMode": [
+    "0=UNSPECIFIED",
+    "1=STANDARD",
+    "2=GRIND"
+  ],
+  "PrivacyMode": [
+    "0=UNSPECIFIED",
+    "1=NO_STORAGE",
+    "2=NO_TRAINING",
+    "3=USAGE_DATA_TRAINING_ALLOWED",
+    "4=USAGE_CODEBASE_TRAINING_ALLOWED"
+  ],
+  "WorkspaceGitSetupMode": [
+    "0=UNSPECIFIED",
+    "1=REUSE",
+    "2=REUSE_THEN_CHECKOUT",
+    "3=NO_REPO"
+  ],
+  "WarmForkMode": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=FORKED",
+    "3=COLD_FALLBACK",
+    "4=LAZY_LOAD",
+    "5=COLD_FALLBACK_LAZY_LOAD"
+  ],
+  "EnvironmentBuildResolution": [
+    "0=UNSPECIFIED",
+    "1=RESOLVED",
+    "2=NO_FINISHED_BUILDS",
+    "3=NO_HEALTHY_BUILDS"
+  ],
+  "BlobType": [
+    "0=UNSPECIFIED",
+    "1=IMAGE",
+    "2=INVOCATION_CONTEXT",
+    "3=EXTRA_CONTEXT",
+    "4=GIT_PR_DIFF_SELECTION",
+    "5=SELECTED_PULL_REQUEST",
+    "6=TEXT",
+    "7=RICH_TEXT",
+    "8=EXTERNAL_LINK_PDF",
+    "9=DOCUMENT",
+    "10=VIDEO"
+  ],
+  "UnifyEligibilityReason": [
+    "0=UNSPECIFIED",
+    "1=BLOCKLISTED",
+    "2=ENTERPRISE",
+    "3=REQUEST_BASED_PRICING",
+    "4=OUTSTANDING_INVOICE",
+    "5=STRIPE_CREDIT_BALANCE",
+    "7=UNSAFE_SUBSCRIPTION_STATUS",
+    "8=ALIPAY_PAYMENT_METHOD",
+    "9=SSO"
+  ],
+  "UnifyPendingMergeState": [
+    "0=UNSPECIFIED",
+    "1=IN_PROGRESS",
+    "2=DELAYED"
+  ],
+  "GrokBotAccessRole": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=MANAGER"
+  ],
+  "GrokBotTransferRole": [
+    "0=UNSPECIFIED",
+    "1=VIEWER",
+    "2=USER",
+    "3=MANAGER"
+  ],
+  "GrokBotTransferActorRole": [
+    "0=UNSPECIFIED",
+    "1=OWNER",
+    "2=SOURCE_ADMIN",
+    "3=ORG_ADMIN",
+    "4=CURSOR_SUPPORT"
+  ],
+  "GrokBotTransferGroupDropReason": [
+    "0=UNSPECIFIED",
+    "1=MANUAL",
+    "2=NOT_LINKED_ON_DESTINATION",
+    "3=CURSOR_GROUP_SOURCE"
+  ],
+  "GrokBotTransferTeamRowSource": [
+    "0=UNSPECIFIED",
+    "1=SOURCE_TEAM_ROW",
+    "2=OTHER_TEAM_SHARE",
+    "3=BOTH"
+  ],
+  "GrokBotTransferWarningKind": [
+    "0=UNSPECIFIED",
+    "1=CROSS_TEAM_SHARING_MISMATCH",
+    "2=TEAMS_ADMIN_GRANT_MISSING",
+    "3=DESTINATION_TEAM_ROW_MANAGER",
+    "4=OWNER_NOT_ON_DESTINATION"
+  ],
+  "GrokBotTransferOutcome": [
+    "0=UNSPECIFIED",
+    "1=TRANSFERRED",
+    "2=ALREADY_ON_TEAM",
+    "3=NOT_PERMITTED",
+    "4=NOT_ELIGIBLE",
+    "5=DESTINATION_NOT_READY",
+    "6=PLAN_STALE",
+    "7=BUSY",
+    "8=STARTED",
+    "9=FAILED"
+  ],
+  "GrokBotTransferState": [
+    "0=UNSPECIFIED",
+    "1=RUNNING",
+    "2=DONE",
+    "3=FAILED",
+    "4=ROLLED_BACK"
+  ],
+  "AppSecretState": [
+    "0=UNSPECIFIED",
+    "1=REQUESTED",
+    "2=SET"
+  ],
+  "PublishProposalKind": [
+    "0=UNSPECIFIED",
+    "1=CREATE",
+    "2=UPDATE"
+  ],
+  "PublishProposalStatus": [
+    "0=UNSPECIFIED",
+    "1=PENDING",
+    "2=PUBLISHED",
+    "3=DISMISSED",
+    "4=CONFIRMING"
+  ],
+  "LivePreviewStatus": [
+    "0=UNSPECIFIED",
+    "1=SERVING",
+    "2=UNREACHABLE"
+  ],
+  "PublishReviewState": [
+    "0=UNSPECIFIED",
+    "1=REVIEWING",
+    "2=PASSED",
+    "3=WARNINGS",
+    "4=BLOCKED",
+    "5=FAILED"
+  ],
+  "PublishReviewOverrideOption": [
+    "0=UNSPECIFIED",
+    "1=ASK_ADMIN",
+    "2=SELF_APPROVE",
+    "3=NOT_OVERRIDABLE",
+    "4=TEAM_DISALLOWS"
+  ],
+  "PublishReviewOverrideState": [
+    "0=UNSPECIFIED",
+    "1=REQUESTED",
+    "2=APPROVED",
+    "3=DENIED",
+    "4=REVOKED",
+    "5=EXPIRED"
+  ],
+  "MergeRepublishState": [
+    "0=UNSPECIFIED",
+    "1=ARMED",
+    "2=MERGED",
+    "3=PUBLISHING",
+    "4=PUBLISHED",
+    "5=FAILED",
+    "6=CANCELLED",
+    "7=EXPIRED"
+  ],
+  "AppPublishStatus": [
+    "0=UNSPECIFIED",
+    "1=QUEUED",
+    "2=BUILDING",
+    "3=READY",
+    "4=ERROR",
+    "5=CANCELED"
+  ],
+  "AppPublishStep": [
+    "0=UNSPECIFIED",
+    "1=CREATING_REPO",
+    "2=PROVISIONING",
+    "3=BUILDING",
+    "4=ASSIGNING_URL",
+    "5=READY",
+    "6=FAILED"
+  ],
+  "AppVisibility": [
+    "0=UNSPECIFIED",
+    "1=PRIVATE",
+    "2=TEAM",
+    "3=PUBLIC"
+  ],
+  "AppViewerRole": [
+    "0=UNSPECIFIED",
+    "1=OWNER",
+    "2=EDITOR"
+  ],
+  "AppDeployTarget": [
+    "0=UNSPECIFIED",
+    "1=PRODUCTION",
+    "2=PREVIEW"
+  ],
+  "AppAccessListRole": [
+    "0=UNSPECIFIED",
+    "1=VIEWER",
+    "2=EDITOR"
+  ],
+  "PageVisibility": [
+    "0=UNSPECIFIED",
+    "1=PRIVATE",
+    "2=TEAM",
+    "3=PUBLIC"
+  ],
+  "PageKind": [
+    "0=UNSPECIFIED",
+    "1=CANVAS"
+  ],
+  "ScmConnectIntentSource": [
+    "0=UNSPECIFIED",
+    "1=PORTAL",
+    "2=GLASS_CLOUD_AGENT",
+    "3=GLASS_DIFF",
+    "4=GLASS_AUTOMATIONS"
+  ],
+  "UnificationIntentStep": [
+    "0=UNSPECIFIED",
+    "1=DRAFT",
+    "2=AWAITING_PAYMENT",
+    "3=COLLAPSING",
+    "4=FINALIZING",
+    "5=DONE",
+    "6=MERGING_IDENTITY_JOINS",
+    "7=MERGING_MAPPINGS",
+    "8=SETTLING_LEGACY_BILLING"
+  ],
+  "UnifyCtaAudience": [
+    "0=UNSPECIFIED",
+    "1=INDIVIDUAL",
+    "2=TEAM_ADMIN"
+  ],
+  "XaiTeamMembershipHoldSource": [
+    "0=UNSPECIFIED",
+    "1=MIGRATION",
+    "2=OPERATOR_MERGE",
+    "3=SCIM",
+    "4=SSO",
+    "5=AUTO_ENROLL"
+  ],
+  "AnthropicCyberVerificationStatus": [
+    "0=UNSPECIFIED",
+    "1=ACTIVE",
+    "2=PENDING",
+    "3=REJECTED"
+  ],
+  "AnthropicEfsStatus": [
+    "0=UNSPECIFIED",
+    "1=REQUESTED",
+    "2=APPROVED",
+    "3=REJECTED"
+  ],
+  "GroupVisibility": [
+    "0=UNSPECIFIED",
+    "1=TEAM_ADMIN",
+    "2=TEAM"
+  ],
+  "McpServerAppliesTo": [
+    "0=UNSPECIFIED",
+    "1=LOCAL_AND_CLOUD",
+    "2=LOCAL",
+    "3=CLOUD",
+    "4=NONE"
+  ],
+  "McpToolAccess": [
+    "0=UNSPECIFIED",
+    "1=ALL",
+    "2=READ_ONLY",
+    "3=SPECIFIC"
+  ],
+  "McpServedBy": [
+    "0=UNSPECIFIED",
+    "1=CURSOR",
+    "2=GROK"
+  ],
+  "McpSignOutReason": [
+    "0=UNSPECIFIED",
+    "1=EXPIRED",
+    "2=REVOKED",
+    "3=ORGANIZATION_POLICY",
+    "4=MFA_REQUIRED",
+    "5=ADMIN_BLOCKED",
+    "6=ACCOUNT_DISABLED",
+    "7=CLIENT_INVALID",
+    "8=ACCOUNT_RESTRICTED",
+    "9=PROVIDER_UNAVAILABLE",
+    "10=PROVIDER_ERROR"
+  ],
+  "ConnectorSuiteId": [
+    "0=UNSPECIFIED",
+    "1=GOOGLE_WORKSPACE",
+    "2=MICROSOFT_365"
+  ],
+  "ConnectorSuiteMemberOutcome": [
+    "0=UNSPECIFIED",
+    "1=CONNECTED",
+    "2=NOT_GRANTED",
+    "3=INSTALL_REFUSED",
+    "4=CLIENT_PLACED",
+    "5=INSTALL_FAILED",
+    "6=ALREADY_CONNECTED",
+    "7=NOT_CONNECTED",
+    "8=DISABLED",
+    "9=STORE_FAILED"
+  ],
+  "ConnectorSuiteCoverage": [
+    "0=UNSPECIFIED",
+    "1=FULL",
+    "2=PARTIAL",
+    "3=NONE"
+  ],
+  "ConnectorSuiteExposure": [
+    "0=NONE",
+    "1=PASS",
+    "2=FAIL"
+  ],
+  "McpCloudVerdict": [
+    "0=UNSPECIFIED",
+    "1=USABLE",
+    "2=SIGN_IN",
+    "3=MOVE_TO_CLOUD",
+    "4=LOCAL_ONLY",
+    "5=NEEDS_SETUP",
+    "6=RETRY"
+  ],
+  "McpSignInRefusalKind": [
+    "0=UNSPECIFIED",
+    "1=STDIO",
+    "2=CLIENT_ONLY",
+    "3=SETUP_REQUIRED",
+    "4=OAUTH_CLIENT_UNCONFIGURED",
+    "5=REGISTRATION_UNAVAILABLE",
+    "6=REGISTRATION_REJECTED",
+    "7=RATE_LIMITED",
+    "8=OAUTH_WEB_PAGE",
+    "9=EGRESS_BLOCKED",
+    "10=STATIC_CREDENTIAL",
+    "11=ACCESS_DISABLED",
+    "12=REFRESH_UNAVAILABLE",
+    "13=REFRESH_RACE",
+    "14=FRESH_TOKEN_REJECTED",
+    "15=TRANSPORT_FAILURE",
+    "16=INVALID_CONFIG",
+    "17=NOT_FOUND",
+    "18=PROBE_FAILED"
+  ],
+  "McpTransportFailureReason": [
+    "0=UNSPECIFIED",
+    "1=DNS",
+    "2=REFUSED",
+    "3=TLS",
+    "4=TIMEOUT",
+    "5=HTTP_5XX"
+  ],
+  "McpConnectorAuthState": [
+    "0=UNSPECIFIED",
+    "1=SIGNED_IN",
+    "2=SIGNED_OUT",
+    "3=UNAVAILABLE"
+  ],
+  "TeamRole": [
+    "0=UNSPECIFIED",
+    "1=OWNER",
+    "2=MEMBER",
+    "3=FREE_OWNER",
+    "4=REMOVED"
+  ],
+  "TeamMemberBillingTier": [
+    "0=UNSPECIFIED",
+    "1=TIER_1000",
+    "2=TIER_2000"
+  ],
+  "MergedTeamSeatTier": [
+    "0=UNSPECIFIED",
+    "1=FREE",
+    "2=PLUS",
+    "3=SUPER",
+    "4=ULTRA",
+    "5=PREMIUM"
+  ],
+  "TeamBillingSource": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=STRIPE",
+    "3=XAI",
+    "4=CONTRACT"
+  ],
+  "PrivateInferenceEnablement": [
+    "0=UNSPECIFIED",
+    "1=ENABLED",
+    "2=DISABLED"
+  ],
+  "PrepaidBillingMode": [
+    "0=UNSPECIFIED",
+    "1=ON_DEMAND",
+    "2=PREPAID"
+  ],
+  "XaiCommerceBearerPurpose": [
+    "0=UNSPECIFIED",
+    "1=BROWSER_COMMERCE",
+    "2=PREPAID_TOP_UP"
+  ],
+  "XaiCommerceBearerTokenSource": [
+    "0=UNSPECIFIED",
+    "1=PARTNER_JWT",
+    "2=DEV_OVERRIDE"
+  ],
+  "XaiCommerceBearerRefusalReason": [
+    "0=UNSPECIFIED",
+    "1=UNAVAILABLE",
+    "2=INTERACTIVE_ONLY",
+    "3=NOT_CONFIGURED",
+    "4=NOT_LINKED",
+    "5=RATE_LIMITED"
+  ],
+  "SlackConnectSource": [
+    "0=UNSPECIFIED",
+    "1=LEGACY_UNKNOWN",
+    "2=GLASS_CHECKLIST",
+    "3=GLASS_SETTINGS",
+    "4=GLASS_AUTOMATIONS",
+    "5=IDE_SETTINGS",
+    "6=IDE_IN_APP_AD",
+    "7=DASHBOARD_INTEGRATIONS",
+    "8=DASHBOARD_OVERVIEW",
+    "9=DASHBOARD_SETUP_PROGRESS",
+    "10=DASHBOARD_CHECKLIST",
+    "11=DASHBOARD_AUTOMATIONS",
+    "12=DASHBOARD_SLACK_SETTINGS",
+    "13=DASHBOARD_SAND_SETUP",
+    "14=CLOUD_ENVIRONMENT_ONBOARDING",
+    "15=MANAGED_AGENTS",
+    "16=REVIEW_SETTINGS",
+    "17=SAND_LISTENER",
+    "18=EMAIL",
+    "19=PUBLIC_INSTALL",
+    "20=PUBLIC_INSTALL_USER_SCOPES",
+    "21=SLACK_AUTH_PROMPT",
+    "22=SLACK_LINK_UNFURL",
+    "23=GLASS_UNATTRIBUTED",
+    "24=IDE_UNATTRIBUTED",
+    "25=WEB_UNATTRIBUTED",
+    "26=GROK_BOT_UNATTRIBUTED"
+  ],
+  "SlackConnectSite": [
+    "0=UNSPECIFIED",
+    "1=CURSOR",
+    "2=GROK"
+  ],
+  "TeamEnterpriseGrantState": [
+    "0=UNSPECIFIED",
+    "1=GRANTED",
+    "2=NONE",
+    "3=UNAVAILABLE"
+  ],
+  "FirstPartyPluginMode": [
+    "0=UNSPECIFIED",
+    "1=ENABLE_ALL",
+    "2=ALLOWLIST"
+  ],
+  "AutoCreatePrMode": [
+    "0=UNSPECIFIED",
+    "1=ALWAYS",
+    "2=SINGLE",
+    "3=NEVER"
+  ],
+  "PrReviewOpenDestinationMode": [
+    "0=UNSPECIFIED",
+    "1=GITHUB",
+    "2=GRAPHITE",
+    "3=REVIEW_CURSOR"
+  ],
+  "PrReviewOpenSurfaceMode": [
+    "0=UNSPECIFIED",
+    "1=IN_APP",
+    "2=EXTERNAL_BROWSER"
+  ],
+  "GithubArtifactPostingMode": [
+    "0=UNSPECIFIED",
+    "1=POST_ARTIFACT",
+    "2=LINK_ONLY"
+  ],
+  "PublicArtifactSharingMode": [
+    "0=UNSPECIFIED",
+    "1=ALLOWED",
+    "2=DISABLED"
+  ],
+  "CloudAgentEgressProtectionMode": [
+    "0=UNSPECIFIED",
+    "1=ALLOW_ALL",
+    "2=DEFAULT_WITH_NETWORK_SETTINGS",
+    "3=NETWORK_SETTINGS_ONLY",
+    "4=PARENT_PLUS_NETWORK_SETTINGS"
+  ],
+  "TeamFollowupEnabledMode": [
+    "0=UNSPECIFIED",
+    "1=DISABLED",
+    "2=SERVICE_ACCOUNTS_ONLY",
+    "3=ALL"
+  ],
+  "SlackReplyMode": [
+    "0=UNSPECIFIED",
+    "1=FOLLOW_THREADS",
+    "2=MENTIONS_ONLY"
+  ],
+  "AutomationDefaultVisibility": [
+    "0=UNSPECIFIED",
+    "1=VISIBLE",
+    "2=EDITABLE",
+    "3=PRIVATE"
+  ],
+  "PersonalSecretsPolicy": [
+    "0=UNSPECIFIED",
+    "1=ALLOWED",
+    "2=DISABLED"
+  ],
+  "SandboxingMode": [
+    "0=UNSPECIFIED",
+    "1=ENABLED",
+    "2=DISABLED",
+    "3=ENFORCED"
+  ],
+  "NetworkingMode": [
+    "0=UNSPECIFIED",
+    "1=USER_CONTROLLED",
+    "2=ALWAYS_DISABLED"
+  ],
+  "GitMode": [
+    "0=UNSPECIFIED",
+    "1=USER_CONTROLLED",
+    "2=ALWAYS_DISABLED"
+  ],
+  "SandboxReadBoundaryMode": [
+    "0=UNSPECIFIED",
+    "1=SYSTEM",
+    "2=WORKSPACE",
+    "4=NONE"
+  ],
+  "SlackInboundInstallMode": [
+    "0=UNSPECIFIED",
+    "1=OPEN",
+    "2=LOCKED"
+  ],
+  "LocalToolPermissionCeiling": [
+    "0=UNSPECIFIED",
+    "1=NEVER",
+    "2=ASK",
+    "3=ALWAYS"
+  ],
+  "LocalToolOtherCommandsPolicy": [
+    "0=UNSPECIFIED",
+    "1=ASK",
+    "2=BLOCK"
+  ],
+  "SandEgressMode": [
+    "0=UNSPECIFIED",
+    "1=ALLOW_ALL",
+    "2=DEFAULT_WITH_NETWORK_SETTINGS",
+    "3=NETWORK_SETTINGS_ONLY"
+  ],
+  "SandLocalEgressMode": [
+    "0=UNSPECIFIED",
+    "1=ALWAYS_ON",
+    "2=MEMBER_DECIDES",
+    "3=ALWAYS_OFF"
+  ],
+  "GrokBotTeamBotSharing": [
+    "0=UNSPECIFIED",
+    "1=ALLOWED",
+    "2=ADMINS_ONLY",
+    "3=DISABLED",
+    "4=DESIGNATED"
+  ],
+  "PagesTeamSharingLevel": [
+    "0=UNSPECIFIED",
+    "1=EVERYONE",
+    "2=SPECIFIC_TEAMMATES",
+    "3=OFF"
+  ],
+  "LlmGatewayAuthMode": [
+    "0=UNSPECIFIED",
+    "1=JWT_ACCESS",
+    "2=CUSTOMER_MANAGED"
+  ],
+  "LlmGatewayRoutingMode": [
+    "0=UNSPECIFIED",
+    "1=LEGACY",
+    "2=MODEL_LIST",
+    "3=CUSTOM"
+  ],
+  "LlmGatewayCredentialSourceStrategy": [
+    "0=UNSPECIFIED",
+    "1=TEAM_CREDENTIAL_ALL_SURFACES",
+    "2=CLIENT_LOCAL_TEAM_CLOUD"
+  ],
+  "LlmGatewayDiscoveryScope": [
+    "0=UNSPECIFIED",
+    "1=ALL_MODELS",
+    "2=CATALOG_PLUS_UNPUBLISHED"
+  ],
+  "SandGroupAccessMode": [
+    "0=UNSPECIFIED",
+    "1=ALL",
+    "2=LIMITED"
+  ],
+  "CloudAgentGroupAccessMode": [
+    "0=UNSPECIFIED",
+    "1=ALL",
+    "2=LIMITED"
+  ],
+  "CursorGroupAccessMode": [
+    "0=UNSPECIFIED",
+    "1=ALL",
+    "2=LIMITED"
+  ],
+  "SandBillingBrand": [
+    "0=UNSPECIFIED",
+    "1=CURSOR",
+    "2=GROK"
+  ],
+  "GrokBotUsageSource": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=AUTOMATION",
+    "3=AGENT",
+    "4=GROUP",
+    "5=OTHER"
+  ],
+  "ConnectionHealth": [
+    "0=UNSPECIFIED",
+    "1=HEALTHY",
+    "2=SETUP_INCOMPLETE",
+    "3=DEGRADED",
+    "4=NEEDS_REAUTH",
+    "5=NEEDS_ADMIN",
+    "6=ERROR",
+    "7=DISCONNECTED"
+  ],
+  "ScmReasonCode": [
+    "0=UNSPECIFIED",
+    "1=NEEDS_REAUTH",
+    "2=NEEDS_ADMIN",
+    "3=REPO_NOT_IN_SELECTION",
+    "4=WRONG_TEAM",
+    "5=RATE_LIMITED",
+    "6=NETWORK_BLOCKED",
+    "7=PROVIDER_OUTAGE",
+    "8=CAPABILITY_UNSUPPORTED",
+    "9=CURSOR_ROLE_REQUIRED",
+    "10=READ_ONLY",
+    "11=PERSONAL_REPO",
+    "12=BLOCKED_BY_POLICY",
+    "13=ARCHIVED",
+    "14=NO_REPO_ACCESS",
+    "15=ACCESS_UNCHECKED",
+    "16=MISSING_PERMISSION"
+  ],
+  "AllowlistConfig": [
+    "0=UNSPECIFIED",
+    "1=ALLOWLIST",
+    "2=BLOCKLIST"
+  ],
+  "XaiCursorTeamMemberRole": [
+    "0=UNSPECIFIED",
+    "1=MEMBER",
+    "2=ADMIN"
+  ],
+  "SlackLinkedWorkspaceStatus": [
+    "0=UNSPECIFIED",
+    "1=CONNECTED",
+    "2=NEEDS_RECONNECT",
+    "3=RESTRICTED"
+  ],
+  "SpendGroupByCategory": [
+    "0=UNSPECIFIED",
+    "1=MODEL",
+    "2=USAGE_TYPE",
+    "3=ORIGINATING_FLOW",
+    "4=GROK_BOT",
+    "5=PRODUCT",
+    "6=USER"
+  ],
+  "DailySpendRankingMetric": [
+    "0=UNSPECIFIED",
+    "1=SPEND",
+    "2=TOKENS"
+  ],
+  "SpendType": [
+    "0=UNSPECIFIED",
+    "1=ON_DEMAND",
+    "2=INCLUDED",
+    "3=ALL"
+  ],
+  "SharedConversationVisibility": [
+    "0=UNSPECIFIED",
+    "1=PRIVATE",
+    "2=TEAM",
+    "3=PUBLIC"
+  ],
+  "CanvasBrand": [
+    "0=UNSPECIFIED",
+    "1=CURSOR",
+    "2=GROK"
+  ],
+  "CanvasVisibility": [
+    "0=UNSPECIFIED",
+    "1=PRIVATE",
+    "2=TEAM_VIEW",
+    "3=PUBLIC"
+  ],
+  "PluginStatus": [
+    "0=UNSPECIFIED",
+    "1=DRAFT",
+    "2=PENDING_APPROVAL",
+    "3=APPROVED",
+    "4=REJECTED",
+    "5=UNLISTED"
+  ],
+  "PluginLifecycleState": [
+    "0=UNSPECIFIED",
+    "1=PUBLIC_LISTED",
+    "2=PUBLIC_UNLISTED",
+    "3=PUBLIC_DRAFT",
+    "4=PUBLIC_PENDING",
+    "5=PUBLIC_REJECTED",
+    "6=PUBLISHER_SUBMISSION",
+    "7=PRIVATE_ACTIVE",
+    "10=PUBLIC_DEPRECATED",
+    "11=PRIVATE_DEPRECATED",
+    "12=PUBLIC_INVALID",
+    "13=PRIVATE_INVALID",
+    "14=PRIVATE_PUBLISHED"
+  ],
+  "PluginSharepointInstallBlockDetail": [
+    "0=UNSPECIFIED",
+    "1=NO_TEAM",
+    "2=TEAM_NOT_CONNECTED",
+    "3=TEAM_SETUP_UNFINISHED"
+  ],
+  "PluginAccountUnavailableReason": [
+    "0=UNSPECIFIED",
+    "1=TAILSCALE_NOT_ENABLED"
+  ],
+  "PluginTeamAdminInstallBlockReason": [
+    "0=UNSPECIFIED",
+    "1=MCP_ADMIN_POLICY",
+    "2=FIRST_PARTY_ALLOWLIST",
+    "3=TEAM_LIST",
+    "4=SHAREPOINT_TEAM_ONLY"
+  ],
+  "ConnectorPolicyBlockedStage": [
+    "0=UNSPECIFIED",
+    "1=IMPRESSION",
+    "2=CONNECT_CLICK"
+  ],
+  "ConnectorPolicyBlockedClient": [
+    "0=UNSPECIFIED",
+    "1=GROK_BOT_DESKTOP",
+    "2=GROK_BOT_MOBILE",
+    "3=GROK_BOT_WEB"
+  ],
+  "McpServerAddBlockingSetting": [
+    "0=UNSPECIFIED",
+    "1=MCP_ALLOWLIST",
+    "2=CLOUD_AGENT_MCP_ALLOWLIST"
+  ],
+  "EffectivePluginInstallMode": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=TEAM_DEFAULT",
+    "3=TEAM_REQUIRED"
+  ],
+  "MarketplaceAccessPrincipalKind": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=TEAM_MEMBER_GROUP",
+    "3=TEAM_ADMIN_GROUP",
+    "4=GROUP"
+  ],
+  "TeamMarketplacePluginInstallMode": [
+    "0=OPTIONAL",
+    "1=DEFAULT",
+    "2=REQUIRED"
+  ],
+  "ManagerSpawnKind": [
+    "0=UNSPECIFIED",
+    "1=CREATED",
+    "2=ADOPTED",
+    "3=CREATED_SAME_VM",
+    "4=CREATED_INLINE"
+  ],
+  "BackgroundComposerUpdateKind": [
+    "0=UNSPECIFIED",
+    "1=CREATED",
+    "2=STATUS_CHANGED",
+    "3=ARCHIVED",
+    "4=UNARCHIVED",
+    "5=METADATA_CHANGED",
+    "6=MEMBERSHIP_CHANGED",
+    "7=VISIBILITY_CHANGED",
+    "8=DELETED",
+    "9=SUBSCRIPTIONS_CHANGED",
+    "11=MACHINE_PRESSURE_CHANGED",
+    "12=READ_CURSOR_ADVANCED",
+    "13=UNREAD_CHANGED",
+    "14=TRACKED_TASKS_CHANGED",
+    "15=PROJECT_MEMBERS_CHANGED",
+    "16=PROJECT_APPS_CHANGED"
+  ],
+  "BackgroundComposerMachinePressure": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=HIGH"
+  ],
+  "BackgroundComposerStatus": [
+    "0=UNSPECIFIED",
+    "1=RUNNING",
+    "2=FINISHED",
+    "3=ERROR",
+    "4=CREATING",
+    "5=EXPIRED"
+  ],
+  "CloudAgentWorkflowStatus": [
+    "0=UNSPECIFIED",
+    "1=RUNNING",
+    "2=IDLE",
+    "3=ERROR",
+    "4=ARCHIVED",
+    "5=EXPIRED",
+    "6=NOT_YET_STARTED",
+    "7=WAITING_FOR_BACKGROUND_WORK"
+  ],
+  "BackgroundComposerSource": [
+    "0=UNSPECIFIED",
+    "1=EDITOR",
+    "2=SLACK",
+    "3=WEBSITE",
+    "4=LINEAR",
+    "5=IOS_APP",
+    "6=API",
+    "7=GITHUB",
+    "8=CLI",
+    "9=GITHUB_CI_AUTOFIX",
+    "10=GITLAB",
+    "11=ENVIRONMENT_SETUP_WEB",
+    "12=GRIND_WEB",
+    "13=BUGBOT_AUTOFIX",
+    "14=AUTOMATIONS",
+    "15=GRAPHITE_CHAT_WEB",
+    "16=GLASS",
+    "17=GRAPHITE_FULL_SELF_DRIVING",
+    "18=TEAMS",
+    "19=LOCAL",
+    "20=JIRA",
+    "21=SDK",
+    "22=FULL_SELF_DRIVING",
+    "23=QABOT_FRONTEND",
+    "24=AS_SUBAGENT_FROM_LOCAL",
+    "25=ENVIRONMENT_SETUP_GLASS",
+    "26=SAND_CODING_SUBAGENT",
+    "27=BITBUCKET",
+    "28=CLOUD_META_AGENT",
+    "29=AS_SUBAGENT_FROM_CLOUD",
+    "30=ENVIRONMENT_SETUP_ONBOARDING_AUTO",
+    "31=ORIGIN",
+    "32=AS_SIDE_CHAT_FROM_CLOUD",
+    "33=GROK_BOT",
+    "34=CLOUD_ONBOARDING_WEB",
+    "35=CHANGE_MONITOR_ONBOARDING_WEB",
+    "36=MAIN_BOT",
+    "37=ROLLOUTS_AUTOPILOT",
+    "38=EMAIL"
+  ],
+  "PrivateWorkerType": [
+    "0=UNSPECIFIED",
+    "1=POOL",
+    "2=MY_MACHINE"
+  ],
+  "PRStatus": [
+    "0=PR_STATUS_UNSPECIFIED",
+    "1=PR_STATUS_OPEN",
+    "2=PR_STATUS_DRAFT",
+    "3=PR_STATUS_MERGED",
+    "4=PR_STATUS_CLOSED",
+    "0=UNSPECIFIED",
+    "1=LOCAL",
+    "2=CLOUD"
+  ],
+  "CloudSubagentParentSpawnKind": [
+    "0=UNSPECIFIED",
+    "1=TASK",
+    "2=EVENT_SUBSCRIPTION",
+    "3=ADOPTED"
+  ],
+  "EnsembleStatus": [
+    "0=UNSPECIFIED",
+    "1=PARENT",
+    "2=CHILD"
+  ],
+  "LogicalEnvironmentScope": [
+    "0=UNSPECIFIED",
+    "1=PERSONAL",
+    "2=TEAM",
+    "3=REPOSITORY"
+  ],
+  "EnvironmentVersionSourceKind": [
+    "0=UNSPECIFIED",
+    "1=REPO_FILE",
+    "2=DATABASE_USER",
+    "3=DATABASE_TEAM",
+    "4=REQUEST_OVERRIDE"
+  ],
+  "AutoCreatePrSetting": [
+    "0=UNSPECIFIED",
+    "1=ALWAYS",
+    "2=SINGLE",
+    "3=NEVER"
+  ],
+  "BackgroundComposerQuickActionExecutionMode": [
+    "0=UNSPECIFIED",
+    "1=SUBAGENT",
+    "2=PARENT_AGENT"
+  ],
+  "BackgroundComposerQuickActionSubagentTemplateScope": [
+    "0=UNSPECIFIED",
+    "1=BUILTIN",
+    "2=USER",
+    "3=TEAM"
+  ],
+  "BackgroundComposerQuickActionSubagentTemplateOperation": [
+    "0=UNSPECIFIED",
+    "1=CREATE",
+    "2=UPDATE",
+    "3=DELETE"
+  ],
+  "CloudAgentStartupWarningType": [
+    "0=UNSPECIFIED",
+    "1=SNAPSHOT_EXPIRED",
+    "2=SNAPSHOT_INVALID",
+    "3=SNAPSHOT_NOT_FOUND_OR_NO_ACCESS",
+    "4=SNAPSHOT_COPY_FAILED",
+    "5=POD_CREATE_FAILED_AFTER_TURN"
+  ],
+  "CursorTeamMemberCurrentSeatKind": [
+    "0=UNSPECIFIED",
+    "1=FREE",
+    "2=STANDARD",
+    "3=PREMIUM",
+    "4=ENTERPRISE_POOL",
+    "5=LEGACY_PAID",
+    "6=COMPLAT",
+    "7=UNRESOLVED"
+  ],
+  "CursorTeamMemberRole": [
+    "0=UNSPECIFIED",
+    "1=MEMBER",
+    "2=ADMIN"
+  ],
+  "AddCursorTeamMemberOutcome": [
+    "0=UNSPECIFIED",
+    "1=ADDED",
+    "2=UNCHANGED",
+    "3=INVITED",
+    "4=USER_NOT_FOUND"
+  ],
+  "RemoveCursorTeamMemberOutcome": [
+    "0=UNSPECIFIED",
+    "1=REMOVED",
+    "2=UNCHANGED"
+  ],
+  "CursorTeamMergeBlock": [
+    "0=UNSPECIFIED",
+    "1=ENTERPRISE",
+    "2=REQUEST_BASED_PRICING",
+    "3=MERGED",
+    "4=IN_PROGRESS",
+    "6=NOT_ADMIN"
+  ],
+  "StartCursorTeamMergeOutcome": [
+    "0=UNSPECIFIED",
+    "1=STARTED",
+    "2=CURSOR_TEAM_BLOCKED",
+    "3=XAI_TEAM_MERGED",
+    "4=XAI_TEAM_MERGE_COMMITTED",
+    "5=ACTOR_ALREADY_ON_TEAM"
+  ],
+  "PrepareCursorTeamMergeCheckoutOutcome": [
+    "0=UNSPECIFIED",
+    "1=PREPARED",
+    "2=PURCHASE_PENDING",
+    "3=ALREADY_PAID"
+  ],
+  "CancelCursorTeamMergeOutcome": [
+    "0=UNSPECIFIED",
+    "1=CANCELLED",
+    "2=PURCHASE_PENDING",
+    "3=ALREADY_PAID"
+  ],
+  "FinalizeCursorTeamMergeCheckoutOutcome": [
+    "0=UNSPECIFIED",
+    "1=AWAITING_PAYMENT",
+    "2=PAID",
+    "3=MERGED"
+  ],
+  "XaiUnificationAfterPurchaseOutcome": [
+    "0=UNSPECIFIED",
+    "1=MERGE_STARTED",
+    "2=ALREADY_MERGED",
+    "3=NOT_LINKED",
+    "4=NOT_UNIFIED_PLAN",
+    "5=BLOCKED_BY_CURSOR_TEAM",
+    "6=NEEDS_USER_ACTION",
+    "7=UNAVAILABLE",
+    "8=NOT_ELIGIBLE",
+    "9=MERGED"
+  ],
+  "CreateUnifiedDashboardTeamOutcome": [
+    "0=UNSPECIFIED",
+    "1=CREATED",
+    "2=UNCHANGED"
+  ],
+  "ClientOS": [
+    "0=CLIENT_OS_UNSPECIFIED",
+    "1=CLIENT_OS_WINDOWS",
+    "2=CLIENT_OS_MACOS",
+    "3=CLIENT_OS_LINUX",
+    "4=CLIENT_OS_IOS",
+    "5=CLIENT_OS_ANDROID",
+    "0=UNSPECIFIED",
+    "1=INFO",
+    "2=DEBUG",
+    "3=WARN",
+    "4=ERROR"
+  ],
+  "StatsigExposureKind": [
+    "0=UNSPECIFIED",
+    "1=FEATURE_GATE",
+    "2=EXPERIMENT",
+    "3=DYNAMIC_CONFIG",
+    "4=LAYER_PARAMETER"
+  ],
+  "CredentialLifecycleState": [
+    "0=UNSPECIFIED",
+    "1=ACTIVE",
+    "2=EXPIRING",
+    "3=GRACE",
+    "4=EXPIRED",
+    "5=PROVIDER_REJECTED"
+  ],
+  "CredentialExpirationMode": [
+    "0=UNSPECIFIED",
+    "1=DISABLED",
+    "2=WARN",
+    "3=ENFORCE"
+  ],
+  "CredentialTargetRuleKind": [
+    "0=UNSPECIFIED",
+    "1=EXACT_HOST_PORT",
+    "2=REGISTRABLE_DOMAIN"
+  ],
+  "OnePasswordConnectionKind": [
+    "0=UNSPECIFIED",
+    "1=SERVICE_ACCOUNT",
+    "2=OAUTH_BROKER"
+  ],
+  "OnePasswordBrokerConnectionState": [
+    "0=UNSPECIFIED",
+    "1=PAIRING",
+    "2=CONNECTED",
+    "3=RECONNECT_REQUIRED"
+  ],
+  "OnePasswordSyncTrigger": [
+    "0=UNSPECIFIED",
+    "1=MANUAL",
+    "2=APP_FOCUS"
+  ],
+  "SandCredentialDecisionHarness": [
+    "0=UNSPECIFIED",
+    "1=BOX",
+    "2=TEMPORAL"
+  ],
+  "SandSetupManifestScopeKind": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=TEAM",
+    "3=ORGANIZATION"
+  ],
+  "SandSetupTestPhase": [
+    "0=UNSPECIFIED",
+    "1=BOOTING",
+    "2=RUNNING",
+    "3=SUCCEEDED",
+    "4=FAILED"
+  ],
+  "SandSetupTestGuestScriptResult": [
+    "0=UNSPECIFIED",
+    "1=PASSED",
+    "2=FAILED",
+    "3=NOT_RUN"
+  ],
+  "BulkTeamMemberSandBoxAction": [
+    "0=UNSPECIFIED",
+    "1=KILL",
+    "2=RECREATE",
+    "3=PERMANENT_DELETE",
+    "4=DELETE_GROK_BOT_DATA"
+  ],
+  "BulkTeamMemberSandBoxItemState": [
+    "0=UNSPECIFIED",
+    "1=QUEUED",
+    "2=RUNNING",
+    "3=SUCCEEDED",
+    "4=SKIPPED",
+    "5=FAILED"
+  ],
+  "BulkTeamMemberSandBoxOperationState": [
+    "0=UNSPECIFIED",
+    "1=RUNNING",
+    "2=SUCCEEDED",
+    "3=PARTIALLY_SUCCEEDED",
+    "4=FAILED"
+  ],
+  "AdminRefreshSandBoxEgressTrigger": [
+    "0=UNSPECIFIED",
+    "1=SINGLE",
+    "2=BULK"
+  ],
+  "AdminRefreshSandBoxEgressStatus": [
+    "0=UNSPECIFIED",
+    "1=PUSHED",
+    "2=NO_BOX",
+    "3=ERROR"
+  ],
+  "AdminRefreshSandBoxEgressLabelOutcome": [
+    "0=UNSPECIFIED",
+    "1=REFRESHED",
+    "2=SKIPPED",
+    "3=UNSUPPORTED_HOST",
+    "4=FAILED"
+  ],
+  "SandBoxMigrationPhase": [
+    "0=UNSPECIFIED",
+    "1=BACKING_UP",
+    "2=CREATING",
+    "3=MOVING",
+    "4=CLEANING_UP",
+    "5=WIPING",
+    "6=DONE",
+    "7=FAILED"
+  ],
+  "SandBoxRunState": [
+    "0=UNSPECIFIED",
+    "1=ABSENT",
+    "2=HIBERNATED",
+    "3=RUNNING",
+    "4=STARTING"
+  ],
+  "SandBoxUpgradeScheduleState": [
+    "0=UNSPECIFIED",
+    "1=SCHEDULED",
+    "2=CLAIMED",
+    "3=RUNNING",
+    "4=WAITING_FOR_IMAGE",
+    "5=COMPLETED",
+    "6=MISSED",
+    "7=FAILED",
+    "8=CANCELLED"
+  ],
+  "SandBoxStoreMultipartOperationFailureCode": [
+    "0=UNSPECIFIED",
+    "1=PRECONDITION_FAILED",
+    "2=UPLOAD_NOT_FOUND",
+    "3=INVALID_PARTS",
+    "4=CHECKSUM_MISMATCH",
+    "5=TRANSIENT",
+    "6=INTERNAL",
+    "7=RESTART_REQUIRED"
+  ],
+  "SandBoxStoreManifestCommitStatus": [
+    "0=UNSPECIFIED",
+    "1=COMMITTED",
+    "2=RETRY",
+    "3=FENCED"
+  ],
+  "SandVoiceCallStartSurface": [
+    "0=UNSPECIFIED",
+    "1=DESKTOP_BUTTON",
+    "2=MOBILE_BUTTON",
+    "3=DEEP_LINK",
+    "4=SIRI",
+    "5=SHORTCUT",
+    "6=ONBOARDING_CARD"
+  ],
+  "GrokBotChangelogStatus": [
+    "0=UNSPECIFIED",
+    "1=DRAFT",
+    "2=PUBLISHED",
+    "3=PAUSED",
+    "4=ARCHIVED"
+  ],
+  "GrokBotChangelogDeliveryWindow": [
+    "0=UNSPECIFIED",
+    "1=NEXT_WORKING_WINDOW",
+    "2=MORNING"
+  ],
+  "GrokBotChangelogManualSendOutcome": [
+    "0=UNSPECIFIED",
+    "1=FIRED",
+    "2=REFUSED"
+  ],
+  "GrokBotChangelogEntryDraftOutcome": [
+    "0=UNSPECIFIED",
+    "1=WRITTEN",
+    "2=WAITING"
+  ],
+  "GrokBotOnboardingDripStatus": [
+    "0=UNSPECIFIED",
+    "1=DRAFT",
+    "2=PUBLISHED",
+    "3=PAUSED",
+    "4=ARCHIVED"
+  ],
+  "GrokBotOnboardingDripManualSendOutcome": [
+    "0=UNSPECIFIED",
+    "1=FIRED",
+    "2=REFUSED"
+  ],
+  "GrokBotOnboardingDripRouterStatus": [
+    "0=UNSPECIFIED",
+    "1=UNPUBLISHED",
+    "2=PUBLISHED"
+  ],
+  "GrokBotSessionBoxPodState": [
+    "0=UNSPECIFIED",
+    "1=ABSENT",
+    "2=REACHABLE",
+    "3=HIBERNATED",
+    "4=STARTING",
+    "5=UNKNOWN"
+  ],
+  "GrokBotSessionBoxCredentialState": [
+    "0=UNSPECIFIED",
+    "1=ABSENT",
+    "2=PRESENT",
+    "3=REVOKED"
+  ],
+  "GrokBotMarketplaceListingStatus": [
+    "0=UNSPECIFIED",
+    "1=PENDING_REVIEW",
+    "2=LISTED",
+    "3=DELISTED"
+  ],
+  "GrokBotMarketplaceImageKind": [
+    "0=UNSPECIFIED",
+    "1=BOT",
+    "2=CREATOR"
+  ],
+  "GrokBotAgentSessionKind": [
+    "0=UNSPECIFIED",
+    "1=MAIN",
+    "2=SLACK_DM",
+    "3=SLACK_THREAD",
+    "4=DM",
+    "5=GROUP",
+    "6=TEAMS_DM",
+    "7=TEAMS_THREAD",
+    "8=TEAMS_GROUP_CHAT"
+  ],
+  "GrokBotAttachmentReadOutcome": [
+    "0=UNSPECIFIED",
+    "1=STORE",
+    "2=NOT_IN_STORE",
+    "3=NO_STORAGE"
+  ],
+  "GrokBotAgentStoreFolderType": [
+    "0=UNSPECIFIED",
+    "1=UNINDEXED_ATTACHMENTS",
+    "2=AGENT_OTHER",
+    "3=BOT_FILES",
+    "4=GROK_BOT_OTHER",
+    "5=DOCUMENTS",
+    "6=CANVASES",
+    "7=WORKSPACE"
+  ],
+  "GrokBotSlackAccessLookupErrorKind": [
+    "0=UNSPECIFIED",
+    "1=AGENT_NOT_FOUND",
+    "2=BOT_NOT_CONNECTED_TO_SLACK",
+    "3=INVALID_MESSAGE_LINK",
+    "4=WRONG_WORKSPACE",
+    "5=BOT_NOT_IN_CHANNEL",
+    "6=MESSAGE_NOT_FOUND",
+    "7=USER_NOT_FOUND",
+    "8=MISSING_SLACK_SCOPE"
+  ],
+  "GrokBotSlackAccessLinkSource": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=SLACK_ACCESS",
+    "3=CREATOR_FALLBACK"
+  ],
+  "GrokBotSlackAccessCheckId": [
+    "0=UNSPECIFIED",
+    "1=REPLIED",
+    "2=APP_CONNECTED",
+    "3=OWNER_FLOOR",
+    "4=WORKSPACE",
+    "5=WAKE_PATH",
+    "6=EFFECTIVE_LINK",
+    "7=LINKED_ACCESS",
+    "8=UNLINKED_ROUTE",
+    "9=ACTING_PRINCIPAL"
+  ],
+  "GrokBotSlackAccessCheckStatus": [
+    "0=UNSPECIFIED",
+    "1=PASS",
+    "2=FAIL",
+    "3=SKIPPED",
+    "4=UNKNOWN"
+  ],
+  "GrokBotSlackAccessCheckSource": [
+    "0=UNSPECIFIED",
+    "1=SLACK_API",
+    "2=BACKEND"
+  ],
+  "GrokBotSlackAccessLevel": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=SSU",
+    "3=ORGANIZATION",
+    "4=TEAM",
+    "5=COLLABORATOR",
+    "6=MANAGER",
+    "7=OWNER"
+  ],
+  "GrokBotAttachmentUploadMode": [
+    "0=UNSPECIFIED",
+    "1=USE_BOX",
+    "2=SINGLE_PUT",
+    "3=MULTIPART",
+    "4=REFUSED"
+  ],
+  "GrokBotAttachmentUploadRefusal": [
+    "0=UNSPECIFIED",
+    "1=TOO_LARGE",
+    "2=AGENT_FULL",
+    "3=EXPIRED",
+    "4=INCOMPLETE",
+    "5=SIZE_MISMATCH",
+    "6=NOT_AN_IMAGE",
+    "7=TARGET_CHANGED",
+    "8=UNSUPPORTED_TYPE"
+  ],
+  "GrokBotTurnFailureCode": [
+    "0=UNSPECIFIED",
+    "1=INTERNAL",
+    "2=TIMEOUT",
+    "3=USAGE_LIMIT",
+    "4=RATE_LIMIT",
+    "5=TEAM_POLICY_UNAVAILABLE",
+    "6=UNPAID_INVOICE",
+    "7=PROVIDER_CONTENT_BLOCKED",
+    "8=BOX_UPDATING",
+    "9=TAILNET_BOX_REFUSED",
+    "10=TAILNET_VIEWER_BOX_REFUSED"
+  ],
+  "GrokBotTurnFailureAccount": [
+    "0=UNSPECIFIED",
+    "1=OWNER",
+    "2=ACTING_USER",
+    "3=TEAM_SERVICE_ACCOUNT"
+  ],
+  "GrokBotRosterChangeKind": [
+    "0=UNSPECIFIED",
+    "1=AGENT_CREATED",
+    "2=AGENT_UPDATED",
+    "3=AGENT_DELETED",
+    "4=AGENT_VISIBILITY_CHANGED",
+    "5=ROOM_MEMBERS_CHANGED",
+    "6=SIDEBAR_VISIBILITY_CHANGED",
+    "7=USER_SETTINGS_CHANGED"
+  ],
+  "GrokBotUserSettingsField": [
+    "0=UNSPECIFIED",
+    "1=MCP_SERVERS",
+    "2=TIME_ZONE",
+    "3=AUTO_REVIEW",
+    "4=PINNED_AGENTS",
+    "5=SIDEBAR_SECTIONS",
+    "6=HAS_SEEN_ONBOARDING",
+    "7=MAIN_AGENT",
+    "8=X_TOOL_ACCESS",
+    "9=JOB_ROLE",
+    "10=LIBRARY_PINS",
+    "11=CART"
+  ],
+  "GrokBotClientPresenceTrigger": [
+    "0=UNSPECIFIED",
+    "1=TYPING"
+  ],
+  "GrokBotBoxIntent": [
+    "0=UNSPECIFIED",
+    "1=APP_FOREGROUND",
+    "2=APP_BACKGROUND",
+    "3=CHAT_OPEN",
+    "4=COMPOSER_FOCUS",
+    "5=TYPING",
+    "6=UPLOAD_START",
+    "7=FILE_OPEN",
+    "8=COMPUTER_OPEN"
+  ],
+  "GrokBotBoxIntentAction": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=IN_FLIGHT",
+    "3=PRETHAW",
+    "4=REFUSED"
+  ],
+  "GrokBotNotificationPlatform": [
+    "0=UNSPECIFIED",
+    "1=MACOS",
+    "2=WINDOWS",
+    "3=LINUX",
+    "4=IOS",
+    "5=ANDROID"
+  ],
+  "GrokBotNotificationOsPermission": [
+    "0=UNSPECIFIED",
+    "1=GRANTED",
+    "2=DENIED",
+    "3=UNDETERMINED",
+    "4=UNKNOWN"
+  ],
+  "GrokBotMessagingCapabilityClient": [
+    "0=UNSPECIFIED",
+    "1=MAIN_APP",
+    "2=IMESSAGE_APP"
+  ],
+  "GrokBotBoxDiskPressureLevel": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=SOFT",
+    "3=HARD"
+  ],
+  "SandBoxStoreFlushSource": [
+    "0=UNSPECIFIED",
+    "1=HIBERNATE_HOOK",
+    "2=PERIODIC_CLEAN_PASS"
+  ],
+  "GrokBotAutomationAction": [
+    "0=UNSPECIFIED",
+    "1=OPEN",
+    "2=TOGGLE",
+    "3=EDIT",
+    "4=DELETE"
+  ],
+  "GrokBotAgentSuggestionDismissReason": [
+    "0=UNSPECIFIED",
+    "1=HIDDEN",
+    "2=ACTED"
+  ],
+  "GrokBotTaskState": [
+    "0=UNSPECIFIED",
+    "1=WORKING",
+    "2=NEEDS_INPUT",
+    "3=DONE"
+  ],
+  "GrokBotTaskListTurnEnd": [
+    "0=UNSPECIFIED",
+    "1=FINISHED",
+    "2=STOPPED",
+    "3=SUPERSEDED"
+  ],
+  "GrokBotAgentAutomationRerunResult": [
+    "0=UNSPECIFIED",
+    "1=STARTED",
+    "2=ALREADY_RERUN",
+    "3=STARTING",
+    "4=NOT_OFFERED",
+    "5=FAILED"
+  ],
+  "GrokBotApprovalMode": [
+    "0=UNSPECIFIED",
+    "1=AUTO_REVIEW",
+    "2=READ_ONLY",
+    "3=RUN_EVERYTHING"
+  ],
+  "GrokBotXToolAccess": [
+    "0=UNSPECIFIED",
+    "1=OWN",
+    "2=SHARED"
+  ],
+  "GrokBotEmailProvider": [
+    "0=UNSPECIFIED",
+    "1=GOOGLE",
+    "2=MICROSOFT"
+  ],
+  "GrokBotToolPermission": [
+    "0=UNSPECIFIED",
+    "1=ALWAYS_ALLOW",
+    "2=NEEDS_APPROVAL",
+    "3=BLOCKED"
+  ],
+  "GrokBotAutoReviewRuleSaveSurface": [
+    "0=UNSPECIFIED",
+    "1=DRAFT_CARD",
+    "2=APPROVAL_CARD",
+    "3=SETTINGS",
+    "4=CHAT_CARD"
+  ],
+  "GrokBotAutoReviewRuleTextSource": [
+    "0=UNSPECIFIED",
+    "1=SERVER_PROPOSAL",
+    "2=AGENT_FALLBACK",
+    "3=USER_TYPED",
+    "4=RECIPIENTS_RULE",
+    "5=CHAT_REQUEST"
+  ],
+  "GrokBotUserProfilePhotoKind": [
+    "0=UNSPECIFIED",
+    "1=SELFIE"
+  ],
+  "GrokBotLibraryPinMediaKind": [
+    "0=UNSPECIFIED",
+    "1=IMAGE",
+    "2=VIDEO",
+    "3=FILE",
+    "4=LINK"
+  ],
+  "GrokBotCartCheckoutStatus": [
+    "0=UNSPECIFIED",
+    "1=PENDING",
+    "2=AWAITING_PAYMENT",
+    "3=PAYING",
+    "4=FAILED",
+    "5=EXPIRED",
+    "6=SKIPPED"
+  ],
+  "GrokBotTranscriptSearchTarget": [
+    "0=UNSPECIFIED",
+    "1=MESSAGES",
+    "2=FILES"
+  ],
+  "GrokBotAgentViewerAction": [
+    "0=UNSPECIFIED",
+    "1=SHARE_IN_PLACE",
+    "2=MANAGE_CREDENTIALS"
+  ],
+  "GrokBotAgentKind": [
+    "0=UNSPECIFIED",
+    "1=AGENT",
+    "2=ROOM"
+  ],
+  "GrokBotPullRequestChatBlockReason": [
+    "0=UNSPECIFIED",
+    "1=AUTHOR_IS_USER",
+    "2=AUTHOR_IS_APP",
+    "3=AUTHOR_SERVICE_ACCOUNT_NOT_GROK_BOT",
+    "4=BOT_NOT_FOUND",
+    "5=BOT_HARNESS_UNSUPPORTED",
+    "7=OWNER_GATE_OFF",
+    "8=ROOM_UNAVAILABLE",
+    "9=VIEWER_GATE_OFF",
+    "10=ROOM_CLOSED"
+  ],
+  "GrokBotAgentHarnessKind": [
+    "0=UNSPECIFIED",
+    "1=BOX",
+    "2=TEMPORAL"
+  ],
+  "GrokBotAgentCreateIntent": [
+    "0=UNSPECIFIED",
+    "1=FRESH",
+    "2=REGISTER_EXISTING_LOCAL"
+  ],
+  "GrokBotAgentCreateCaller": [
+    "0=UNSPECIFIED",
+    "1=ROOM_MEMBERS",
+    "2=ENSURE_SERVER_BACKED",
+    "3=MINT",
+    "4=BACKFILL",
+    "5=PRODUCT_CREATE"
+  ],
+  "GrokBotAgentVisibility": [
+    "0=UNSPECIFIED",
+    "1=OWNER",
+    "2=TEAM"
+  ],
+  "GrokBotAgentViewerAccess": [
+    "0=UNSPECIFIED",
+    "1=DIRECT",
+    "2=GROUP",
+    "3=TEAM"
+  ],
+  "SetGrokBotAgentVisibilityOutcome": [
+    "0=UNSPECIFIED",
+    "1=UPDATED",
+    "2=UNSUPPORTED_HARNESS",
+    "3=NO_TEAM",
+    "4=BUSY"
+  ],
+  "CloneGrokBotAgentToTeamOutcome": [
+    "0=UNSPECIFIED",
+    "1=CLONED",
+    "2=UNSUPPORTED",
+    "3=NO_TEAM"
+  ],
+  "ShareGrokBotAgentInPlaceOutcome": [
+    "0=UNSPECIFIED",
+    "1=STARTED",
+    "2=UNSUPPORTED",
+    "3=INELIGIBLE"
+  ],
+  "GrokBotAgentInPlaceShareState": [
+    "0=UNSPECIFIED",
+    "1=NOT_STARTED",
+    "2=RUNNING",
+    "3=DONE",
+    "4=FAILED"
+  ],
+  "GrokBotAgentInPlaceShareStep": [
+    "0=UNSPECIFIED",
+    "1=CHECK",
+    "2=MARK",
+    "3=MEMORY",
+    "4=FILES",
+    "5=VERIFY_FILES",
+    "6=GRANTS",
+    "7=FLIP",
+    "8=FINISH",
+    "9=CLEAR"
+  ],
+  "PublishGrokBotAgentOutcome": [
+    "0=UNSPECIFIED",
+    "1=PUBLISHED",
+    "2=ALREADY_PUBLISHED",
+    "3=NOT_SHARED",
+    "4=UNSUPPORTED_HARNESS"
+  ],
+  "UnpublishGrokBotAgentOutcome": [
+    "0=UNSPECIFIED",
+    "1=UNPUBLISHED",
+    "2=NOT_PUBLISHED",
+    "3=NOT_SHARED",
+    "4=UNSUPPORTED_HARNESS"
+  ],
+  "GrokBotMeetingsVisibility": [
+    "0=UNSPECIFIED",
+    "1=MANAGERS",
+    "2=EVERYONE"
+  ],
+  "GrokBotAgentAccessPrincipalType": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=GROUP"
+  ],
+  "GrokBotAgentLinkAccess": [
+    "0=UNSPECIFIED",
+    "1=ALLOWED",
+    "2=NO_ACCESS",
+    "3=NOT_FOUND"
+  ],
+  "GrokBotAgentAccessInviteRecipientMatch": [
+    "0=UNSPECIFIED",
+    "1=MATCHES",
+    "2=DOES_NOT_MATCH",
+    "3=UNKNOWN"
+  ],
+  "GrokBotAgentAccessInviteState": [
+    "0=UNSPECIFIED",
+    "1=OPEN",
+    "2=ACCEPTED",
+    "3=EXPIRED",
+    "4=REVOKED",
+    "5=UNAVAILABLE",
+    "6=NOT_SHAREABLE"
+  ],
+  "GrokBotAgentAccessInviteIneligibleReason": [
+    "0=UNSPECIFIED",
+    "1=NO_SUBSCRIPTION",
+    "2=TIER_NOT_ELIGIBLE",
+    "3=NOT_INDIVIDUAL",
+    "4=SUBSCRIPTION_NOT_ACTIVE"
+  ],
+  "GrokBotAgentAccessInviteSubscriptionTier": [
+    "0=UNSPECIFIED",
+    "1=NONE",
+    "2=PLUS",
+    "3=PREMIUM",
+    "4=SUPER",
+    "5=ULTRA"
+  ],
+  "GrokBotAgentAccessInviteAcceptStatus": [
+    "0=UNSPECIFIED",
+    "1=REDEEMED",
+    "2=INVALID_CODE",
+    "3=RECIPIENT_MISMATCH",
+    "4=NOT_ELIGIBLE",
+    "5=TRY_AGAIN"
+  ],
+  "GrokBotAgentAccessInviteAcceptOutcome": [
+    "0=UNSPECIFIED",
+    "1=GRANTED",
+    "2=ALREADY_HELD",
+    "3=ALREADY_ACCEPTED",
+    "4=ACCEPTED_BY_SOMEONE_ELSE",
+    "5=EXPIRED",
+    "6=REVOKED",
+    "7=NOT_IN_CODE",
+    "8=NOT_GRANTABLE",
+    "9=TRY_AGAIN"
+  ],
+  "GrokBotAgentApprovalMode": [
+    "0=UNSPECIFIED",
+    "2=READ_ONLY"
+  ],
+  "GrokBotAgentPreferenceLayer": [
+    "0=UNSPECIFIED",
+    "1=MAIN",
+    "2=EXECUTORS"
+  ],
+  "GrokBotAutomationPolicyAction": [
+    "0=UNSPECIFIED",
+    "1=CREATE",
+    "2=CHANGE_POLICY"
+  ],
+  "GrokBotVaultItemKind": [
+    "0=UNSPECIFIED",
+    "1=LOGIN",
+    "2=CARD",
+    "3=CONTACT"
+  ],
+  "GrokBotVaultItemManager": [
+    "0=UNSPECIFIED",
+    "1=GROK_BOT_EMAIL"
+  ],
+  "GrokBotVaultCreateRefusal": [
+    "0=UNSPECIFIED",
+    "1=VAULT_FULL"
+  ],
+  "GrokBotPaymentWallet": [
+    "0=UNSPECIFIED",
+    "1=X_MONEY",
+    "2=STRIPE_LINK",
+    "3=SHOP_PAY"
+  ],
+  "GrokBotEmailAddressAvailability": [
+    "0=UNSPECIFIED",
+    "1=AVAILABLE",
+    "2=YOURS",
+    "3=TAKEN",
+    "4=INVALID",
+    "5=RESERVED",
+    "6=NOT_CONFIGURED"
+  ],
+  "GrokBotEmailDirection": [
+    "0=UNSPECIFIED",
+    "1=INBOUND",
+    "2=OUTBOUND"
+  ],
+  "GrokBotEmailSearchMode": [
+    "0=UNSPECIFIED",
+    "1=HYBRID",
+    "2=KEYWORD",
+    "3=SEMANTIC"
+  ],
+  "GrokBotEmailBodyStatus": [
+    "0=UNSPECIFIED",
+    "1=AVAILABLE",
+    "2=NOT_INDEXED",
+    "3=PURGED",
+    "4=REJECTED"
+  ],
+  "GrokBotMessagingPhoneCodeSendOutcome": [
+    "0=UNSPECIFIED",
+    "1=SENT",
+    "2=ALREADY_LINKED",
+    "4=RATE_LIMITED",
+    "5=SEND_FAILED",
+    "6=NO_LINE",
+    "7=INVALID_ADDRESS"
+  ],
+  "GrokBotMessagingPhoneCodeConfirmOutcome": [
+    "0=UNSPECIFIED",
+    "1=LINKED",
+    "2=WRONG_CODE",
+    "3=EXPIRED",
+    "4=TOO_MANY_TRIES",
+    "5=NEEDS_MOVE_CONFIRM",
+    "6=LINK_FAILED",
+    "7=LINKED_TO_ANOTHER_ACCOUNT",
+    "8=RATE_LIMITED"
+  ],
+  "GrokBotMessagingPrefillSource": [
+    "0=UNSPECIFIED",
+    "1=LINK",
+    "2=FORM_VAULT"
+  ],
+  "GrokBotAccountPhoneState": [
+    "0=UNSPECIFIED",
+    "1=UNAVAILABLE",
+    "2=CAN_ADD",
+    "3=SIGN_IN_WITH_GROK",
+    "4=NOT_ELIGIBLE",
+    "5=HAS_PHONE"
+  ],
+  "GrokBotAccountPhoneCodeSendOutcome": [
+    "0=UNSPECIFIED",
+    "1=SENT",
+    "2=RATE_LIMITED",
+    "3=INVALID_NUMBER",
+    "4=SIGN_IN_WITH_GROK",
+    "5=NOT_ELIGIBLE",
+    "6=UNAVAILABLE",
+    "7=HAS_PHONE"
+  ],
+  "GrokBotAccountPhoneCodeConfirmOutcome": [
+    "0=UNSPECIFIED",
+    "1=ADDED",
+    "2=WRONG_CODE",
+    "3=EXPIRED",
+    "4=RATE_LIMITED",
+    "5=NUMBER_IN_USE",
+    "6=SIGN_IN_WITH_GROK",
+    "7=NOT_ELIGIBLE",
+    "8=UNAVAILABLE",
+    "9=HAS_PHONE"
+  ],
+  "GrokBotAccountPhoneTextingOutcome": [
+    "0=UNSPECIFIED",
+    "1=LINKED",
+    "2=ALREADY_LINKED",
+    "3=LINKED_TO_ANOTHER_ACCOUNT",
+    "4=NEW_CHAT_CAP_REACHED",
+    "5=NO_LINE",
+    "6=SEND_FAILED",
+    "7=LINK_FAILED",
+    "8=NOT_OFFERED"
+  ],
+  "GrokBotMessagingGroupChatLogState": [
+    "0=UNSPECIFIED",
+    "1=SHOWN",
+    "2=ENDED",
+    "3=HOST_LEFT",
+    "4=UNAVAILABLE"
+  ],
+  "GrokBotMessagingGroupChatAuthor": [
+    "0=UNSPECIFIED",
+    "1=HOST",
+    "2=MEMBER",
+    "3=BOT"
+  ],
+  "GrokBotMessagingGroupLeaveOutcome": [
+    "0=UNSPECIFIED",
+    "1=LEFT",
+    "2=NOT_IN_GROUP",
+    "3=TOO_SMALL",
+    "4=FAILED",
+    "5=MUTED",
+    "6=UNSUPPORTED",
+    "7=UNAVAILABLE"
+  ],
+  "GrokBotConnectorType": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=TEAM"
+  ],
+  "GrokBotPluginPolicyBlock": [
+    "0=UNSPECIFIED",
+    "1=MCP_SERVERS_OFF",
+    "2=MCP_ALLOWLIST",
+    "3=CLOUD_AGENT_ALLOWLIST",
+    "4=DENYLIST",
+    "5=OTHER"
+  ],
+  "GrokBotPluginCredentialSource": [
+    "0=UNSPECIFIED",
+    "1=PER_USER",
+    "2=SERVICE_ACCOUNT",
+    "3=DELEGATED"
+  ],
+  "GrokBotDelegatedCredentialState": [
+    "0=UNSPECIFIED",
+    "1=ACTIVE",
+    "2=NEEDS_RECONNECT",
+    "3=TURNED_OFF_BY_ADMIN",
+    "4=DELEGATOR_INACTIVE",
+    "5=DELEGATOR_DISCONNECTED"
+  ],
+  "GrokBotPluginCredentialAction": [
+    "0=UNSPECIFIED",
+    "1=CONNECT_SERVICE_ACCOUNT",
+    "2=USE_DELEGATED_AUTH",
+    "3=REPLACE_DELEGATED_AUTH",
+    "4=REMOVE_CREDENTIAL"
+  ],
+  "GrokBotPluginAddAction": [
+    "0=UNSPECIFIED",
+    "1=NOT_ADDABLE",
+    "2=PIN",
+    "3=SETTINGS",
+    "4=CHOOSE_ACCESS"
+  ],
+  "GrokBotDelegatedAuthRefusalReason": [
+    "0=UNSPECIFIED",
+    "1=ADMIN_DISABLED",
+    "2=WARNING_OUTDATED",
+    "3=HAS_SERVICE_ACCOUNT",
+    "4=NOT_SINGLE_SERVER",
+    "5=NOT_HOSTED_OAUTH",
+    "6=NO_SERVER_URL",
+    "7=STATIC_CREDENTIAL",
+    "8=NO_LOGIN",
+    "9=SIGN_IN_MISMATCH",
+    "10=PLUGIN_NOT_ALLOWED"
+  ],
+  "GrokBotSkillRevisionAuthor": [
+    "0=UNSPECIFIED",
+    "1=BOT",
+    "2=PERSON"
+  ],
+  "GrokBotOutcomeStatus": [
+    "0=UNSPECIFIED",
+    "1=ON_TRACK",
+    "2=NEEDS_YOU",
+    "3=PAUSED"
+  ],
+  "GrokBotAutomationRunResult": [
+    "0=UNSPECIFIED",
+    "1=DONE",
+    "2=NOTHING_TO_DO",
+    "3=FAILED",
+    "4=RUNNING"
+  ],
+  "GrokBotTeamReviewMemoryAction": [
+    "0=UNSPECIFIED",
+    "1=WRITE",
+    "2=FORGET"
+  ],
+  "GrokBotTeamReviewSkillAction": [
+    "0=UNSPECIFIED",
+    "1=ADD",
+    "2=UPDATE",
+    "3=REMOVE"
+  ],
+  "GrokBotTeamReviewItemStatus": [
+    "0=UNSPECIFIED",
+    "1=PENDING",
+    "2=APPROVED",
+    "3=REJECTED"
+  ],
+  "GrokBotTeamReviewDecision": [
+    "0=UNSPECIFIED",
+    "1=APPROVE",
+    "2=REJECT"
+  ],
+  "GrokBotAgentFileStore": [
+    "0=UNSPECIFIED",
+    "1=BOT",
+    "2=USER"
+  ],
+  "GrokBotTemplateVisibility": [
+    "0=UNSPECIFIED",
+    "1=PUBLIC",
+    "2=TEAM"
+  ],
+  "GrokBotTemplateCreatorAttribution": [
+    "0=UNSPECIFIED",
+    "1=SYSTEM"
+  ],
+  "GrokBotTemplateOwnerType": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=TEAM"
+  ],
+  "GrokBotFirstPartyTemplate": [
+    "0=UNSPECIFIED",
+    "1=SWE"
+  ],
+  "GrokBotTemplateImportEntry": [
+    "0=UNSPECIFIED",
+    "1=CHAT_LINK",
+    "2=AUTO_OPEN_LINK",
+    "3=X_TIMELINE_CARD",
+    "4=X_POST_CTA",
+    "5=X_CASHTAG_CTA"
+  ],
+  "GrokBotClientSurface": [
+    "0=UNSPECIFIED",
+    "1=DESKTOP",
+    "2=MOBILE",
+    "3=GLASS"
+  ],
+  "GrokBotUserMessageInitiator": [
+    "0=UNSPECIFIED",
+    "1=USER",
+    "2=TEMPLATE_IMPORT",
+    "3=TEMPLATE_SHARE",
+    "4=CARD_ACTION",
+    "5=PLUGIN_SETUP",
+    "6=TEACH_RECORDING"
+  ],
+  "GrokBotSendSource": [
+    "0=UNSPECIFIED",
+    "1=CHAT",
+    "2=PUSH",
+    "3=APP_INTENT",
+    "4=ACTION_BUTTON_DICTATION"
+  ],
+  "GrokBotSendPage": [
+    "0=UNSPECIFIED",
+    "1=TASKS"
+  ],
+  "GrokBotUserMessageDelivery": [
+    "0=UNSPECIFIED",
+    "1=ACCEPTED_BOX",
+    "2=ACCEPTED_TEMPORAL",
+    "3=DUPLICATE",
+    "4=REFUSED"
+  ],
+  "GrokBotTemporalHarnessMode": [
+    "0=UNSPECIFIED",
+    "1=OFF",
+    "2=SHADOW",
+    "3=LIVE",
+    "4=BOX"
+  ],
+  "GrokBotImagePrecaptionOutcome": [
+    "0=UNSPECIFIED",
+    "1=CAPTIONED",
+    "2=ALREADY_CAPTIONED",
+    "3=NOT_NEEDED",
+    "4=SKIPPED",
+    "5=FAILED",
+    "6=SKIPPED_FOR_AGENT"
+  ],
+  "GrokBotCardPhotoOutcome": [
+    "0=UNSPECIFIED",
+    "1=READ",
+    "2=NOT_FOUND",
+    "3=UNAVAILABLE"
+  ],
+  "GrokBotAddressLookupOutcome": [
+    "0=UNSPECIFIED",
+    "1=SUGGESTED",
+    "2=UNAVAILABLE"
+  ],
+  "GrokBotCloudAgentWatchKind": [
+    "0=UNSPECIFIED",
+    "1=LAUNCH",
+    "2=REPLY",
+    "3=WATCH"
+  ],
+  "GrokBotSendStatus": [
+    "0=UNSPECIFIED",
+    "1=NOT_FOUND",
+    "2=ACCEPTED",
+    "3=REJECTED",
+    "4=PENDING",
+    "5=UNKNOWN_DURABILITY"
+  ],
+  "GrokBotCredentialRequestResolution": [
+    "0=UNSPECIFIED",
+    "1=APPROVED",
+    "2=DENIED"
+  ],
+  "GrokBotPlacesAreaSearchOutcome": [
+    "0=UNSPECIFIED",
+    "1=FOUND",
+    "2=EMPTY",
+    "3=UNAVAILABLE",
+    "4=FAILED",
+    "5=RATE_LIMITED",
+    "6=NOT_SEARCHABLE"
+  ],
+  "GrokBotSimilarProductsSearchOutcome": [
+    "0=UNSPECIFIED",
+    "1=FOUND",
+    "2=EMPTY",
+    "3=UNAVAILABLE",
+    "4=FAILED",
+    "5=RATE_LIMITED",
+    "6=NOT_SEARCHABLE"
+  ],
+  "GrokBotShoppingProductLookupOutcome": [
+    "0=UNSPECIFIED",
+    "1=FOUND",
+    "2=NOT_FOUND",
+    "3=UNAVAILABLE",
+    "4=FAILED",
+    "5=RATE_LIMITED"
+  ],
+  "GrokBotTryOnImageOutcome": [
+    "0=UNSPECIFIED",
+    "1=GENERATED",
+    "2=NOT_FOUND",
+    "3=NO_SELFIE",
+    "4=UNAVAILABLE",
+    "5=RATE_LIMITED",
+    "6=CONTENT_BLOCKED",
+    "7=FAILED",
+    "8=LIMIT_REACHED"
+  ],
+  "GrokBotFlightBookingLinkOutcome": [
+    "0=UNSPECIFIED",
+    "1=RESOLVED",
+    "2=UNAVAILABLE",
+    "3=RATE_LIMITED",
+    "4=NOT_RESOLVABLE",
+    "5=SEPARATE_TICKETS",
+    "6=NO_MATCH",
+    "7=FAILED"
+  ],
+  "GrokBotPlaceDetailsOutcome": [
+    "0=UNSPECIFIED",
+    "1=FOUND",
+    "2=UNAVAILABLE",
+    "3=FAILED",
+    "4=RATE_LIMITED",
+    "5=NOT_ON_CARD"
+  ],
+  "GrokBotUserFormClientPlatform": [
+    "0=UNSPECIFIED",
+    "1=DESKTOP",
+    "2=IOS",
+    "3=ANDROID"
+  ],
+  "GrokBotUserFormVaultTarget": [
+    "0=UNSPECIFIED",
+    "1=PERSONAL",
+    "2=AGENT"
+  ],
+  "GrokBotUserFormDismissMode": [
+    "0=UNSPECIFIED",
+    "1=DISMISSED",
+    "2=ESCALATED"
+  ],
+  "GrokBotMessagingCardKind": [
+    "0=UNSPECIFIED",
+    "1=APPROVAL",
+    "2=CHOICE",
+    "3=FORM",
+    "4=PAGE",
+    "5=PAYMENT"
+  ],
+  "GrokBotMessagingCardState": [
+    "0=UNSPECIFIED",
+    "1=PENDING",
+    "2=APPROVED",
+    "3=DENIED",
+    "4=ANSWERED",
+    "5=EXPIRED",
+    "6=SUPERSEDED",
+    "7=ALWAYS",
+    "8=NEVER",
+    "9=FAILED",
+    "12=ESCALATED"
+  ],
+  "GrokBotMessagingCardSubtype": [
+    "0=UNSPECIFIED",
+    "1=AUTO_REVIEW",
+    "2=MEETING_JOIN_CONSENT",
+    "3=LOCAL_TOOL_PERMISSION",
+    "4=CREDENTIAL_REQUEST",
+    "5=DRAFT",
+    "6=QUESTION",
+    "7=USER_FORM",
+    "8=SECRET_REQUEST"
+  ],
+  "GrokBotMessagingCardSettledBy": [
+    "0=UNSPECIFIED",
+    "1=CARD",
+    "2=TEXT_REPLY",
+    "3=APP",
+    "4=EXPIRY",
+    "5=NEWER_CARD",
+    "6=ASK"
+  ],
+  "GrokBotMessagingCardAnswerKind": [
+    "0=UNSPECIFIED",
+    "1=APPROVE",
+    "2=DENY",
+    "3=CHOOSE",
+    "4=SUBMIT",
+    "5=ALWAYS",
+    "8=ESCALATE"
+  ],
+  "GrokBotMessagingCardAnswerStatus": [
+    "0=UNSPECIFIED",
+    "1=ACCEPTED",
+    "2=STALE_VERSION",
+    "3=ALREADY_SETTLED",
+    "4=EXPIRED",
+    "5=SUPERSEDED",
+    "6=NOT_SUPPORTED",
+    "7=IN_PROGRESS",
+    "8=REFUSED"
+  ],
+  "GrokBotFeedbackAction": [
+    "0=UNSPECIFIED",
+    "1=UP",
+    "2=DOWN",
+    "3=SUBMIT",
+    "4=REVERT"
+  ],
+  "GrokBotLabelerQuestionAction": [
+    "0=UNSPECIFIED",
+    "1=ANSWER",
+    "3=DISMISS",
+    "4=STOP_ASKING",
+    "6=UNDO"
+  ],
+  "GrokBotAgentMessageDelivery": [
+    "0=UNSPECIFIED",
+    "1=DELIVERED_TEMPORAL",
+    "2=DELIVERED_BOX",
+    "3=DUPLICATE",
+    "4=TARGET_NOT_FOUND",
+    "5=FORBIDDEN",
+    "6=BOX_UNREACHABLE",
+    "7=TEMPORAL_UNAVAILABLE",
+    "8=INVALID_TARGET"
+  ],
+  "GrokBotAutoReviewApprovalResolution": [
+    "0=UNSPECIFIED",
+    "1=APPROVED",
+    "2=DENIED",
+    "3=ALWAYS"
+  ],
+  "GrokBotLocalToolPermissionCardResolution": [
+    "0=UNSPECIFIED",
+    "1=ALLOW_ONCE",
+    "2=DENY",
+    "3=ALWAYS",
+    "4=NEVER"
+  ],
+  "GrokBotConnectorGrantResolution": [
+    "0=UNSPECIFIED",
+    "1=ALLOWED",
+    "2=SKIPPED",
+    "3=ALWAYS_THIS_BOT",
+    "4=ALWAYS_ALL_TEAM_BOTS",
+    "5=ALLOW_IN_CHANNEL"
+  ],
+  "GrokBotVirtualCardRaiseOutcome": [
+    "0=UNSPECIFIED",
+    "1=RAISED",
+    "2=ALREADY_PENDING"
+  ],
+  "GrokBotVirtualCardResolution": [
+    "0=UNSPECIFIED",
+    "1=APPROVED",
+    "2=DENIED"
+  ],
+  "GrokBotVirtualCardOutcome": [
+    "0=UNSPECIFIED",
+    "1=APPROVED",
+    "2=DENIED",
+    "3=NEEDS_AUTH",
+    "4=FAILED",
+    "6=NEEDS_PASSKEY"
+  ],
+  "GrokBotVirtualCardAnswerable": [
+    "0=UNSPECIFIED",
+    "1=APPROVE_OR_DENY",
+    "2=DENY_ONLY"
+  ],
+  "GrokBotStripeLinkPaymentMethodKind": [
+    "0=UNSPECIFIED",
+    "1=CARD",
+    "2=BANK_ACCOUNT"
+  ],
+  "GrokBotStripeLinkPaymentMethodsOutcome": [
+    "0=UNSPECIFIED",
+    "1=OK",
+    "2=NEEDS_AUTH",
+    "3=UNAVAILABLE",
+    "4=ACCOUNT_CLOSED"
+  ],
+  "GrokBotXConnectOutcome": [
+    "0=UNSPECIFIED",
+    "1=CONNECTED",
+    "2=PENDING",
+    "3=DISABLED",
+    "4=EXPIRED",
+    "5=ACCOUNT_MISMATCH",
+    "6=UNAVAILABLE"
+  ],
+  "PasskeyCeremonyKind": [
+    "0=UNSPECIFIED",
+    "1=REGISTER",
+    "2=APPROVE",
+    "3=APPROVE_WITH_REGISTRATION"
+  ],
+  "PasskeyCeremonyStatus": [
+    "0=UNSPECIFIED",
+    "1=PENDING",
+    "2=COMPLETED",
+    "3=FAILED",
+    "4=EXPIRED"
+  ],
+  "SpendApprovalCeremonyMode": [
+    "0=UNSPECIFIED",
+    "1=ASSERT",
+    "2=REGISTER"
+  ],
+  "GrokBotUserComputerMessagesConsentVerdict": [
+    "0=UNSPECIFIED",
+    "1=STANDING",
+    "2=ASK",
+    "3=REFUSED"
+  ],
+  "GrokBotCalendarMeetingChange": [
+    "0=UNSPECIFIED",
+    "1=ADDED",
+    "2=MOVED",
+    "3=CANCELLED",
+    "4=LINK_CHANGED"
+  ],
+  "GrokBotCalendarJoinPromptWithdrawnReason": [
+    "0=UNSPECIFIED",
+    "1=MOVED",
+    "2=CANCELLED",
+    "3=DISMISSED",
+    "4=JOINED",
+    "5=ENDED"
+  ],
+  "GrokBotCalendarMeetingProvider": [
+    "0=UNSPECIFIED",
+    "1=GOOGLE_MEET",
+    "2=ZOOM",
+    "3=MICROSOFT_TEAMS",
+    "4=WEBEX",
+    "5=OTHER"
+  ],
+  "GrokBotCalendarRsvp": [
+    "0=UNSPECIFIED",
+    "1=ACCEPTED",
+    "2=TENTATIVE",
+    "3=DECLINED",
+    "4=NEEDS_ACTION"
+  ],
+  "GrokBotMeetingPromptAction": [
+    "0=UNSPECIFIED",
+    "1=JOIN_NOW",
+    "2=DISMISS",
+    "3=ALWAYS_JOIN_SERIES"
+  ],
+  "GrokBotMeetingPromptRefusal": [
+    "0=UNSPECIFIED",
+    "1=CONSENT_REQUIRED",
+    "2=TOO_MANY_MEETINGS",
+    "3=NOT_RECURRING",
+    "4=NO_JOIN_LINK",
+    "5=FAILED"
+  ],
+  "GrokBotBoxHandBackTrigger": [
+    "0=UNSPECIFIED",
+    "1=BUTTON",
+    "2=VIEWER_CLOSED",
+    "3=DISMISSED"
+  ],
+  "GrokBotRoomMemberTurnDispatch": [
+    "0=UNSPECIFIED",
+    "1=ACCEPTED",
+    "2=DUPLICATE",
+    "3=NOT_TEMPORAL",
+    "4=TARGET_NOT_FOUND",
+    "5=TEMPORAL_UNAVAILABLE"
+  ],
+  "GrokBotRoomMemberTurnOutcome": [
+    "0=UNSPECIFIED",
+    "1=SENT",
+    "2=PASS",
+    "3=SKIPPED",
+    "4=TIMEOUT",
+    "5=CANCELLED",
+    "6=ERROR"
+  ],
+  "GrokBotRoomMemberTurnResultIntake": [
+    "0=UNSPECIFIED",
+    "1=ACCEPTED",
+    "2=UNKNOWN_NONCE",
+    "3=HOST_UNAVAILABLE"
+  ],
+  "GrokBotSlackInstallStatus": [
+    "0=UNSPECIFIED",
+    "1=NOT_CONNECTED",
+    "2=APP_CREATED",
+    "3=CONNECTED",
+    "4=UNSUPPORTED_HARNESS"
+  ],
+  "GrokBotSlackConnectFailureKind": [
+    "0=UNSPECIFIED",
+    "1=CANCELLED",
+    "2=ORG_INSTALL",
+    "3=WRONG_CURSOR_ACCOUNT",
+    "4=INCOMPLETE"
+  ],
+  "GrokBotSlackConnectOutcome": [
+    "0=UNSPECIFIED",
+    "1=STARTED",
+    "2=UNSUPPORTED_HARNESS",
+    "3=NOT_PUBLISHED"
+  ],
+  "GrokBotSlackConnectClaimOutcome": [
+    "0=UNSPECIFIED",
+    "1=CLAIMED",
+    "2=INVALID",
+    "3=WRONG_CURSOR_ACCOUNT"
+  ],
+  "GrokBotSlackInstallOutcome": [
+    "0=UNSPECIFIED",
+    "1=INSTALLED",
+    "2=PENDING_ADMIN_APPROVAL",
+    "3=NOT_CONNECTED",
+    "4=WORKSPACE_REQUIRED",
+    "5=MANAGER_REAUTH_REQUIRED",
+    "6=INSUFFICIENT_SCOPES",
+    "7=INSTALL_CONFLICT",
+    "8=RATELIMITED",
+    "9=SLACK_REJECTED",
+    "10=UNSUPPORTED_HARNESS",
+    "11=NOT_PUBLISHED",
+    "12=WORKSPACE_NOT_ALLOWED"
+  ],
+  "GrokBotSlackReinstallOutcome": [
+    "0=UNSPECIFIED",
+    "1=UPDATED",
+    "2=UP_TO_DATE",
+    "3=RECREATE_REQUIRED",
+    "4=PENDING_ADMIN_APPROVAL",
+    "5=NOT_CONNECTED",
+    "6=MANAGER_REAUTH_REQUIRED",
+    "7=INSUFFICIENT_SCOPES",
+    "8=RATELIMITED",
+    "9=SLACK_REJECTED",
+    "10=UNSUPPORTED_HARNESS",
+    "11=THROTTLED"
+  ],
+  "GrokBotSlackUninstallOutcome": [
+    "0=UNSPECIFIED",
+    "1=REMOVED",
+    "2=NOT_CONNECTED",
+    "3=MANAGER_REAUTH_REQUIRED",
+    "4=RATELIMITED",
+    "5=SLACK_REJECTED",
+    "6=UNSUPPORTED_HARNESS"
+  ],
+  "GrokBotSlackWorkspaceInstallState": [
+    "0=UNSPECIFIED",
+    "1=INSTALLED",
+    "2=UNINSTALLED"
+  ],
+  "GrokBotSlackWorkspaceInstallStartOutcome": [
+    "0=UNSPECIFIED",
+    "1=STARTED",
+    "2=ALREADY_INSTALLED",
+    "3=NOT_CONFIGURED"
+  ],
+  "GrokBotSlackWorkspaceInstallUninstallOutcome": [
+    "0=UNSPECIFIED",
+    "1=UNINSTALLED",
+    "2=NOT_INSTALLED",
+    "3=RATELIMITED",
+    "4=SLACK_REJECTED"
+  ],
+  "GrokBotTeamsInstallState": [
+    "0=UNSPECIFIED",
+    "1=NOT_CONNECTED",
+    "2=CONNECTED",
+    "3=APP_CREATED",
+    "4=PENDING_ADMIN_APPROVAL",
+    "5=INSTALLED",
+    "6=UPDATE_PENDING",
+    "7=REMOVED_IN_TEAMS",
+    "8=REMOVED",
+    "9=UNSUPPORTED_HARNESS",
+    "10=NOT_PUBLISHED",
+    "11=UNAVAILABLE",
+    "12=PROVISIONING"
+  ],
+  "GrokBotTeamsBotStatusReason": [
+    "0=UNSPECIFIED",
+    "1=SETTING_UP",
+    "2=ADMIN_APPROVAL",
+    "3=ADMIN_CONSENT",
+    "4=TEAM_OWNER",
+    "5=ADMIN_POLICY",
+    "6=REJECTED",
+    "7=REMOVED",
+    "8=NOT_SET_UP"
+  ],
+  "GrokBotTeamsConsentResult": [
+    "0=UNSPECIFIED",
+    "1=CONSENT_REQUIRED",
+    "2=ACCESS_DENIED",
+    "3=OTHER",
+    "4=GRANT_CONFLICT"
+  ],
+  "GrokBotTeamsTeamReadiness": [
+    "0=UNSPECIFIED",
+    "1=NOT_REQUIRED",
+    "2=READY",
+    "3=AWAITING_ADMIN",
+    "4=UNKNOWN",
+    "5=RECONNECT_REQUIRED"
+  ],
+  "GrokBotBoxHarnessMigrationPassState": [
+    "0=UNSPECIFIED",
+    "1=DISABLED",
+    "2=DONE",
+    "3=PENDING"
+  ],
+  "LiveTeamAgentOrder": [
+    "0=UNSPECIFIED",
+    "1=LAST_ACTIVE"
+  ],
+  "GrokBotAccountMigrationState": [
+    "0=UNSPECIFIED",
+    "1=COMPUTING",
+    "2=COMPUTE_FAILED",
+    "3=REVIEWING",
+    "4=MIGRATING",
+    "5=DONE",
+    "6=PARTIALLY_DONE",
+    "7=CANCELLED"
+  ],
+  "GrokBotTranscriptFieldState": [
+    "0=UNSPECIFIED",
+    "1=ABSENT",
+    "2=PLAINTEXT",
+    "3=ENCRYPTED"
+  ],
+  "VoiceCallHarnessToolOutcomeKind": [
+    "0=UNSPECIFIED",
+    "1=SERVED",
+    "2=UNKNOWN_TOOL",
+    "3=INVALID_INPUT"
+  ]
+}

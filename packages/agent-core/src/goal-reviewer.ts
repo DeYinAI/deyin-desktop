@@ -39,6 +39,8 @@ export interface GoalReviewRequest {
   backgroundSubagentRunning?: boolean;
   effort?: ReasoningEffort;
   maxTokens?: number;
+  /** Called immediately before every HTTP request the review sends (its re-ask and transport retries included). */
+  onHttpAttempt?: () => void;
 }
 
 export interface GoalReviewResult {
@@ -191,6 +193,7 @@ export async function reviewGoal(req: GoalReviewRequest): Promise<GoalReviewResu
       signal: req.signal,
       effort: req.effort,
       maxTokens: req.maxTokens ?? 700,
+      onHttpAttempt: req.onHttpAttempt,
       // No `tools`: the reviewer reads and answers, nothing else.
     })) {
       if (event.type === "text") text += event.delta;

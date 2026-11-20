@@ -1,6 +1,8 @@
 import type { DeyinConfig } from "./config.js";
 import type { ImageModelParams } from "./image-model-params.js";
 import type { VideoModelParams } from "./video-model-params.js";
+import type { SecureFormRequest } from "./bots/secure-form.js";
+import type { RoutineServerView } from "./bots/engine-view.js";
 
 export interface UserProfile {
   sub: string;
@@ -121,8 +123,15 @@ export interface ChatMessage {
  * threads; each thread is a timeline of structured events. Persisted per
  * profile via ProjectsStore (desktop: projects.json, web: localStorage). */
 
+/**
+ * The three products behind the sidebar's product switcher. Each owns its own shell:
+ * Deyin Code (workspaces and coding sessions), Deyin Bot (a roster of durable Bots) and
+ * Deyin Conductor (pipelines of external coding agents).
+ */
+export type ProductId = "code" | "bot" | "conductor";
+
 /** Composer interaction mode (Cursor-style), independent of the access ApprovalMode. */
-export type ChatMode = "agent" | "plan" | "ask" | "delivery" | "bot";
+export type ChatMode = "agent" | "plan" | "ask" | "delivery" | "conductor";
 
 export type AgentTodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
@@ -144,10 +153,29 @@ export interface DiffSnippetLine {
   newNo: number | null;
 }
 
+/** What one run cost in model requests. `requests` is every HTTP request sent, replays and goal reviews included. */
+export interface RunRequestStats {
+  /** Loop steps kept in the transcript (replays are not steps). */
+  steps: number;
+  requests: number;
+  /** Requests replayed after a transient failure or cut-off stream. */
+  replays: number;
+  reviewerCalls: number;
+}
+
 export type ThreadEvent =
   | { kind: "user"; text: string; attachments?: ContextAttachment[]; linkedThreadIds?: string[] }
   | { kind: "assistant"; text: string }
-  | { kind: "reasoning"; text: string; seconds?: number }
+  | {
+      kind: "reasoning";
+      text: string;
+      seconds?: number;
+      /** Loop step (one model request) that produced this reasoning. */
+      step?: number;
+      /** Epoch ms when the reasoning stream began and ended; bound the block's wall-clock time. */
+      startedAt?: number;
+      endedAt?: number;
+    }
   | { kind: "plan"; steps: PlanStep[]; badge?: string }
   /** Compact plan artifact in chat; full markdown lives in the Plan tab. */
   | { kind: "plan-ready"; title?: string; fileName?: string; preview?: string }
@@ -165,6 +193,8 @@ export type ThreadEvent =
       snippetMore?: number;
       /** Run this edit belongs to — the undo checkpoint the chat card restores. */
       checkpointId?: string;
+      /** Loop step (one model request) whose tool call made this edit. */
+      step?: number;
     }
   | { kind: "model-switch"; from: string; to: string }
   /** Timeline note for the /goal command; text null = goal cleared. `replaced` marks a new
@@ -188,6 +218,8 @@ export type ThreadEvent =
       startedAt?: number;
       /** Wall-clock duration (set by tool-end). */
       durationMs?: number;
+      /** Loop step (one model request) that issued this call; calls of one step share it. */
+      step?: number;
     }
   /** Live subagent (task tool) run: spawn → progress lines → done/failed. */
   | {
@@ -240,11 +272,15 @@ export type ThreadEvent =
       reclaimedTokens: number;
       summary?: string;
     }
+  /** End-of-run request accounting, so the number of model requests is checkable rather than guessed from rows. */
+  | ({ kind: "run-stats" } & RunRequestStats)
   | { kind: "error"; text: string };
 
 export interface Thread {
   id: string;
   title: string;
+  /** The Deyin Bot this thread is a conversation with. Absent for Code and Conductor threads. */
+  botId?: string;
   /** Epoch ms of the last activity; the sidebar renders it as a relative age. */
   updatedAt: number;
   events: ThreadEvent[];
@@ -546,6 +582,15 @@ export interface DeyinSettings {
   computerUseEnabled: boolean;
   /** Days to retain local computer-use screenshots (default 7). */
   computerUseScreenshotRetentionDays: number;
+  /** Show the on-screen "Deyin is controlling your computer" overlay while computer use runs. */
+  computerUseOverlay: boolean;
+  /** Drive the user's real Chrome through the Deyin extension (opt-in). */
+  chromeControlEnabled: boolean;
+  /**
+   * Where agent-owned Chrome tabs live: a background tab group in the user's
+   * window ("group"), or a separate unfocused window ("window").
+   */
+  chromeTabStrategy: "group" | "window";
   defaultModel: string | null;
   /**
    * Per-phase model overrides: role -> "providerId::modelId" (a bare "modelId"
@@ -553,6 +598,12 @@ export interface DeyinSettings {
    * "delivery" and "tool"; anything left out uses the session's own model.
    */
   roleModels: Record<string, string>;
+  /**
+   * Conductor: which external agent the user prefers for each pipeline role
+   * (role -> agent id, e.g. plan -> "claude"). Holds only explicit choices; a
+   * role left out uses the built-in default while that agent is installed.
+   */
+  conductorRolePreferences: Partial<Record<ConductorRole, string>>;
   /** Per-subagent model overrides: subagent name -> "providerId::modelId". */
   subagentModels: Record<string, string>;
   /** Per-subagent reasoning-effort overrides: name -> "low" | "medium" | "high". */
@@ -585,6 +636,8 @@ export interface DeyinSettings {
   codeFontSize: number;
   /** "agent" runs the tool-calling loop; "chat" is the plain text stream fallback. */
   agentMode: "agent" | "chat";
+  /** Which product's shell the app reopens in. Restored on launch; switched from the logo menu. */
+  activeProduct: ProductId;
   /** Shell id from EnvInfo.shells new terminals default to; null = host default. */
   defaultShell: string | null;
   terminalFontSize: number;
@@ -606,6 +659,8 @@ export interface DeyinSettings {
   optimizationPluginEnabled: boolean;
   /** Background memory (remember/forget + automatic recall). */
   memoryEnabled: boolean;
+  /** Let Bots sign in with logins kept in 1Password (through its `op` command), asking the person each time. */
+  vaultOnePassword: boolean;
   /** Route write/edit/delete through the user review queue. */
   reviewMode: "off" | "on";
  /**
@@ -643,8 +698,109 @@ export type AutomationPayload =
   | { kind: "skill"; skill: string; input?: string }
   | { kind: "subagent"; subagent: string; input?: string };
 
+/**
+ * Hard bounds on one unattended run. The runner aborts a run that exceeds the
+ * wall clock or goes quiet, and the agent loop stops at the step budget, so a
+ * stuck run can neither hold the schedule hostage nor run unbounded.
+ */
+export interface AutomationLimits {
+  /** Wall-clock budget for the whole run. */
+  maxMinutes: number;
+  /** Abort when no event (text, tool call or tool result) arrives for this long. */
+  idleMinutes: number;
+  /** Tool-round budget. Replaces the app-wide "unlimited" default for unattended runs. */
+  maxSteps: number;
+}
+
+/** A shared resource that only one run may use at a time. */
+export type AutomationResource = "browser";
+
+/** What a run cannot do without; checked before the model is called. */
+export interface AutomationRequirements {
+  /** Tool-name globs (`*` is the only wildcard), e.g. `mcp__browser__*`. */
+  tools?: string[];
+  /** Resources the run holds exclusively, so two runs never fight over one Chrome. */
+  exclusive?: AutomationResource[];
+}
+
+/** What an unattended run may do beyond the default deny. */
+export interface AutomationConsent {
+  /** Hosts (and their subdomains) that browser tools may navigate to. */
+  browserOrigins: string[];
+}
+
+/**
+ * Why a run could not do its job. `login-required`, `captcha`, `account-warning`,
+ * `approval-required` (a site the automation has no consent for) and `stopped`
+ * (the user switched the tool off) need a person; the rest may clear on their own.
+ */
+export type AutomationBlockerKind =
+  | "login-required"
+  | "captcha"
+  | "account-warning"
+  | "approval-required"
+  | "stopped"
+  | "rate-limit"
+  | "tool-missing"
+  | "mcp"
+  | "auth"
+  | "other";
+
+export interface AutomationBlocker {
+  kind: AutomationBlockerKind;
+  detail: string;
+}
+
+/**
+ * How a run ended, as reported by the run itself (or inferred by the runner).
+ * `unreported` is a run whose agent loop finished without calling
+ * `automation_report`; it is never a streak-breaking failure on its own.
+ */
+export type AutomationOutcome = "success" | "idle" | "blocked" | "failed" | "unreported";
+
+/** One automatic edit of an automation's learned rules, kept so it can be reverted. */
+export interface LearnedRevision {
+  id: string;
+  at: number;
+  /** The failed run that triggered the patch. */
+  runId: string;
+  /** Failure signature this patch targets (outcome + last failing tool + error category). */
+  signature: string;
+  rationale: string;
+  added: string[];
+  removed: string[];
+  /** The rules as they were before this patch. */
+  previousRules: string[];
+  /** Failures in a row at the time of the patch; the probation baseline. */
+  baselineFailures: number;
+  status: "probation" | "kept" | "reverted";
+  resolvedAt?: number;
+  note?: string;
+}
+
+/** Runner-maintained state; never part of what the user edits. */
+export interface AutomationHealth {
+  consecutiveFailures: number;
+  /** Runs in a row whose agent finished without reporting an outcome. */
+  consecutiveUnreported?: number;
+  lastOutcome?: AutomationOutcome;
+  lastSuccessAt?: number;
+  pausedAt?: number;
+  pausedReason?: string;
+  pausedKind?: AutomationBlockerKind | "failures";
+  /** Unix ms of the next cheap resume probe; absent when none is due. */
+  nextProbeAt?: number;
+  probeAttempts?: number;
+  /** Failure signature -> unix ms of the last automatic patch for it. */
+  healedAt?: Record<string, number>;
+  /** Signatures the healer gave up on after a patch made things worse. */
+  unhealable?: string[];
+}
+
 export interface Automation {
   id: string;
+  /** Set when a Bot owns this automation (a routine): it runs as that Bot, in the Bot's own folder. */
+  botId?: string;
   name: string;
   description?: string;
   enabled: boolean;
@@ -657,9 +813,29 @@ export interface Automation {
   updatedAt: number;
   /** Unix ms of last successful scheduled slot (for catch-up). */
   lastScheduledAt?: number;
+  /** Run bounds; the defaults apply to any field left out. */
+  limits?: Partial<AutomationLimits>;
+  requires?: AutomationRequirements;
+  consent?: AutomationConsent;
+  /** Let the healer add learned rules after failures. On unless set to false. */
+  autoHeal?: boolean;
+  /** Healer-owned, lower priority than the payload; bounded in count and length. */
+  learnedRules?: string[];
+  learnedRevisions?: LearnedRevision[];
+  health?: AutomationHealth;
 }
 
 export type AutomationRunStatus = "queued" | "running" | "completed" | "failed" | "aborted";
+
+/** Counters kept outside the event log, so eviction never loses them. */
+export interface AutomationRunSummary {
+  durationMs?: number;
+  steps: number;
+  toolCalls: Record<string, number>;
+  toolErrors: number;
+  lastTool?: string;
+  lastError?: string;
+}
 
 export interface AutomationRun {
   id: string;
@@ -669,6 +845,11 @@ export interface AutomationRun {
   finishedAt?: number;
   reason?: string;
   finalText?: string;
+  outcome?: AutomationOutcome;
+  blocker?: AutomationBlocker;
+  /** URLs or paths the run reports having produced (a post URL, a saved file). */
+  artifacts?: string[];
+  summary?: AutomationRunSummary;
   events: AgentUiEvent[];
 }
 
@@ -728,6 +909,8 @@ export interface AutomationInfo extends Automation {
   lastRun?: AutomationRun;
   /** Unix ms of the next scheduled run; absent for manual, paused or ended automations. */
   nextRunAt?: number;
+  /** Set for a routine of a Bot that lives on a server: whether the server starts it on schedule. */
+  server?: RoutineServerView;
 }
 
 /* Capabilities (plugins / skills / subagents / MCP / commands / hooks) ----- */
@@ -935,6 +1118,8 @@ export interface ContextUsageSnapshot {
 
 /** Renderer-facing events streamed from the main-process agent runtime. */
 export type AgentUiEvent =
+ /** A new loop step (one model request) begins; stamped onto the rows it produces so they group. */
+ | { type: "step-start"; step: number }
  | { type: "text-delta"; delta: string }
  | { type: "reasoning-delta"; delta: string }
   | { type: "tool-start"; callId: string; name: string; summary: string; cwd?: string }
@@ -962,7 +1147,22 @@ export type AgentUiEvent =
      prefixChanged?: boolean;
      changeReasons?: Array<"system" | "tools" | "prune" | "fold" | "overflow">;
    }
- | { type: "permission-request"; requestId: string; toolName: string; summary: string }
+ | {
+     type: "permission-request";
+     requestId: string;
+     toolName: string;
+     summary: string;
+     /** Why a person is being asked, in a sentence. Set for a Bot, whose rules decide what needs a yes. */
+     reason?: string;
+     /** "Always allow" is kept for the Bot from now on, not just for this conversation. */
+     saved?: boolean;
+   }
+ | {
+     /** A Bot asks for something it was not given (a code, a password for a site not in the Vault). Answered with `agent.answerSecureForm`; what is typed never comes back through events. */
+     type: "secure-form-request";
+     requestId: string;
+     form: SecureFormRequest;
+   }
  | {
      type: "mcp-auth-needed";
      requestId: string;
@@ -1043,7 +1243,7 @@ export type AgentUiEvent =
      diffSummary: string;
      reviewNotes?: string;
    }
- | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string }
+ | { type: "done"; reason: "completed" | "max-steps" | "aborted"; finalText: string; stats?: RunRequestStats }
  | { type: "error"; message: string };
 
 export interface AgentEventEnvelope {
@@ -1070,6 +1270,11 @@ export interface AgentStartOptions {
   approvalMode: ApprovalMode;
   /** Composer mode: agent (build), plan (read-only research) or ask (read-only Q&A). */
   mode: ChatMode;
+  /**
+   * Run as this Deyin Bot: its persona joins the system prompt, its memory replaces the workspace's,
+   * and it works in its own data directory instead of the open project.
+   */
+  botId?: string;
   /** Prior plain-text turns used to rebuild context after a restart. */
   history: { role: "user" | "assistant"; content: string }[];
   /** Seed the agent loop's todo list (e.g. plan todos handed to Build). */
@@ -1110,6 +1315,8 @@ export interface ProviderModel {
   id: string;
   name: string;
   contextLength?: number;
+  /** Declared output-token ceiling, when the catalog publishes one (`max_output_tokens`). */
+  maxOutputTokens?: number;
   /** Accepts image inputs: true/false when known, undefined when the catalog does not say (API decides). */
   vision?: boolean;
   /** "image" models generate pictures; "video" models use POST /v1/videos. */
@@ -1445,7 +1652,7 @@ export interface ResolvedContextFile {
   truncated?: boolean;
 }
 
-/* External Agents & Bot Mode Orchestrator ----------------------------------- */
+/* External Agents & Conductor Orchestrator ----------------------------------- */
 
 export type ExternalAgentType = "codex" | "claude" | "opencode" | "zcode" | "zed" | "cursor" | "custom";
 export type ExternalAgentProtocol = "acp" | "headless-cli" | "interactive-pty" | "custom-script";
@@ -1465,9 +1672,18 @@ export interface ExternalAgentDescriptor {
   lastCheckedAt: number;
 }
 
+/**
+ * What a pipeline stage is for. Advisory: it labels the stage and guides which
+ * agent is offered for it (see `conductorRolePreferences`); the engine only ever runs
+ * the stage's `agentId`.
+ */
+export type ConductorRole = "plan" | "code" | "review" | "test" | "design" | "docs" | "custom";
+
 export interface WorkflowStageDefinition {
   id: string;
   name: string;
+  /** Optional purpose tag; stages written before roles existed simply have none. */
+  role?: ConductorRole;
   agentId: string;
   modelOverride?: string;
   systemPrompt?: string;
@@ -1485,7 +1701,7 @@ export interface WorkflowStageDefinition {
   };
 }
 
-export interface BotWorkflowDefinition {
+export interface ConductorWorkflowDefinition {
   id: string;
   name: string;
   description?: string;
@@ -1499,13 +1715,13 @@ export interface BotWorkflowDefinition {
   updatedAt: number;
 }
 
-export type BotStageStatus = "queued" | "running" | "stalled" | "completed" | "failed" | "skipped" | "aborted";
+export type ConductorStageStatus = "queued" | "running" | "stalled" | "completed" | "failed" | "skipped" | "aborted";
 
-export interface BotStageProgress {
+export interface ConductorStageProgress {
   stageId: string;
   stageName: string;
   agentId: string;
-  status: BotStageStatus;
+  status: ConductorStageStatus;
   startedAt?: number;
   finishedAt?: number;
   elapsedMs: number;
@@ -1519,20 +1735,20 @@ export interface BotStageProgress {
   outputSummary?: string;
 }
 
-export interface BotWorkflowRunState {
+export interface ConductorWorkflowRunState {
   runId: string;
   workflowId: string;
   workflowName: string;
   status: "idle" | "running" | "stalled" | "completed" | "failed" | "aborted";
   currentStageIndex: number;
-  stages: BotStageProgress[];
+  stages: ConductorStageProgress[];
   startedAt: number;
   finishedAt?: number;
   totalElapsedMs: number;
   error?: string;
 }
 
-export interface BotElicitationRequest {
+export interface ConductorElicitationRequest {
   id: string;
   stageId: string;
   agentId: string;

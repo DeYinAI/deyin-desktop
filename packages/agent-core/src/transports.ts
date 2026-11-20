@@ -59,6 +59,10 @@ export interface TransportOptions {
   /** Max output tokens; omitted when unset (Anthropic defaults to 32768). */
   maxTokens?: number;
   signal?: AbortSignal;
+  /** Transport-level retries after a transient HTTP status; see StreamChatEventsOptions. */
+  transientRetries?: number;
+  /** Called immediately before every HTTP request sent to the provider. */
+  onHttpAttempt?: () => void;
   /** Compression + cache markers. */
   wire?: WireOptions;
   /** OpenAI / Openference prompt cache routing key. */
@@ -368,12 +372,16 @@ export async function* streamAnthropicEvents(opts: TransportOptions): AsyncGener
     else headers["x-api-key"] = opts.token;
   }
 
-  const res = await fetchWithTransientRetry(`${root}/v1/messages`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const res = await fetchWithTransientRetry(
+    `${root}/v1/messages`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    { retries: opts.transientRetries, onAttempt: opts.onHttpAttempt },
+  );
   if (!res.ok) {
     throw new ProviderHttpError(
       `Anthropic request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000),
@@ -656,12 +664,16 @@ export async function* streamResponsesEvents(opts: TransportOptions): AsyncGener
 
   const responsesHeaders: Record<string, string> = { "content-type": "application/json" };
   if (opts.token) responsesHeaders.authorization = `Bearer ${opts.token}`;
-  const res = await fetchWithTransientRetry(`${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`, {
-    method: "POST",
-    headers: responsesHeaders,
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const res = await fetchWithTransientRetry(
+    `${opts.apiBaseUrl.replace(/\/+$/, "")}/responses`,
+    {
+      method: "POST",
+      headers: responsesHeaders,
+      body: JSON.stringify(body),
+      signal: opts.signal,
+    },
+    { retries: opts.transientRetries, onAttempt: opts.onHttpAttempt },
+  );
   if (!res.ok) {
     throw new ProviderHttpError(
       `Responses request failed (${res.status}). ${(await readError(res)).slice(0, 300) || "The provider had a temporary network problem — please retry in a moment."}`.trim().slice(0, 2000),

@@ -1,7 +1,7 @@
 {
   "name": "deyin-desktop",
   "private": true,
-  "version": "1.0.31",
+  "version": "1.0.32",
   "description": "Deyin - an original, web-hostable agentic development environment with Openference OAuth.",
   "type": "module",
   "author": "Deyin",
@@ -15,7 +15,7 @@
     "build": "pnpm sync:changelog && pnpm -r --filter \"./packages/**\" build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "eslint packages/agent-core packages/host-core packages/ui/client apps/desktop apps/web apps/cli scripts/ci",
+    "lint": "eslint packages/agent-core packages/host-core packages/bot-engine packages/ui/client apps/desktop apps/web apps/cli scripts/ci",
     "oauth:dev": "pnpm --filter @deyin/oauth-provider dev",
     "desktop:dev": "pnpm --filter @deyin/desktop dev",
     "web:dev": "pnpm --filter @deyin/web dev",

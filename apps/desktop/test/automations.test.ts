@@ -3,7 +3,6 @@ import test from "node:test";
 import { PermissionEngine } from "@deyin/agent-core";
 import {
   AUTOMATION_NEVER_SKIP_PREFIXES,
-  AUTOMATION_NEVER_SKIP_TOOLS,
   automationRequiresExtraConfirmation,
 } from "../src/main/permission-policy.js";
 import { PayloadResolutionError, resolvePayload, skillPrompt } from "../src/main/automations/payload.js";
@@ -94,10 +93,9 @@ test("subagent payload delegates in-process locally, by prompt remotely", () => 
 
 function automationEngine(): PermissionEngine {
   return new PermissionEngine({
-    agentRules: [{ tool: "chrome_navigate", action: "ask" }],
+    agentRules: [],
     configRules: [],
     skipAll: true,
-    neverSkipTools: AUTOMATION_NEVER_SKIP_TOOLS,
     neverSkipPrefixes: AUTOMATION_NEVER_SKIP_PREFIXES,
   });
 }
@@ -106,10 +104,21 @@ test("skipAll does not auto-allow computer-use in an unattended run", () => {
   const engine = automationEngine();
   // Ordinary tools are auto-allowed; that is the point of an unattended run.
   assert.equal(engine.actionFor({ name: "read", tier: "read" } as never), "allow");
-  // OS input synthesis and browser navigation must still reach the resolver,
-  // which denies them — there is no user to answer a prompt.
+  // OS input synthesis must still reach the resolver, which denies it —
+  // there is no user to answer a prompt.
   assert.notEqual(engine.actionFor({ name: "computer_click", tier: "write" } as never), "allow");
-  assert.notEqual(engine.actionFor({ name: "chrome_navigate", tier: "write" } as never), "allow");
+});
+
+test("Chrome is not blocked by the permission engine: its consent is enforced per call by the run's guard", () => {
+  const engine = automationEngine();
+  // A blanket refusal here is what made an automation that needed Chrome improvise around it. The tools only exist
+  // in a run that has consent, and the executor holds every call to it (see automation-consent.test.ts).
+  for (const name of ["chrome_open", "chrome_navigate", "chrome_click", "chrome_fill", "chrome_batch"]) {
+    assert.equal(engine.actionFor({ name, tier: "execute" } as never), "allow", name);
+  }
+  for (const name of ["chrome_snapshot", "chrome_screenshot", "chrome_status"]) {
+    assert.equal(engine.actionFor({ name, tier: "read" } as never), "allow", name);
+  }
 });
 
 test("high-risk computer-use intent is classified for denial", () => {

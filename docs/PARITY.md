@@ -58,7 +58,7 @@ full UX is not yet fleshed out. All implementation here is original Deyin code.
 | Settings: Indexing (live local semantic index + search probe) | Done | `settings/IndexingPage.tsx`, `host-core/src/indexer/*` |
 | Settings: Usage stats (cards, heatmap, per-day chart, cached account snapshot) | Done | `components/settings/UsageStatsPage.tsx`, `main/usage.ts` |
 | Settings: Onboard checklist (computed from real state, persisted) | Done | `components/settings/OnboardPage.tsx` |
-| Environment detection (Local / WSL2) | Done | `main/host/env.ts`, `components/EnvironmentBadge.tsx` |
+| Environment detection (Local / WSL2) | Done | `main/host/env.ts` (surfaced via the terminal shell picker) |
 | Terminal (PTY, tabs, shell picker incl. WSL2 distros) | Done (needs `node-pty` built) | `host-core/src/host/pty.ts`, web `server/host.ts`, `components/TerminalPanel.tsx` |
 | Agent persistent PTY + live tool output + attachable Agent tab | Done (needs `node-pty` built) | `host-core/src/host/agent-shell.ts`, `main/agent.ts`, `tool-delta` / `shell-session` events, `TerminalPanel` attach |
 | Two-level model picker (providers → models, Manage models) | Done | `components/ModelPicker.tsx` |

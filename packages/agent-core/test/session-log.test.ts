@@ -194,6 +194,39 @@ test("run-summary lifecycle record round-trips and forks without leaking into th
   );
 });
 
+test("stream-retry replays are journaled one per replay and stay out of the transcript", () => {
+  const s = store();
+  const meta = s.create({ cwd: "/tmp", model: "m", agent: "build" });
+  s.append(meta.id, { role: "user", content: "go" });
+  s.appendEvent(meta.id, {
+    kind: "stream-retry",
+    step: 3,
+    attempt: 1,
+    maxAttempts: 5,
+    reason: "The provider returned HTTP 503",
+    delayMs: 1500,
+  });
+  s.appendEvent(meta.id, {
+    kind: "stream-retry",
+    step: 3,
+    attempt: 2,
+    maxAttempts: 5,
+    reason: "The provider returned HTTP 503",
+    delayMs: 3000,
+  });
+  s.load(meta.id); // settle the one-time v2 meta upgrade before forking
+
+  const retries = s.events(meta.id).flatMap((e) => (e.type === "lifecycle" && e.event.kind === "stream-retry" ? [e.event] : []));
+  assert.deepEqual(
+    retries.map((r) => [r.step, r.attempt, r.delayMs]),
+    [
+      [3, 1, 1500],
+      [3, 2, 3000],
+    ],
+  );
+  assert.equal(s.load(meta.id)?.messages.length, 1, "retry records must not leak into the transcript");
+});
+
 test("portable session snapshots round-trip and can be removed", () => {
   const s = store();
   const meta = s.create({ cwd: "/source", model: "m", agent: "build" });

@@ -5,6 +5,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { terminalTheme, typography } from "@deyin/branding";
 import { Icon } from "./Icon.js";
+import { readClipboardText, showContextMenu, writeClipboardText } from "../clipboard.js";
 import type { EnvInfo, ShellInfo } from "@deyin/contract";
 
 interface TerminalSession {
@@ -713,7 +714,10 @@ function TerminalInstance({
       drawBoldTextInBrightColors: false,
       smoothScrollDuration: 80,
       scrollOnUserInput: true,
-      rightClickSelectsWord: true,
+      // Right-click must not move the selection: replacing a drag selection
+      // with a single word would destroy exactly what the user right-clicked
+      // to copy. The context menu below does the work instead.
+      rightClickSelectsWord: false,
       allowProposedApi: true,
       theme: terminalTheme(themeRef.current),
     });
@@ -770,22 +774,81 @@ function TerminalInstance({
     const copySelection = () => {
       if (!copyOnSelectRef.current) return;
       const text = term.getSelection();
-      if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+      if (text) void writeClipboardText(text);
     };
     host.addEventListener("pointerup", copySelection);
+
+    // Right-click opens the host's edit menu. xterm renders to a canvas, so
+    // there is no editable element for the platform to build a menu from and
+    // the event would otherwise go nowhere. An existing selection is left
+    // alone; with none, the word under the pointer is picked so Copy, Cut and
+    // Select All still have something to act on.
+    const selectWordAt = (event: MouseEvent) => {
+      const screen = host.querySelector(".xterm-screen");
+      if (!screen) return;
+      const rect = screen.getBoundingClientRect();
+      const cellW = rect.width / Math.max(1, term.cols);
+      const cellH = rect.height / Math.max(1, term.rows);
+      const col = Math.floor((event.clientX - rect.left) / cellW);
+      const viewportRow = Math.floor((event.clientY - rect.top) / cellH);
+      if (col < 0 || viewportRow < 0 || col >= term.cols || viewportRow >= term.rows) return;
+
+      // translateToString maps the viewport row onto the scrollback buffer.
+      const line = term.buffer.active.getLine(term.buffer.active.viewportY + viewportRow);
+      if (!line) return;
+      const text = line.translateToString(true);
+      if (col >= text.length) return;
+
+      const isWordChar = (ch: string) => /[\w./\\:@~-]/.test(ch);
+      let start = col;
+      let end = col;
+      if (isWordChar(text[col]!)) {
+        while (start > 0 && isWordChar(text[start - 1]!)) start -= 1;
+        while (end + 1 < text.length && isWordChar(text[end + 1]!)) end += 1;
+      }
+      const bufferRow = term.buffer.active.viewportY + viewportRow;
+      term.select(start, bufferRow, end - start + 1);
+    };
+
+    const onContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      term.focus();
+      if (!term.getSelection()) selectWordAt(e);
+      void showContextMenu({
+        kind: "terminal",
+        hasSelection: !!term.getSelection(),
+        x: e.clientX,
+        y: e.clientY,
+      }).then((command) => {
+        if (!command) return;
+        if (command === "copy") {
+          const text = term.getSelection();
+          if (text) void writeClipboardText(text);
+          return;
+        }
+        if (command === "paste") {
+          void readClipboardText().then((text) => {
+            if (!text) return;
+            term.focus();
+            term.paste(text);
+          });
+          return;
+        }
+        if (command === "selectAll") term.selectAll();
+      });
+    };
+    host.addEventListener("contextmenu", onContextMenu);
+
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
       const mod = e.ctrlKey || e.metaKey;
       if (mod && e.shiftKey && e.key.toLowerCase() === "v") {
-        void navigator.clipboard
-          ?.readText()
-          .then((text) => text && term.paste(text))
-          .catch(() => {});
+        void readClipboardText().then((text) => text && term.paste(text));
         return false;
       }
       if (mod && e.shiftKey && e.key.toLowerCase() === "c") {
         const text = term.getSelection();
-        if (text) void navigator.clipboard?.writeText(text).catch(() => {});
+        if (text) void writeClipboardText(text);
         return false;
       }
       // Let the panel's own tab shortcuts through rather than sending them to the PTY.
@@ -872,6 +935,7 @@ function TerminalInstance({
       offData();
       offExit();
       host.removeEventListener("pointerup", copySelection);
+      host.removeEventListener("contextmenu", onContextMenu);
       linkSub.dispose();
       observer.disconnect();
       cancelAnimationFrame(raf);

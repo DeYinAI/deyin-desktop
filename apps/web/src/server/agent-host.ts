@@ -9,10 +9,18 @@ import {
   CheckpointStore,
   FileStorage,
   inferCheckpointOperation,
+  runRequestStats,
   type ImageModelChoice,
 } from "@deyin/host-core";
 import type { GatedArtifactStore } from "./gated-artifacts.js";
-import type { AgentEventEnvelope, AgentImageInput, AgentTodoItem, AgentUiEvent, ChatMode } from "@deyin/host-core/shared";
+import type {
+  AgentEventEnvelope,
+  AgentImageInput,
+  AgentTodoItem,
+  AgentUiEvent,
+  ChatMode,
+  RunRequestStats,
+} from "@deyin/host-core/shared";
 import {
   PermissionEngine,
   agentForMode,
@@ -114,6 +122,8 @@ interface ActiveRun {
   abort: AbortController;
   doneEmitted: boolean;
   runId?: string;
+  /** Request accounting from the loop's run-summary, attached to the closing `done` event. */
+  stats?: RunRequestStats;
 }
 
 interface PendingPrompt<T> {
@@ -335,7 +345,11 @@ export class WebAgentHost {
     if (!run || run.doneEmitted) return;
     run.doneEmitted = true;
     this.active.delete(threadId);
-    this.emit(threadId, { type: "done", reason, finalText }, runId ?? run.runId);
+    this.emit(
+      threadId,
+      { type: "done", reason, finalText, ...(run.stats ? { stats: run.stats } : {}) },
+      runId ?? run.runId,
+    );
   }
 
   private async startRun(options: WebAgentStartOptions): Promise<void> {
@@ -915,6 +929,15 @@ export class WebAgentHost {
   /** agent-core loop events → the desktop-shaped UI events (same mapping as the desktop host). */
   private forwardEvent(threadId: string, event: AgentEvent, runId?: string): void {
     switch (event.type) {
+      case "step-start":
+        this.emit(threadId, { type: "step-start", step: event.step });
+        break;
+      case "run-summary": {
+        // Emitted just before the loop returns, so `finish` sees it on the run record.
+        const run = this.active.get(threadId);
+        if (run) run.stats = runRequestStats(event.summary);
+        break;
+      }
       case "text-delta":
         this.emit(threadId, { type: "text-delta", delta: event.delta });
         break;

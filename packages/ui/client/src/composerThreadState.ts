@@ -46,6 +46,8 @@ export interface PendingInteractionsState {
   approvalsByThread: Record<string, readonly unknown[]>;
   questionByThread: Record<string, readonly unknown[] | unknown | null | undefined>;
   mcpAuthByThread: Record<string, readonly unknown[]>;
+  /** Secure Forms a Bot is waiting on. Absent where there are none to track. */
+  secureFormByThread?: Record<string, readonly unknown[]>;
 }
 
 /** Count pending interactions blocking a single thread. */
@@ -57,7 +59,8 @@ export function countPendingInteractionsForThread(
   const questions = pending.questionByThread[threadId];
   const questionCount = Array.isArray(questions) ? questions.length : questions ? 1 : 0;
   const mcpAuth = pending.mcpAuthByThread[threadId]?.length ?? 0;
-  return approvals + questionCount + mcpAuth;
+  const secureForms = pending.secureFormByThread?.[threadId]?.length ?? 0;
+  return approvals + questionCount + mcpAuth + secureForms;
 }
 
 /** Pending interaction counts keyed by thread id (sidebar badge helper). */
@@ -72,13 +75,14 @@ export function countPendingInteractionsByThread(
   return counts;
 }
 
-/** Pending approvals, MCP auth prompts, and question dialogs awaiting user input. */
+/** Pending approvals, MCP auth prompts, question dialogs, and Secure Forms awaiting user input. */
 export function countPendingInteractions(opts: {
   approvals?: number;
   mcpAuth?: number;
   questions?: number;
+  secureForms?: number;
 }): number {
-  return (opts.approvals ?? 0) + (opts.mcpAuth ?? 0) + (opts.questions ?? 0);
+  return (opts.approvals ?? 0) + (opts.mcpAuth ?? 0) + (opts.questions ?? 0) + (opts.secureForms ?? 0);
 }
 
 /** Show Stop when any agent run is active or the focused thread is streaming. */

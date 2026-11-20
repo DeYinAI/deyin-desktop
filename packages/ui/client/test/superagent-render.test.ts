@@ -142,7 +142,7 @@ test("the settings tab renders every section from the stored settings", () => {
   assert.ok(!html.includes("Unsaved changes"), "an untouched form has no save bar");
 });
 
-test("the settings page asks one question per source and keeps the full table under Advanced policy", () => {
+test("the settings page asks one question per source and keeps the full table in a closed section of its own", () => {
   const html = render(SettingsTab, { view: view(), controller: controller(), models: [], providerId: "openference" });
   // Three controls up front, one per source, each showing the stored value (issues was set to explicit in the fixture).
   const headline = [...html.matchAll(/aria-label="Mentions from anyone else, in ([^":]+): ([^"]+)"/g)];
@@ -150,11 +150,56 @@ test("the settings page asks one question per source and keeps the full table un
   assert.equal(headline[0]![2], "Treat as a request");
   assert.equal(headline[1]![2], "Ignore");
   assert.ok(html.includes("Ignore is the safe choice"), "the risk of the permissive choice is stated");
-  // The full 3x3 table is still there, in a closed section: nothing in it differs from its default.
+  // The full 3x3 table is still there, in a closed section: no cell in it differs from its default.
   const advanced = html.slice(html.indexOf('class="superagent__advanced"'));
   assert.ok(advanced.includes("Anyone else, not addressed to the agent") && advanced.includes("Allowed account, not addressed to the agent"));
   assert.doesNotMatch(detailsTag(html, "superagent__advanced"), / open/);
-  assert.ok(!html.includes("changed from default"));
+  assert.doesNotMatch(html, /\d+ changed from default/, "the table counts nothing while nothing in it differs");
+});
+
+/** A policy at its defaults: nothing the page keeps out of sight differs from what a first run starts with. */
+function plainView(): SuperagentView {
+  const plain = view();
+  plain.settings.policy.sources.github = { allowed: [{ id: "alice" }], bots: [], admission: {} };
+  return plain;
+}
+
+const section = (name: string): string => `form-section__title">${name}<`;
+
+test("the settings page shows only what a first run needs, and keeps the rest in a closed Advanced section", () => {
+  const html = render(SettingsTab, { view: plainView(), controller: controller(), models: [], providerId: "openference", onSetupInChat: () => undefined });
+  assert.doesNotMatch(detailsTag(html, "superagent__more"), / open/, "a default policy hides nothing, so Advanced starts closed");
+  const advanced = html.indexOf('class="superagent__more"');
+  assert.ok(advanced > 0);
+
+  // Up front: the chat entry, the account, the repository with what to watch, who may ask, and how much it does alone.
+  for (const name of ["Set up in chat", "Agent account", "Repository", "Who may ask", "How it acts"]) {
+    const at = html.indexOf(section(name));
+    assert.ok(at >= 0 && at < advanced, `${name} is up front`);
+  }
+  for (const control of ['aria-label="Watch issues"', 'aria-label="Watch pull requests"', 'aria-label="Watch comments"', 'aria-label="Assessment mode: ']) {
+    const at = html.indexOf(control);
+    assert.ok(at >= 0 && at < advanced, `${control} is up front`);
+  }
+  assert.ok(html.indexOf("Allowed accounts") < advanced);
+  assert.ok(html.slice(0, advanced).includes("Start in chat"), "the chat button is up front");
+
+  // Behind Advanced, still on the page: everything else, which is no longer asked of a first-time user.
+  for (const name of ["GitHub", "What counts as a request", "Rules", "Assessment", "Workers", "Instructions", "Reset"]) {
+    assert.ok(html.indexOf(section(name)) > advanced, `${name} is under Advanced`);
+  }
+  for (const control of ["Check GitHub every", "Branch prefix", "Trusted bots", "Parallel workers"]) {
+    assert.ok(html.indexOf(control) > advanced, `${control} is under Advanced`);
+  }
+  assert.doesNotMatch(html, /policy changed from default/);
+});
+
+test("Advanced opens by itself, and says why, when the headline policy lets more through", () => {
+  // The fixture lets anyone who mentions the agent in an issue start work: the one cell that is not in the table.
+  const html = render(SettingsTab, { view: view(), controller: controller(), models: [], providerId: "openference", onSetupInChat: () => undefined });
+  assert.match(detailsTag(html, "superagent__more"), / open/, "a policy that lets more through is never behind a closed section");
+  assert.ok(html.includes("policy changed from default"));
+  assert.doesNotMatch(detailsTag(html, "superagent__advanced"), / open/, "while the table inside it, with nothing changed, stays closed");
 });
 
 test("Advanced policy opens and says so when a cell in it is not at its default", () => {
@@ -162,5 +207,6 @@ test("Advanced policy opens and says so when a cell in it is not at its default"
   changed.settings.policy.sources.github = { allowed: [{ id: "alice" }], bots: [], admission: { comments: { unlistedUnaddressed: "inferred" } } };
   const html = render(SettingsTab, { view: changed, controller: controller(), models: [], providerId: "openference" });
   assert.match(detailsTag(html, "superagent__advanced"), / open/, "a policy that lets more through is never hidden");
+  assert.match(detailsTag(html, "superagent__more"), / open/, "nor is it behind a closed Advanced section");
   assert.ok(html.includes("1 changed from default"));
 });

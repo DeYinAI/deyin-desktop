@@ -3,7 +3,111 @@
 All notable **public** releases of Deyin are documented here.
 
 > **Note on Versioning History:**
-> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.30`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+> Prior to the official public open-source release on August 23, 2026, the codebase used internal pre-release milestone tags (`v0.x` and `v2.0.0`–`v2.1.10` private beta builds). For the public launch, versioning was formally reset to **v1.0.0** to establish a clean, standard Semantic Versioning baseline. All public production releases follow the continuous `v1.0.x` release line (`v1.0.0` → `v1.0.32`). Pre-v1 beta notes are archived at the bottom of this document and under [`docs/archive/`](./archive/).
+
+## 1.0.32 — 2026-11-20
+
+### Highlights
+
+- **Three Products, One App:** A switcher on the logo and title (like ChatGPT's model picker) changes the whole
+  interface between **Deyin Code**, **Deyin Bot** and **Deyin Conductor**. Each has its own sidebar and home, and
+  choosing a mode that belongs to another product (`/conductor`, Ctrl+Shift+B) moves you there.
+- **Deyin Bot — A Durable Assistant With Its Own Memory:** A Bot is a named persona that keeps its own memory apart
+  from every other Bot, with its own files, skills (with history and **Put back**), routines (schedule, once, manual)
+  and permissions. Auto Review decides what a Bot may do without asking, and anything else shows an **Allow once /
+  Always allow / Deny** card. A Bot runs on this computer by default; it can instead live on an SSH server you
+  already own, where Deyin installs its own engine (`deyin bot-engine serve`). Nothing needs a Deyin-hosted cloud.
+  - **Vault, Secure Form and Take over:** Logins, cards and contacts are filled into pages without the Bot seeing the
+    secret, 1Password can be switched on as a second place a login is looked for (through its own `op` command, asked
+    every time), and you can take over the browser at any moment.
+  - **Teach, Rooms, Avatars:** Show a Bot a task once in the in-app browser and it becomes a skill. A **room** puts two
+    to eight Bots in one conversation: the host asks a Bot when you write its @handle, and each Bot answers as itself.
+    Avatars are Deyin's own forms and colors, an uploaded picture, or one made from a description with your own image
+    model (shown first, applied only when you save).
+  - **Share and Connections:** Templates, share links and six starter Bots. A routine can start from a webhook, an
+    email post, Slack, Teams or @mentions of the Bot's X account; every public reply waits for you to approve that
+    exact text, and a message from outside is treated as untrusted text.
+  - **Honest about limits:** Email, Slack, Teams, X, 1Password and a Bot on a remote server are tested against
+    stand-ins, not a real workspace, account or host. Installing the engine on a server downloads the Deyin CLI
+    installer from `cdn.deyin.ai`, which must be live first. Not built: a mailbox for the Bot, texting and phone
+    calls, payments, teams, and mobile. [`docs/PARITY-GROK-BOT.md`](./PARITY-GROK-BOT.md) lists every surface and its
+    status.
+- **Conductor Orchestration and Pipeline Validation:** Full multi-agent pipeline validation
+  (`validateConductorWorkflow`) detecting missing or uninstalled agents, cyclical execution dependencies, and
+  unreachable stages before any workflow runs. New agent-facing tools (`conductor-workflow-tools.ts`) let the
+  assistant and the `build-conductor-workflow` skill inspect, validate, generate and run pipelines directly from chat.
+  The new live execution strip (`ConductorRunStrip` + `useConductorRun`) displays active stage progress directly above
+  the composer, while template workflows and role preferences can be configured under Settings → Conductor.
+- **Streamlined Composer & Unified Run Display:**
+  - Single merged execution header: Run activity blocks now fold into a single line (`Completed in Ns · Ran commands, wrote files...`),
+    with no nested disclosures.
+  - Composer mode selection via typed slash commands (`/plan`, `/ask`, `/conductor`, `/agent`; `/bot` still works as an alias for `/conductor`) with contextual inline hints
+    and an exit chip, replacing the cluttered dropdown button.
+  - Aligned message action row and conversation stats line.
+  - Replaced native OS select elements across settings and Superagent with themed `MenuSelect` dropdowns for visual consistency.
+- **Automations That Report, Recover and Heal Themselves:** A run now ends with an explicit outcome (succeeded, nothing
+  to do, blocked, failed, or none reported) and a step-by-step timeline on the Records tab; a long run no longer loses
+  its beginning from the history. Every automation is bounded by a run-time, quiet and step limit, and a stuck run is
+  stopped and recorded as failed. Before a run calls the model it checks what it can without one, so a missing sign-in
+  or an unapproved site is a **blocked** run that names the fix; three failures in a row pause the automation, which
+  then checks again by itself and resumes when the cause was temporary. After a failed run, **self-healing** can add
+  one short learned rule to the automation's own playbook; the rule is validated mechanically, tried on the next run and
+  rolled back if that run fails, and every change is listed in the automation's Healing section with an **Undo**.
+- **Per-Automation Access to Your Chrome:** An automation is granted specific sites (`browserSites`) before it gets the
+  `chrome_*` tools, the grant is shown when you approve the automation, and every call is held to those sites; other
+  sites are refused and reported as `approval-required`. An unattended run can no longer improvise by typing or
+  clicking through the operating system from `bash`.
+- **Set Up Superagent by Answering a Few Questions:** Type `/superagent`, or press **Start in chat** on the Superagent
+  page, and the assistant asks one question at a time (the repository, who may ask, the agent's own GitHub account, what
+  to watch, and Observe first or Act on requests), applies the answers, checks that the agent account can push, and
+  switches Superagent on only after you say yes. A GitHub token is never typed into chat: none of its six `superagent_*`
+  tools has a parameter that could carry one, and each refuses an argument it does not declare. The agent account signs
+  in through GitHub's device flow (a one-time code you enter at github.com while signed in as the agent account) when
+  the build has a GitHub OAuth app, and otherwise by pasting a token into the masked field on the page, as before.
+- **A Much Shorter Superagent Settings Page:** The Set up tab now shows the agent account, the repository and what to
+  watch, who may ask, and the mode. Polling, branch prefix, trusted bots, what counts as a request, rules, models,
+  workers and instructions moved under a collapsed **Advanced** section, which opens by itself when the policy in it is
+  not at its defaults, so a policy that lets more through is never hidden.
+- **Use Your Real Chrome Without Disturbing It (Windows, Opt-in):** A new **Chrome** page in Settings pairs Deyin with
+  the Chrome you already use through a small extension, and the agent then works in its own background tabs (a
+  **Deyin** tab group in your window, or a separate unfocused window) while the tab you are looking at stays yours.
+  Nineteen `chrome_*` tools cover tabs, snapshots, screenshots, trusted clicks and typing, dialogs, console and
+  network logs, and batching. The connection is loopback-only and paired with a six-digit code you confirm in the
+  extension; each site is approved before it is used. The in-app browser now runs on the same page driver, so both get
+  trusted input and the same accessibility snapshot. The extension is loaded as an unpacked extension for now.
+- **Computer Use That Stays Out of Your Way (Windows):** Actions now try the quietest route first — window messages,
+  then UI Automation — and only fall back to your real mouse and keyboard, restoring the pointer and the foreground
+  window afterwards. Windows are captured while covered or in the background. New `computer_hover`,
+  `computer_press_key`, `computer_scroll`, `computer_drag`, `computer_wait` (including wait-for-text) and
+  `computer_list_displays`; clicks accept a button, a count and modifiers. Observations are filterable and a ref from
+  an out-of-date observation is refused instead of hitting whatever moved there. The host is per-monitor DPI aware.
+  Every action has its own time limit, and Stop now cancels the action inside the host.
+- **See When Deyin Is Controlling Your Computer, and Take Over at Any Time:** While computer use runs, a pill on your
+  screen says what it is doing and has a **Stop** button; while it uses your real mouse and keyboard a glowing border
+  surrounds that display. Touching the mouse or keyboard at that moment stops the agent where it is, leaves the pointer
+  and focus as you put them, and asks whether to resume. **Ctrl+Alt+Shift+Esc** stops it from anywhere. The indicator
+  can be turned off in Settings → Computer Use.
+
+### Changed
+
+- Conductor's internal ids moved from `bot` to `conductor` so that "Bot" means only Deyin Bot. Saved threads, projects
+  and web-client state are upgraded on load (mode `bot` becomes `conductor`, and the tools `bot_workflow_validate`,
+  `bot_workflow_run`, `inspect_bot_run` and `merge_bot_diff` become `conductor_workflow_validate`,
+  `conductor_workflow_run`, `inspect_conductor_run` and `merge_conductor_diff`).
+- Computer use no longer registers Esc as a global shortcut; stopping is the **Ctrl+Alt+Shift+Esc** chord, which is
+  registered only while computer use is running.
+- `computer_*` actions are now confirmed by their risk: launching an app, destructive chords (Alt+F4, Ctrl+W, anything
+  with the Windows key), right and middle clicks, and text that mentions paying, deleting, sending, signing in or a
+  password. Unattended automation runs still refuse every `computer_*` action.
+- Computer use is verified on a 100% display only. On a scaled display coordinates are expected to be right (the host
+  is per-monitor DPI aware) but have not been checked.
+
+- Unattended automation runs now stop at 15 minutes, after 5 quiet minutes, or after 120 tool rounds unless the
+  automation sets its own `limits`; this replaces the app-wide step setting for them.
+- `remember` and `forget` are not available in unattended automation runs; they can read memory, and use
+  `automation_state` to keep progress between runs.
+- `chrome_*` tools are no longer blanket-denied for automations: they are available only to an automation that was
+  granted sites, and only on those sites.
 
 ## 1.0.31 — 2026-10-31
 
@@ -12,8 +116,7 @@ All notable **public** releases of Deyin are documented here.
 - **Superagent — A Proactive Coding Agent for One GitHub Repository (Desktop, Off by Default):** A new **Superagent**
   page in the sidebar watches a GitHub repository as a dedicated agent account, decides which requests it may act on,
   and works each accepted request in its own git worktree, ending in a pull request that you review and merge — it never
-  merges. It follows the design of [deepseek-ai/dsh-superagent-prototype](https://github.com/deepseek-ai/dsh-superagent-prototype)
-  (MIT): the agents' instructions are that project's Markdown prompts, unchanged, with a short "This installation"
+  merges. It follows the design of an open-source prototype (MIT): the agents' instructions are that project's Markdown prompts, unchanged, with a short "This installation"
   section added after them; the engine, GitHub client, store and desktop integration are Deyin's own. Nothing runs until
   you connect the agent account's token, set the repository, list the GitHub accounts allowed to ask, and switch it on;
   with an empty allow-list it never acts on anything. Setup, the three modes (Mentions only, Observe, Auto), what it can
@@ -537,7 +640,7 @@ See [PLUGINS_AND_MCP.md](./PLUGINS_AND_MCP.md) and [RELEASE.md](./RELEASE.md) fo
 
 ### 2.0.0 — 2026-08-02 (Private Beta)
 
-- **Prefix cache (Phase 1):** Prefix stability tracking with system/tools/log_rewrite attribution, tiered compaction (50% soft warning, 60% snip, 80% prune), DeepSeek reasoning roundtrip and continuation.
+- **Prefix cache (Phase 1):** Prefix stability tracking with system/tools/log_rewrite attribution, tiered compaction (50% soft warning, 60% snip, 80% prune), model reasoning roundtrip and continuation.
 - **Coordinator (Phase 2):** Planner/executor isolated sessions with deterministic routing policy (balanced, conservative, aggressive).
 - **Fleet & scheduler (Phase 3):** Fleet tool with write-path preflight and parallel execution; background jobs with JSONL persistence and `wait` tool.
 - **Delivery mode (Phase 5):** Evidence ledger, readiness gates, and `complete_step` sign-offs.

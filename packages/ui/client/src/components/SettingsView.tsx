@@ -6,10 +6,13 @@ import { UpdateBanner } from "./UpdateBanner.js";
 
 // Settings pages are heavy (MCP catalog, indexing UI, usage charts) and only one
 // is visible at a time; lazy chunks keep them out of the initial renderer bundle.
+const ConductorPage = lazy(() => import("./settings/ConductorPage.js").then((m) => ({ default: m.ConductorPage })));
 const CapabilityPage = lazy(() => import("./settings/CapabilityPage.js").then((m) => ({ default: m.CapabilityPage })));
 const GeneralPage = lazy(() => import("./settings/GeneralPage.js").then((m) => ({ default: m.GeneralPage })));
 const AppearancePage = lazy(() => import("./settings/AppearancePage.js").then((m) => ({ default: m.AppearancePage })));
 const SshHostsPage = lazy(() => import("./settings/SshHostsPage.js").then((m) => ({ default: m.SshHostsPage })));
+const VaultPage = lazy(() => import("./settings/VaultPage.js").then((m) => ({ default: m.VaultPage })));
+const BotServersPage = lazy(() => import("./settings/BotServersPage.js").then((m) => ({ default: m.BotServersPage })));
 const IdentityPage = lazy(() => import("./settings/IdentityPage.js").then((m) => ({ default: m.IdentityPage })));
 const IndexingPage = lazy(() => import("./settings/IndexingPage.js").then((m) => ({ default: m.IndexingPage })));
 const McpPage = lazy(() => import("./settings/McpPage.js").then((m) => ({ default: m.McpPage })));
@@ -18,6 +21,7 @@ const ModelSettingsPage = lazy(() => import("./settings/ModelSettingsPage.js").t
 const PluginsPage = lazy(() => import("./settings/PluginsPage.js").then((m) => ({ default: m.PluginsPage })));
 const TerminalPage = lazy(() => import("./settings/TerminalPage.js").then((m) => ({ default: m.TerminalPage })));
 const BrowserPage = lazy(() => import("./settings/BrowserPage.js").then((m) => ({ default: m.BrowserPage })));
+const ChromePage = lazy(() => import("./settings/ChromePage.js").then((m) => ({ default: m.ChromePage })));
 const ComputerUsePage = lazy(() => import("./settings/ComputerUsePage.js").then((m) => ({ default: m.ComputerUsePage })));
 const UsageStatsPage = lazy(() => import("./settings/UsageStatsPage.js").then((m) => ({ default: m.UsageStatsPage })));
 import type { MessageKey } from "@deyin/host-core/shared";
@@ -37,12 +41,15 @@ export type SettingsPage =
   | "models"
   | "modelRoles"
   | "extensions"
+  | "conductor"
   | "integrations"
   | "skills"
   | "workspace"
   | "data"
   | "indexing"
   | "sshHosts"
+  | "vault"
+  | "botServers"
   | "account";
 
 /** Legacy page ids kept valid so stale deep-links (e.g. stored settings pages) route somewhere sane. */
@@ -62,6 +69,8 @@ const LEGACY_PAGE_ROUTES: Partial<Record<string, SettingsPage>> = {
   usage: "data",
   optimization: "data",
   sshHosts: "sshHosts",
+  vault: "vault",
+  botServers: "botServers",
   identity: "account",
   onboard: "account",
   cache: "data",
@@ -116,6 +125,7 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     sectionKey: "settings.section.extensions",
     entries: [
       { page: "extensions", labelKey: "settings.nav.extensions", icon: "grid" },
+      { page: "conductor", labelKey: "settings.nav.conductor", icon: "bot" },
     ],
   },
   {
@@ -129,6 +139,13 @@ const NAV: { sectionKey: MessageKey; entries: NavEntry[] }[] = [
     sectionKey: "settings.section.data",
     entries: [
       { page: "data", labelKey: "settings.nav.agentData", icon: "chart" },
+    ],
+  },
+  {
+    sectionKey: "settings.section.bot",
+    entries: [
+      { page: "vault", labelKey: "settings.nav.vault", icon: "lock" },
+      { page: "botServers", labelKey: "settings.nav.botServers", icon: "server" },
     ],
   },
   {
@@ -249,7 +266,7 @@ export function SettingsView(props: SettingsViewProps) {
   // Integrations, Skills, Workspace and SSH hosts manage desktop-local
   // resources, so the web build hides them entry by entry (a group can mix
   // shared and desktop-only pages, as Account and SSH hosts do).
-  const DESKTOP_ONLY: SettingsPage[] = ["extensions", "workspace", "sshHosts"];
+  const DESKTOP_ONLY: SettingsPage[] = ["extensions", "conductor", "workspace", "sshHosts", "vault", "botServers"];
   const CHAT_ONLY_HIDDEN: SettingsPage[] = ["modelRoles", "data", "indexing"];
   const hiddenPages = new Set<SettingsPage>([
     ...(isWeb ? DESKTOP_ONLY : []),
@@ -333,6 +350,12 @@ export function SettingsView(props: SettingsViewProps) {
             onSetSubagentModel={setSubagentModel}
           />
         )}
+        {page === "conductor" && (
+          <ConductorPage
+            preferences={props.settings.conductorRolePreferences ?? {}}
+            onChange={(conductorRolePreferences) => props.onChangeSettings({ conductorRolePreferences })}
+          />
+        )}
         {page === "extensions" && (
           <>
             {extensionTab === "mcps" && <McpPage onToggle={toggleCap} tabs={extensionTabs} platform={props.platform} />}
@@ -357,6 +380,7 @@ export function SettingsView(props: SettingsViewProps) {
           <div className="settings-page">
             <TerminalPage settings={props.settings} onChange={props.onChangeSettings} />
             <BrowserPage settings={props.settings} onChange={props.onChangeSettings} />
+            <ChromePage settings={props.settings} onChange={props.onChangeSettings} />
             <ComputerUsePage settings={props.settings} onChange={props.onChangeSettings} />
           </div>
         )}
@@ -409,6 +433,10 @@ export function SettingsView(props: SettingsViewProps) {
         )}
         {/* SSH targets for remote automation runs; its own page, desktop-only. */}
         {page === "sshHosts" && <SshHostsPage />}
+        {page === "vault" && (
+          <VaultPage onePassword={{ enabled: props.settings.vaultOnePassword, onChange: (vaultOnePassword) => props.onChangeSettings({ vaultOnePassword }) }} />
+        )}
+        {page === "botServers" && <BotServersPage onOpenSshHosts={() => setPage("sshHosts")} />}
         </Suspense>
       </div>
     </div>

@@ -31,7 +31,7 @@ async function readJsonSafe<T = Record<string, unknown>>(path: string): Promise<
  * and standard lifecycle commands (test, build, typecheck, lint).
  */
 export async function detectProjectToolchain(cwd: string): Promise<ProjectToolchainInfo | null> {
-  let rootFiles: string[] = [];
+  let rootFiles: string[];
   try {
     const entries = await readdir(cwd, { withFileTypes: true });
     rootFiles = entries.map((e) => e.name);

@@ -26,6 +26,12 @@ interface SummaryRecord {
   compactionPasses: number;
   /** Paid fold attempts that came back unusable; absent in pre-fold-failure records. */
   foldFailures?: number;
+  /** Every HTTP request sent to the model provider; absent in older records and when none was sent. */
+  httpAttempts?: number;
+  /** Model requests replayed after a transient failure or cut-off stream; absent when zero. */
+  streamRetries?: number;
+  /** Goal-reviewer calls; absent when zero. */
+  reviewerCalls?: number;
   promptTokens: number;
   cachedPromptTokens: number;
   cacheHitRate: number;
@@ -113,6 +119,9 @@ if (asJson) {
           loopGuardTrips: total((s) => s.loopGuardTrips),
           compactionPasses: total((s) => s.compactionPasses),
           foldFailures: total((s) => s.foldFailures ?? 0),
+          httpAttempts: total((s) => s.httpAttempts ?? 0),
+          streamRetries: total((s) => s.streamRetries ?? 0),
+          reviewerCalls: total((s) => s.reviewerCalls ?? 0),
           promptTokens,
           cachedPromptTokens,
           cacheHitRate: promptTokens > 0 ? cachedPromptTokens / promptTokens : 0,
@@ -136,7 +145,21 @@ if (all.length === 0) {
 const pct = (x: number): string => `${(x * 100).toFixed(1)}%`;
 console.log(`Run summaries in ${sessionsDir}`);
 console.log("");
-const header = ["session", "runs", "steps", "tools", "denied", "failed", "dupes", "guards", "foldfail", "cache"].join(" | ");
+const header = [
+  "session",
+  "runs",
+  "steps",
+  "reqs",
+  "replays",
+  "reviews",
+  "tools",
+  "denied",
+  "failed",
+  "dupes",
+  "guards",
+  "foldfail",
+  "cache",
+].join(" | ");
 console.log(header);
 console.log("-".repeat(header.length));
 for (const s of sessions) {
@@ -148,6 +171,9 @@ for (const s of sessions) {
       s.id.slice(0, 18),
       s.summaries.length,
       t((x) => x.steps),
+      t((x) => x.httpAttempts ?? 0),
+      t((x) => x.streamRetries ?? 0),
+      t((x) => x.reviewerCalls ?? 0),
       t((x) => x.toolCalls),
       t((x) => x.deniedCalls),
       t((x) => x.failedCalls),
@@ -164,6 +190,9 @@ console.log(
     `TOTAL (${all.length} runs)`,
     all.length,
     total((s) => s.steps),
+    total((s) => s.httpAttempts ?? 0),
+    total((s) => s.streamRetries ?? 0),
+    total((s) => s.reviewerCalls ?? 0),
     total((s) => s.toolCalls),
     total((s) => s.deniedCalls),
     total((s) => s.failedCalls),

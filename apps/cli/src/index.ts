@@ -22,6 +22,7 @@ import { serveCli } from "./server.js";
 import { runAcp } from "./acp.js";
 import { runRemote } from "./remote.js";
 import { benchCommand } from "./commands/bench.js";
+import { botEngineCommand } from "./commands/bot-engine.js";
 
 // One User-Agent identity for every outbound CLI request (providers, GitHub, search).
 initUserAgent("cli", VERSION);
@@ -205,6 +206,7 @@ const SUBCOMMAND_NAMES = new Set([
   "serve",
   "acp",
   "bench",
+  "bot-engine",
   "subagent",
   "memory",
   "capabilities",
@@ -908,6 +910,7 @@ const main = defineCommand({
       },
     }),
     bench: benchCommand,
+    "bot-engine": botEngineCommand,
   },
   async run({ args, rawArgs }) {
     // citty invokes the parent run() after a subcommand too; mirror its dispatch

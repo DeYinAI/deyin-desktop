@@ -513,6 +513,12 @@ export function AutomationsView(props: Props) {
           onRun={(task) => void runNow(task)}
           onStop={(runId) => api.stop(runId)}
           onDelete={(task) => void remove(task)}
+          onSetAutoHeal={async (task, enabled) => {
+            setItems((await api.update(task.id, { autoHeal: enabled })).list);
+          }}
+          onRevertLearned={async (task, revisionId) => {
+            setItems(await api.revertLearned(task.id, revisionId));
+          }}
           onOpenSshSettings={props.onOpenSshSettings}
           onProbeWsl={async (distro) => {
             const result = await api.testWsl(distro);

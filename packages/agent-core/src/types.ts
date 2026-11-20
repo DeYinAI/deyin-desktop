@@ -1,3 +1,5 @@
+import type { ConductorRolePreferences } from "@deyin/host-core/shared";
+
 /** One tool invocation requested by the model (arguments is the raw JSON string). */
 export interface AgentToolCall {
   id: string;
@@ -170,6 +172,8 @@ export interface ToolContext {
   getDiagnostics?: (paths?: string[]) => Promise<DiagnosticItem[]>;
   /** Host bridge for external AI bot discovery (list_external_bots tool). */
   listExternalAgents?: (forceRefresh?: boolean) => Promise<any[]>;
+  /** The user's explicit Conductor role -> agent choices (list_external_bots reports them per role). */
+  getConductorRolePreferences?: () => ConductorRolePreferences;
   /** Host bridge for external AI bot execution (delegate_external_bot tool). */
   runExternalAgent?: (options: {
     agentId: string;
@@ -181,8 +185,8 @@ export interface ToolContext {
     runId?: string;
     logBufferId?: string;
   }) => Promise<{ ok: boolean; error?: string; outputText: string; runId?: string }>;
-  /** Host bridge for merging bot worktree branches (merge_bot_diff tool). */
-  mergeBotBranch?: (cwd: string, branchName: string) => Promise<{ ok: boolean; message: string }>;
+  /** Host bridge for merging Conductor worktree branches (merge_conductor_diff tool). */
+  mergeConductorBranch?: (cwd: string, branchName: string) => Promise<{ ok: boolean; message: string }>;
 }
 
 /** One compiler or language-server diagnostic item. */
@@ -282,8 +286,8 @@ export type InteractionRequest =
   | { type: "ask-question"; questions: AskQuestionItem[]; title?: string };
 
 export interface ModeChangeRequest {
-  target: "agent" | "plan" | "ask" | "delivery" | "bot";
-  previous?: "agent" | "plan" | "ask" | "delivery" | "bot";
+  target: "agent" | "plan" | "ask" | "delivery" | "conductor";
+  previous?: "agent" | "plan" | "ask" | "delivery" | "conductor";
   userApproved?: boolean;
   explanation?: string;
   event: "enter" | "exit" | "switch";

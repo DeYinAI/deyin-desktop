@@ -6,13 +6,17 @@ export type ApprovalDecision = "allow" | "allow-always" | "deny";
 interface Props {
   toolName: string;
   summary: string;
+  /** Why a person is being asked, when the host knows (a Bot's rules decide what needs a yes). */
+  reason?: string;
+  /** "Always allow" is kept from now on, not only for this conversation. */
+  saved?: boolean;
   /** How many requests are waiting, including this one (parallel tool calls). */
   pendingCount?: number;
   onDecision: (decision: ApprovalDecision) => void;
 }
 
 /** Permission prompt for agent tool calls in ask-first mode. */
-export function ApprovalDialog({ toolName, summary, pendingCount = 1, onDecision }: Props) {
+export function ApprovalDialog({ toolName, summary, reason, saved = false, pendingCount = 1, onDecision }: Props) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Never hijack keys while the user is typing (composer / inputs).
@@ -36,13 +40,14 @@ export function ApprovalDialog({ toolName, summary, pendingCount = 1, onDecision
         <div className="inline-card__body inline-card__body--mono" title={summary}>
           {summary}
         </div>
+        {reason && <div className="inline-card__body approval-inline__reason">{reason}</div>}
       </div>
       <div className="inline-card__actions">
         <button className="btn btn--pill btn--ghost" onClick={() => onDecision("deny")}>
           Deny
         </button>
         <button className="btn btn--pill" onClick={() => onDecision("allow-always")}>
-          Allow for session
+          {saved ? "Always allow" : "Allow for session"}
         </button>
         <button className="btn btn--pill btn--solid" onClick={() => onDecision("allow")}>
           Allow once

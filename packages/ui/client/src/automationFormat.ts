@@ -4,7 +4,7 @@ import { triggerToSchedule } from "./automationSchedule.js";
 
 type Translate = (key: MessageKey) => string;
 
-function fill(template: string, vars: Record<string, string | number>): string {
+export function fill(template: string, vars: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ""));
 }
 

@@ -1,47 +1,130 @@
 using System.Diagnostics;
-using System.IO;
-using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Deyin.ComputerUseHost;
 
+public sealed record WindowBounds(int X, int Y, int Width, int Height);
+
+/// <summary>
+/// A top-level window. <c>Bounds</c> are physical screen pixels of the visible frame; <c>DpiScale</c> is the
+/// display's scale factor (1.5 = 150%). Both are facts about the window; the screenshot space is described separately.
+/// </summary>
+public sealed record WindowInfo(
+  string Id,
+  string Title,
+  string App,
+  int Pid,
+  WindowBounds Bounds,
+  string? DisplayId,
+  double DpiScale,
+  bool Minimized,
+  bool Foreground,
+  bool Elevated);
+
+public sealed record AppInfo(string Id, string Name, string Path);
+
 public sealed class WindowEnumerator
 {
-  private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  private static readonly TimeSpan ProcessCacheTtl = TimeSpan.FromSeconds(10);
+  private static readonly TimeSpan AppsCacheTtl = TimeSpan.FromSeconds(60);
+  private const int LaunchWaitMs = 8000;
 
-  [DllImport("user32.dll")]
-  private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  private sealed record ProcessFacts(string Name, bool Elevated, long ExpiresAt);
 
-  [DllImport("user32.dll")]
-  private static extern bool IsWindow(IntPtr hWnd);
+  private readonly Dictionary<uint, ProcessFacts> _processes = new();
+  private readonly object _lock = new();
+  private IReadOnlyList<AppInfo>? _apps;
+  private long _appsExpiresAt;
 
-  [DllImport("user32.dll")]
-  private static extern bool IsWindowVisible(IntPtr hWnd);
+  /* Windows -------------------------------------------------------------------- */
 
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-
-  [DllImport("user32.dll")]
-  private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-
-  public IReadOnlyList<object> ListWindows()
+  public IReadOnlyList<WindowInfo> ListWindows()
   {
-    var list = new List<object>();
-    EnumWindows((hWnd, _) =>
+    var found = new List<IntPtr>();
+    Native.EnumWindows((hwnd, _) =>
     {
-      if (!IsWindowVisible(hWnd)) return true;
-      var title = GetTitle(hWnd);
-      if (string.IsNullOrWhiteSpace(title)) return true;
-      var processName = GetProcessName(hWnd);
-      list.Add(new { id = hWnd.ToInt64().ToString(), title, app = processName });
+      if (IsAppWindow(hwnd)) found.Add(hwnd);
       return true;
     }, IntPtr.Zero);
-    return list;
+    var foreground = Native.RootOf(Native.GetForegroundWindow());
+    return found.Select(h => Describe(h, foreground)).ToList();
   }
 
-  public IReadOnlyList<object> ListApps()
+  public WindowInfo Describe(IntPtr hwnd) => Describe(hwnd, Native.RootOf(Native.GetForegroundWindow()));
+
+  private WindowInfo Describe(IntPtr hwnd, IntPtr foreground)
   {
-    var apps = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+    var pid = Native.ProcessIdOf(hwnd);
+    var facts = FactsFor(pid);
+    var minimized = Native.IsIconic(hwnd);
+    var frame = minimized ? default : Native.FrameBounds(hwnd);
+    var display = minimized ? null : Displays.ForWindow(hwnd);
+    return new WindowInfo(
+      hwnd.ToInt64().ToString(),
+      Native.TitleOf(hwnd),
+      facts.Name,
+      (int)pid,
+      new WindowBounds(frame.Left, frame.Top, frame.Width, frame.Height),
+      display?.Id,
+      display?.Scale ?? 1,
+      minimized,
+      Native.RootOf(hwnd) == foreground,
+      facts.Elevated);
+  }
+
+  /// <summary>Windows a person would call an app window: visible, titled, not a tool window, not cloaked (other virtual desktop, hidden UWP shell).</summary>
+  private static bool IsAppWindow(IntPtr hwnd)
+  {
+    if (!Native.IsWindowVisible(hwnd)) return false;
+    if (Native.IsCloaked(hwnd)) return false;
+    if (string.IsNullOrWhiteSpace(Native.TitleOf(hwnd))) return false;
+    var ex = Native.GetWindowLongPtr(hwnd, Native.GWL_EXSTYLE).ToInt64();
+    return (ex & Native.WS_EX_TOOLWINDOW) == 0;
+  }
+
+  public IntPtr ResolveHwnd(string windowId)
+  {
+    if (!long.TryParse(windowId, out var handle) || handle == 0) return IntPtr.Zero;
+    var hwnd = new IntPtr(handle);
+    return Native.IsWindow(hwnd) && Native.IsWindowVisible(hwnd) ? hwnd : IntPtr.Zero;
+  }
+
+  public string GetTitle(IntPtr hwnd) => Native.TitleOf(hwnd);
+
+  private ProcessFacts FactsFor(uint pid)
+  {
+    var now = Environment.TickCount64;
+    lock (_lock)
+    {
+      if (_processes.TryGetValue(pid, out var cached) && cached.ExpiresAt > now) return cached;
+    }
+    var name = "unknown";
+    try
+    {
+      name = Process.GetProcessById((int)pid).ProcessName;
+    }
+    catch
+    {
+      // the process ended, or it is protected
+    }
+    var facts = new ProcessFacts(name, Native.IsPidElevated(pid), now + (long)ProcessCacheTtl.TotalMilliseconds);
+    lock (_lock)
+    {
+      _processes[pid] = facts;
+    }
+    return facts;
+  }
+
+  /* Apps ----------------------------------------------------------------------- */
+
+  public IReadOnlyList<AppInfo> ListApps()
+  {
+    var now = Environment.TickCount64;
+    lock (_lock)
+    {
+      if (_apps is not null && _appsExpiresAt > now) return _apps;
+    }
+
+    var apps = new Dictionary<string, AppInfo>(StringComparer.OrdinalIgnoreCase);
     foreach (var dir in new[]
              {
                Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms),
@@ -49,7 +132,7 @@ public sealed class WindowEnumerator
              })
     {
       if (!Directory.Exists(dir)) continue;
-      foreach (var lnk in Directory.EnumerateFiles(dir, "*.lnk", SearchOption.AllDirectories))
+      foreach (var lnk in SafeEnumerateShortcuts(dir))
       {
         var name = Path.GetFileNameWithoutExtension(lnk);
         if (string.IsNullOrWhiteSpace(name)) continue;
@@ -57,199 +140,36 @@ public sealed class WindowEnumerator
         var id = !string.IsNullOrWhiteSpace(target)
           ? Path.GetFileNameWithoutExtension(target).ToLowerInvariant()
           : name.ToLowerInvariant().Replace(' ', '-');
-        apps.TryAdd(id, new { id, name, path = target ?? lnk });
+        apps.TryAdd(id, new AppInfo(id, name, target ?? lnk));
       }
     }
-    foreach (var proc in Process.GetProcesses())
+
+    // Anything with an open window is launchable even without a Start menu entry.
+    foreach (var window in ListWindows())
     {
-      try
-      {
-        if (string.IsNullOrWhiteSpace(proc.MainWindowTitle)) continue;
-        var id = proc.ProcessName.ToLowerInvariant();
-        apps.TryAdd(id, new { id, name = proc.ProcessName, path = proc.MainModule?.FileName ?? proc.ProcessName });
-      }
-      catch
-      {
-        // access denied for some processes
-      }
+      var id = window.App.ToLowerInvariant();
+      if (apps.ContainsKey(id)) continue;
+      apps[id] = new AppInfo(id, window.App, Native.ImagePathOf((uint)window.Pid) ?? window.App);
     }
-    return apps.Values.Take(200).ToList();
+
+    var result = apps.Values.Take(300).ToList();
+    lock (_lock)
+    {
+      _apps = result;
+      _appsExpiresAt = now + (long)AppsCacheTtl.TotalMilliseconds;
+    }
+    return result;
   }
 
-  public IntPtr ResolveHwnd(string windowId)
+  private static IEnumerable<string> SafeEnumerateShortcuts(string dir)
   {
-    if (!long.TryParse(windowId, out var handle) || handle == 0) return IntPtr.Zero;
-    var hwnd = new IntPtr(handle);
-    if (!IsWindow(hwnd) || !IsWindowVisible(hwnd))
-    {
-      return IntPtr.Zero;
-    }
-    return hwnd;
-  }
-
-  public string GetTitle(IntPtr hwnd)
-  {
-    var sb = new StringBuilder(512);
-    _ = GetWindowText(hwnd, sb, sb.Capacity);
-    return sb.ToString();
-  }
-
-  public (string WindowId, int Pid) LaunchApp(string appId)
-  {
-    var psi = new ProcessStartInfo
-    {
-      FileName = appId.Contains('\\') || appId.Contains(':') ? appId : appId,
-      UseShellExecute = true,
-    };
-    if (!appId.Contains('\\') && !appId.Contains(':'))
-    {
-      psi.FileName = appId.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? appId : $"{appId}.exe";
-    }
-
-    var expectedName = Path.GetFileNameWithoutExtension(psi.FileName);
-    var runningWindow = FindWindowForProcessName(expectedName);
-    if (runningWindow != IntPtr.Zero)
-    {
-      GetWindowThreadProcessId(runningWindow, out var runningPid);
-      return (runningWindow.ToInt64().ToString(), (int)runningPid);
-    }
-
-    var proc = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to launch {appId}");
-    var processName = string.Empty;
     try
     {
-      processName = proc.ProcessName;
+      return Directory.EnumerateFiles(dir, "*.lnk", SearchOption.AllDirectories).ToList();
     }
-    catch { }
-    if (string.IsNullOrWhiteSpace(processName) || processName.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
     {
-      try
-      {
-        processName = expectedName;
-      }
-      catch { }
-    }
-
-    if (!string.IsNullOrWhiteSpace(processName))
-    {
-      var existing = FindWindowForProcessName(processName);
-      if (existing != IntPtr.Zero)
-      {
-        GetWindowThreadProcessId(existing, out var existingPid);
-        return (existing.ToInt64().ToString(), (int)existingPid);
-      }
-    }
-
-    if (!proc.HasExited)
-    {
-      try
-      {
-        proc.WaitForInputIdle(2000);
-      }
-      catch
-      {
-        // Some processes do not have a graphical message loop or fail WaitForInputIdle
-      }
-    }
-
-    var hwnd = IntPtr.Zero;
-    try
-    {
-      hwnd = proc.MainWindowHandle;
-    }
-    catch { }
-
-    for (var i = 0; i < 20 && hwnd == IntPtr.Zero; i++)
-    {
-      Thread.Sleep(100);
-      try
-      {
-        if (!proc.HasExited)
-        {
-          proc.Refresh();
-          hwnd = proc.MainWindowHandle;
-        }
-      }
-      catch { }
-
-      if (hwnd == IntPtr.Zero)
-      {
-        hwnd = FindWindowForProcess(proc.Id, processName);
-      }
-      if (hwnd == IntPtr.Zero && !string.IsNullOrWhiteSpace(processName))
-      {
-        hwnd = FindWindowForProcessName(processName);
-      }
-    }
-
-    var windowIdStr = hwnd != IntPtr.Zero ? hwnd.ToInt64().ToString() : string.Empty;
-    return (windowIdStr, proc.Id);
-  }
-
-  public IntPtr FindWindowForProcessName(string processName)
-  {
-    if (string.IsNullOrWhiteSpace(processName)) return IntPtr.Zero;
-    var found = IntPtr.Zero;
-    EnumWindows((hWnd, _) =>
-    {
-      if (!IsWindow(hWnd) || !IsWindowVisible(hWnd)) return true;
-      var title = GetTitle(hWnd);
-      if (string.IsNullOrWhiteSpace(title)) return true;
-
-      var pName = GetProcessName(hWnd);
-      if (string.Equals(pName, processName, StringComparison.OrdinalIgnoreCase))
-      {
-        found = hWnd;
-        return false;
-      }
-      return true;
-    }, IntPtr.Zero);
-    return found;
-  }
-
-  public IntPtr FindWindowForProcess(int pid, string processName)
-  {
-    IntPtr candidate = IntPtr.Zero;
-    EnumWindows((hWnd, _) =>
-    {
-      if (!IsWindow(hWnd) || !IsWindowVisible(hWnd)) return true;
-      var title = GetTitle(hWnd);
-      if (string.IsNullOrWhiteSpace(title)) return true;
-
-      GetWindowThreadProcessId(hWnd, out var windowPid);
-      if (pid > 0 && windowPid == pid)
-      {
-        candidate = hWnd;
-        return false;
-      }
-
-      if (!string.IsNullOrWhiteSpace(processName) && candidate == IntPtr.Zero)
-      {
-        try
-        {
-          var pName = Process.GetProcessById((int)windowPid).ProcessName;
-          if (pName.Equals(processName, StringComparison.OrdinalIgnoreCase))
-          {
-            candidate = hWnd;
-          }
-        }
-        catch { }
-      }
-      return true;
-    }, IntPtr.Zero);
-    return candidate;
-  }
-
-  private static string GetProcessName(IntPtr hwnd)
-  {
-    GetWindowThreadProcessId(hwnd, out var pid);
-    try
-    {
-      return Process.GetProcessById((int)pid).ProcessName;
-    }
-    catch
-    {
-      return "unknown";
+      return Array.Empty<string>();
     }
   }
 
@@ -267,5 +187,72 @@ public sealed class WindowEnumerator
     {
       return null;
     }
+  }
+
+  /* Launching ---------------------------------------------------------------------- */
+
+  /// <summary>
+  /// Launch an app, or return its window if it is already running (a second Notepad is rarely what anyone wants).
+  /// The window is found as "the new window that appeared", because packaged apps such as Calculator and Settings
+  /// open their window under a different process than the one that was started.
+  /// </summary>
+  public (string WindowId, int Pid) LaunchApp(string appId, CancellationToken ct)
+  {
+    var isPathOrUri = appId.Contains('\\') || appId.Contains('/') || appId.Contains(':');
+    var fileName = isPathOrUri || appId.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? appId : $"{appId}.exe";
+    var expectedName = isPathOrUri ? "" : Path.GetFileNameWithoutExtension(fileName);
+
+    if (expectedName.Length > 0)
+    {
+      var running = FindWindowForProcessName(expectedName);
+      if (running != IntPtr.Zero) return (running.ToInt64().ToString(), (int)Native.ProcessIdOf(running));
+    }
+
+    var before = new HashSet<long>(ListWindows().Select(w => long.Parse(w.Id)));
+    var process = Process.Start(new ProcessStartInfo { FileName = fileName, UseShellExecute = true })
+      ?? throw new InvalidOperationException($"Failed to launch {appId}");
+
+    var deadline = Environment.TickCount64 + LaunchWaitMs;
+    while (Environment.TickCount64 < deadline)
+    {
+      ct.ThrowIfCancellationRequested();
+      var fresh = ListWindows().Where(w => !before.Contains(long.Parse(w.Id))).ToList();
+      var best = fresh.FirstOrDefault(w => ProcessMatches(w, process, expectedName)) ?? (fresh.Count == 1 ? fresh[0] : null);
+      if (best is not null)
+      {
+        // Let the first frame paint so the screenshot is not a blank window.
+        ct.WaitHandle.WaitOne(250);
+        return (best.Id, best.Pid);
+      }
+      ct.WaitHandle.WaitOne(120);
+    }
+    return ("", SafePid(process));
+  }
+
+  private static bool ProcessMatches(WindowInfo window, Process started, string expectedName)
+  {
+    if (window.Pid == SafePid(started)) return true;
+    return expectedName.Length > 0 && window.App.Equals(expectedName, StringComparison.OrdinalIgnoreCase);
+  }
+
+  private static int SafePid(Process process)
+  {
+    try
+    {
+      return process.Id;
+    }
+    catch
+    {
+      return 0;
+    }
+  }
+
+  public IntPtr FindWindowForProcessName(string processName)
+  {
+    if (string.IsNullOrWhiteSpace(processName)) return IntPtr.Zero;
+    return ListWindows()
+      .Where(w => w.App.Equals(processName, StringComparison.OrdinalIgnoreCase))
+      .Select(w => new IntPtr(long.Parse(w.Id)))
+      .FirstOrDefault();
   }
 }

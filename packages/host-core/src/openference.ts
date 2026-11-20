@@ -132,12 +132,31 @@ export async function retryBackoff(res: Response, signal?: AbortSignal, attempt 
  * Every provider request in the app (host-core and agent-core transports) goes
  * through here, so this is also where the Deyin User-Agent is defaulted: a caller
  * that forgets the header would otherwise send undici's bare `node`.
+ *
+ * A caller that already replays failed requests itself (the agent loop does, with
+ * a visible, capped, Retry-After-aware policy) must pass `retries: 0`. Otherwise
+ * two layers multiply: a provider that is down costs (1 + loop replays) x
+ * (1 + transport retries) requests, and the inner ones are invisible.
  */
-export async function fetchWithTransientRetry(url: string, init: RequestInit): Promise<Response> {
+export interface FetchRetryOptions {
+  /** Retries after the first attempt. Defaults to MAX_TRANSIENT_RETRIES; 0 makes this a single attempt. */
+  retries?: number;
+  /** Called immediately before every HTTP request this call sends, retries included. */
+  onAttempt?: () => void;
+}
+
+export async function fetchWithTransientRetry(
+  url: string,
+  init: RequestInit,
+  options: FetchRetryOptions = {},
+): Promise<Response> {
   const request = withUserAgent(init);
+  const retries = Math.max(0, options.retries ?? MAX_TRANSIENT_RETRIES);
+  options.onAttempt?.();
   let res = await fetch(url, request);
-  for (let attempt = 0; attempt < MAX_TRANSIENT_RETRIES && !res.ok && isTransientStatus(res.status); attempt++) {
+  for (let attempt = 0; attempt < retries && !res.ok && isTransientStatus(res.status); attempt++) {
     await retryBackoff(res, init.signal ?? undefined, attempt);
+    options.onAttempt?.();
     res = await fetch(url, request);
   }
   return res;

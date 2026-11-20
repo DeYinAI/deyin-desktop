@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { Cron } from "croner";
-import type { BotWorkflowsStore, BotWorkflowEngine } from "@deyin/host-core";
+import type { ConductorWorkflowsStore, ConductorWorkflowEngine } from "@deyin/host-core";
 import type { ExternalAgentService } from "./service.js";
 
-export class BotWorkflowScheduler {
+export class ConductorWorkflowScheduler {
   private jobs = new Map<string, Cron | NodeJS.Timeout>();
   private activeExecutions = new Set<string>();
   private disposed = false;
 
   constructor(
-    private readonly store: BotWorkflowsStore,
-    private readonly engine: BotWorkflowEngine,
+    private readonly store: ConductorWorkflowsStore,
+    private readonly engine: ConductorWorkflowEngine,
     private readonly externalAgents: ExternalAgentService,
     private readonly getWorkspaceRoot: () => string | null,
     private readonly broadcastEvent: (event: any) => void,
@@ -37,7 +37,7 @@ export class BotWorkflowScheduler {
           });
           this.jobs.set(workflow.id, job);
         } catch (err) {
-          console.error(`[bot-scheduler] Invalid cron for workflow ${workflow.id}:`, err);
+          console.error(`[conductor-scheduler] Invalid cron for workflow ${workflow.id}:`, err);
         }
       } else if (workflow.schedule.intervalMinutes && workflow.schedule.intervalMinutes > 0) {
         const intervalMs = workflow.schedule.intervalMinutes * 60 * 1000;
@@ -52,7 +52,7 @@ export class BotWorkflowScheduler {
 
   private trigger(workflowId: string): void {
     if (this.activeExecutions.has(workflowId)) {
-      console.warn(`[bot-scheduler] Workflow ${workflowId} is already running, skipping scheduled tick.`);
+      console.warn(`[conductor-scheduler] Workflow ${workflowId} is already running, skipping scheduled tick.`);
       return;
     }
 

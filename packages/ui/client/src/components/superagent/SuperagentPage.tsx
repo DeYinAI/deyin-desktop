@@ -23,7 +23,7 @@ function useNow(periodMs: number): number {
 }
 
 /** Superagent: a proactive coding agent for one GitHub repository. Switched on here, steered by its tickets and settings. */
-export function SuperagentPage(props: { models: ModelInfo[]; selectedProviderId: string; onBack: () => void }) {
+export function SuperagentPage(props: { models: ModelInfo[]; selectedProviderId: string; onBack: () => void; onSetupInChat: () => void }) {
   const controller = useSuperagent();
   const { view } = controller;
   const [tab, setTab] = useState<Tab>("activity");
@@ -128,7 +128,7 @@ export function SuperagentPage(props: { models: ModelInfo[]; selectedProviderId:
         {tab === "activity" ? (
           <ActivityTab view={view} controller={controller} now={now} />
         ) : (
-          <SettingsTab view={view} controller={controller} models={props.models} providerId={props.selectedProviderId} />
+          <SettingsTab view={view} controller={controller} models={props.models} providerId={props.selectedProviderId} onSetupInChat={props.onSetupInChat} />
         )}
       </div>
     </div>

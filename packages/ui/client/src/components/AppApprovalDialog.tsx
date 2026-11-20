@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { COMPUTER_USE_STOP_CHORD_LABEL } from "@deyin/contract";
 import { Icon } from "./Icon.js";
 import { PromptDock } from "./PromptDock.js";
 
@@ -37,7 +38,7 @@ export function AppApprovalDialog() {
 					</div>
 					<div className="inline-card__body">
 						Deyin wants to {actionLabel} <code>{req.appId}</code>. “Always allow” adds it to the list in Settings →
-						Computer Use; press Esc at any time during automation to cancel.
+						Computer Use. Stop any time with the Stop button or {COMPUTER_USE_STOP_CHORD_LABEL}.
 					</div>
 				</div>
 				<div className="inline-card__actions">

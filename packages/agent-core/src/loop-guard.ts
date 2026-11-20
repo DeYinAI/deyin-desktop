@@ -55,6 +55,14 @@ const RESPECT_BLOCKER =
   "Change approach: do not keep retrying a blocked tool by switching tools, reordering calls, or rewording arguments. Respect the blocker — use an already-allowed tool, ask the user for the specific approval, or explain the blocker in your final answer.";
 
 /**
+ * UI automation tools (in-app browser, the user's Chrome, the desktop) act on
+ * live state that changes between calls, so an identical call is not a no-op.
+ */
+function isUiAutomationTool(toolName: string): boolean {
+  return toolName.startsWith("computer_") || toolName.startsWith("browser_") || toolName.startsWith("chrome_");
+}
+
+/**
  * Collapse an error message to a stable category.
  *
  * Two failures of the same kind must produce the same string even when the
@@ -111,7 +119,7 @@ export class LoopGuard {
     if (tier === "read" || tier === "interaction") return null;
     // UI automation execution actions (clicks, key presses, scrolls) are state-dependent
     // on the current window/page state and are not pure idempotent mutations.
-    if (toolName.startsWith("computer_") || toolName.startsWith("browser_")) return null;
+    if (isUiAutomationTool(toolName)) return null;
     const key = `${toolName}\u0000${argsKey}`;
     const seen = this.repeatSuccess.get(key) ?? 0;
     if (seen < REPEAT_SUCCESS_THRESHOLD - 1) return null;
@@ -133,11 +141,12 @@ export class LoopGuard {
         o.ok &&
         (o.toolName === "computer_get_state" ||
           o.toolName === "browser_snapshot" ||
+          o.toolName === "chrome_snapshot" ||
           o.toolName === "computer_list_windows")
     );
     if (inspectedUi) {
       for (const key of [...this.repeatSuccess.keys()]) {
-        if (key.startsWith("computer_") || key.startsWith("browser_")) {
+        if (isUiAutomationTool(key)) {
           this.repeatSuccess.delete(key);
         }
       }

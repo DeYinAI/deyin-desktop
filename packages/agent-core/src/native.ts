@@ -140,7 +140,7 @@ export function fastFrameAcpChunk(buffer: string, chunk: string): { payloads: st
     try {
       const res = n.frameAcpChunk(buffer, chunk);
       if (res) return res;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   const combined = buffer + chunk;
   const parts = combined.split("\n");
@@ -155,7 +155,7 @@ export function fastFrameNdjsonChunk(buffer: string, chunk: string): { lines: st
     try {
       const res = n.frameNdjsonChunk(buffer, chunk);
       if (res) return res;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   const combined = buffer + chunk;
   const parts = combined.split("\n");
@@ -170,7 +170,7 @@ export function fastRingBufferAppend(bufferId: string, line: string, capacity = 
     try {
       n.ringBufferAppend(bufferId, line, capacity);
       return;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   let buf = tsRingBuffers.get(bufferId);
   if (!buf) {
@@ -187,7 +187,7 @@ export function fastRingBufferGetLines(bufferId: string, maxLines?: number): str
     try {
       const res = n.ringBufferGetLines(bufferId, maxLines ?? null);
       if (res) return res;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   const buf = tsRingBuffers.get(bufferId) ?? [];
   if (maxLines && buf.length > maxLines) {
@@ -205,7 +205,7 @@ export function fastRingBufferClear(bufferId: string): void {
       } else if (typeof n.ringBufferClear === "function") {
         n.ringBufferClear(bufferId);
       }
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   tsRingBuffers.delete(bufferId);
 }
@@ -232,7 +232,7 @@ export function fastWatchdogRegister(
     try {
       n.watchdogRegister(id, pid, timeoutMs, stallThresholdMs, nowMs);
       return;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   tsWatchdogs.set(id, {
     pid,
@@ -249,7 +249,7 @@ export function fastWatchdogHeartbeat(id: string, nowMs = Date.now()): boolean {
     try {
       const res = n.watchdogHeartbeat(id, nowMs);
       if (typeof res === "boolean") return res;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   const entry = tsWatchdogs.get(id);
   if (!entry) return false;
@@ -269,7 +269,7 @@ export function fastWatchdogCheck(id: string, nowMs = Date.now()): WatchdogStatu
           inactiveMs: res.inactiveMs,
         };
       }
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   const entry = tsWatchdogs.get(id);
   if (!entry) {
@@ -292,7 +292,7 @@ export function fastWatchdogUnregister(id: string): boolean {
     try {
       const res = n.watchdogUnregister(id);
       if (typeof res === "boolean") return res;
-    } catch {}
+    } catch { /* the native call failed; the TypeScript implementation below takes over */ }
   }
   return tsWatchdogs.delete(id);
 }

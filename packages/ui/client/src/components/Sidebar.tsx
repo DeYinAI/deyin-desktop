@@ -1,17 +1,28 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { ProductId } from "@deyin/host-core/shared";
 import { useT } from "../i18n.js";
 import { AnchoredMenu } from "./AnchoredMenu.js";
 import { Icon, type IconName } from "./Icon.js";
-import { Logo } from "./Logo.js";
+import { ProductSwitcher } from "./ProductSwitcher.js";
 import { ProfileMenu } from "./ProfileMenu.js";
 import { UpdateBanner } from "./UpdateBanner.js";
+import { PRODUCTS, type Product } from "../products.js";
 import { formatThreadAge, type Project, type Thread } from "../threads.js";
-import type { BotWorkflowDefinition, DeyinSettings, ExternalAgentDescriptor, UserProfile } from "@deyin/contract";
+import { threadActivity, type ThreadActivity } from "../threadActivity.js";
+import type { View } from "../views.js";
+import type { ConductorWorkflowDefinition, DeyinSettings, ExternalAgentDescriptor, UserProfile } from "@deyin/contract";
 
 interface SidebarProps {
   platform: "desktop" | "web";
   /** Which top-level view is showing, so its nav row reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
+  activeView?: View;
+  /** The products this host offers (a chat-only host offers only Code). */
+  products: readonly Product[];
+  /** The product whose shell the sidebar is showing. */
+  activeProduct: ProductId;
+  onSelectProduct: (id: ProductId) => void;
+  /** What fills the sidebar body for the Bot product (its roster); the host owns the Bots, not this component. */
+  botBody?: ReactNode;
   projects: Project[];
   activeProjectId: string | null;
   activeThreadId: string | null;
@@ -20,13 +31,14 @@ interface SidebarProps {
   settings: DeyinSettings;
   busy: boolean;
   connecting: boolean;
+  /** Create the product's own kind of item: a session, a Bot or a run. */
   onNewTask: () => void;
   onNewMission?: () => void;
   onNewProject: () => void;
   /** Start a session inside a specific workspace folder. */
   onNewTaskInProject?: (projectId: string) => void;
   onSelectProject: (projectId: string) => void;
-  /** Select target repository specifically for bot delegations in Bot Mode. */
+  /** Select target repository specifically for external-agent delegations in Conductor mode. */
   onSelectTargetRepository?: (projectId: string) => void;
   onSelectThread: (projectId: string, threadId: string) => void;
   onOpenSearch: () => void;
@@ -45,24 +57,14 @@ interface SidebarProps {
   onOpenAutomations: () => void;
   /** Open the Superagent view (a proactive agent for one GitHub repository). */
   onOpenSuperagent: () => void;
-  /** Open the Bot Workflows / Pipelines editor surface. */
+  /** Open the Conductor Workflows / Pipelines editor surface. */
   onOpenWorkflows?: (workflowId?: string | null) => void;
   /** Open the appearance/customisation surface. */
   onOpenCustomize: () => void;
-  /** Active chat mode (e.g. 'agent' | 'bot'). */
-  currentMode?: import("@deyin/contract").ChatMode;
-  /** Switch between Workspace and Bot Mode. */
-  onSwitchMode?: (mode: import("@deyin/contract").ChatMode) => void;
-  /** Select top-level view between Workspace and Bot Mode. */
-  onSelectView?: (view: "workspace" | "bot") => void;
-  /**
-   * Hosted chat-only web has no local shell or git, so Bot Mode's pipelines and
-   * external agent CLIs cannot run there: its switch and mission list are hidden
-   * on that build. Absent means available, so the desktop app is unaffected.
-   */
-  botModeAvailable?: boolean;
   /** Pending approvals / MCP auth / questions per thread (sidebar badge). */
   pendingByThread?: Record<string, number>;
+  /** Threads with a run, chat stream or generation in flight (row spinner). */
+  runningThreadIds?: ReadonlySet<string>;
 }
 
 /** A pinned thread, carrying the project it belongs to so the flat list can select it. */
@@ -163,13 +165,9 @@ function saveExpandedLists(expanded: Set<string>): void {
 
 export function Sidebar(props: SidebarProps) {
   const t = useT();
-  // A chat-only host cannot run bot missions at all, so it reads as the
-  // workspace sidebar even if a thread still carries the bot mode.
-  const isBotView =
-    props.botModeAvailable !== false &&
-    (props.activeView === "bot" ||
-      props.activeView === "workflows" ||
-      (props.activeView !== "workspace" && props.currentMode === "bot"));
+  // The product decides the shell. A chat-only host never offers Conductor or Bot, so it always reads as Code.
+  const isConductorView = props.activeProduct === "conductor";
+  const isBotView = props.activeProduct === "bot";
 
   const [filterOpen, setFilterOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -182,7 +180,7 @@ export function Sidebar(props: SidebarProps) {
 
   const [agents, setAgents] = useState<ExternalAgentDescriptor[]>([]);
   const [scanningAgents, setScanningAgents] = useState(false);
-  const [workflows, setWorkflows] = useState<BotWorkflowDefinition[]>([]);
+  const [workflows, setWorkflows] = useState<ConductorWorkflowDefinition[]>([]);
 
   const loadAgents = useCallback(async (refresh = false) => {
     if (window.deyin?.externalAgents) {
@@ -197,9 +195,9 @@ export function Sidebar(props: SidebarProps) {
   }, []);
 
   const loadWorkflows = useCallback(async () => {
-    if (window.deyin?.botWorkflows) {
+    if (window.deyin?.conductorWorkflows) {
       try {
-        const list = await window.deyin.botWorkflows.list();
+        const list = await window.deyin.conductorWorkflows.list();
         setWorkflows(list);
       } catch {
         // The workflow list is optional chrome; keep whatever was loaded last.
@@ -208,16 +206,16 @@ export function Sidebar(props: SidebarProps) {
   }, []);
 
   useEffect(() => {
-    if (isBotView) {
+    if (isConductorView) {
       void loadAgents();
       void loadWorkflows();
     }
-  }, [isBotView, loadAgents, loadWorkflows]);
+  }, [isConductorView, loadAgents, loadWorkflows]);
 
-  const botMissions = useMemo(() => {
+  const conductorMissions = useMemo(() => {
     return props.projects.flatMap((p) =>
       p.threads
-        .filter((t) => t.mode === "bot" && !t.archived)
+        .filter((t) => t.mode === "conductor" && !t.archived)
         .map((t) => ({ projectId: p.id, thread: t }))
     );
   }, [props.projects]);
@@ -322,7 +320,13 @@ export function Sidebar(props: SidebarProps) {
         }}
       >
         <span className="sb-slot">
-          {thread.unread && <span className="thread-row__unread" aria-hidden />}
+          <ThreadActivityMark
+            activity={threadActivity({
+              running: props.runningThreadIds?.has(thread.id) ?? false,
+              pending: props.pendingByThread?.[thread.id] ?? 0,
+              unread: thread.unread === true,
+            })}
+          />
         </span>
         <span className="thread-row__title">{thread.title}</span>
         <ThreadPendingBadge count={props.pendingByThread?.[thread.id] ?? 0} />
@@ -334,16 +338,13 @@ export function Sidebar(props: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand-row">
-        <button type="button" className="sidebar__brand" title={t("nav.newTask")} onClick={() => props.onNewTask()}>
-          <Logo size={22} />
-          <span className="sidebar__brand-name">Deyin</span>
-        </button>
+        <ProductSwitcher products={props.products} active={props.activeProduct} onSelect={props.onSelectProduct} variant="sidebar" />
       </div>
 
       <nav className="sidebar__panels" aria-label="Navigation">
         <button type="button" className="sb-row sidebar__new-session" onClick={() => props.onNewTask()}>
           <span className="sb-row__glyph"><Icon name="sparkles" size={15} /></span>
-          <span className="sidebar__new-label">{isBotView ? "New mission" : "New session"}</span>
+          <span className="sidebar__new-label">{t(PRODUCTS[props.activeProduct].newItemKey)}</span>
           <span className="sidebar__new-kbd">Ctrl+N</span>
         </button>
         <button
@@ -387,24 +388,12 @@ export function Sidebar(props: SidebarProps) {
               onClick={() => { setMoreOpen(false); props.onOpenSuperagent(); }}
             />
           )}
-          {isBotView && props.onOpenWorkflows && (
+          {isConductorView && props.onOpenWorkflows && (
             <MoreItem
               icon="bolt"
-              label="Workflows"
+              label={t("conductor.pipelines")}
               active={props.activeView === "workflows"}
               onClick={() => { setMoreOpen(false); props.onOpenWorkflows?.(null); }}
-            />
-          )}
-          {(props.botModeAvailable !== false && (props.onSelectView || props.onSwitchMode)) && (
-            <MoreItem
-              icon={isBotView ? "layout" : "bot"}
-              label={isBotView ? "Switch to Workspace" : "Switch to Bot mode"}
-              onClick={() => {
-                setMoreOpen(false);
-                const next = isBotView ? "workspace" : "bot";
-                props.onSelectView?.(next);
-                props.onSwitchMode?.(next === "bot" ? "bot" : "agent");
-              }}
             />
           )}
           <MoreItem icon="palette" label={t("nav.customize")} onClick={() => { setMoreOpen(false); props.onOpenCustomize(); }} />
@@ -412,8 +401,8 @@ export function Sidebar(props: SidebarProps) {
       </nav>
 
       <div className="sidebar__ws-head">
-        <span className="sidebar__ws-title">{isBotView ? "Missions" : "Workspaces"}</span>
-        {!isBotView && (
+        <span className="sidebar__ws-title">{isBotView ? t("bot.roster.title") : isConductorView ? t("mode.conductor") : "Workspaces"}</span>
+        {!isConductorView && !isBotView && (
           <div className="sidebar__ws-actions">
             <button
               type="button"
@@ -471,9 +460,11 @@ export function Sidebar(props: SidebarProps) {
 
       <div className="sidebar__scroll">
         {isBotView ? (
+          props.botBody ?? null
+        ) : isConductorView ? (
           <>
             {/* Target Repository Pill / Switcher */}
-            <div className="sidebar__bot-context">
+            <div className="sidebar__conductor-context">
               <div className="sidebar__section">TARGET REPOSITORY</div>
               <div className="sidebar__target-project">
                 <Icon name="folder" size={13} />
@@ -497,19 +488,19 @@ export function Sidebar(props: SidebarProps) {
               </div>
             </div>
 
-            {/* Bot Missions List */}
+            {/* Conductor runs list */}
             <div className="sidebar__section">
-              <span>BOT MISSIONS</span>
-              {botMissions.length > 0 && <span className="sidebar__section-count">{botMissions.length}</span>}
+              <span>{t("conductor.runs").toUpperCase()}</span>
+              {conductorMissions.length > 0 && <span className="sidebar__section-count">{conductorMissions.length}</span>}
             </div>
 
-            {botMissions.length > 0 ? (
-              <div className="sidebar__bot-missions">
-                {botMissions.map(({ projectId, thread }) => renderThread(projectId, thread))}
+            {conductorMissions.length > 0 ? (
+              <div className="sidebar__conductor-missions">
+                {conductorMissions.map(({ projectId, thread }) => renderThread(projectId, thread))}
               </div>
             ) : (
               <div className="sidebar__empty">
-                No bot missions yet. Click "New Mission" to start orchestrating.
+                No runs yet. Click "{t("conductor.newRun")}" to hand a task to an external agent.
               </div>
             )}
 
@@ -529,7 +520,7 @@ export function Sidebar(props: SidebarProps) {
                   type="button"
                   className="icon-btn icon-btn--xs"
                   onClick={() => props.onOpenWorkflows?.(null)}
-                  title="Create new workflow"
+                  title="Create new pipeline"
                 >
                   <Icon name="plus" size={12} />
                 </button>
@@ -537,7 +528,7 @@ export function Sidebar(props: SidebarProps) {
             </div>
 
             {workflows.length > 0 ? (
-              <div className="sidebar__bot-pipelines">
+              <div className="sidebar__conductor-pipelines">
                 {workflows.map((wf) => (
                   <button
                     key={wf.id}
@@ -680,7 +671,7 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       {/* External Agents Card (Above Profile) */}
-      {isBotView && (
+      {isConductorView && (
         <div className="sidebar__agents-card">
           <div className="sidebar__agents-card-header">
             <div className="sidebar__agents-card-title">
@@ -765,6 +756,22 @@ function MoreItem(props: {
       {props.hint && <span className="menu__item-note">{props.hint}</span>}
     </button>
   );
+}
+
+/** Leading mark: a spinner while the session works, a dot once it finished unseen. */
+function ThreadActivityMark({ activity }: { activity: ThreadActivity }) {
+  switch (activity) {
+    case "running":
+      return <span className="thread-row__spinner" role="img" aria-label="Running" title="Running…" />;
+    case "unread":
+      return <span className="thread-row__unread" role="img" aria-label="Unread activity" title="New activity" />;
+    case "idle":
+      return null;
+    default: {
+      const unreachable: never = activity;
+      return unreachable;
+    }
+  }
 }
 
 function ThreadPendingBadge({ count }: { count: number }) {

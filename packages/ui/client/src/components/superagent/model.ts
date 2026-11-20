@@ -177,18 +177,23 @@ export function admissionValue(settings: Settings, row: AdmissionRow, cell: Admi
 }
 
 /**
- * The one cell the settings page offers per row without opening Advanced policy: what happens when someone who is not on the
+ * The one cell the settings page offers per row without opening the table of Advanced policy: what happens when someone who is not on the
  * allowed list addresses the agent. It is the only cell that allows all three choices (a request, an assessed candidate, or nothing).
  */
 export const HEADLINE_CELL = "unlistedAddressed" satisfies AdmissionCell;
 
 /**
- * The cells, other than the headline one, that differ from their default. They only appear in Advanced policy, so the page
- * counts them: a policy that lets something through must not be hidden behind a closed section.
+ * Every cell of the table, the headline one included, that differs from its default. The settings page keeps all of the policy
+ * under a closed Advanced section, so it opens by itself when this is not empty: a policy that lets something through must not be hidden.
  */
-export function changedAdvancedCells(settings: Settings): { row: AdmissionRow; cell: AdmissionCell }[] {
-  const cells = (Object.keys(ADMISSION_DEFAULTS) as AdmissionCell[]).filter((cell) => cell !== HEADLINE_CELL);
+export function changedPolicyCells(settings: Settings): { row: AdmissionRow; cell: AdmissionCell }[] {
+  const cells = Object.keys(ADMISSION_DEFAULTS) as AdmissionCell[];
   return GITHUB_ROWS.flatMap((row) => cells.filter((cell) => admissionValue(settings, row, cell) !== ADMISSION_DEFAULTS[cell]).map((cell) => ({ row, cell })));
+}
+
+/** The changed cells other than the headline one: they only appear in the table under Advanced policy, so the page counts them. */
+export function changedAdvancedCells(settings: Settings): { row: AdmissionRow; cell: AdmissionCell }[] {
+  return changedPolicyCells(settings).filter(({ cell }) => cell !== HEADLINE_CELL);
 }
 
 export function withAdmission(settings: Settings, row: AdmissionRow, cell: AdmissionCell, value: string): Settings {

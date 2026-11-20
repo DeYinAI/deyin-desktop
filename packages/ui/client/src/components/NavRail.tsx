@@ -1,110 +1,66 @@
-import type { ChatMode } from "@deyin/contract";
+import type { ProductId } from "@deyin/host-core/shared";
 import { useT } from "../i18n.js";
-import { Icon, type IconName } from "./Icon.js";
+import { navLabelText, productNavItems, type NavItemId } from "../navItems.js";
+import type { Product } from "../products.js";
+import type { View } from "../views.js";
+import { Icon } from "./Icon.js";
+import { ProductSwitcher } from "./ProductSwitcher.js";
 import { UpdateBanner } from "./UpdateBanner.js";
 
 interface NavRailProps {
   /** Which top-level view is showing, so its rail button reads as selected. */
-  activeView?: "workspace" | "settings" | "upgrade" | "automations" | "plugins" | "superagent" | "bot" | "workflows";
-  platform?: "desktop" | "web";
-  currentMode?: ChatMode;
-  onSwitchMode?: (mode: ChatMode) => void;
-  onSelectView?: (view: "workspace" | "bot") => void;
-  /**
-   * Hosted chat-only web has no local shell or git, so Bot Mode's pipelines and
-   * external agent CLIs cannot run there. Off on that build only; the rail then
-   * shows no Workspace/Bot switch at all, since the pair exists to move between
-   * the two.
-   */
-  botModeAvailable?: boolean;
-  onNewTask: () => void;
+  activeView: View;
+  platform: "desktop" | "web";
+  /** The products this host offers; a chat-only host has only Code and shows a plain mark. */
+  products: readonly Product[];
+  activeProduct: ProductId;
+  onSelectProduct: (id: ProductId) => void;
+  /** Create the product's own kind of item: a session, a Bot or a run. */
+  onNewItem: () => void;
   onOpenPlugins: () => void;
   onOpenSearch: () => void;
   onOpenAutomations: () => void;
   onOpenSuperagent: () => void;
-  onOpenWorkflows?: () => void;
+  onOpenWorkflows: () => void;
   onOpenCustomize: () => void;
   onOpenSettings: () => void;
 }
 
-/** Collapsed-sidebar stand-in: the sidebar's nav actions as a narrow icon strip,
+/** Collapsed-sidebar stand-in: the product switcher and the sidebar's nav actions as a narrow icon strip,
  *  mirroring the workspace panel's rail on the opposite edge. The expand control
  *  is the title bar's sidebar toggle. */
 export function NavRail(props: NavRailProps) {
   const t = useT();
-  const isBot =
-    props.activeView === "bot" ||
-    props.activeView === "workflows" ||
-    (props.activeView !== "workspace" && props.currentMode === "bot");
-
-  const items: { icon: IconName; label: string; onClick: () => void; active?: boolean }[] = [
-    { icon: "plusCircle", label: isBot ? "New mission" : "New session", onClick: () => props.onNewTask() },
-    { icon: "search", label: t("nav.search"), onClick: props.onOpenSearch },
-    { icon: "puzzle", label: "Plugins", onClick: props.onOpenPlugins, active: props.activeView === "plugins" },
-    ...(isBot && props.onOpenWorkflows
-      ? [{
-          icon: "bolt" as IconName,
-          label: "Workflows",
-          onClick: props.onOpenWorkflows,
-          active: props.activeView === "workflows",
-        }]
-      : []),
-    ...(props.platform !== "web"
-      ? [{
-          icon: "clock" as IconName,
-          label: "Automation tasks",
-          onClick: props.onOpenAutomations,
-          active: props.activeView === "automations",
-        }]
-      : []),
-    ...(props.platform !== "web"
-      ? [{
-          icon: "rocket" as IconName,
-          label: t("nav.superagent"),
-          onClick: props.onOpenSuperagent,
-          active: props.activeView === "superagent",
-        }]
-      : []),
-    { icon: "palette", label: t("nav.customize"), onClick: props.onOpenCustomize },
-    ...(props.botModeAvailable !== false && (props.onSelectView || props.onSwitchMode)
-      ? [
-          {
-            icon: "layout" as IconName,
-            label: "Workspace",
-            onClick: () => {
-              props.onSelectView?.("workspace");
-              props.onSwitchMode?.("agent");
-            },
-            active: !isBot,
-          },
-          {
-            icon: "bot" as IconName,
-            label: "Bot Mode",
-            onClick: () => {
-              props.onSelectView?.("bot");
-              props.onSwitchMode?.("bot");
-            },
-            active: isBot,
-          },
-        ]
-      : []),
-  ];
+  const onItem: Record<NavItemId, () => void> = {
+    new: props.onNewItem,
+    search: props.onOpenSearch,
+    plugins: props.onOpenPlugins,
+    workflows: props.onOpenWorkflows,
+    automations: props.onOpenAutomations,
+    superagent: props.onOpenSuperagent,
+    customize: props.onOpenCustomize,
+  };
+  const items = productNavItems(props.activeProduct, props.platform, props.activeView);
 
   return (
     <nav className="nav-rail" aria-label="Navigation">
+      <ProductSwitcher products={props.products} active={props.activeProduct} onSelect={props.onSelectProduct} variant="rail" />
       <div className="nav-rail__items">
-        {items.map((item) => (
-          <button
-            key={item.icon}
-            type="button"
-            className={`nav-rail__btn${item.active ? " nav-rail__btn--active" : ""}`}
-            title={item.label}
-            aria-label={item.label}
-            onClick={item.onClick}
-          >
-            <Icon name={item.icon} size={14} />
-          </button>
-        ))}
+        {items.map((item) => {
+          const label = navLabelText(t, item.label);
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`nav-rail__btn${item.active ? " nav-rail__btn--active" : ""}`}
+              title={label}
+              aria-label={label}
+              onClick={onItem[item.id]}
+            >
+              <Icon name={item.icon} size={14} />
+            </button>
+          );
+        })}
       </div>
 
       <div className="nav-rail__footer">

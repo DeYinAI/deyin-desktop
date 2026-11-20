@@ -29,6 +29,8 @@ export interface ComposerHandle {
   clearComposerState(): void;
   /** Prefill the composer (edit-and-resend). */
   setDraft(draft: Partial<ComposerDraftState>): void;
+  /** Change the text from what it is now (for example, add a mention after what has been typed). */
+  updateInput(update: (current: string) => string): void;
 }
 
 type DockedComposerProps = Omit<
@@ -127,6 +129,7 @@ export const ComposerDock = forwardRef<ComposerHandle, ComposerDockProps>(functi
     ref,
     () => ({
       clearInput: () => setInput(""),
+      updateInput: (update) => setInput(update),
       clearImages: () => setImages([]),
       clearComposerState: () => {
         setInput("");

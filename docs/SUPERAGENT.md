@@ -37,18 +37,61 @@ GitHub ──poll──▶ messages ──▶ policy ──▶ assessment ──
 
 ## Setting up
 
+You can answer a few questions in chat, or fill in the page yourself. Both end in the same settings.
+
+### In chat
+
+Open Superagent and press **Start in chat** on the _Set up_ tab, or type `/superagent` in any chat. The assistant asks
+one question at a time and fills in:
+
+1. the repository to watch (it offers the one in the current workspace),
+2. the GitHub accounts that may ask for work,
+3. the agent's own GitHub account, signed in through GitHub (see below),
+4. what to watch, and whether to **Observe first** or **Act on requests**.
+
+It then checks that the agent account can push to the repository, shows the whole setup on one line, and switches
+Superagent on only when you say yes. Rules, models, worker limits and instructions stay on the dashboard under
+_Advanced_; the assistant does not change them.
+
+**A token is never typed into chat.** None of the assistant's tools (`superagent_status`, `superagent_configure`,
+`superagent_connect_github`, `superagent_verify`, `superagent_set_state`, `superagent_disconnect`) has a parameter that
+could carry one, and each refuses an argument it does not declare. If you paste a token anyway, the assistant is told
+not to use it, and you should revoke it: it is now in that conversation.
+
+**Signing the agent account in.** When this build includes Deyin's GitHub OAuth app, the assistant shows a one-time code
+and a link (GitHub's _device flow_). Open the link in a private window signed in as the **agent** account, enter the
+code and authorize. Deyin collects the token directly from GitHub and stores it exactly like a pasted one: encrypted, and
+never shown to a model. Two things to know:
+
+- An OAuth app's token has GitHub's `repo` scope, which covers every repository the account can reach, and it has no
+  expiry of its own. What limits it is the account, so keep the agent account dedicated and invite it only to the repository it
+  works on. A fine-grained token (below) is limited to one repository in the token itself.
+- The agent's account must not be your own: it may not be on the allowed list, so you could never ask it for anything.
+
+Without an OAuth app in the build, the assistant says so and sends you to the dashboard to paste a token instead.
+
+_For maintainers:_ register a GitHub OAuth App (Settings → Developer settings → OAuth Apps), tick **Enable Device
+Flow**, and set its client id as `BUNDLED_CLIENT_ID` in `apps/desktop/src/main/superagent/github-device-flow.ts`. The
+client id is public, and the flow has no client secret. A fork can instead set `DEYIN_GITHUB_CLIENT_ID`.
+
+### By hand
+
 1. **Create a GitHub account for the agent.** Use a dedicated account, not your own, so its activity is attributed to it
-   and its access can be limited to the one repository.
+   and its access can be limited to the one repository. Invite it to the repository with write access.
 2. **Create a token for that account.** A fine-grained personal access token on the repository with _Contents_,
    _Issues_ and _Pull requests_ set to **read and write**.
 3. **Open Superagent** in the sidebar, choose the _Set up_ tab, paste the token and press **Connect**. Deyin checks it
    with GitHub and shows the account it belongs to. A token GitHub rejects is not kept.
 4. **Set the repository** (`owner/name`) and choose what to watch (issues, pull requests, comments).
 5. **List who may ask.** Add GitHub logins to _Allowed accounts_, one per line. The agent's own account cannot be on the
-   list. _Trusted bots_ are read as context but never act as a request.
-6. **Review the rules.** Each rule is plain text that says what the agent may take on, and where it stops. Two are
-   provided (copy fixes and visual fixes); edit them, turn them off, or add your own.
+   list.
+6. **Choose the mode** under _How it acts_. Start in Observe (below).
 7. **Save**, then switch **On**. The _Needs setup_ banner lists whatever is still missing.
+
+Everything else is under _Advanced_, which opens by itself when the policy in it is not at its defaults: how often GitHub
+is polled, the branch prefix, _Trusted bots_ (read as context but never a request), what counts as a request, the rules
+(each is plain text that says what the agent may take on, and where it stops; two are provided, copy fixes and visual
+fixes), the models, the workers and the instructions.
 
 Start in **Observe** mode. It reads everything and records, under _Recent decisions_, what it _would_ have taken on,
 without acting. When those decisions match what you would have wanted, switch the mode to **Auto**.
@@ -74,7 +117,7 @@ without acting. When those decisions match what you would have wanted, switch th
 ## What it can and cannot do
 
 - Workers run **as you, with your environment**, in a worktree of the repository. Deyin does not sandbox them. File
-  tools are confined to the worktree, but a shell command is not. _Blocked commands_ (Settings → Workers) is a
+  tools are confined to the worktree, but a shell command is not. _Blocked commands_ (Settings → Advanced → Workers) is a
   best-effort screen of commands the shell refuses to start; it is **not a security boundary**: `python3 -c`,
   `busybox rm`, `$(which rm)` and many other spellings get past it. If you do not trust the people on the allow-list, or
   the contents of the repository (a worker reads both, and an instruction hidden in an issue can steer it), run Deyin in

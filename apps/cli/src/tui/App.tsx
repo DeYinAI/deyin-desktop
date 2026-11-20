@@ -324,6 +324,18 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           setStreamText("");
           setStreamReasoning("");
           notice(describeStreamRetry(event));
+          // Journal each replay (the run summary keeps only a count). A remote
+          // session is journaled by the server that runs it, not here.
+          if (!initial.remote && sessionIdRef.current) {
+            ctx.sessions.appendEvent(sessionIdRef.current, {
+              kind: "stream-retry",
+              step: event.step,
+              attempt: event.attempt,
+              maxAttempts: event.maxAttempts,
+              reason: event.reason,
+              delayMs: event.delayMs,
+            });
+          }
           break;
         case "evidence-gate": {
           // Delivery-mode gates stay silent here as before; the loop's own
@@ -336,7 +348,9 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           const s = event.summary;
           notice(
             `Run: ${s.steps} steps, ${s.toolCalls} tool calls (${s.deniedCalls} denied, ${s.failedCalls} failed, ` +
-              `${s.duplicateResults} duplicates elided, ${s.loopGuardTrips} guard trips), cache hit rate ${(s.cacheHitRate * 100).toFixed(1)}%.`,
+              `${s.duplicateResults} duplicates elided, ${s.loopGuardTrips} guard trips), ` +
+              (s.httpAttempts ? `${s.httpAttempts} http requests (${s.streamRetries ?? 0} replays, ${s.reviewerCalls ?? 0} goal reviews), ` : "") +
+              `cache hit rate ${(s.cacheHitRate * 100).toFixed(1)}%.`,
           );
           break;
         }
@@ -344,7 +358,7 @@ export function App({ ctx, initial }: { ctx: CliContext; initial: AppInitialStat
           break;
       }
     },
-    [notice, pushItem],
+    [notice, pushItem, ctx.sessions, initial.remote],
   );
 
   const startRun = useCallback(

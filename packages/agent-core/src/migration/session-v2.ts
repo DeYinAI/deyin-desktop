@@ -35,6 +35,8 @@ export interface SessionMetaV2 extends SessionMetaBase {
   cacheStats?: SessionCacheStats;
   /** Set when this session was forked from another; the log carries the full event. */
   forkedFrom?: string;
+  /** The Deyin Bot this session is a conversation with. Absent for Code and Conductor sessions. */
+  botId?: string;
 }
 
 export type SessionMetaRecord = Omit<SessionMetaV2, "updatedAt" | "messageCount">;
@@ -75,6 +77,7 @@ export function migrateSessionMeta(raw: unknown): SessionMetaRecord {
   };
 
   const forkedFrom = typeof input.forkedFrom === "string" ? input.forkedFrom : undefined;
+  const botId = typeof input.botId === "string" && input.botId.length > 0 ? input.botId : undefined;
 
   // Legacy snake_case from early agent experiments.
   const prefixHash =
@@ -102,6 +105,7 @@ export function migrateSessionMeta(raw: unknown): SessionMetaRecord {
   if (prefixHash) base.prefixHash = prefixHash;
   if (cacheStats) base.cacheStats = cacheStats;
   if (forkedFrom) base.forkedFrom = forkedFrom;
+  if (botId) base.botId = botId;
 
   return base;
 }

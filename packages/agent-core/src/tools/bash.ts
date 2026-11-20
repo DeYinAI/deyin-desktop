@@ -409,14 +409,14 @@ function runBackgroundCommand(
         try {
           process.kill(-child.pid, "SIGKILL");
           return;
-        } catch {}
+        } catch { /* the group could not be signalled; fall back to killing the child itself */ }
       } else {
         try {
           execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: "ignore" });
           return;
-        } catch {}
+        } catch { /* taskkill failed; fall back to killing the child itself */ }
       }
-      try { child.kill("SIGKILL"); } catch {}
+      try { child.kill("SIGKILL"); } catch { /* the child has already exited */ }
     };
 
     if (timeoutS > 0) {
@@ -439,11 +439,11 @@ function runBackgroundCommand(
       try {
         const remOut = child.stdout.read();
         if (remOut) stdout += typeof remOut === "string" ? remOut : remOut.toString("utf8");
-      } catch {}
+      } catch { /* nothing more could be read from stdout */ }
       try {
         const remErr = child.stderr.read();
         if (remErr) stderr += typeof remErr === "string" ? remErr : remErr.toString("utf8");
-      } catch {}
+      } catch { /* nothing more could be read from stderr */ }
 
       if (err) {
         resolve({ output: `spawn error: ${err.message}`, exitCode: null });

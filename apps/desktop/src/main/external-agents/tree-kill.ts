@@ -19,7 +19,7 @@ export function killProcessTree(pid: number, signal: NodeJS.Signals = "SIGTERM")
   } catch {
     try {
       process.kill(pid, signal);
-    } catch {}
+    } catch { /* the process has already exited */ }
   }
 
   // Backup force kill after 1 second if still alive
@@ -35,7 +35,7 @@ export function killProcessTree(pid: number, signal: NodeJS.Signals = "SIGTERM")
             process.kill(pid, "SIGKILL");
           }
         }
-      } catch {}
+      } catch { /* the process has already exited */ }
     }, 1000);
   }
 }

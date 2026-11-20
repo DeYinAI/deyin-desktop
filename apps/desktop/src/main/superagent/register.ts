@@ -4,11 +4,14 @@ import { createBuiltinRegistry } from "@deyin/agent-core";
 import { CH, type SuperagentReply } from "@deyin/contract";
 import type { FetchLike, Logger } from "@deyin/superagent";
 import { resolveProviderRouting, type AgentRunContextDeps } from "../automations/agent-run-context.js";
+import { githubClientId } from "./github-device-flow.js";
 import { parseModelId } from "./runner.js";
 import { SuperagentService } from "./service.js";
 import { createCipher } from "./token-store.js";
 
 export interface SuperagentRegistration {
+  /** What the chat's setup tools drive; absent when Superagent could not be created, so the tools are not offered. */
+  service: SuperagentService | undefined;
   /** Stops every run and writes everything down. */
   dispose(): Promise<void>;
 }
@@ -50,6 +53,7 @@ export function registerSuperagent(options: { dir: string; deps: AgentRunContext
         for (const win of BrowserWindow.getAllWindows()) win.webContents.send(CH.superagentChanged, view);
       },
       fetch: fetchNow,
+      githubClientId: githubClientId(),
       logger,
     });
     void service.start();
@@ -85,6 +89,7 @@ export function registerSuperagent(options: { dir: string; deps: AgentRunContext
   ipcMain.handle(CH.superagentReset, () => withService((running) => running.reset()));
 
   return {
+    service: live,
     dispose: async () => {
       await live?.dispose();
     },

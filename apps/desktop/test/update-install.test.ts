@@ -54,9 +54,9 @@ test("begin() shows 'installing' immediately but waits before handing off", () =
   assert.equal(t.state.status, "installing");
   assert.equal(t.handOffs, 0, "the overlay needs a moment to paint before the app quits");
 
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS - 1);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS - 1);
   assert.equal(t.handOffs, 0);
-  t.clock.advance(1);
+  t.clock.advanceNow(1);
   assert.equal(t.handOffs, 1);
   assert.equal(t.state.status, "installing", "stays installing until the process is replaced");
 });
@@ -78,7 +78,7 @@ test("begin() does nothing unless an update is downloaded", () => {
     assert.equal(t.flow.begin(), false, `status ${status}`);
     assert.equal(t.state.status, status, `status ${status} must be left alone`);
     assert.equal(t.clock.pendingCount, 0, `status ${status} must not schedule a hand-off`);
-    t.clock.advance(INSTALL_STALL_TIMEOUT_MS * 2);
+    t.clock.advanceNow(INSTALL_STALL_TIMEOUT_MS * 2);
     assert.equal(t.handOffs, 0, `status ${status}`);
   }
 });
@@ -87,18 +87,18 @@ test("a double click hands off exactly once", () => {
   const t = setup();
   assert.equal(t.flow.begin(), true);
   assert.equal(t.flow.begin(), false);
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.equal(t.handOffs, 1);
 });
 
 test("a hand-off that throws becomes an error and is not retried", () => {
   const t = setup({}, { handOffThrows: new Error("spawn EACCES") });
   t.flow.begin();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.equal(t.state.status, "error");
   assert.equal(t.state.error, "spawn EACCES");
   assert.equal(t.clock.pendingCount, 0, "no watchdog left armed after a failure");
-  t.clock.advance(INSTALL_STALL_TIMEOUT_MS * 2);
+  t.clock.advanceNow(INSTALL_STALL_TIMEOUT_MS * 2);
   assert.equal(t.handOffs, 1);
   assert.equal(t.state.error, "spawn EACCES");
 });
@@ -110,7 +110,7 @@ test("an updater error during the pause aborts the hand-off", () => {
   assert.equal(t.state.status, "error");
   assert.equal(t.state.error, "boom");
   assert.equal(t.clock.pendingCount, 0);
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS * 2);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS * 2);
   assert.equal(t.handOffs, 0, "never launch an installer after the install already failed");
 });
 
@@ -126,12 +126,12 @@ test("handleError() ignores errors that are not about an install in progress", (
 test("still running long after the hand-off is reported instead of hanging on 'installing'", () => {
   const t = setup();
   t.flow.begin();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.equal(t.handOffs, 1);
 
-  t.clock.advance(INSTALL_STALL_TIMEOUT_MS - 1);
+  t.clock.advanceNow(INSTALL_STALL_TIMEOUT_MS - 1);
   assert.equal(t.state.status, "installing");
-  t.clock.advance(1);
+  t.clock.advanceNow(1);
   assert.equal(t.state.status, "error");
   assert.equal(t.state.error, INSTALL_STALLED_MESSAGE);
 });
@@ -139,9 +139,9 @@ test("still running long after the hand-off is reported instead of hanging on 'i
 test("the stall watchdog leaves the state alone if something else already changed it", () => {
   const t = setup();
   t.flow.begin();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   t.status = "downloaded";
-  t.clock.advance(INSTALL_STALL_TIMEOUT_MS);
+  t.clock.advanceNow(INSTALL_STALL_TIMEOUT_MS);
   assert.equal(t.state.status, "downloaded");
   assert.equal(t.state.error, undefined);
 });
@@ -149,7 +149,7 @@ test("the stall watchdog leaves the state alone if something else already change
 test("an error after the hand-off cancels the watchdog and surfaces the real message", () => {
   const t = setup();
   t.flow.begin();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.equal(t.flow.handleError(new Error("installer exited with code 2")), true);
   assert.equal(t.state.status, "error");
   assert.equal(t.state.error, "installer exited with code 2");
@@ -160,7 +160,7 @@ test("the hand-off is skipped if the state left 'installing' during the pause", 
   const t = setup();
   t.flow.begin();
   t.status = "error";
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.equal(t.handOffs, 0);
 });
 
@@ -170,14 +170,14 @@ test("after an aborted install a fresh download can be installed again", () => {
   t.flow.handleError(new Error("boom"));
   t.status = "downloaded";
   assert.equal(t.flow.begin(), true);
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.equal(t.handOffs, 1, "the aborted attempt's timers must not double-fire");
 });
 
 test("each step is logged so a failed update can be diagnosed from the app log", () => {
   const t = setup();
   t.flow.begin();
-  t.clock.advance(INSTALL_HANDOFF_DELAY_MS);
+  t.clock.advanceNow(INSTALL_HANDOFF_DELAY_MS);
   assert.deepEqual(t.logs, ["install: starting (version 1.0.30)", "install: handing off to the installer"]);
 });
 

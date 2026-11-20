@@ -56,6 +56,41 @@ test("AutomationRunsStore abortStale clears leftover running/queued", () => {
   assert.equal(runs.get(b.id)?.status, "aborted");
 });
 
+test("AutomationRunsStore mirror records a run from elsewhere once, in order, and updates it when it ends", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "deyin-mirror-"));
+  const storage = new FileStorage(dir, plainCipher);
+  const runs = new AutomationRunsStore(storage);
+  const local = runs.create("auto-1");
+  runs.finish(local.id, "completed", { finalText: "here" });
+  const elsewhere = { id: "engine-run_1", automationId: "auto-1", status: "running" as const, startedAt: 1_000, events: [] };
+
+  assert.equal(runs.mirror(elsewhere), true);
+  assert.equal(runs.mirror(elsewhere), false, "the same record again changes nothing");
+  assert.deepEqual(runs.list("auto-1").map((r) => r.id), [local.id, "engine-run_1"], "an older run sorts after a newer local one");
+  assert.equal(runs.lastForAutomation("auto-1")?.id, local.id);
+
+  assert.equal(runs.mirror({ ...elsewhere, status: "completed", finishedAt: 2_000, finalText: "there" }), true);
+  assert.equal(runs.list("auto-1").length, 2, "updated in place, not repeated");
+  assert.equal(runs.get("engine-run_1")?.finalText, "there");
+
+  await storage.flush();
+  const reopened = new AutomationRunsStore(storage);
+  assert.equal(reopened.get("engine-run_1")?.status, "completed", "it is saved");
+});
+
+test("AutomationRunsStore mirror keeps only the newest runs of an automation, like any other run", () => {
+  const dir = mkdtempSync(join(tmpdir(), "deyin-mirror-trim-"));
+  const runs = new AutomationRunsStore(new FileStorage(dir, plainCipher));
+  for (let i = 0; i < 25; i += 1) {
+    runs.mirror({ id: `engine-${i}`, automationId: "auto-1", status: "completed", startedAt: 1_000 + i, events: [] });
+  }
+  const kept = runs.list("auto-1");
+  assert.equal(kept.length, 20);
+  assert.equal(kept[0]?.id, "engine-24");
+  assert.equal(kept.at(-1)?.id, "engine-5");
+  assert.equal(runs.get("engine-0"), undefined);
+});
+
 test("SshHostsStore encrypts credentials", () => {
   const dir = mkdtempSync(join(tmpdir(), "deyin-ssh-"));
   const storage = new FileStorage(dir, plainCipher);

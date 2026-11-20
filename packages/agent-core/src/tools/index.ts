@@ -39,9 +39,9 @@ import { testRunnerTool } from "./test-runner.js";
 import {
   listExternalBotsTool,
   delegateExternalBotTool,
-  inspectBotRunTool,
-  mergeBotDiffTool,
-} from "./bot-tools.js";
+  inspectConductorRunTool,
+  mergeConductorDiffTool,
+} from "./conductor-tools.js";
 
 export { ToolRegistry } from "./registry.js";
 export { bashTool, effectiveShell, executeShellCommand, resolveVirtualEnv, type ShellExecutionResult, type VirtualEnvInfo } from "./bash.js";
@@ -97,9 +97,9 @@ export { testRunnerTool, formatTestOutput } from "./test-runner.js";
 export {
   listExternalBotsTool,
   delegateExternalBotTool,
-  inspectBotRunTool,
-  mergeBotDiffTool,
-} from "./bot-tools.js";
+  inspectConductorRunTool,
+  mergeConductorDiffTool,
+} from "./conductor-tools.js";
 export { globToRegExp, matchGlob } from "./globmatch.js";
 export { commitFileMutation, applyFileMutationDirect } from "./file-mutation.js";
 export type { FileMutationRequest, FileMutationOp } from "./file-mutation.js";
@@ -159,8 +159,8 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   testRunnerTool,
   listExternalBotsTool,
   delegateExternalBotTool,
-  inspectBotRunTool,
-  mergeBotDiffTool,
+  inspectConductorRunTool,
+  mergeConductorDiffTool,
 ];
 
 export function createBuiltinRegistry(): ToolRegistry {

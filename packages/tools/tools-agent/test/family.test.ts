@@ -29,8 +29,8 @@ test("@deyin/plugin-tools-agent registers its family into the catalog", async ()
       "ask_question",
       "list_external_bots",
       "delegate_external_bot",
-      "inspect_bot_run",
-      "merge_bot_diff",
+      "inspect_conductor_run",
+      "merge_conductor_diff",
     ].sort(),
   );
 });
