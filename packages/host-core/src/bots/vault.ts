@@ -2,8 +2,7 @@ import { BotError, cleanBotLine, cleanBotText } from "./types.js";
 import { normalizeSite } from "./vault-sites.js";
 
 /**
- * The Vault: logins, cards and contacts a Bot may fill into a page without ever being shown them (the Grok Bot
- * model). What leaves the host is a *view* — titles, usernames, a card's last four digits — and never a password,
+ * The Vault: logins, cards and contacts a Bot may fill into a page without ever being shown them. What leaves the host is a *view* — titles, usernames, a card's last four digits — and never a password,
  * a card number or a security code. Those are write-only: stored encrypted, read by the host to fill a field,
  * and removed from anything a Bot is later shown. Everything here is data and pure functions; storing is in
  * `vault-store.ts`.

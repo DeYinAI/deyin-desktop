@@ -4,8 +4,6 @@ import type { Automation } from "../types.js";
  * A routine is an automation a Bot owns: it runs as that Bot (its persona and memory, in its own
  * files folder) on a schedule or by hand. Everything else about it — cron, run history, pausing,
  * healing — is the automation machinery, so there is no second scheduler.
- *
- * The numbers are the documented Grok Bot limits.
  */
 export interface RoutineLimits {
   /** Routines one Bot may own. */

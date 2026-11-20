@@ -32,8 +32,7 @@ Includes everything in 1.0.32 below.
   - **Honest about limits:** Email, Slack, Teams, X, 1Password and a Bot on a remote server are tested against
     stand-ins, not a real workspace, account or host. Installing the engine on a server downloads the Deyin CLI
     installer from `cdn.deyin.ai`, which must be live first. Not built: a mailbox for the Bot, texting and phone
-    calls, payments, teams, and mobile. [`docs/PARITY-GROK-BOT.md`](./PARITY-GROK-BOT.md) lists every surface and its
-    status.
+    calls, payments, teams, and mobile.
 
 ### Changed
 

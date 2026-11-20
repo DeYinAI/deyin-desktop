@@ -30,7 +30,7 @@ export const RUNTIME_LIMITS = Object.freeze({
   concurrentRuns: 2,
   /** Bots one engine keeps folders for. */
   bots: 200,
-  /** Routines one Bot may keep on an engine; the Grok Bot limit. */
+  /** Routines one Bot may keep on an engine. */
   routinesPerBot: 50,
   routineName: 80,
   cronLength: 120,

@@ -26,7 +26,6 @@ Documentation for Deyin **v1** (first public open-source release).
 | Doc | Contents |
 |-----|----------|
 | [FEATURES.md](./FEATURES.md) | Feature overview |
-| [PARITY.md](./PARITY.md) | Desktop vs web capability matrix |
 | [capabilities.json](./capabilities.json) | Machine-readable capability manifest |
 | [OAUTH.md](./OAUTH.md) | Openference OAuth integration |
 | [DEPLOY-OPENFERENCE-OAUTH.md](./DEPLOY-OPENFERENCE-OAUTH.md) | OAuth provider deployment |

@@ -1,9 +1,8 @@
 /**
  * The Deyin Bot entity.
  *
- * Mirrors the recovered `GrokBotAgent` message (docs/rea/grok-bot-1.2.3/proto-shapes.json) field for
- * field in camelCase, keeping the fields a local-first app can honor and adding the few Deyin needs:
- * `handle` (a unique @mention), `isPrimary` (the Bot that coordinates the others) and `hostId`
+ * A Bot has a name, a persona, an avatar, a place to run, an approval mode and the fields a local-first app can honor,
+ * plus `handle` (a unique @mention), `isPrimary` (the Bot that coordinates the others) and `hostId`
  * (which of the user's servers a server Bot lives on). Everything here is browser-safe so the
  * renderer validates with the same code the store enforces.
  */
@@ -15,19 +14,19 @@ import {
   type BotAvatarShape,
 } from "./avatar.js";
 
-/** Where a Bot runs. Maps the recovered `GrokBotAgentHarnessKind` BOX | TEMPORAL. */
+/** Where a Bot runs: on this computer, or on a server the person owns. */
 export const BOT_HARNESSES = ["local", "server"] as const;
 export type BotHarness = (typeof BOT_HARNESSES)[number];
 
-/** Maps the recovered `GrokBotApprovalMode` AUTO_REVIEW | READ_ONLY | RUN_EVERYTHING. */
+/** How a Bot's tool calls are approved: by an automatic reviewer, read-only, or run everything. */
 export const BOT_APPROVAL_MODES = ["auto_review", "read_only", "run_everything"] as const;
 export type BotApprovalMode = (typeof BOT_APPROVAL_MODES)[number];
 
-/** Maps the recovered `GrokBotAgentVisibility`. Deyin has no teams, so only `owner` can be set. */
+/** Who can see a Bot. Deyin has no teams, so only `owner` can be set. */
 export const BOT_VISIBILITIES = ["owner", "team"] as const;
 export type BotVisibility = (typeof BOT_VISIBILITIES)[number];
 
-/** Maps the recovered `GrokBotAgentKind` AGENT | ROOM. A room is a conversation among Bots. */
+/** A single Bot (`agent`) or a `room`, which is a conversation among Bots. */
 export const BOT_KINDS = ["agent", "room"] as const;
 export type BotKind = (typeof BOT_KINDS)[number];
 

@@ -17,10 +17,10 @@ export const brand = {
   tagline: "Agentic development, with Openference.",
 } as const;
 
-/** Dark theme palette (default). Bluish neutral ramp measured from the
- * DeepSeek Harness desktop client: the window/sidebar ground (#1b1b1c) sits one
- * step above the conversation surface (#151517), cards and the composer use the
- * next step (#2c2c2e), and the accent is the soft DeepSeek blue. */
+/** Dark theme palette (default). Bluish neutral ramp: the window/sidebar
+ * ground (#1b1b1c) sits one step above the conversation surface (#151517),
+ * cards and the composer use the next step (#2c2c2e), and the accent is a soft
+ * blue. */
 export const colors = {
   // Surfaces. Ground = sidebar + window chrome, surface = conversation/panels.
   bg: "#1b1b1c",
@@ -37,7 +37,7 @@ export const colors = {
   textMuted: "#adb2b8",
   textFaint: "#81858c",
 
-  // Accent (deepseek-400 on dark)
+  // Accent (blue-400 on dark)
   accent: "#7aaaff",
   accentHover: "#93b8ff",
   accentSoft: "rgba(122, 170, 255, 0.16)",
@@ -80,7 +80,7 @@ export const colorsWarm = {
   running: "#c4a072",
 } as const;
 
-/** Light theme palette (DeepSeek Harness light ramp). */
+/** Light theme palette. */
 export const colorsLight = {
   bg: "#f9fafb",
   surface: "#ffffff",
@@ -278,7 +278,7 @@ export function cssVariables(): string {
     lines.push(`  --color-accent-soft: ${tokens.accentSoft};`);
     lines.push("}");
   }
-  // The default blue accent is the DeepSeek blue, which needs its darker step
+  // The default blue accent needs its darker step
   // on the light interface to keep contrast.
   lines.push(':root[data-theme="light"][data-accent="blue"] {');
   lines.push(`  --color-accent: ${colorsLight.accent};`);

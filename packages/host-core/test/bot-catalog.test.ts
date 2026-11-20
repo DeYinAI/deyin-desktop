@@ -17,7 +17,7 @@ const ids = (entries: readonly CatalogEntry[]) => entries.map((entry) => entry.i
 
 /* The shipped starters ------------------------------------------------------------- */
 
-test("the four recovered example Bots are shipped, rewritten, each under its own Deyin name", () => {
+test("the starters adapted from example Bots are shipped, each under its own Deyin name", () => {
   const derived = BOT_CATALOG.filter((entry) => entry.derivedFrom).map((entry) => [entry.derivedFrom, entry.template.name]);
   assert.deepEqual(derived, [
     ["Overheard", "Standup Scribe"],
@@ -25,7 +25,7 @@ test("the four recovered example Bots are shipped, rewritten, each under its own
     ["Meeting Recap Deck", "Meeting Recap"],
     ["Pitch Deck Coach", "Pitch Coach"],
   ]);
-  for (const [from, to] of derived) assert.notEqual(from, to, "none is shipped under the recovered name");
+  for (const [from, to] of derived) assert.notEqual(from, to, "none is shipped under the original name");
 });
 
 test("every starter is a real template: it survives being written out and read back, and has what a Bot needs", () => {

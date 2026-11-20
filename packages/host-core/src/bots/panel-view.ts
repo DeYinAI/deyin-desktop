@@ -46,7 +46,7 @@ export interface CatalogCard {
   routines: number;
   /** One made from it already exists. */
   have: boolean;
-  /** The recovered example it is rewritten from, when it is one. */
+  /** The name of the example it was adapted from, when it is one. */
   derivedFrom?: string;
 }
 

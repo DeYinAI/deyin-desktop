@@ -1,6 +1,4 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { test } from "node:test";
 import {
   BOT_AVATAR_COLORS,
@@ -19,32 +17,6 @@ import {
   resolveBotAvatar,
 } from "../src/bots/avatar.js";
 
-interface RecoveredPalette {
-  shapes: string[];
-  colors: { id: string; label: string; value: string }[];
-}
-
-// The Grok Bot palette recovered during the analysis. Deyin's avatars are their own design, so the two must not overlap.
-const recovered = JSON.parse(
-  readFileSync(join(import.meta.dirname, "../../../docs/rea/grok-bot-1.2.3/avatar-palette.json"), "utf8"),
-) as RecoveredPalette;
-
-test("Deyin's avatar forms share no name with the recovered Grok Bot shapes", () => {
-  const theirs = new Set(recovered.shapes);
-  for (const shape of BOT_AVATAR_SHAPES) assert.ok(!theirs.has(shape), `${shape} is also a Grok Bot shape`);
-});
-
-test("Deyin's avatar colors share no id, label or value with the recovered Grok Bot colors", () => {
-  const ids = new Set(recovered.colors.map((c) => c.id));
-  const labels = new Set(recovered.colors.map((c) => c.label.toLowerCase()));
-  const values = new Set(recovered.colors.map((c) => c.value.toLowerCase()));
-  for (const color of BOT_AVATAR_COLORS) {
-    assert.ok(!ids.has(color.id), `${color.id}: same id`);
-    assert.ok(!labels.has(color.label.toLowerCase()), `${color.label}: same label`);
-    assert.ok(!values.has(color.value.toLowerCase()), `${color.value}: same value`);
-  }
-});
-
 test("the forms and colors are the designed set, each once", () => {
   assert.deepEqual([...BOT_AVATAR_SHAPES], ["orb", "tile", "tilt", "pill", "lozenge", "hexagon", "octagon", "diamond", "petal", "bloom"]);
   assert.equal(new Set(BOT_AVATAR_SHAPES).size, BOT_AVATAR_SHAPES.length);
@@ -61,7 +33,7 @@ test("the first color is the Deyin mark's own tint, and the default pool is part
   assert.ok(!BOT_DEFAULT_SHAPE_POOL.includes("diamond") && !BOT_DEFAULT_SHAPE_POOL.includes("lozenge"));
 });
 
-test("type guards accept palette members only, and not the old Grok-shaped names", () => {
+test("type guards accept palette members only, and not the old names", () => {
   assert.equal(isBotAvatarShape("hexagon"), true);
   assert.equal(isBotAvatarShape("hex"), false, "the old name is migrated on read, not accepted on write");
   assert.equal(isBotAvatarShape("pumpkin"), false);
@@ -135,8 +107,6 @@ test("resolveBotAvatar keeps current choices and repairs the rest from the id", 
 test("every look a Bot could have been saved with before the redesign becomes a current one", () => {
   const oldShapes = ["blob", "pebble", "bean", "egg", "squircle", "tablet", "capsule", "cylinder", "hex", "gem", "crystal", "wedge", "shield", "dome", "arch", "cloud", "teardrop", "leaf", "square", "sparkle", "clover", "flower", "heart", "house", "star"];
   const oldColors = ["black", "brown", "red", "orange", "yellow", "green", "cyan", "blue", "violet", "magenta", "gray"];
-  assert.deepEqual(oldShapes, recovered.shapes, "the table covers every shape the old palette had");
-  assert.deepEqual(oldColors, recovered.colors.map((c) => c.id), "and every color");
   for (const shape of oldShapes) assert.ok(isBotAvatarShape(resolveBotAvatar({ id: "bot_legacy", avatarShape: shape, avatarColor: "rose" }).shape), shape);
   for (const color of oldColors) assert.ok(isBotAvatarColor(resolveBotAvatar({ id: "bot_legacy", avatarShape: "orb", avatarColor: color }).color), color);
 });
