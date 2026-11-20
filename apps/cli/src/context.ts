@@ -16,7 +16,7 @@ import {
 } from "@deyin/host-core";
 import { AgentsStore } from "@deyin/host-core";
 import { parseModelRef, type ProviderRouting } from "@deyin/agent-core";
-import type { ProviderInfo } from "@deyin/host-core";
+import { fetchWithUserAgent, type ProviderInfo } from "@deyin/host-core";
 import { OAuthClient } from "@deyin/oauth-client";
 import { FileTokenStore } from "@deyin/oauth-client/node";
 
@@ -70,7 +70,7 @@ export function createContext(opts: { cwd?: string; dataDir?: string; overrides?
   const storage = new FileStorage(dataDir);
   flushOnExit(storage);
   const oauth = new OAuthClient(
-    { issuer: config.oauthIssuer, clientId: config.clientId, scopes: DEFAULT_CONFIG.scopes },
+    { issuer: config.oauthIssuer, clientId: config.clientId, scopes: DEFAULT_CONFIG.scopes, fetch: fetchWithUserAgent },
     new FileTokenStore({ path: join(dataDir, "credentials.json") }),
   );
   return {

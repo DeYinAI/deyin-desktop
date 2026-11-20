@@ -1,3 +1,5 @@
+import { deyinUserAgent } from "@deyin/host-core";
+
 export interface RemoteRunOptions {
   url: string;
   prompt: string;
@@ -47,7 +49,7 @@ function authHeader(opts: RemoteRunOptions): string | undefined {
 export async function runRemote(options: RemoteRunOptions): Promise<number> {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = { "content-type": "application/json", "user-agent": deyinUserAgent() };
   const authorization = authHeader(options);
   if (authorization) headers.authorization = authorization;
   let response: Response;

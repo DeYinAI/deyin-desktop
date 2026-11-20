@@ -9,6 +9,7 @@ import {
   type DeepLinkLoginStart,
 } from "@deyin/oauth-client/node";
 import { DEEP_LINK_REDIRECT_URI, type DeyinConfig } from "@deyin/contract";
+import { fetchWithUserAgent } from "@deyin/host-core";
 import type { UserProfile } from "@deyin/contract";
 
 /**
@@ -51,7 +52,7 @@ export class AuthManager {
     });
 
     this.client = new OAuthClient(
-      { issuer: config.oauthIssuer, clientId: config.clientId, scopes: config.scopes },
+      { issuer: config.oauthIssuer, clientId: config.clientId, scopes: config.scopes, fetch: fetchWithUserAgent },
       store,
     );
   }

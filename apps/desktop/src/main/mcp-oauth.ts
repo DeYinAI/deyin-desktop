@@ -15,6 +15,7 @@ import {
   type StoredOAuthTokens,
 } from "@modelcontextprotocol/client";
 import type { McpAuthResult, McpAuthStatus, McpModuleManifest } from "@deyin/contract";
+import { fetchWithUserAgent } from "@deyin/host-core";
 import { assertModuleId } from "./mcp-modules.js";
 import { mcpOAuthCallbackStateValid } from "./mcp-oauth-state.js";
 
@@ -276,7 +277,7 @@ export class McpOAuthService {
           finish(SUCCESS_HTML);
           provider?.clearTransientOAuthState();
 
-          const freshTransport = new StreamableHTTPClientTransport(new URL(mcpUrl), { authProvider: provider! });
+          const freshTransport = new StreamableHTTPClientTransport(new URL(mcpUrl), { authProvider: provider!, fetch: fetchWithUserAgent });
           const client = new Client({ name: "deyin", version: "0.1.0" }, { capabilities: {} });
           await client.connect(freshTransport);
           const { tools } = await client.listTools();
@@ -300,7 +301,7 @@ export class McpOAuthService {
         const port = (server.address() as AddressInfo).port;
         redirectUri = `http://127.0.0.1:${port}${redirectPath}`;
         provider = new DesktopMcpOAuthProvider(safeId, this.store, redirectUri);
-        transport = new StreamableHTTPClientTransport(new URL(mcpUrl), { authProvider: provider });
+        transport = new StreamableHTTPClientTransport(new URL(mcpUrl), { authProvider: provider, fetch: fetchWithUserAgent });
         const client = new Client({ name: "deyin", version: "0.1.0" }, { capabilities: {} });
         client
           .connect(transport)

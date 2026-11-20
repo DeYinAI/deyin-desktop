@@ -65,6 +65,40 @@ export function deyinUserAgent(): string {
  return buildDeyinUserAgent("unknown", "0.0.0");
 }
 
+/**
+ * `init` with the Deyin User-Agent filled in unless the caller already set one
+ * (any header casing, any `HeadersInit` shape). Plain-object headers stay plain
+ * objects; `Headers`/tuple-array inputs are normalized into a `Headers`.
+ *
+ * Without this, Node's fetch (undici) identifies every request as bare `node`.
+ */
+export function withUserAgent(init?: RequestInit): RequestInit {
+  const headers = init?.headers;
+  if (headers === undefined) return { ...init, headers: { "user-agent": deyinUserAgent() } };
+  if (headers instanceof Headers || Array.isArray(headers)) {
+    const merged = new Headers(headers);
+    if (!merged.has("user-agent")) merged.set("user-agent", deyinUserAgent());
+    return { ...init, headers: merged };
+  }
+  if (Object.keys(headers).some((name) => name.toLowerCase() === "user-agent")) return { ...init, headers };
+  return { ...init, headers: { ...headers, "user-agent": deyinUserAgent() } };
+}
+
+/**
+ * `fetch` that identifies as Deyin unless the caller set a User-Agent. Pass it
+ * wherever a library takes an injectable `fetch` (OAuth client, MCP transports,
+ * bot connectors) so third-party request paths cannot fall back to `node`.
+ */
+export function fetchWithUserAgent(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  if (typeof Request !== "undefined" && input instanceof Request) {
+    // Explicit init.headers replace the Request's own, so carry them across first.
+    const headers = new Headers(input.headers);
+    if (init?.headers) new Headers(init.headers).forEach((value, name) => headers.set(name, value));
+    return fetch(input, withUserAgent({ ...init, headers }));
+  }
+  return fetch(input, withUserAgent(init));
+}
+
 /** Test hook: restore the uninitialized state. */
 export function resetUserAgentForTest(): void {
  current = "";

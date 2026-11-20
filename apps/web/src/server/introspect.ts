@@ -1,3 +1,5 @@
+import { deyinUserAgent } from "@deyin/host-core";
+
 export interface IntrospectionResult {
   active: boolean;
   sub?: string;
@@ -13,7 +15,7 @@ export async function introspect(issuer: string, token: string): Promise<Introsp
   try {
     const res = await fetch(`${issuer.replace(/\/+$/, "")}/oauth/introspect`, {
       method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
+      headers: { "content-type": "application/x-www-form-urlencoded", "user-agent": deyinUserAgent() },
       body: new URLSearchParams({ token }),
     });
     if (!res.ok) return { active: false };

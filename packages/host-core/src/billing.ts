@@ -2,6 +2,7 @@
 
 import type { TokenSource } from "./models.js";
 import type { BillingCycle, PendingPlanChange } from "./billing-plan.js";
+import { deyinUserAgent } from "./user-agent.js";
 
 export type { BillingCycle, PendingPlanChange };
 export {
@@ -118,6 +119,7 @@ async function authFetch(
     signal: AbortSignal.timeout(15_000),
     headers: {
       authorization: `Bearer ${token}`,
+      "user-agent": deyinUserAgent(),
       ...(init?.headers ?? {}),
     },
   });
