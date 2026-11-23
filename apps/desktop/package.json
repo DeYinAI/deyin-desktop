@@ -26,10 +26,10 @@
   "dependencies": {
     "@modelcontextprotocol/client": "^2.4.0",
     "croner": "^10.0.1",
-    "electron-updater": "^6.8.9",
-    "playwright-core": "^1.49.0",
+    "electron-updater": "^6.8.11",
+    "playwright-core": "^1.65.1",
     "ssh2": "^1.17.0",
-    "ws": "^8.21.3"
+    "ws": "^8.23.0"
   },
   "optionalDependencies": {
     "node-pty": "^1.0.0"
@@ -52,13 +52,13 @@
     "@deyin/tools": "workspace:*",
     "@deyin/ui": "workspace:*",
     "@types/node": "^22.10.2",
-    "@types/ssh2": "^1.15.1",
-    "@types/ws": "^8.18.1",
+    "@types/ssh2": "^1.15.6",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^43.8.11",
     "electron-builder": "^26.18.1",
     "electron-vite": "^5.0.0",
-    "tsx": "^4.19.2",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.3",
     "vite": "^6.4.6"
   }
