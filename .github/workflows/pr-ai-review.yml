@@ -60,7 +60,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Explain skipped AI review
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const marker = '<!-- deyin-ai-review-dependabot -->';
