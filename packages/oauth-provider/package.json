@@ -27,7 +27,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.9",
     "hono": "^4.13.19",
-    "jose": "^5.9.6"
+    "jose": "^6.2.18"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
