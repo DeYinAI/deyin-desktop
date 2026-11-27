@@ -80,6 +80,7 @@ import type {
   WebAgentProviderRouting,
 } from "@deyin/contract/web";
 import { isChatOnlyHosted } from "./chat-only.js";
+import { beginSsoSignIn, randomSsoState } from "./sso-handoff.js";
 
 const CHAT_ONLY = isChatOnlyHosted();
 const OAUTH_ISSUER = (import.meta.env.VITE_DEYIN_OAUTH_ISSUER as string) ?? "http://localhost:8788";
@@ -89,7 +90,6 @@ const CLIENT_ID = (import.meta.env.VITE_DEYIN_CLIENT_ID as string) ?? "deyin-des
 const SCOPES = ["openid", "profile", "email", "offline_access", "model:invoke", "billing:manage"];
 const REDIRECT_URI = `${location.origin}/auth/callback`;
 const API_BASE = `${location.origin}/api`;
-const SSO_URL = `${OAUTH_ISSUER.replace(/\/+$/, "")}/auth/sso`;
 /** Drop host RPCs that exceed this without a reply (mirrors desktop IPC patience). */
 const INVOKE_TIMEOUT_MS = 120_000;
 
@@ -519,8 +519,17 @@ export function createBrowserTransport(): DeyinApi {
     auth: {
       async connect(): Promise<UserProfile> {
         if (CHAT_ONLY) {
-          const redirect = encodeURIComponent(`${location.origin}/`);
-          location.assign(`${SSO_URL}?redirect=${redirect}`);
+          // The address that comes back carries a value only this browser knows (sso-handoff.ts), so a
+          // link someone else made cannot sign this browser in to their account.
+          location.assign(
+            beginSsoSignIn({
+              origin: location.origin,
+              issuer: OAUTH_ISSUER,
+              storage: localStorage,
+              now: () => Date.now(),
+              randomState: randomSsoState,
+            }),
+          );
           return new Promise<never>(() => {});
         }
         // Full-page redirect; the profile is resolved after the callback + reload.
